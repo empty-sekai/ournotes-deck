@@ -52,8 +52,8 @@ results are compared item by item with an independent exhaustive enumeration, wh
 or Top-K code with the search. On real cards and charts, 25,600 requests covering about 450 million decks showed 0
 mismatches. For the live score with snap skills the enumeration simulates every member set, leader, snap placement
 and performance order: on real cards and charts, with the default and random judgement streams, 1,280 requests over
-2.3 million simulated decks and orders, and on synthetic pools whose snap skills change the ranking, 2,640 requests
-over 115 million, showed 0 mismatches.
+2.2 million simulated decks and orders, and on synthetic pools whose snap skills change the ranking, 3,200 requests
+over 109 million, showed 0 mismatches.
 A search that reaches its time limit returns `TimedOut`, with legal and exactly evaluated decks but no
 ranking claim. Inputs outside the proven range, unknown cards, rules the game would reject and parts of the game that
 are not modelled are reported as errors.

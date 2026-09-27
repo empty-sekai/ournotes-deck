@@ -11,9 +11,9 @@
 //!   add (its live skill, extended by its snap, and its snap's own score effects), each with a margin `eps` for the
 //!   float arithmetic of the simulation (rounding and the drift of re-executed frames);
 //! - candidates (order, class assignment) are enumerated below the bound and simulated in order of a per-note bound
-//!   that reads the candidate's own conversions and, when it can neither recover life nor guard, the notes whose
-//!   filed damage empties the life; a candidate is dropped only when a bound is strictly below the best exact score
-//!   or the Top-K threshold.
+//!   that reads the candidate's own conversions and, when it guards nowhere and recovers life only at its skill
+//!   events, the notes whose filed damage empties the life; a candidate is dropped only when a bound is strictly
+//!   below the best exact score or the Top-K threshold.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -579,6 +579,9 @@ struct Coef {
     /// Prefix sums of `z * k * max_jp` and of `z * k * jp[j]`.
     pc: Vec<f64>,
     pj: [Vec<f64>; 4],
+    /// The same with the life-zero factor (assist times the life-zero factor) in place of `z`.
+    pcd: Vec<f64>,
+    pjd: [Vec<f64>; 4],
 }
 
 /// What the per-entry bound of one candidate reads, entries in chart-time order. A candidate's entries reach only
@@ -611,8 +614,81 @@ struct Fine {
     /// already filed when the entry reads its life empties it. `z_dead` is their factor after the floor.
     dead: Vec<bool>,
     z_dead: f64,
-    /// Whether a member with a class can recover life or guard.
-    life_up: Vec<Vec<bool>>,
+    /// The rows of each member and class that can raise the life.
+    life: Vec<Vec<LifeKind>>,
+    /// For candidates that recover life at their skill events: the base life; the slots of the life fold in time
+    /// order (a run of life frames that the frame cache can fold twice, or one chart time outside such runs) with
+    /// the last time each covers and its damage (the smallest damage of the reachable judgements of its entries);
+    /// for each position, the slot of each of its skill events' recoveries and how many times the fold can apply
+    /// it; for each entry, the smallest chart time of the entries judged after it.
+    base: i64,
+    slot_end: Vec<i64>,
+    slot_dmg: Vec<i64>,
+    ev_slot: [Vec<(usize, i64)>; 5],
+    until: Vec<i64>,
+    /// The smallest `until` from each entry on, and the first entry from which every entry is in `dead`.
+    until_min: Vec<i64>,
+    dead_from: usize,
+}
+
+/// The rows of one performer that can raise the life.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LifeKind {
+    None,
+    /// Only life recovery rows triggered by the performer's own skill event, recovering this much in total there.
+    Recovery(i64),
+    /// Anything else (a guard, a recovery with another trigger, a live skill row).
+    Other,
+}
+
+/// What the per-entry bound of one candidate knows about its life.
+#[derive(Clone, Copy, Debug)]
+enum CandLife {
+    /// Nothing raises the life: `Fine::dead` applies.
+    NoRise,
+    /// Only recoveries at skill events: an entry reads life 0 when its chart time is at least this time and the entries
+    /// at chart times up to it are judged no later than the entry (see `Fine::zero_from`).
+    ZeroFrom(i64),
+    /// No life bound.
+    Unknown,
+}
+
+impl Fine {
+    /// The last time of the first slot at which the life is 0 in the slot-ordered fold of every damage (smallest
+    /// damage per entry) and of the recoveries `rec[k]` at position `k`'s skill events, each as many times as the
+    /// frame cache can apply it (`i64::MAX`: never). The commands of one slot are folded in an order that is not
+    /// known, so a slot with both damage and recovery gives `clamp(life + recovery - damage, 0, 2 * base)`, at least
+    /// what any order gives.
+    fn zero_from(&self, rec: [i64; 5]) -> i64 {
+        let mut ups: Vec<(usize, i64)> = Vec::new();
+        for (k, slots) in self.ev_slot.iter().enumerate() {
+            if rec[k] > 0 {
+                ups.extend(slots.iter().map(|&(slot, times)| (slot, rec[k].saturating_mul(times))));
+            }
+        }
+        ups.sort_unstable();
+        let cap = 2 * self.base;
+        let mut life = self.base;
+        let mut j = 0usize;
+        for (slot, (&end, &dmg)) in self.slot_end.iter().zip(&self.slot_dmg).enumerate() {
+            let mut up = 0i64;
+            while j < ups.len() && ups[j].0 == slot {
+                up = up.saturating_add(ups[j].1);
+                j += 1;
+            }
+            life = if up == 0 {
+                (life - dmg).max(0)
+            } else if dmg == 0 {
+                life.saturating_add(up).min(cap)
+            } else {
+                (life.saturating_add(up) - dmg).clamp(0, cap)
+            };
+            if life <= 0 {
+                return end;
+            }
+        }
+        i64::MAX
+    }
 }
 
 /// The conversions of one performer: its live skill's (with their target judgement and targets) and its snap
@@ -686,8 +762,88 @@ pub(crate) struct SnapLive<'a> {
     fine: Fine,
     a0: f64,
     global: f64,
+    /// Whether some entry can read life 0 at a factor below the one of `Coef::z` (the class search then bounds life).
+    life_bound: bool,
+    /// With `life_bound`, for each member and position (`m * 5 + k`): the prefix sums, with `Coef::z` and with the
+    /// life-zero factor, of the largest per-entry gain over the member's classes without other life-raising rows
+    /// (empty when it has none).
+    split: Vec<(Vec<f64>, Vec<f64>)>,
     /// Relative margin of the bounds.
     eps: f64,
+}
+
+/// `SnapLive::split`: for each member and position, the largest gain of each entry over the member's classes without
+/// other life-raising rows (the value of its windows containing the entry, before the factor after the floor), summed
+/// with `Coef::z` and with the life-zero factor.
+fn split_envelopes(contrib: &[Vec<[Contrib; 5]>], fine: &Fine, coef: &Coef) -> Vec<(Vec<f64>, Vec<f64>)> {
+    let ne = coef.times.len();
+    let mut out = vec![(Vec::new(), Vec::new()); contrib.len() * 5];
+    let mut v = vec![0f64; ne];
+    let mut best = vec![0f64; ne];
+    for (m, per) in contrib.iter().enumerate() {
+        for k in 0..5 {
+            let mut any = false;
+            best.fill(0.0);
+            for (c, arr) in per.iter().enumerate() {
+                if fine.life[m][c] == LifeKind::Other {
+                    continue;
+                }
+                any = true;
+                let ws = &arr[k].windows;
+                for w in ws {
+                    for e in w.lo as usize..w.hi as usize {
+                        let mut x = w.note * coef.k[e] * coef.max_jp[e];
+                        for j in 0..4 {
+                            if w.judge[j] != 0.0 {
+                                x += w.judge[j] * coef.k[e] * coef.jp[e][j];
+                            }
+                        }
+                        v[e] += x;
+                    }
+                }
+                for w in ws {
+                    for e in w.lo as usize..w.hi as usize {
+                        best[e] = best[e].max(v[e]);
+                    }
+                }
+                for w in ws {
+                    v[w.lo as usize..w.hi as usize].fill(0.0);
+                }
+            }
+            if !any {
+                continue;
+            }
+            let (mut pz, mut pd) = (vec![0f64; ne + 1], vec![0f64; ne + 1]);
+            for e in 0..ne {
+                pz[e + 1] = pz[e] + coef.z[e] * best[e];
+                pd[e + 1] = pd[e] + fine.z_dead * best[e];
+            }
+            out[m * 5 + k] = (pz, pd);
+        }
+    }
+    out
+}
+
+/// The largest `sum_i g[i][k_i]` over the assignments of the five slots to distinct positions.
+fn best_assignment(g: &[[f64; 5]; 5]) -> f64 {
+    let mut best = [f64::MIN; 32];
+    best[0] = 0.0;
+    for mask in 0usize..31 {
+        if best[mask] == f64::MIN {
+            continue;
+        }
+        let i = mask.count_ones() as usize;
+        for k in 0..5 {
+            if mask & (1 << k) == 0 {
+                let v = best[mask] + g[i][k];
+                let next = mask | (1 << k);
+                if v > best[next] {
+                    best[next] = v;
+                }
+            }
+        }
+    }
+    best[31]
 }
 
 fn ub(power: i64, a: f64, eps: f64) -> i64 {
@@ -1080,10 +1236,15 @@ impl<'a> SnapLive<'a> {
         let ne = coef.times.len();
         coef.pc = vec![0f64; ne + 1];
         coef.pj = [vec![0f64; ne + 1], vec![0f64; ne + 1], vec![0f64; ne + 1], vec![0f64; ne + 1]];
+        coef.pcd = vec![0f64; ne + 1];
+        coef.pjd = [vec![0f64; ne + 1], vec![0f64; ne + 1], vec![0f64; ne + 1], vec![0f64; ne + 1]];
+        let z_dead = assist as f64 * onus as f64;
         for e in 0..ne {
             coef.pc[e + 1] = coef.pc[e] + coef.z[e] * coef.k[e] * coef.max_jp[e];
+            coef.pcd[e + 1] = coef.pcd[e] + z_dead * coef.k[e] * coef.max_jp[e];
             for j in 0..4 {
                 coef.pj[j][e + 1] = coef.pj[j][e] + coef.z[e] * coef.k[e] * coef.jp[e][j];
+                coef.pjd[j][e + 1] = coef.pjd[j][e] + z_dead * coef.k[e] * coef.jp[e][j];
             }
         }
         let a0 = coef.pc[ne];
@@ -1110,7 +1271,14 @@ impl<'a> SnapLive<'a> {
             extra: vec![Default::default()],
             dead: order.iter().map(|&i| dead_stream[i]).collect(),
             z_dead: assist as f64 * onus as f64,
-            life_up: vec![Vec::new(); n],
+            life: vec![Vec::new(); n],
+            base,
+            slot_end: Vec::new(),
+            slot_dmg: Vec::new(),
+            ev_slot: Default::default(),
+            until: Vec::new(),
+            until_min: Vec::new(),
+            dead_from: 0,
         };
         for e in 0..ne {
             let g = if e > 0 && coef.times[e] == coef.times[e - 1] { fine.group[e - 1] } else { e as u32 };
@@ -1137,6 +1305,104 @@ impl<'a> SnapLive<'a> {
                 }
             }
         }
+        // life bound of recovering candidates
+        {
+            let mut after = vec![i64::MAX; entries.len()];
+            for i in (0..entries.len().saturating_sub(1)).rev() {
+                after[i] = after[i + 1].min(entries[i + 1].1.time_ms as i64);
+            }
+            fine.until = order.iter().map(|&i| after[i]).collect();
+            fine.until_min = fine.until.clone();
+            for e in (0..fine.until_min.len().saturating_sub(1)).rev() {
+                fine.until_min[e] = fine.until_min[e].min(fine.until_min[e + 1]);
+            }
+            fine.dead_from = fine.dead.len();
+            while fine.dead_from > 0 && fine.dead[fine.dead_from - 1] {
+                fine.dead_from -= 1;
+            }
+            // Life frames and the frame cache (see `docs/search.md`): a life query at life frame `q` leaves the cache
+            // complete up to at most `q - 1`; a command filed at a life frame `f` up to the cache folds the frames from
+            // `f` to the cache once more at the next query. Queries happen at each play frame's time and at each
+            // judged entry's chart time; commands are the entries' damage (filed before that entry's query) and the
+            // skill events' recoveries (at the time of the frame where the event fires, after that frame's entries).
+            let lmax = get_frame(setup.params.music_length_ms).wrapping_add(2);
+            let lf = |ms: i32| {
+                let f = get_frame(ms);
+                if lmax <= f { lmax.wrapping_sub(1) } else { f }
+            };
+            let pf: Vec<i32> = frames.iter().map(|&t| lf(t)).collect();
+            // the windows `[f, q - 1]` that a command can fold again: `f` its life frame, `q` the largest life frame
+            // queried before it is filed
+            let mut windows: Vec<(i32, i32)> = Vec::new();
+            let mut mq_note = i32::MIN;
+            for e in &entries {
+                let q = if e.0 == 0 { i32::MIN } else { pf[e.0 - 1] }.max(mq_note);
+                let f = lf(e.1.time_ms);
+                if f < q {
+                    windows.push((f, q - 1));
+                }
+                mq_note = mq_note.max(f);
+            }
+            let mut note_upto = vec![i32::MIN; frames.len()];
+            let (mut m, mut q) = (i32::MIN, 0usize);
+            for (i, slot) in note_upto.iter_mut().enumerate() {
+                while q < entries.len() && entries[q].0 <= i {
+                    m = m.max(lf(entries[q].1.time_ms));
+                    q += 1;
+                }
+                *slot = m;
+            }
+            for &i1 in fire_k.iter().flatten() {
+                let q = pf[i1].max(note_upto[i1]);
+                if pf[i1] < q {
+                    windows.push((pf[i1], q - 1));
+                }
+            }
+            windows.sort_unstable();
+            let mut runs: Vec<(i32, i32)> = Vec::new();
+            for &(a, b) in &windows {
+                match runs.last_mut() {
+                    Some(r) if a <= r.1 => r.1 = r.1.max(b),
+                    _ => runs.push((a, b)),
+                }
+            }
+            // slot key: (first life frame, time); a run is one slot, a time outside the runs is one slot
+            let key = |ms: i32| -> (i32, i64) {
+                let f = lf(ms);
+                let r = runs.partition_point(|x| x.1 < f);
+                match runs.get(r) {
+                    Some(&(a, _)) if a <= f => (a, i64::MIN),
+                    _ => (f, ms as i64),
+                }
+            };
+            let end_of = |k: (i32, i64)| -> i64 {
+                if k.1 != i64::MIN {
+                    return k.1;
+                }
+                let b = runs[runs.partition_point(|x| x.0 < k.0)].1;
+                if b >= lmax.wrapping_sub(1) { i64::MAX } else { 40 * b as i64 }
+            };
+            let mut keys: Vec<(i32, i64)> = entries.iter().map(|e| key(e.1.time_ms)).collect();
+            keys.extend(fire_k.iter().flatten().map(|&i| key(frames[i])));
+            keys.sort_unstable();
+            keys.dedup();
+            fine.slot_end = keys.iter().map(|&k| end_of(k)).collect();
+            fine.slot_dmg = vec![0i64; keys.len()];
+            for (e, &d) in entries.iter().zip(&dmin) {
+                let slot = keys.binary_search(&key(e.1.time_ms)).expect("slot of an entry");
+                fine.slot_dmg[slot] = fine.slot_dmg[slot].saturating_add(d);
+            }
+            for k in 0..5 {
+                fine.ev_slot[k] = fire_k[k]
+                    .iter()
+                    .map(|&i| {
+                        let slot = keys.binary_search(&key(frames[i])).expect("slot of a recovery");
+                        let times = 1 + windows.iter().filter(|w| w.0 <= pf[i] && pf[i] <= w.1).count() as i64;
+                        (slot, times)
+                    })
+                    .collect();
+            }
+        }
         let ent_frame: Vec<i64> = order.iter().map(|&i| entries[i].0 as i64).collect();
         let mut sources: HashMap<ConvSource, u32> = HashMap::new();
         for &m in &members {
@@ -1148,9 +1414,25 @@ impl<'a> SnapLive<'a> {
                 .collect();
             let live_life =
                 member_live[m].iter().any(|x| matches!(x.row.effect_type, 3001 | 3003) && x.out.is_none_or(|o| o.yes));
-            fine.life_up[m] = classes[m]
+            fine.life[m] = classes[m]
                 .iter()
-                .map(|c| live_life || c.rows.iter().any(|r| matches!(r.effect_type, 3001 | 3003) && r.can_start))
+                .map(|c| {
+                    let (mut up, mut other) = (0i64, live_life);
+                    for r in c.rows.iter().filter(|r| r.can_start) {
+                        match r.effect_type {
+                            3001 if r.event_bound => up += (r.value as i32).max(0) as i64,
+                            3001 | 3003 => other = true,
+                            _ => {}
+                        }
+                    }
+                    if other {
+                        LifeKind::Other
+                    } else if up > 0 {
+                        LifeKind::Recovery(up)
+                    } else {
+                        LifeKind::None
+                    }
+                })
                 .collect();
             let mut per = Vec::with_capacity(classes[m].len());
             for c in &classes[m] {
@@ -1262,7 +1544,28 @@ impl<'a> SnapLive<'a> {
         let drift = ops * 2f64.powi(-24) * (1.0 + f_tot) * 1.01;
         // plus the rounding of the factor after the floor (assist, life)
         let eps = drift + 2f64.powi(-22) + CHAIN_EPS + 2f64.powi(-19);
-        let sl = SnapLive { master, setup, classes, class_of, contrib, sim_id, class_gid, coef, fine, a0, global, eps };
+        // the class search bounds life only when some entry can read life 0 (when the fold without recoveries never
+        // reaches 0, no fold with recoveries does) at a factor below `Coef::z`
+        let life_bound = env.life_lo <= 0
+            && (fine.dead_from < coef.times.len() || fine.zero_from([0; 5]) != i64::MAX)
+            && (0..coef.times.len()).any(|e| fine.z_dead < coef.z[e]);
+        let split = if life_bound { split_envelopes(&contrib, &fine, &coef) } else { Vec::new() };
+        let sl = SnapLive {
+            master,
+            setup,
+            classes,
+            class_of,
+            contrib,
+            sim_id,
+            class_gid,
+            coef,
+            fine,
+            a0,
+            global,
+            life_bound,
+            split,
+            eps,
+        };
         // the score must stay far from the 32-bit range for the per-note sum to be monotone in power
         let mut u: Vec<i64> = members
             .iter()
@@ -1279,6 +1582,82 @@ impl<'a> SnapLive<'a> {
     /// An upper bound of the live score of any deck with power at most `power`.
     pub fn score_bound(&self, power: i64) -> i64 {
         ub(power, self.global, self.eps)
+    }
+
+    /// The largest gain of member `m` at each position over its classes (`G(k, m, c)`; 0 for members that are not
+    /// allowed).
+    pub fn position_gains(&self, m: usize) -> [f64; 5] {
+        let mut g = [0f64; 5];
+        for c in &self.contrib[m] {
+            for (k, x) in g.iter_mut().enumerate() {
+                *x = x.max(c[k].gain);
+            }
+        }
+        g
+    }
+
+    /// An upper bound of the live score of any deck with power at most `power` whose positions' gains sum to at
+    /// most `gain`.
+    pub fn gain_bound(&self, power: i64, gain: f64) -> i64 {
+        ub(power, (self.a0 + gain).min(self.global), self.eps)
+    }
+
+    /// The first entry (chart-time order) from which every entry reads life 0 under `life` (the number of entries
+    /// when there is none).
+    fn dead_start(&self, life: CandLife) -> usize {
+        let f = &self.fine;
+        match life {
+            CandLife::NoRise => f.dead_from,
+            CandLife::ZeroFrom(t0) => {
+                let a = self.coef.times.partition_point(|&t| (t as i64) < t0);
+                a.max(f.until_min.partition_point(|&u| u <= t0))
+            }
+            CandLife::Unknown => self.coef.times.len(),
+        }
+    }
+
+    /// `A0` plus the gains of `parts`, with the entries from `start` on at the life-zero factor.
+    fn life_sum(&self, parts: [&Contrib; 5], start: usize) -> f64 {
+        self.a0_from(start) + parts.iter().map(|p| self.gain_from(p, start)).sum::<f64>()
+    }
+
+    /// At least the gain of every class of member `m` without other life-raising rows at position `k`, with the
+    /// entries from `start` on at the life-zero factor (`plain`: at least the gain of every such class).
+    fn split_gain(&self, m: usize, k: usize, start: usize, plain: f64) -> f64 {
+        match self.split.get(m * 5 + k) {
+            Some((pz, pd)) if !pz.is_empty() => {
+                let ne = self.coef.times.len();
+                let s = start.min(ne);
+                plain.min(pz[s] + (pd[ne] - pd[s]))
+            }
+            _ => plain,
+        }
+    }
+
+    /// `A0` with the entries from `start` on at the life-zero factor.
+    fn a0_from(&self, start: usize) -> f64 {
+        let c = &self.coef;
+        let ne = c.times.len();
+        c.pc[start.min(ne)] + (c.pcd[ne] - c.pcd[start.min(ne)])
+    }
+
+    /// The gain of one part with the entries from `start` on at the life-zero factor (at most its `gain`).
+    fn gain_from(&self, part: &Contrib, start: usize) -> f64 {
+        let c = &self.coef;
+        let seg = |p: &[f64], d: &[f64], lo: usize, hi: usize| -> f64 {
+            (p[hi.min(start)] - p[lo.min(start)]) + (d[hi.max(start)] - d[lo.max(start)])
+        };
+        let mut total = 0f64;
+        for w in &part.windows {
+            let (lo, hi) = (w.lo as usize, w.hi as usize);
+            total += w.note * seg(&c.pc, &c.pcd, lo, hi);
+            for j in 0..4 {
+                if w.judge[j] != 0.0 {
+                    total += w.judge[j] * seg(&c.pj[j], &c.pjd[j], lo, hi);
+                }
+            }
+        }
+        total
     }
 
     /// The margin of one candidate: as `eps`, with the drift from this candidate's own commands. Each execution of
@@ -1313,10 +1692,17 @@ impl<'a> SnapLive<'a> {
         drift + 2f64.powi(-22) + CHAIN_EPS + 2f64.powi(-19)
     }
 
-    /// Per-note bound of one candidate (conversion source `src[k]` at position `k`; `life_up`: some performer can
-    /// recover life or guard): the sum over the stream of each note's floored bound, with the judgements and combo
-    /// breaks of the candidate's own conversions, and without `life_up` the life-zero factor where life is 0.
-    fn fine_bound(&self, power: i64, parts: [&Contrib; 5], src: [u32; 5], life_up: bool, scratch: &mut Scratch) -> i64 {
+    /// Per-note bound of one candidate (conversion source `src[k]` at position `k`): the sum over the stream of each
+    /// note's floored bound, with the judgements and combo breaks of the candidate's own conversions, and the
+    /// life-zero factor where `life` shows that the life is 0.
+    fn fine_bound(
+        &self,
+        power: i64,
+        parts: [&Contrib; 5],
+        src: [u32; 5],
+        life: CandLife,
+        scratch: &mut Scratch,
+    ) -> i64 {
         let ne = self.coef.times.len();
         let judge = parts.iter().any(|p| p.judge);
         scratch.note.clear();
@@ -1378,7 +1764,12 @@ impl<'a> SnapLive<'a> {
             }
             let x = p * k * v * (1.0 + eps);
             let y = x.floor();
-            let ze = if !life_up && f.dead[e] { f.z_dead } else { c.z[e] };
+            let dead = match life {
+                CandLife::NoRise => f.dead[e],
+                CandLife::ZeroFrom(t0) => t0 <= c.times[e] as i64 && t0 < f.until[e],
+                CandLife::Unknown => false,
+            };
+            let ze = if dead { f.z_dead } else { c.z[e] };
             let z = if ze == 1.0 { y } else { (ze * y * (1.0 + 2f64.powi(-20))).floor() };
             total = total.saturating_add(z as i64);
         }
@@ -1446,10 +1837,49 @@ impl<'a> SnapLive<'a> {
             matched: HashMap::new(),
             scratch: Scratch::default(),
             simulated: HashMap::new(),
+            zero_from: HashMap::new(),
             deadline,
             timed_out: false,
             sims: 0,
+            nodes: 0,
+            wbn: [i64::MIN / 4; 5],
+            wbo: [i64::MIN / 4; 5],
+            gn: [[0f64; 5]; 5],
+            go: [[0f64; 5]; 5],
+            recn: [0; 5],
+            has_o: [false; 5],
         };
+        for i in 0..5 {
+            let m = members[i];
+            for c in 0..cls[i].len() {
+                let w = lf.wb[i][c];
+                if w <= i64::MIN / 8 {
+                    continue;
+                }
+                let g: [f64; 5] = std::array::from_fn(|k| self.contrib[m][c][k].gain);
+                match self.fine.life[m][c] {
+                    LifeKind::Other => {
+                        lf.has_o[i] = true;
+                        lf.wbo[i] = lf.wbo[i].max(w);
+                        for k in 0..5 {
+                            lf.go[i][k] = lf.go[i][k].max(g[k]);
+                        }
+                    }
+                    kind => {
+                        lf.wbn[i] = lf.wbn[i].max(w);
+                        for k in 0..5 {
+                            lf.gn[i][k] = lf.gn[i][k].max(g[k]);
+                        }
+                        if let LifeKind::Recovery(r) = kind {
+                            lf.recn[i] = lf.recn[i].max(r);
+                        }
+                    }
+                }
+            }
+        }
+        if self.life_bound && !lf.leaf_open(&gmax) {
+            return Ok((None, false));
+        }
         // a first candidate: the best-bound order with each slot's class of largest linearised gain
         {
             let (_, o0) = orders[0];
@@ -1498,8 +1928,16 @@ impl<'a> SnapLive<'a> {
                 }
                 r
             };
+            let mut rest = Rests { w: rest1, g: rest2, wn: [0; 6], gn: [0f64; 6] };
+            for i in (0..5).rev() {
+                rest.wn[i] = rest.wn[i + 1].saturating_add(lf.wbn[i]);
+                rest.gn[i] = rest.gn[i + 1] + lf.gn[i][pos[i]];
+            }
             let mut cs = [0usize; 5];
-            lf.dfs(o, pos, 0, fixed, self.a0, &rest1, &rest2, &mut cs)?;
+            if self.life_bound && !lf.order_open(pos, &rest) {
+                continue;
+            }
+            lf.dfs(o, pos, 0, fixed, self.a0, &rest, false, &mut cs)?;
             lf.flush(false)?;
         }
         lf.flush(true)?;
@@ -1533,9 +1971,38 @@ struct Leaf<'s, 'a, 'm> {
     scratch: Scratch,
     /// Scores simulated in this leaf by performer identities and power.
     simulated: HashMap<([(u32, u32); 5], i64), i64>,
+    /// `Fine::zero_from` of each recovery vector met in this leaf.
+    zero_from: HashMap<[i64; 5], i64>,
     deadline: Option<Instant>,
     timed_out: bool,
     sims: u64,
+    /// Nodes of the class search (the deadline is checked every 1024).
+    nodes: u64,
+    /// Per slot, over the classes whose life-raising rows are only recoveries at skill events (`n`) and over the
+    /// others (`o`): the largest snap weight, the largest gain at each position, the largest recovery (`n` only),
+    /// and whether there is an other class.
+    wbn: [i64; 5],
+    wbo: [i64; 5],
+    gn: [[f64; 5]; 5],
+    go: [[f64; 5]; 5],
+    recn: [i64; 5],
+    has_o: [bool; 5],
+}
+
+/// The part of the class search's life bound that depends on the chosen classes, by the recovery of a node's slot:
+/// (recovery, start of the entries at the life-zero factor, rest of the bound).
+struct LifeMemo {
+    n: usize,
+    at: [(i64, usize, f64); 8],
+}
+
+/// Remaining sums of the class search of one order, from each slot on: largest snap weights and gains over all
+/// classes (`w`, `g`) and over the classes without other life-raising rows (`wn`, `gn`).
+struct Rests {
+    w: [i64; 6],
+    g: [f64; 6],
+    wn: [i64; 6],
+    gn: [f64; 6],
 }
 
 impl Leaf<'_, '_, '_> {
@@ -1586,10 +2053,18 @@ impl Leaf<'_, '_, '_> {
         i: usize,
         s1: i64,
         s2: f64,
-        rest1: &[i64; 6],
-        rest2: &[f64; 6],
+        rest: &Rests,
+        other: bool,
         cs: &mut [usize; 5],
     ) -> Result<(), Error> {
+        self.nodes += 1;
+        if self.nodes % 1024 == 0 {
+            if let Some(d) = self.deadline {
+                if Instant::now() >= d {
+                    self.timed_out = true;
+                }
+            }
+        }
         if self.timed_out {
             return Ok(());
         }
@@ -1598,6 +2073,8 @@ impl Leaf<'_, '_, '_> {
         }
         let m = self.members[i];
         let ncl = self.sl.classes[m].len();
+        let life_on = !other && self.sl.life_bound;
+        let mut memo = LifeMemo { n: 0, at: [(0, 0, 0.0); 8] };
         for c in 0..ncl {
             let w = self.wb[i][c];
             if w <= i64::MIN / 8 {
@@ -1605,13 +2082,162 @@ impl Leaf<'_, '_, '_> {
             }
             let g = self.sl.contrib[m][c][pos[i]].gain;
             let (n1, n2) = (s1 + w, s2 + g);
-            if ub(n1 + rest1[i + 1], n2 + rest2[i + 1], self.sl.eps) < self.cutoff() {
+            if ub(n1 + rest.w[i + 1], n2 + rest.g[i + 1], self.sl.eps) < self.cutoff() {
                 continue;
             }
             cs[i] = c;
-            self.dfs(o, pos, i + 1, n1, n2, rest1, rest2, cs)?;
+            let kind = self.sl.fine.life[m][c];
+            if life_on && kind != LifeKind::Other && !self.class_open(pos, i, n1, n2, rest, cs, &mut memo) {
+                continue;
+            }
+            self.dfs(o, pos, i + 1, n1, n2, rest, other || kind == LifeKind::Other, cs)?;
         }
         Ok(())
+    }
+
+    /// The start of the entries at the life-zero factor, and the rest of the class search's life bound there (`A0`
+    /// and the gains of the chosen slots before `upto - 1` split at the start, plus a bound of the split gains of the
+    /// remaining slots' classes without other life-raising rows), for the chosen classes `cs[..upto]` and the largest
+    /// recovery of each remaining slot. The rest is 0 when no entry is at the life-zero factor.
+    fn life_rest(&mut self, pos: [usize; 5], upto: usize, cs: &[usize; 5]) -> (usize, f64) {
+        let sl = self.sl;
+        let mut rec = [0i64; 5];
+        for j in 0..5 {
+            rec[pos[j]] = if j < upto {
+                match sl.fine.life[self.members[j]][cs[j]] {
+                    LifeKind::Recovery(r) => r,
+                    _ => 0,
+                }
+            } else {
+                self.recn[j]
+            };
+        }
+        // the fold is non-decreasing in each recovery, so the largest ones give the latest `t0`
+        let life = if rec == [0; 5] {
+            CandLife::NoRise
+        } else {
+            let f = &sl.fine;
+            CandLife::ZeroFrom(*self.zero_from.entry(rec).or_insert_with(|| f.zero_from(rec)))
+        };
+        let start = sl.dead_start(life);
+        if start >= sl.coef.times.len() {
+            return (start, 0.0);
+        }
+        let mut a = sl.a0_from(start);
+        for j in upto..5 {
+            a += sl.split_gain(self.members[j], pos[j], start, self.gn[j][pos[j]]);
+        }
+        for j in 0..upto.saturating_sub(1) {
+            a += sl.gain_from(&sl.contrib[self.members[j]][cs[j]][pos[j]], start);
+        }
+        (start, a)
+    }
+
+    /// Whether the completions of the chosen classes `cs[..upto]` (power up to `n1`, gains `n2`) with another
+    /// life-raising class at some remaining slot can reach the cutoff (bounded without life).
+    fn other_open(&self, pos: [usize; 5], upto: usize, n1: i64, n2: f64, rest: &Rests) -> bool {
+        let cutoff = self.cutoff();
+        (upto..5).any(|j| {
+            self.has_o[j] && {
+                let p = n1 + rest.w[upto] - self.wbmax[j] + self.wbo[j];
+                let (gm, go) = (rest.g[j] - rest.g[j + 1], self.go[j][pos[j]]);
+                ub(p, n2 + rest.g[upto] - gm + go, self.sl.eps) >= cutoff
+            }
+        })
+    }
+
+    /// Whether the leaf can reach the cutoff under the class search's life bound, before any order: its candidates with
+    /// another life-raising class at some slot, bounded without life, and the others with the largest recovery of
+    /// any slot at every position; gains by the best assignment of slots to positions (`gmax`: the largest gain of
+    /// each slot at each position).
+    fn leaf_open(&mut self, gmax: &[[f64; 5]; 5]) -> bool {
+        let sl = self.sl;
+        let cutoff = self.cutoff();
+        let wsum: i64 = self.wbmax.iter().sum();
+        for j in 0..5 {
+            if self.has_o[j] {
+                let mut g = *gmax;
+                g[j] = self.go[j];
+                let p = self.fixed + wsum - self.wbmax[j] + self.wbo[j];
+                if ub(p, sl.a0 + best_assignment(&g), sl.eps) >= cutoff {
+                    return true;
+                }
+            }
+        }
+        let r = self.recn.iter().copied().max().unwrap_or(0);
+        let life = if r <= 0 {
+            CandLife::NoRise
+        } else {
+            let (f, rec) = (&sl.fine, [r; 5]);
+            CandLife::ZeroFrom(*self.zero_from.entry(rec).or_insert_with(|| f.zero_from(rec)))
+        };
+        let start = sl.dead_start(life);
+        let power = self.wbn.iter().fold(self.fixed, |a, &w| a.saturating_add(w));
+        if start >= sl.coef.times.len() {
+            return ub(power, sl.a0 + best_assignment(&self.gn), sl.eps) >= cutoff;
+        }
+        let g: [[f64; 5]; 5] =
+            std::array::from_fn(|j| std::array::from_fn(|k| sl.split_gain(self.members[j], k, start, self.gn[j][k])));
+        ub(power, sl.a0_from(start) + best_assignment(&g), sl.eps) >= cutoff
+    }
+
+    /// Whether an order can still reach the cutoff under the class search's life bound, before any class is chosen.
+    fn order_open(&mut self, pos: [usize; 5], rest: &Rests) -> bool {
+        let (fixed, a0) = (self.fixed, self.sl.a0);
+        if self.other_open(pos, 0, fixed, a0, rest) {
+            return true;
+        }
+        let (start, a) = self.life_rest(pos, 0, &[0; 5]);
+        let a = if start >= self.sl.coef.times.len() { a0 + rest.gn[0] } else { a };
+        ub(fixed.saturating_add(rest.wn[0]), a, self.sl.eps) >= self.cutoff()
+    }
+
+    /// Whether a node of the class search whose slots up to `i` have classes `cs[..=i]` without other life-raising
+    /// rows (power up to `n1`, gains `n2`) can still reach the cutoff: its completions with such classes only, whose
+    /// recoveries are at most the largest of each slot, read life 0 from the start their fold gives (`A0` and the
+    /// chosen gains split there, the remaining gains unchanged); its completions with another class at some slot are
+    /// bounded without life. `memo` keeps the start and the rest of the bound by the recovery of slot `i`.
+    #[allow(clippy::too_many_arguments)]
+    fn class_open(
+        &mut self,
+        pos: [usize; 5],
+        i: usize,
+        n1: i64,
+        n2: f64,
+        rest: &Rests,
+        cs: &[usize; 5],
+        memo: &mut LifeMemo,
+    ) -> bool {
+        if self.other_open(pos, i + 1, n1, n2, rest) {
+            return true;
+        }
+        let sl = self.sl;
+        let r = match sl.fine.life[self.members[i]][cs[i]] {
+            LifeKind::Recovery(r) => r,
+            _ => 0,
+        };
+        let (start, a) = match memo.at[..memo.n].iter().find(|x| x.0 == r) {
+            Some(&(_, start, a)) => (start, a),
+            None => {
+                let (start, a) = self.life_rest(pos, i + 1, cs);
+                if memo.n < memo.at.len() {
+                    memo.at[memo.n] = (r, start, a);
+                    memo.n += 1;
+                }
+                (start, a)
+            }
+        };
+        let power = n1.saturating_add(rest.wn[i + 1]);
+        let cutoff = self.cutoff();
+        if start >= sl.coef.times.len() {
+            return ub(power, n2 + rest.gn[i + 1], sl.eps) >= cutoff;
+        }
+        // the split gain is at most the plain one
+        let part = &sl.contrib[self.members[i]][cs[i]][pos[i]];
+        if ub(power, a + part.gain, sl.eps) < cutoff {
+            return false;
+        }
+        ub(power, a + sl.gain_from(part, start), sl.eps) >= cutoff
     }
 
     /// Bounds one (order, class assignment) and queues it when it can still win.
@@ -1624,12 +2250,16 @@ impl Leaf<'_, '_, '_> {
         if ub(power, s2, sl.eps) < self.cutoff() {
             return Ok(());
         }
+        let life = self.cand_life(o, cs);
+        let start = sl.dead_start(life);
+        if start < sl.coef.times.len() && ub(power, sl.life_sum(parts, start), sl.eps) < self.cutoff() {
+            return Ok(());
+        }
         let snaps = snaps_j.map(|x| x.map(|j| self.t.snaps[j]));
         let snap_ids = snaps.map(|x| x.map_or(NO_SNAP, |i| self.pool.snaps[i].id));
         let mut scratch = std::mem::take(&mut self.scratch);
         let src: [u32; 5] = std::array::from_fn(|k| sl.fine.src[self.members[o[k]]][cs[o[k]]]);
-        let life_up = (0..5).any(|i| sl.fine.life_up[self.members[i]][cs[i]]);
-        let bound = sl.fine_bound(power, parts, src, life_up, &mut scratch);
+        let bound = sl.fine_bound(power, parts, src, life, &mut scratch);
         self.scratch = scratch;
         let c = Cand { bound, power, snaps, snap_ids, order: o, classes: cs };
         if !self.could_beat(&c) {
@@ -1640,6 +2270,24 @@ impl Leaf<'_, '_, '_> {
             self.flush(false)?;
         }
         Ok(())
+    }
+
+    /// The life bound of the candidate with order `o` and classes `cs`: from the recovery of the performer at each
+    /// position, when every life-raising row is a recovery at the performer's own skill events.
+    fn cand_life(&mut self, o: [usize; 5], cs: [usize; 5]) -> CandLife {
+        let f = &self.sl.fine;
+        let mut rec = [0i64; 5];
+        for k in 0..5 {
+            match f.life[self.members[o[k]]][cs[o[k]]] {
+                LifeKind::None => {}
+                LifeKind::Recovery(r) => rec[k] = r,
+                LifeKind::Other => return CandLife::Unknown,
+            }
+        }
+        if rec == [0; 5] {
+            return CandLife::NoRise;
+        }
+        CandLife::ZeroFrom(*self.zero_from.entry(rec).or_insert_with(|| f.zero_from(rec)))
     }
 
     /// Simulates pending candidates in order of their bound: all of them that can still win when `all`, else the

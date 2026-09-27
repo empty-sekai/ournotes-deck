@@ -312,6 +312,7 @@ pub fn search(pool: &Pool, req: &SearchRequest) -> Result<SearchOutcome, Error> 
         stats: PowerStats::default(),
         error: None,
         live: mode,
+        gains: Vec::new(),
     };
     s.run();
     if let Some(e) = s.error {

@@ -96,6 +96,19 @@ fn run(stream_kind: u64, kinds: &[i64], tag: u64) {
                         }
                     }
                 }
+                if stream_kind == 3 {
+                    // many misses, and notes judged up to 3 frames early or up to 5 frames late
+                    let last = s.frames.len() as i64 - 1;
+                    for r in s.judged.iter_mut() {
+                        if rng.chance(0.35) {
+                            r[2] = [1, 2][rng.below(2) as usize];
+                        }
+                        if rng.chance(0.3) {
+                            r[0] = (r[0] as i64 + rng.range(-3, 5)).clamp(0, last) as i32;
+                        }
+                    }
+                    s.judged.sort_by_key(|r| r[0]);
+                }
                 s
             }
         };
@@ -154,6 +167,14 @@ fn life_and_conversions_match_oracle() {
 fn life_zero_matches_oracle() {
     run(2, &[], 0x11f0);
     run(2, &[1, 3, 4, 6, 9, 11], 0x11f1);
+}
+
+/// Life recovery at skill events with the life running out, under early and late judgements (the life frame cache
+/// folds some frames twice), with and without guards.
+#[test]
+fn recovery_with_early_and_late_judgements_matches_oracle() {
+    run(3, &[5, 1, 3, 11], 0x2ec0);
+    run(3, &[5, 8, 6, 4], 0x9d17);
 }
 
 #[test]

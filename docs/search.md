@@ -247,6 +247,39 @@ least once (with the frame cache, some of them twice). The damage of an entry is
 reachable judgements. Where this bound is 0 the note's life is 0, and `Z_e` is the assist factor times the life-zero
 factor. When no allowed card has a life recovery or guard row, the coefficients above the candidates use it too.
 
+Life with recoveries. The life controller keeps a log of life commands (note damage at the note's chart time,
+recovery and guard at their execution times) in 40 ms life frames, and a query at time `t` folds the commands with
+times up to `t` in time order: a damage `d` maps the life `x` to `max(0, x - d)`, a recovery `r` maps `x > 0` to
+`min(2 * base, x + r)` and keeps 0. Each map is non-decreasing in `x`; a damage never raises the life and a recovery
+never lowers it. So removing a damage command or adding a recovery never lowers the result, and a life of 0 stays 0.
+
+The frame cache: a query at life frame `q` stores the fold of the frames before `q` and marks the cache complete up
+to `q - 1`; a command filed at a frame `f` up to the mark lowers the mark to `f - 1` but keeps the stored life, so the
+next query folds the frames from `f` again, starting from that life: the commands of the frames from `f` up to the old
+mark are folded twice. Such a command is filed after a query at a life frame above its own. Queries happen at each
+play frame's time and at each judged note's chart time; the commands are the note damage (filed just before the
+note's query), and for these candidates the recoveries of snap rows triggered by the performer's own skill event,
+filed at the time of the frame where the event fires, after that frame's notes. From the stream the search takes, for
+every note and every skill event, the window `[f, q - 1]` of its life frame `f` and the largest life frame `q` queried
+before it is filed, when `f < q`. Every twice-folded frame lies in such a window, and each refold folds a command once
+more, so a recovery at life frame `F` is applied at most `1 +` (the number of windows containing `F`) times.
+
+The fold is taken over *slots*: a run of overlapping windows is one slot (ending at the end of its last life frame),
+and every chart time outside the runs is one slot. A computed life is then a fold, slot by slot, of the filed commands
+with some of them repeated inside their slots, and possibly with commands of a slot's later frames folded before its
+earlier ones. Within a slot the fold uses `clamp(x + r - d, 0, 2 * base)` when it has both damage `d` and recovery `r`
+(each recovery counted as many times as it can be applied): whatever the order and the repetitions, the result is 0
+when the life starts at 0, and otherwise at most `x + r - d` (a fold that never reaches 0 adds at most the recoveries
+and subtracts at least the damage; one that reaches 0 stays there) and at most `2 * base`. Repeated damage only lowers
+the result.
+
+For a candidate whose only life-raising rows are such recoveries (no guard, no recovery with another trigger, none in
+the live skills), the search folds, slot by slot, every entry's smallest damage and the candidate's recoveries at their
+events, and takes the end `t0` of the first slot at which this fold is 0. An entry at chart time `t_e` reads life 0
+when `t0 <= t_e` and every entry at a chart time up to `t0` is judged no later than it: its query folds all those
+damages and only recoveries this fold contains, at most as often, so the life it reads is at most the fold's value at
+`t0`, which is 0, and the later commands keep it 0.
+
 Windows. A factor started at `exec` holds for the notes with chart times in `[exec, finish)`: its start and end
 commands are filed at those times, and a command filed in a score frame that was already executed undoes and
 re-executes the frames from there, so every note is last scored with the factors whose commands surround its chart
@@ -286,27 +319,61 @@ above the leaves is `P_bound * (A0 + sum_k max over allowed members and classes 
 with the K-th value where the power search compares its bound. A snap can extend its member's live skill and add
 factors of its own, so this bound is higher than without snap skills and prunes less above the leaves.
 
+The depth-first search over members also bounds the gains of the members themselves. With `g(m, k)` the largest
+`G(k, m, c)` over the classes of member `m`, a member set `M` adds at most the largest sum of `g` over the assignments
+of its members to the positions, which is at most both `sum over positions k of max over M of g(m, k)` and `sum over M
+of max over k of g(m, k)`. At a node that has chosen the members `C` (the leader, the fixed members and the picks so
+far) and still picks `r` members among the characters from the node's position on, the members to come are cards of
+distinct characters there. So the gain is at most the smaller of `sum over k of max(max over C of g(m, k), max over
+the cards of those characters of g(m, k))` and `sum over C of max over k of g(m, k)` plus the `r` largest single-card
+maxima of distinct characters there. Both fall as the position moves on, like the power bound, so a failed test ends
+the loop over characters; a failed test for one card skips that card only. A complete member set gets the largest
+assignment sum itself (a recursion over subsets of the five members) before its leader terms are computed, and again
+with its exact member-only power. Each test is `P * (A0 + gain) * (1 + eps)` against the K-th value, never above the
+test with the largest gain of every position.
+
 **5. Leaf.** For a member set at its canonical leader, with member-only power `F`:
 
 1. every performance order gets `(F + sum_i max_c w_i(c)) * (A0 + sum_k max_c G(k, m_{order[k]}, c)) * (1 + eps)`,
    with `w_i(c)` the largest snap weight of class `c` in slot `i` (distinctness relaxed); orders are visited by this
-   bound;
+   bound, and the leaf ends at once when the life test below fails before any order;
 2. within an order, a depth-first search over the slots chooses classes; a branch is cut when
-   `(F + chosen w + best remaining w) * (A0 + chosen G + best remaining G) * (1 + eps)` is below the cutoff;
+   `(F + chosen w + best remaining w) * (A0 + chosen G + best remaining G) * (1 + eps)` is below the cutoff, or when
+   the life test fails (with no class chosen yet: for the order);
 3. a complete choice gets its exact power from the restricted assignment (or is infeasible), the same product bound
-   with that power, and then the per-entry bound of part 4 with its floors, the candidate's reachable judgements and
-   its own margin;
+   with that power, the product bound with the life-zero factor from the first entry (chart-time order) after which
+   every entry reads life 0 under the candidate's life bound (the sums of `A0` and `G` split at that entry), and then
+   the per-entry bound of part 4 with its floors, the candidate's reachable judgements and its own margin;
 4. surviving candidates are simulated in descending order of the per-entry bound (ties: power descending, then snap
    ids and order ascending). The first candidate is the best-bound order with a greedy class choice, and pending
    candidates are simulated as the list grows, so the cutoff rises early. Candidates whose performers are the same for
    the simulation (members with the same live skill, band and card type, and character when a member target reads
    characters; snaps with equal class keys; same order and power) are simulated once.
 
+Life test. Call a class *plain* when its only life-raising rows are recoveries at its performer's skill events, or
+when it has none. A node whose chosen classes are all plain covers two kinds of completions. Those with a class that
+is not plain at some remaining slot `j` are bounded by the product with slot `j`'s best such `w` and `G` and the best
+of every other remaining slot. Those with plain classes only recover at most the chosen classes' recoveries and, at
+each remaining slot, its largest plain one; the life fold of step 3 with these recoveries gives a start, and they
+score at most `(F + chosen w + best remaining plain w) * (A0' + chosen G' + sum over remaining slots of H') *
+(1 + eps)`: `'` marks the sums split at that start as in step 3, and `H'` is the smaller of the slot's best plain `G`
+and its envelope, the sum over the entries, at `Z_e` before the start and at the life-zero factor from it, of the
+largest value of the entry over the member's plain classes at that position. The test fails when all these bounds
+are below the cutoff. Before any order it uses the largest plain recovery of any slot at every position, and for the
+gains the best assignment of slots to positions. Each slot of the life fold is non-decreasing in its recoveries
+(`clamp(x + r - d, 0, 2 * base)` rises with `r` and is at least `max(0, x - d)`), so smaller recoveries, or none,
+give no later `t0` and no later start, and a later start leaves at the life-zero factor only entries that read life 0
+for every covered candidate (with no recovery at all, the dead entries of the life bound without recoveries). A
+class's split gain is the sum over the entries of its value times the entry's factor, which the envelope bounds entry
+by entry, and a split sum is at most the plain one: the life-zero factor is at most `Z_e`, and every coefficient and
+factor is non-negative.
+
 The cutoff is the larger of the K-th value and the best score simulated in this leaf. A candidate is dropped only when
 its bound is strictly below the cutoff, or equal to the best simulated score while its power, snap ids and order cannot
 win the tie. Each bound is at least the exact score of every deck it covers (parts 3 and 4), so the leaf returns its
 member set's best representative, and a member set whose leaf finds nothing at the K-th value cannot enter the result.
-A search that reaches its time limit inside a leaf keeps that leaf's best simulated deck and reports `TimedOut`.
+A search that reaches its time limit inside a leaf (checked before each simulation and every 1024 nodes of the
+class search) keeps that leaf's best simulated deck and reports `TimedOut`.
 
 Cost. The search simulates at least one deck per member set that reaches the leaves, and every candidate whose
 per-entry bound reaches the cutoff. With the default stream the bound is close to the score and the number of
