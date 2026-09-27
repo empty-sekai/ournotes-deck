@@ -14,7 +14,8 @@ Deck power, skip score and live score for BanG Dream! Our Notes, and an exact To
 - **Live score**: the per-note score, frames, the combo bonus table, factor commands, and the whole live frame by
   frame (`live::full`): judgement conversion, combo, life (recovery, guard, life zero), the score calculator
   (including the rewind a late judgement causes), and the conditions and effects of live skills and snap skills.
-  Gekisou is not modelled yet and is reported as unsupported.
+  Gekisou (range states, the Gekisou combo and Just counts, the luck lottery, the rank bonus, Gekisou and
+  Gekisou snap skills) is modelled as well; the search supports Gekisou off only.
 - **Event points**: event bonuses, score ranks, boosts and the event-point amount the game client computes. The game
   server decides the awarded amount; this crate reproduces the client's own computation.
 - **Search**: the best K decks for deck power (with or without a song, with or without event parameters), for the
@@ -39,8 +40,8 @@ throw compared too). The checks cover:
 There are millions of generated inputs, real master rows among them, and 0 mismatches. Deliberately broken variants
 were run alongside, to confirm that the comparison does catch differences. The five-slot sum and the
 bonus builders are integer code; they were not run on their own, and are ported function by function. This crate is
-then compared with that checked model, also with 0 mismatches: more than 50,000 whole-live frame-by-frame scenarios,
-including 1,048 real charts played in full.
+then compared with that checked model, also with 0 mismatches: more than 50,000 whole-live frame-by-frame scenarios
+each with Gekisou off and on, including 1,048 and 1,267 real charts played in full.
 
 **Exact search.** A `Complete` search result is exactly the canonical Top-K over every legal deck. Pruning uses only
 bounds that are proven admissible under the game's arithmetic (proofs in [docs/search.md](docs/search.md)). Search
@@ -52,7 +53,7 @@ are not modelled are reported as errors.
 
 **Not yet verified.** How the units combine, frame by frame, into a whole live has not been compared with the game as
 a whole. That needs a recording of a play on a device: the random seed, frame times and each note's judgement.
-Gekisou is not modelled yet.
+With Gekisou on the score depends on the random seed; the search does not offer a Gekisou objective yet.
 
 ## Data
 

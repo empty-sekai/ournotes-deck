@@ -1,48 +1,65 @@
-//! Whole-live simulation, frame by frame, with live skills and snap (support) skills; Gekisou off.
+//! Whole-live simulation, frame by frame, with live skills, snap (support) skills and, optionally, Gekisou.
 //!
-//! Each frame, in order: the chart's skill events whose time has come fire (each once); the frame's judged notes, in
-//! stream order, go through judgement conversion, the combo counter (at their chart time), note damage and the
-//! note score command (with the life at their chart time frozen into it); the score is brought to the frame time;
-//! live skills triggered by the fired events restart; skills update in phase 1 then phase 2 (live skills by
-//! ascending skill key, then condition skills in deck order), each phase followed by its appliers in list order; the
-//! current life is synced and the score is brought to the frame time again.
+//! Each frame, in order: with Gekisou, the fevers advance and the Gekisou ranges step their state machine; the
+//! chart's skill events whose time has come fire (each once); the frame's judged notes, in stream order, go through
+//! judgement conversion, the combo counter (at their chart time), note damage and the note score command (with the
+//! life at their chart time frozen into it); the score is brought to the frame time; live skills triggered by the
+//! fired events restart; skills update in phase 1 then phase 2 (live skills by ascending skill key, then condition
+//! skills: snap skills in deck order, Gekisou skills grouped by mission type, Gekisou support skills), each phase
+//! followed by its appliers in list order; the current life is synced and the score is brought to the frame time
+//! again; with Gekisou, the ranges take the frame's judged notes (combo, Just count, luck lottery) and a range that
+//! completed gets its rank bonus.
 //!
 //! A command that lands in a 40 ms frame the score has already executed (a late judgement, a skill starting at its
 //! trigger time) undoes the frames down to it and executes them again; the factor state after such a rewind is the
 //! game's, which can differ in the last bits from applying every command once. The life keeps the game's frame
-//! cache, which a command in an earlier frame does not fully invalidate.
+//! cache, which a command in an earlier frame does not fully invalidate. Confirming a range's rank bonus computes
+//! the score at the range's start and end, which undoes the frames after the end; they are executed again with the
+//! next frame.
 //!
 //! Modelled effect types: live and snap 2000 (note score up), 2004 (judgement score up), 3001 (life recovery with
 //! over-heal), 3003 (damage guard), 12006 / 13005 (judgement conversion, with a conversion limit), 15000 (extension
-//! of the member's running live skills). Condition types: 1030, 2001, 2003, 4010, 4011, 5000, 7000, 8000 (7005,
-//! 7010, 7013, 7020, 7021 read the Gekisou state and fail when asked). Anything else is [`Error::Unsupported`].
+//! of the member's running live skills); Gekisou and Gekisou support skills additionally 2001 (note score up by the
+//! cumulative count), 4004 (judgement windows: no effect on a given judgement stream), 11000 / 11001 (lot
+//! probability and luck gauge factors), 11002 / 11003 (luck points and gauge), 11005 (minimum lottery result),
+//! 12000 / 13000 (Gekisou combo and Just count bonus), 12004 (combo protection), 13002 (cumulative Just rule).
+//! Condition types: 1030, 2001, 2003, 4010, 4011, 5000, 7000, 7005, 7010, 7013, 7020, 7021, 8000 (the Gekisou ones
+//! fail when asked in a live without Gekisou, except 7000, which never hits there); cumulative conditions 1000 and
+//! 7001. Anything else is [`Error::Unsupported`].
 
 mod combo;
 mod conditions;
 mod convert;
 mod engine;
+mod gekisou;
 mod life;
 mod scorecalc;
 
 use std::collections::{HashMap, HashSet};
 
-use conditions::{CheckCtx, Checker, Factory};
+use conditions::{CheckCtx, Checker, Factory, GkView};
 use convert::{Conversion, ConvertEffect};
 use engine::{
     CondEffect, ConditionSkillUpdater, END_FRAME, EXECUTE_FRAME, EXECUTING, EffectState, FrameInput, ONE_SHOT, STAY,
     SUSTAINED, TriggerResult, UpdateCheckers, effect_update,
 };
+use gekisou::{Controller, Env, FeverUpdater, GkNote, LuckHandle, S_COMPLETE};
 use life::LifeController;
 use scorecalc::{IncrementalCalculator, NoteCommand};
 
 use crate::error::Error;
 use crate::live::random::LiveRandom;
-use crate::live::score::{ComboTable, LiveScoreCalculator, LiveScoreSettings, ScoreFactorState, convert_score_type};
+use crate::live::score::{
+    ComboTable, GekisouComboInfo, LiveScoreCalculator, LiveScoreSettings, ScoreFactorState, convert_score_type,
+};
 use crate::live::skill::{FactorCommand, OWNER_MEMBER, OWNER_SNAP, judgement_factor_mill, note_factor_mill};
-use crate::master::Master;
+use crate::master::{GekisouSkillEffectRow, Master, SupportSkillEffectRow};
+use crate::num::floor_to_i32;
 
-/// Skill type digit of snap skills in their effect keys.
+/// Skill type digits in effect keys.
 const SKILL_TYPE_SUPPORT: i64 = 3;
+const SKILL_TYPE_GEKISOU: i64 = 4;
+const SKILL_TYPE_GEKISOU_SUPPORT: i64 = 5;
 /// Skill update phases, in order.
 const PHASES: [i64; 2] = [1, 2];
 
@@ -57,6 +74,10 @@ pub struct Performer {
     pub band_id: i64,
     pub character_id: i64,
     pub card_type: i64,
+    /// The member's Gekisou skill `(id, level)`; used only with Gekisou.
+    pub gekisou_skill: Option<(i64, i64)>,
+    /// The paired snap's Gekisou support skills `(id, level)`; used only with Gekisou and a Gekisou skill.
+    pub gekisou_support_skills: Vec<(i64, i64)>,
 }
 
 /// A chart note.
@@ -106,12 +127,43 @@ pub struct LiveParams {
     pub assist_factor: f32,
 }
 
+/// Gekisou of a live: the chart's fevers and the song's missions.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GekisouSetup {
+    /// Fever ranges `(start, end)` in chart order; each is one Gekisou range (at most three).
+    pub fevers: Vec<(i32, i32)>,
+    /// The song's three mission types (1 combo, 2 luck, 3 Just count); the first ones go to the fevers in order.
+    pub missions: Vec<i64>,
+}
+
+/// The state of one Gekisou range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GekisouRange {
+    pub mission: i64,
+    /// 1 Wait, 2 Standby, 3 Start, 4 Playing, 5 End, 6 Delay, 7 Complete, 8 Finish.
+    pub state: u8,
+    pub combo: i32,
+    pub max_combo: i32,
+    pub just_count: i32,
+    /// The score when the range started and ended; recomputed at its start and end times when it completes.
+    pub start_score: i32,
+    pub end_score: i32,
+    pub luck_points: i32,
+    pub luck_gauge: i32,
+    pub rush_combo: i32,
+    /// Lottery results drawn: Miss, Hit, Super Hit, Critical.
+    pub lot_results: [i32; 4],
+    /// The rank bonus added when the range completed.
+    pub rank_bonus: Option<i32>,
+}
+
 /// The effect row data the appliers read.
 #[derive(Clone, Debug)]
 struct EffectRow {
     id: i64,
     effect_type: i64,
     effect_value: i64,
+    max_effect_value: i64,
     effect_limit_count: i64,
     /// Judgements of the effect's targets, or the first target id that is not in the master.
     targets: Result<Vec<i64>, i64>,
@@ -146,10 +198,199 @@ struct LiveSkill {
     effects: Vec<LiveEffect>,
 }
 
+/// A condition skill of one member: snap (3), Gekisou (4) or Gekisou support (5).
+#[derive(Clone, Debug)]
+struct CondSkill {
+    member: usize,
+    skill_type: i64,
+    updater: ConditionSkillUpdater,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Listed {
     Live { skill: usize, effect: usize },
     Cond { updater: usize, u: usize },
+}
+
+/// The score controller's factor handles used by Gekisou: note score up by id and the luck (rush) bonus.
+#[derive(Clone, Debug, Default)]
+struct ScoreCtl {
+    counter: i32,
+    cmds: HashMap<i32, FactorCommand>,
+}
+
+impl ScoreCtl {
+    fn put(&mut self, score: &mut IncrementalCalculator, cmd: FactorCommand) -> i32 {
+        self.counter = self.counter.wrapping_add(1);
+        self.cmds.insert(self.counter, cmd);
+        score.add_factor(cmd);
+        self.counter
+    }
+
+    fn take(&mut self, id: i32) -> Result<FactorCommand, Error> {
+        self.cmds.remove(&id).ok_or_else(|| Error::Game(format!("score factor {id} not found")))
+    }
+
+    fn add_note_score_up(&mut self, score: &mut IncrementalCalculator, owner: i32, t: i32, factor: f32) -> i32 {
+        let cmd =
+            FactorCommand { time_ms: t, owner_id: owner, note_mill: note_factor_mill(factor), ..Default::default() };
+        self.put(score, cmd)
+    }
+
+    fn disable_note_score_up(&mut self, score: &mut IncrementalCalculator, t: i32, id: i32) -> Result<(), Error> {
+        let c = self.take(id)?;
+        score.add_factor(FactorCommand {
+            time_ms: t,
+            owner_id: c.owner_id,
+            note_mill: c.note_mill.wrapping_neg(),
+            ..Default::default()
+        });
+        Ok(())
+    }
+
+    fn score_up_factor(&self, id: i32) -> f32 {
+        match self.cmds.get(&id) {
+            Some(c) if c.note_mill != 0 => c.note_mill as f32 / 100000f32,
+            _ => 0f32,
+        }
+    }
+}
+
+/// The luck handle of the Gekisou controller: rush bonus commands through the score controller.
+struct Handle<'a> {
+    sc: &'a mut ScoreCtl,
+    score: &'a mut IncrementalCalculator,
+}
+
+impl LuckHandle for Handle<'_> {
+    fn add(&mut self, t: i32, percent: i32) -> i32 {
+        self.sc.put(self.score, FactorCommand { time_ms: t, owner_id: -1, luck: percent, ..Default::default() })
+    }
+
+    fn disable(&mut self, t: i32, id: i32) -> Result<(), Error> {
+        let c = self.sc.take(id)?;
+        self.score.add_factor(FactorCommand {
+            time_ms: t,
+            owner_id: -1,
+            luck: c.luck.wrapping_neg(),
+            ..Default::default()
+        });
+        Ok(())
+    }
+}
+
+/// The Gekisou part of a live.
+#[derive(Clone, Debug)]
+struct GekisouLive {
+    ctrl: Controller,
+    fever: FeverUpdater,
+    factors: [[i64; 5]; 3],
+    fever_updates: Vec<(usize, u8)>,
+    prev_lots: Vec<i64>,
+    prev_lot_ms: i32,
+    /// `(range, rank, bonus, percent)` of each confirmed range.
+    rank_bonus: Vec<(usize, i32, i32, i64)>,
+}
+
+/// Per-state bookkeeping of the Gekisou appliers.
+#[derive(Clone, Debug, Default)]
+struct GkAppliers {
+    ids: HashMap<StateKey, i32>,
+    exhausted: HashSet<StateKey>,
+    limit_finished: HashMap<StateKey, i32>,
+}
+
+impl GkAppliers {
+    fn add(&mut self, key: StateKey, id: i32) -> Result<(), Error> {
+        if self.ids.contains_key(&key) {
+            return Err(Error::Game("effect state registered twice".into()));
+        }
+        self.ids.insert(key, id);
+        Ok(())
+    }
+
+    fn pop(&mut self, key: StateKey) -> Result<i32, Error> {
+        self.ids.remove(&key).ok_or_else(|| Error::Game("effect state not registered".into()))
+    }
+
+    /// Ends the state at the time its limit ran out, when that was recorded.
+    fn limit(&mut self, key: StateKey, st: &mut EffectState) {
+        if let Some(t) = self.limit_finished.remove(&key) {
+            st.state = END_FRAME;
+            st.finish_ms = t;
+        }
+    }
+}
+
+/// Approximate float equality: `|b - a| < max(1e-6 * max(|a|, |b|), 8 * smallest subnormal)`.
+fn approximately(a: f32, b: f32) -> bool {
+    let tol = (1e-6f32 * a.abs().max(b.abs())).max(f32::from_bits(1) * 8f32);
+    (b - a).abs() < tol
+}
+
+/// The minimum lottery result of an 11005 effect value: 2..=4 give Hit, Super Hit, Critical; else 0.
+fn minimum_result_of(v: i64) -> i64 {
+    if (0..=2).contains(&(v.wrapping_sub(2) as i32)) { v - 1 } else { 0 }
+}
+
+/// The columns of a condition skill effect row (snap or Gekisou table).
+struct CondRow<'a> {
+    id: i64,
+    trigger_type: i64,
+    trigger_group: i64,
+    condition_group: i64,
+    release_group: i64,
+    target_ids: &'a [i64],
+    effect_type: i64,
+    act: f32,
+    value: i64,
+    max_value: i64,
+    limit: i64,
+    cumulative_id: i64,
+    execute_limit: i64,
+    reset_group: i64,
+}
+
+impl<'a> From<&'a SupportSkillEffectRow> for CondRow<'a> {
+    fn from(r: &'a SupportSkillEffectRow) -> CondRow<'a> {
+        CondRow {
+            id: r.id,
+            trigger_type: r.skill_trigger_type,
+            trigger_group: r.skill_trigger_condition_group,
+            condition_group: r.skill_condition_group,
+            release_group: r.skill_release_condition_group,
+            target_ids: &r.skill_target_ids,
+            effect_type: r.skill_effect_type,
+            act: r.activation_time_second,
+            value: r.effect_value,
+            max_value: r.max_effect_value,
+            limit: r.effect_limit_count,
+            cumulative_id: r.skill_cumulative_condition_id,
+            execute_limit: r.effect_execute_limit_count,
+            reset_group: r.effect_execute_limit_reset_condition_group,
+        }
+    }
+}
+
+impl<'a> From<&'a GekisouSkillEffectRow> for CondRow<'a> {
+    fn from(r: &'a GekisouSkillEffectRow) -> CondRow<'a> {
+        CondRow {
+            id: r.id,
+            trigger_type: r.skill_trigger_type,
+            trigger_group: r.skill_trigger_condition_group,
+            condition_group: r.skill_condition_group,
+            release_group: r.skill_release_condition_group,
+            target_ids: &r.skill_target_ids,
+            effect_type: r.skill_effect_type,
+            act: r.activation_time_second,
+            value: r.effect_value,
+            max_value: r.max_effect_value,
+            limit: r.effect_limit_count,
+            cumulative_id: r.skill_cumulative_condition_id,
+            execute_limit: r.effect_execute_limit_count,
+            reset_group: r.effect_execute_limit_reset_condition_group,
+        }
+    }
 }
 
 /// A live in progress.
@@ -166,21 +407,82 @@ pub struct LiveModel {
     conversion: Conversion,
     rows: Vec<EffectRow>,
     live: Vec<LiveSkill>,
-    cond: Vec<(usize, ConditionSkillUpdater)>,
+    cond: Vec<CondSkill>,
     guards: HashMap<StateKey, i32>,
     frame_events: Vec<(i32, i32)>,
     judged: Vec<(i32, i32, i32)>,
     trace: Vec<(i32, i32)>,
+    frame_time: i32,
+    scorectl: ScoreCtl,
+    gk: Option<GekisouLive>,
+    gk_appliers: GkAppliers,
 }
 
-fn effect_row(master: &Master, id: i64, effect_type: i64, value: i64, limit: i64, target_ids: &[i64]) -> EffectRow {
-    let targets = target_ids.iter().map(|&t| master.skill_target(t).map(|r| r.judgement).ok_or(t)).collect();
-    EffectRow { id, effect_type, effect_value: value, effect_limit_count: limit, targets }
+fn effect_row(master: &Master, r: &CondRow) -> EffectRow {
+    let targets = r.target_ids.iter().map(|&t| master.skill_target(t).map(|x| x.judgement).ok_or(t)).collect();
+    EffectRow {
+        id: r.id,
+        effect_type: r.effect_type,
+        effect_value: r.value,
+        max_effect_value: r.max_value,
+        effect_limit_count: r.limit,
+        targets,
+    }
+}
+
+fn setting(master: &Master, key: &str) -> Result<i64, Error> {
+    let v = master.live_setting(key).ok_or_else(|| Error::Master(format!("missing live setting {key}")))?;
+    v.trim().parse::<i64>().map_err(|_| Error::Master(format!("live setting {key} is not an integer: {v}")))
+}
+
+/// Builds the condition skill of one member from its effect rows (sorted by id): effect key = row id * 100 + skill
+/// type * 10 + member index.
+#[allow(clippy::too_many_arguments)]
+fn condition_skill(
+    master: &Master,
+    factory: &Factory,
+    phase: &dyn Fn(i64) -> i64,
+    mut rs: Vec<CondRow>,
+    k: usize,
+    skill_type: i64,
+    gate: Option<i64>,
+    rows: &mut Vec<EffectRow>,
+) -> Result<CondSkill, Error> {
+    rs.sort_by_key(|r| r.id);
+    let mut effects = Vec::with_capacity(rs.len());
+    let mut release_groups = Vec::with_capacity(rs.len());
+    for r in rs {
+        let effect_id = r.id.wrapping_mul(100).wrapping_add(skill_type * 10).wrapping_add(k as i64);
+        let trigger = factory.group(r.trigger_group, k)?;
+        let condition = factory.group(r.condition_group, k)?;
+        let reset = factory.group(r.reset_group, k)?;
+        let cumulative = if r.trigger_type == ONE_SHOT || r.trigger_type == SUSTAINED {
+            factory.cumulative(r.cumulative_id)?
+        } else {
+            None
+        };
+        rows.push(effect_row(master, &r));
+        effects.push(CondEffect {
+            effect_id,
+            trigger_type: r.trigger_type,
+            act: r.act,
+            phase: phase(r.effect_type),
+            trigger,
+            condition,
+            execute_limit: r.execute_limit,
+            reset,
+            row: rows.len() - 1,
+            cumulative,
+        });
+        release_groups.push(r.release_group);
+    }
+    let updater = ConditionSkillUpdater::new(effects, |e| factory.group(release_groups[e], k), gate)?;
+    Ok(CondSkill { member: k, skill_type, updater })
 }
 
 impl LiveModel {
-    /// Builds a live: `deck` in skill order, the chart notes, the chart's skill events `(performer index, time)` in
-    /// chart order.
+    /// Builds a live without Gekisou: `deck` in skill order, the chart notes, the chart's skill events
+    /// `(performer index, time)` in chart order.
     pub fn new(
         master: &Master,
         deck: &[Performer],
@@ -188,6 +490,38 @@ impl LiveModel {
         skill_events: &[(i32, i32)],
         params: LiveParams,
     ) -> Result<LiveModel, Error> {
+        LiveModel::build(master, deck, notes, skill_events, params, None)
+    }
+
+    /// Builds a live with Gekisou (see [`LiveModel::new`]); frame delta times drive the ranges' end delays, see
+    /// [`LiveModel::run_timed`].
+    pub fn new_gekisou(
+        master: &Master,
+        deck: &[Performer],
+        notes: &[LiveNote],
+        skill_events: &[(i32, i32)],
+        params: LiveParams,
+        setup: &GekisouSetup,
+    ) -> Result<LiveModel, Error> {
+        LiveModel::build(master, deck, notes, skill_events, params, Some(setup))
+    }
+
+    fn build(
+        master: &Master,
+        deck: &[Performer],
+        notes: &[LiveNote],
+        skill_events: &[(i32, i32)],
+        params: LiveParams,
+        setup: Option<&GekisouSetup>,
+    ) -> Result<LiveModel, Error> {
+        let mut map = HashMap::with_capacity(notes.len());
+        for n in notes {
+            map.insert(n.note_id, *n);
+        }
+        let gk = match setup {
+            None => None,
+            Some(s) => Some(LiveModel::gekisou_live(master, s, &map)?),
+        };
         let settings = LiveScoreSettings::from_master(master)?;
         let table = ComboTable::from_master(master)?;
         let calc = LiveScoreCalculator::new(
@@ -242,14 +576,16 @@ impl LiveModel {
                     )));
                 }
                 let condition = factory.group(r.skill_condition_group, k)?;
-                rows.push(effect_row(
-                    master,
-                    r.id,
-                    r.skill_effect_type,
-                    r.effect_value,
-                    r.effect_limit_count,
-                    &r.skill_target_ids,
-                ));
+                let targets =
+                    r.skill_target_ids.iter().map(|&t| master.skill_target(t).map(|x| x.judgement).ok_or(t)).collect();
+                rows.push(EffectRow {
+                    id: r.id,
+                    effect_type: r.skill_effect_type,
+                    effect_value: r.effect_value,
+                    max_effect_value: r.max_effect_value,
+                    effect_limit_count: r.effect_limit_count,
+                    targets,
+                });
                 effects.push(LiveEffect {
                     row: rows.len() - 1,
                     act: r.activation_time_second,
@@ -266,55 +602,79 @@ impl LiveModel {
         let mut cond = Vec::new();
         for (k, p) in deck.iter().enumerate() {
             for &(sid, lv) in &p.support_skills {
-                let mut rs: Vec<_> = master
+                let rs = master
                     .support_skill_effects
                     .iter()
                     .filter(|r| r.support_skill_id == sid && r.level == lv)
+                    .map(CondRow::from)
                     .collect();
-                rs.sort_by_key(|r| r.id);
-                let mut effects = Vec::with_capacity(rs.len());
-                let mut release_groups = Vec::with_capacity(rs.len());
-                for r in rs {
-                    let effect_id = r.id.wrapping_mul(100).wrapping_add(SKILL_TYPE_SUPPORT * 10).wrapping_add(k as i64);
-                    let trigger = factory.group(r.skill_trigger_condition_group, k)?;
-                    let condition = factory.group(r.skill_condition_group, k)?;
-                    let reset = factory.group(r.effect_execute_limit_reset_condition_group, k)?;
-                    let count_fails = if r.skill_trigger_type == ONE_SHOT || r.skill_trigger_type == SUSTAINED {
-                        factory.cumulative(r.skill_cumulative_condition_id)?
-                    } else {
-                        false
-                    };
-                    rows.push(effect_row(
-                        master,
-                        r.id,
-                        r.skill_effect_type,
-                        r.effect_value,
-                        r.effect_limit_count,
-                        &r.skill_target_ids,
-                    ));
-                    effects.push(CondEffect {
-                        effect_id,
-                        trigger_type: r.skill_trigger_type,
-                        act: r.activation_time_second,
-                        phase: phase(r.skill_effect_type),
-                        trigger,
-                        condition,
-                        execute_limit: r.effect_execute_limit_count,
-                        reset,
-                        row: rows.len() - 1,
-                        count_fails,
-                    });
-                    release_groups.push(r.skill_release_condition_group);
+                cond.push(condition_skill(master, &factory, &phase, rs, k, SKILL_TYPE_SUPPORT, None, &mut rows)?);
+            }
+        }
+        if gk.is_some() {
+            let mut mission = vec![None; deck.len()];
+            for (k, p) in deck.iter().enumerate() {
+                let Some((sid, _)) = p.gekisou_skill else { continue };
+                let row =
+                    master.gekisou_skill(sid).ok_or_else(|| Error::Master(format!("unknown Gekisou skill {sid}")))?;
+                if !(1..=3).contains(&row.gekisou_mission_type) {
+                    return Err(Error::Unsupported(format!("Gekisou mission type {}", row.gekisou_mission_type)));
                 }
-                let updater = ConditionSkillUpdater::new(effects, |e| factory.group(release_groups[e], k))?;
-                cond.push((k, updater));
+                mission[k] = Some(row.gekisou_mission_type);
+            }
+            for m in 1..=3 {
+                for (k, p) in deck.iter().enumerate() {
+                    let (Some((sid, lv)), Some(mk)) = (p.gekisou_skill, mission[k]) else { continue };
+                    if mk != m {
+                        continue;
+                    }
+                    let rs = master
+                        .gekisou_skill_effects
+                        .iter()
+                        .filter(|r| r.skill_id == sid && r.level == lv)
+                        .map(CondRow::from)
+                        .collect();
+                    cond.push(condition_skill(
+                        master,
+                        &factory,
+                        &phase,
+                        rs,
+                        k,
+                        SKILL_TYPE_GEKISOU,
+                        Some(m),
+                        &mut rows,
+                    )?);
+                }
+            }
+            for (k, p) in deck.iter().enumerate() {
+                if mission[k].is_none() {
+                    continue;
+                }
+                for &(sid, lv) in &p.gekisou_support_skills {
+                    let row = master
+                        .gekisou_support_skill(sid)
+                        .ok_or_else(|| Error::Master(format!("unknown Gekisou support skill {sid}")))?;
+                    let rs = master
+                        .gekisou_support_skill_effects
+                        .iter()
+                        .filter(|r| r.skill_id == sid && r.level == lv)
+                        .map(CondRow::from)
+                        .collect();
+                    let gate = Some(row.gekisou_mission_type);
+                    cond.push(condition_skill(
+                        master,
+                        &factory,
+                        &phase,
+                        rs,
+                        k,
+                        SKILL_TYPE_GEKISOU_SUPPORT,
+                        gate,
+                        &mut rows,
+                    )?);
+                }
             }
         }
 
-        let mut map = HashMap::with_capacity(notes.len());
-        for n in notes {
-            map.insert(n.note_id, *n);
-        }
         Ok(LiveModel {
             notes: map,
             events: skill_events.to_vec(),
@@ -332,14 +692,73 @@ impl LiveModel {
             frame_events: Vec::new(),
             judged: Vec::new(),
             trace: Vec::new(),
+            frame_time: 0,
+            scorectl: ScoreCtl::default(),
+            gk,
+            gk_appliers: GkAppliers::default(),
         })
     }
 
-    /// Plays every frame of `play`; returns the final score.
+    fn gekisou_live(
+        master: &Master,
+        setup: &GekisouSetup,
+        notes: &HashMap<i32, LiveNote>,
+    ) -> Result<GekisouLive, Error> {
+        if setup.fevers.len() > gekisou::MAX_RANGES {
+            return Err(Error::Unsupported("more than three fevers".into()));
+        }
+        let mut ranges = Vec::with_capacity(setup.fevers.len());
+        for (i, &(s, e)) in setup.fevers.iter().enumerate() {
+            let m = *setup.missions.get(i).ok_or_else(|| Error::Input("fewer missions than fevers".into()))?;
+            ranges.push((s, e, m));
+        }
+        let after = master.live_judgement_timings.iter().map(|r| r.after_ms).max().unwrap_or(0);
+        let gauge_max = setting(master, "gekisou_luck_gauge_max")?;
+        let gauge_max_rush = setting(master, "gekisou_luck_gauge_max_rush")?;
+        let rush_percent = setting(master, "gekisou_luck_rush_score_bonus_percent")?;
+        let ctrl = Controller::new(
+            ranges,
+            notes.values().map(|n| (n.note_id, n.time_ms)),
+            master,
+            gauge_max,
+            gauge_max_rush,
+            rush_percent,
+            after,
+        )?;
+        let [m0, m1, m2] = match setup.missions.get(..3) {
+            Some(&[a, b, c]) => [a, b, c],
+            _ => return Err(Error::Input("a Gekisou song has three missions".into())),
+        };
+        let factors = gekisou::ranking_factors(master, gekisou::mission_pattern(m0, m1, m2))?;
+        Ok(GekisouLive {
+            ctrl,
+            fever: FeverUpdater::new(&setup.fevers),
+            factors,
+            fever_updates: Vec::new(),
+            prev_lots: Vec::new(),
+            prev_lot_ms: 0,
+            rank_bonus: Vec::new(),
+        })
+    }
+
+    /// Plays every frame of `play` (frame delta times 0); returns the final score.
     pub fn run(&mut self, play: &LivePlay) -> Result<i32, Error> {
         self.random.set_seed(play.base_seed);
         for f in &play.frames {
-            self.frame(f.time_ms, &f.judged)?;
+            self.frame_timed(f.time_ms, &f.judged, 0f32)?;
+        }
+        Ok(self.score.score)
+    }
+
+    /// Plays every frame of `play` with its delta time in seconds (`delta_times[i]` for frame `i`); returns the final
+    /// score.
+    pub fn run_timed(&mut self, play: &LivePlay, delta_times: &[f32]) -> Result<i32, Error> {
+        if delta_times.len() != play.frames.len() {
+            return Err(Error::Input("one delta time per frame".into()));
+        }
+        self.random.set_seed(play.base_seed);
+        for (f, &dt) in play.frames.iter().zip(delta_times) {
+            self.frame_timed(f.time_ms, &f.judged, dt)?;
         }
         Ok(self.score.score)
     }
@@ -369,8 +788,51 @@ impl LiveModel {
         self.conversion.converted
     }
 
-    /// Plays one frame at music time `t`.
+    /// Rank bonus score counted again by frames executed after the score was rewound (0 without Gekisou).
+    pub fn rank_bonus_score(&self) -> i32 {
+        self.score.rank_bonus
+    }
+
+    /// The Gekisou ranges (empty without Gekisou).
+    pub fn gekisou_ranges(&self) -> Vec<GekisouRange> {
+        let Some(gk) = &self.gk else { return Vec::new() };
+        let c = &gk.ctrl;
+        c.ranges
+            .iter()
+            .zip(&c.states)
+            .enumerate()
+            .map(|(i, (r, s))| GekisouRange {
+                mission: r.mission,
+                state: s.state,
+                combo: s.combo,
+                max_combo: s.max_combo,
+                just_count: s.just,
+                start_score: s.start_score,
+                end_score: s.end_score,
+                luck_points: s.luck.total_bonus_point,
+                luck_gauge: s.luck.gauge,
+                rush_combo: s.luck.rush_combo,
+                lot_results: s.luck.results,
+                rank_bonus: gk.rank_bonus.iter().find(|b| b.0 == i).map(|b| b.2),
+            })
+            .collect()
+    }
+
+    /// Plays one frame at music time `t` (delta time 0).
     pub fn frame(&mut self, t: i32, judged: &[JudgedNote]) -> Result<(), Error> {
+        self.frame_timed(t, judged, 0f32)
+    }
+
+    /// Plays one frame at music time `t` with delta time `dt` in seconds.
+    pub fn frame_timed(&mut self, t: i32, judged: &[JudgedNote], dt: f32) -> Result<(), Error> {
+        self.frame_time = t;
+        if let Some(gk) = self.gk.as_mut() {
+            gk.fever.update(t, &mut gk.fever_updates);
+            let current = self.score.score;
+            let mut h = Handle { sc: &mut self.scorectl, score: &mut self.score };
+            let mut env = Env { random: &mut self.random, handle: &mut h };
+            gk.ctrl.before_update(dt, t, &gk.fever_updates, current, &mut env)?;
+        }
         self.frame_events.clear();
         for (i, &(index, ev_t)) in self.events.iter().enumerate() {
             if !self.fired[i] && ev_t <= t {
@@ -395,7 +857,8 @@ impl LiveModel {
             let score_type = convert_score_type(conv as i64)?;
             self.score.add_note(NoteCommand::new(n.time_ms, life, n.note_id, n.note_operate_type, score_type));
         }
-        self.score.calculate(t, &self.combo)?;
+        let info = self.gk.as_ref().map(|g| &g.ctrl as &dyn GekisouComboInfo);
+        self.score.calculate(t, &self.combo, info)?;
         // skills
         let inp = FrameInput { time_ms: t, music_length_ms: self.music_length_ms };
         let mut started: Vec<(i64, i32)> = Vec::new();
@@ -407,18 +870,21 @@ impl LiveModel {
                 }
             }
         }
-        for (_, u) in self.cond.iter_mut() {
-            u.begin_frame();
+        for c in self.cond.iter_mut() {
+            c.updater.begin_frame();
         }
         let mut listed = Vec::new();
         for ph in PHASES {
             listed.clear();
+            let gk_view =
+                self.gk.as_ref().map(|g| GkView { ctrl: &g.ctrl, prev_lots: &g.prev_lots, prev_lot_ms: g.prev_lot_ms });
             let mut ctx = CheckCtx {
                 life: &mut self.life,
                 random: &mut self.random,
                 frame_time: t,
                 judged: &self.judged,
                 events: &self.frame_events,
+                gk: gk_view,
             };
             for (si, s) in self.live.iter_mut().enumerate() {
                 let start = started.iter().find(|x| x.0 == s.key).map(|x| x.1);
@@ -437,8 +903,8 @@ impl LiveModel {
                     listed.push(Listed::Live { skill: si, effect: ei });
                 }
             }
-            for (ui, (_, u)) in self.cond.iter_mut().enumerate() {
-                for x in u.update(ph, inp, &mut ctx)? {
+            for (ui, c) in self.cond.iter_mut().enumerate() {
+                for x in c.updater.update(ph, inp, &mut ctx)? {
                     listed.push(Listed::Cond { updater: ui, u: x });
                 }
             }
@@ -447,34 +913,84 @@ impl LiveModel {
             }
         }
         self.life.sync_current_life(t)?;
-        self.score.calculate(t, &self.combo)?;
+        let info = self.gk.as_ref().map(|g| &g.ctrl as &dyn GekisouComboInfo);
+        self.score.calculate(t, &self.combo, info)?;
+        if self.gk.is_some() {
+            self.gekisou_after(t, &results)?;
+        }
         self.trace.push((t, self.score.score));
+        Ok(())
+    }
+
+    /// The Gekisou update after the frame: the ranges take the judged notes; the first range that completed this
+    /// frame gets its start and end scores and its rank bonus.
+    fn gekisou_after(&mut self, t: i32, results: &[(LiveNote, i32)]) -> Result<(), Error> {
+        let Some(gk) = self.gk.as_mut() else { return Ok(()) };
+        let judged: Vec<GkNote> =
+            results.iter().map(|(n, j)| (n.note_id, n.note_operate_type, n.time_ms, *j)).collect();
+        let current = self.score.score;
+        {
+            let mut h = Handle { sc: &mut self.scorectl, score: &mut self.score };
+            let mut env = Env { random: &mut self.random, handle: &mut h };
+            gk.ctrl.update(t, &judged, &gk.fever_updates, current, &mut env)?;
+        }
+        gk.prev_lots.clear();
+        gk.prev_lots.extend_from_slice(&gk.ctrl.lot_results);
+        gk.prev_lot_ms = if gk.prev_lots.is_empty() { 0 } else { t };
+        let Some(idx) = gk.ctrl.state_updates.iter().copied().find(|&i| gk.ctrl.states[i].state == S_COMPLETE) else {
+            return Ok(());
+        };
+        let (start, end) = (gk.ctrl.ranges[idx].start_ms, gk.ctrl.ranges[idx].end_ms);
+        let info = Some(&gk.ctrl as &dyn GekisouComboInfo);
+        let s0 = self.score.calculate(start, &self.combo, info)?;
+        let s1 = self.score.calculate(end, &self.combo, info)?;
+        gk.ctrl.states[idx].start_score = s0;
+        gk.ctrl.states[idx].end_score = s1;
+        if idx < gk.factors.len() {
+            let (rank, bonus, pct) = gekisou::solo_rank_bonus(idx, gk.ctrl.range_score(idx), &gk.factors);
+            self.score.add_fixed(end, bonus);
+            gk.rank_bonus.push((idx, rank, bonus, pct));
+        }
         Ok(())
     }
 
     fn state_mut(&mut self, item: Listed) -> &mut EffectState {
         match item {
             Listed::Live { skill, effect } => &mut self.live[skill].effects[effect].state,
-            Listed::Cond { updater, u } => &mut self.cond[updater].1.updaters[u].state,
+            Listed::Cond { updater, u } => &mut self.cond[updater].updater.updaters[u].state,
         }
     }
 
     fn apply(&mut self, item: Listed) -> Result<(), Error> {
-        let (ri, k, owner_type, key) = match item {
+        let (ri, k, owner_type, skill_type, key) = match item {
             Listed::Live { skill, effect } => {
                 let s = &self.live[skill];
                 let ri = s.effects[effect].row;
-                (ri, s.member, OWNER_MEMBER, StateKey::Live { row_id: self.rows[ri].id, member: s.member })
+                (ri, s.member, OWNER_MEMBER, 1, StateKey::Live { row_id: self.rows[ri].id, member: s.member })
             }
             Listed::Cond { updater, u } => {
-                let (k, up) = &self.cond[updater];
-                let upd = &up.updaters[u];
-                let ef = &up.effects[upd.effect];
-                (ef.row, *k, OWNER_SNAP, StateKey::Cond { effect_id: ef.effect_id, index: upd.index })
+                let c = &self.cond[updater];
+                let upd = &c.updater.updaters[u];
+                let ef = &c.updater.effects[upd.effect];
+                let owner_type = if c.skill_type == SKILL_TYPE_GEKISOU { OWNER_MEMBER } else { OWNER_SNAP };
+                (
+                    ef.row,
+                    c.member,
+                    owner_type,
+                    c.skill_type,
+                    StateKey::Cond { effect_id: ef.effect_id, index: upd.index },
+                )
             }
         };
-        let st = *self.state_mut(item);
+        let mut st = *self.state_mut(item);
         let owner = (k as i32).wrapping_mul(100).wrapping_add(owner_type);
+        if skill_type == SKILL_TYPE_GEKISOU || skill_type == SKILL_TYPE_GEKISOU_SUPPORT {
+            let done = self.apply_gekisou(ri, &mut st, owner, key);
+            *self.state_mut(item) = st;
+            if done? {
+                return Ok(());
+            }
+        }
         let (effect_type, value) = (self.rows[ri].effect_type, self.rows[ri].effect_value);
         match effect_type {
             2000 => {
@@ -551,6 +1067,142 @@ impl LiveModel {
             t => return Err(Error::Unsupported(format!("skill effect type {t}"))),
         }
         Ok(())
+    }
+
+    /// The Gekisou appliers; `Ok(false)` when the effect type is not one of them.
+    fn apply_gekisou(&mut self, ri: usize, st: &mut EffectState, owner: i32, key: StateKey) -> Result<bool, Error> {
+        let row = &self.rows[ri];
+        let (et, v) = (row.effect_type, row.effect_value);
+        let frame_t = self.frame_time;
+        let ga = &mut self.gk_appliers;
+        let c = &mut self.gk.as_mut().ok_or_else(|| Error::Game("Gekisou effect without Gekisou".into()))?.ctrl;
+        let s = st.state;
+        match et {
+            12000 | 13000 => {
+                if s == EXECUTE_FRAME {
+                    let id = if et == 12000 {
+                        c.add_combo_bonus(st.execute_ms, v as f32)
+                    } else {
+                        c.add_just_bonus(st.execute_ms, v as f32)
+                    };
+                    ga.add(key, id)?;
+                } else if s == END_FRAME {
+                    let id = ga.pop(key)?;
+                    if et == 12000 {
+                        c.subtract_combo_bonus(st.finish_ms, id)?;
+                    } else {
+                        c.subtract_just_bonus(st.finish_ms, id)?;
+                    }
+                }
+            }
+            13002 => {
+                if s == END_FRAME {
+                    if let Some(id) = ga.ids.remove(&key) {
+                        c.remove_cumulative_rule(id);
+                    }
+                } else if s == EXECUTE_FRAME && !ga.ids.contains_key(&key) {
+                    let id = c.add_cumulative_rule(st.cumulative_unit, v, st.cumulative_max, row.max_effect_value);
+                    ga.ids.insert(key, id);
+                }
+            }
+            11000 | 11001 => {
+                if s == EXECUTE_FRAME {
+                    let f = v as f32 / 10000f32;
+                    let id = if et == 11000 {
+                        c.add_lot_probability_up(st.execute_ms, f)
+                    } else {
+                        c.add_gauge_up(st.execute_ms, f)
+                    };
+                    ga.add(key, id)?;
+                } else if s == END_FRAME {
+                    let id = ga.pop(key)?;
+                    if et == 11000 {
+                        c.subtract_lot_probability_up(st.finish_ms, id)?;
+                    } else {
+                        c.subtract_gauge_up(st.finish_ms, id)?;
+                    }
+                }
+            }
+            11002 => {
+                if s == EXECUTE_FRAME {
+                    c.add_luck_point(v);
+                }
+            }
+            11003 => {
+                if s == EXECUTE_FRAME {
+                    let g = (c.current_gauge_max() as i128 * v as i128) as i32;
+                    c.add_luck_gauge_percent(floor_to_i32(g as f32 / 10000f32))?;
+                }
+            }
+            12004 => {
+                ga.limit(key, st);
+                let s = st.state;
+                if s == EXECUTE_FRAME {
+                    let mut mask = 0i64;
+                    for &j in row.targets()? {
+                        if j != 0 && j != -1 {
+                            mask |= 1i64 << (j & 31);
+                        }
+                    }
+                    let id = c.enable_combo_protect(st.execute_ms, row.effect_limit_count, (mask & 0xFF) as i32);
+                    ga.add(key, id)?;
+                } else if s == END_FRAME && !ga.exhausted.remove(&key) {
+                    if let Some(id) = ga.ids.remove(&key) {
+                        c.disable_combo_protect(st.finish_ms, id);
+                    }
+                }
+            }
+            11005 => {
+                ga.limit(key, st);
+                let s = st.state;
+                if s == EXECUTE_FRAME {
+                    let id = c.machine.enable_minimum(minimum_result_of(v), row.effect_limit_count);
+                    ga.add(key, id)?;
+                } else if s == EXECUTING {
+                    if let Some(&id) = ga.ids.get(&key) {
+                        if !c.machine.is_minimum_active(id) {
+                            let mut t = c.machine.take_last_consumed(id);
+                            if t < 0 {
+                                t = frame_t;
+                            }
+                            c.machine.disable_minimum(id);
+                            ga.ids.remove(&key);
+                            ga.exhausted.insert(key);
+                            ga.limit_finished.insert(key, t);
+                        }
+                    }
+                } else if s == END_FRAME && !ga.exhausted.remove(&key) {
+                    if let Some(id) = ga.ids.remove(&key) {
+                        c.machine.disable_minimum(id);
+                    }
+                }
+            }
+            2001 => {
+                let mut n = (v as i128 * st.cumulative_count as i128) as i32;
+                if row.max_effect_value > 0 && row.max_effect_value < n as i64 {
+                    n = row.max_effect_value as i32;
+                }
+                let f = n as f32 / 10000f32;
+                let (sc, score) = (&mut self.scorectl, &mut self.score);
+                if s == EXECUTE_FRAME {
+                    let id = sc.add_note_score_up(score, owner, st.execute_ms, f);
+                    ga.add(key, id)?;
+                } else if s == EXECUTING {
+                    let id = *ga.ids.get(&key).ok_or_else(|| Error::Game("effect state not registered".into()))?;
+                    if !approximately(sc.score_up_factor(id), f) {
+                        sc.disable_note_score_up(score, frame_t, id)?;
+                        let id = sc.add_note_score_up(score, owner, frame_t, f);
+                        ga.ids.insert(key, id);
+                    }
+                } else if s == END_FRAME {
+                    let id = ga.pop(key)?;
+                    sc.disable_note_score_up(score, st.finish_ms, id)?;
+                }
+            }
+            4004 => {}
+            _ => return Ok(false),
+        }
+        Ok(true)
     }
 
     /// Extends every running live skill effect of the member.

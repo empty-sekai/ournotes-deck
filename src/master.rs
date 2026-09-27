@@ -264,7 +264,8 @@ row!(
 );
 
 row!(
-    /// `MasterLiveSkill` and `MasterGekisouSkill` (the columns used for target matching).
+    /// `MasterLiveSkill`, `MasterGekisouSkill` and `MasterGekisouSupportSkill` (the columns used for target
+    /// matching and the Gekisou mission type).
     SkillRow {
         id: i64 = "_id",
         #[serde(deserialize_with = "null_vec")]
@@ -342,6 +343,64 @@ row!(
 );
 
 row!(
+    /// `MasterGekisouSkillEffect` and `MasterGekisouSupportSkillEffect` (`skill_id` is `_gekisouSkillID` or
+    /// `_gekisouSupportSkillID`).
+    GekisouSkillEffectRow {
+        id: i64 = "_id",
+        #[serde(alias = "_gekisouSupportSkillID")]
+        skill_id: i64 = "_gekisouSkillID",
+        level: i64 = "_level",
+        skill_trigger_type: i64 = "_skillTriggerType",
+        skill_trigger_condition_group: i64 = "_skillTriggerConditionGroup",
+        skill_condition_group: i64 = "_skillConditionGroup",
+        skill_release_condition_group: i64 = "_skillReleaseConditionGroup",
+        #[serde(deserialize_with = "null_vec")]
+        skill_target_ids: Vec<i64> = "_skillTargetIDs",
+        skill_effect_type: i64 = "_skillEffectType",
+        #[serde(deserialize_with = "f32_text")]
+        activation_time_second: f32 = "_activationTimeSecond",
+        effect_value: i64 = "_effectValue",
+        max_effect_value: i64 = "_maxEffectValue",
+        effect_limit_count: i64 = "_effectLimitCount",
+        skill_cumulative_condition_id: i64 = "_skillCumulativeConditionID",
+        effect_execute_limit_count: i64 = "_effectExecuteLimitCount",
+        effect_execute_limit_reset_condition_group: i64 = "_effectExecuteLimitResetConditionGroup",
+    }
+);
+
+row!(
+    /// `MasterLiveGekisouLuckBasePoint` (luck gauge points per judgement; note category 1 is hold notes).
+    LuckBasePointRow {
+        id: i64 = "_id",
+        note_category: i64 = "_noteCategory",
+        note_simulate_judgement: i64 = "_noteSimulateJudgement",
+        weight: i64 = "_weight",
+        base_point: i64 = "_basePoint",
+    }
+);
+
+row!(
+    /// `MasterLiveGekisouLuckBonusLot` (lottery results per chance lot type).
+    LuckBonusLotRow {
+        id: i64 = "_id",
+        chance_lot_type: i64 = "_chanceLotType",
+        lot_result: i64 = "_lotResult",
+        weight: i64 = "_weight",
+    }
+);
+
+row!(
+    /// `MasterLiveGekisouRankingScoreBonus`.
+    GekisouRankingBonusRow {
+        id: i64 = "_id",
+        mission_pattern: i64 = "_missionPattern",
+        rank: i64 = "_rank",
+        count: i64 = "_count",
+        score_bonus_percent: i64 = "_scoreBonusPercent",
+    }
+);
+
+row!(
     /// `MasterLiveMusic` (the columns the power and score code read).
     LiveMusicRow {
         id: i64 = "_id",
@@ -353,6 +412,9 @@ row!(
         normal_id: i64 = "_normalID",
         hard_id: i64 = "_hardID",
         expert_id: i64 = "_expertID",
+        gekisou_mission_1: i64 = "_gekisouMission1",
+        gekisou_mission_2: i64 = "_gekisouMission2",
+        gekisou_mission_3: i64 = "_gekisouMission3",
     }
 );
 
@@ -584,6 +646,13 @@ pub struct Master {
     pub support_skill_effects: Vec<SupportSkillEffectRow>,
     pub skill_effect_settings: Vec<SkillEffectSettingRow>,
     pub live_judgement_timings: Vec<LiveJudgementTimingRow>,
+    pub gekisou_skill_effects: Vec<GekisouSkillEffectRow>,
+    /// `MasterGekisouSupportSkill` (id and mission type).
+    pub gekisou_support_skills: Vec<SkillRow>,
+    pub gekisou_support_skill_effects: Vec<GekisouSkillEffectRow>,
+    pub gekisou_luck_base_points: Vec<LuckBasePointRow>,
+    pub gekisou_luck_bonus_lots: Vec<LuckBonusLotRow>,
+    pub gekisou_ranking_score_bonuses: Vec<GekisouRankingBonusRow>,
     index: Index,
 }
 
@@ -597,6 +666,7 @@ struct Index {
     cumulative_condition: HashMap<i64, usize>,
     live_skill: HashMap<i64, usize>,
     gekisou_skill: HashMap<i64, usize>,
+    gekisou_support_skill: HashMap<i64, usize>,
     live_music: HashMap<i64, usize>,
     live_music_score: HashMap<i64, usize>,
     band: HashMap<i64, usize>,
@@ -649,6 +719,12 @@ pub const TABLES: &[&str] = &[
     "MasterSupportSkillEffect",
     "MasterSkillEffectSetting",
     "MasterLiveJudgementTiming",
+    "MasterGekisouSkillEffect",
+    "MasterGekisouSupportSkill",
+    "MasterGekisouSupportSkillEffect",
+    "MasterLiveGekisouLuckBasePoint",
+    "MasterLiveGekisouLuckBonusLot",
+    "MasterLiveGekisouRankingScoreBonus",
 ];
 
 fn parse_table<T: DeserializeOwned>(name: &str, text: Option<&str>) -> Result<Vec<T>, Error> {
@@ -725,6 +801,24 @@ impl Master {
             support_skill_effects: parse_table("MasterSupportSkillEffect", get("MasterSupportSkillEffect"))?,
             skill_effect_settings: parse_table("MasterSkillEffectSetting", get("MasterSkillEffectSetting"))?,
             live_judgement_timings: parse_table("MasterLiveJudgementTiming", get("MasterLiveJudgementTiming"))?,
+            gekisou_skill_effects: parse_table("MasterGekisouSkillEffect", get("MasterGekisouSkillEffect"))?,
+            gekisou_support_skills: parse_table("MasterGekisouSupportSkill", get("MasterGekisouSupportSkill"))?,
+            gekisou_support_skill_effects: parse_table(
+                "MasterGekisouSupportSkillEffect",
+                get("MasterGekisouSupportSkillEffect"),
+            )?,
+            gekisou_luck_base_points: parse_table(
+                "MasterLiveGekisouLuckBasePoint",
+                get("MasterLiveGekisouLuckBasePoint"),
+            )?,
+            gekisou_luck_bonus_lots: parse_table(
+                "MasterLiveGekisouLuckBonusLot",
+                get("MasterLiveGekisouLuckBonusLot"),
+            )?,
+            gekisou_ranking_score_bonuses: parse_table(
+                "MasterLiveGekisouRankingScoreBonus",
+                get("MasterLiveGekisouRankingScoreBonus"),
+            )?,
             index: Index::default(),
         };
         m.reindex()?;
@@ -742,6 +836,7 @@ impl Master {
             cumulative_condition: index_by("MasterSkillCumulativeCondition", &self.cumulative_conditions, |r| r.id)?,
             live_skill: index_by("MasterLiveSkill", &self.live_skills, |r| r.id)?,
             gekisou_skill: index_by("MasterGekisouSkill", &self.gekisou_skills, |r| r.id)?,
+            gekisou_support_skill: index_by("MasterGekisouSupportSkill", &self.gekisou_support_skills, |r| r.id)?,
             live_music: index_by("MasterLiveMusic", &self.live_musics, |r| r.id)?,
             live_music_score: index_by("MasterLiveMusicScore", &self.live_music_scores, |r| r.id)?,
             band: index_by("MasterBand", &self.bands, |r| r.id)?,
@@ -780,6 +875,15 @@ impl Master {
 
     pub fn gekisou_skill(&self, id: i64) -> Option<&SkillRow> {
         self.index.gekisou_skill.get(&id).map(|&i| &self.gekisou_skills[i])
+    }
+
+    pub fn gekisou_support_skill(&self, id: i64) -> Option<&SkillRow> {
+        self.index.gekisou_support_skill.get(&id).map(|&i| &self.gekisou_support_skills[i])
+    }
+
+    /// `MasterLiveSettings` value by key (the first row with the key).
+    pub fn live_setting(&self, key: &str) -> Option<&str> {
+        self.live_settings.iter().find(|r| r.key == key).map(|r| r.value.as_str())
     }
 
     pub fn live_music(&self, id: i64) -> Option<&LiveMusicRow> {

@@ -4,10 +4,13 @@
 //! Undoing a frame subtracts its note scores and, per factor field, the float sum of the factor changes the frame
 //! applied (one subtraction per field), so the float state after an undo can differ in the last bits from the state
 //! before the frame ran; the score follows that state exactly.
+//!
+//! A fixed score (the Gekisou rank bonus) is filed at the next calculation under the frame of its time and added to
+//! the score at once; when that frame is undone and executed again, it is also counted as rank bonus score.
 
 use super::combo::ComboCounter;
 use crate::error::Error;
-use crate::live::score::{LiveScoreCalculator, ScoreFactorState, get_frame};
+use crate::live::score::{GekisouComboInfo, LiveScoreCalculator, ScoreFactorState, get_frame};
 use crate::live::skill::{FactorCommand, apply_factor};
 
 /// Frames kept after the music length.
@@ -90,6 +93,11 @@ pub(crate) struct IncrementalCalculator {
     prev: i32,
     added: i32,
     pub score: i32,
+    /// Filed fixed scores `(frame, score)`.
+    fixed: Vec<(i32, i32)>,
+    pending_fixed: Option<(i32, i32)>,
+    /// Fixed scores counted again by frames executed after an undo.
+    pub rank_bonus: i32,
     order_f: Vec<usize>,
     order_n: Vec<usize>,
 }
@@ -107,6 +115,9 @@ impl IncrementalCalculator {
             prev: -1,
             added: -1,
             score: 0,
+            fixed: Vec::new(),
+            pending_fixed: None,
+            rank_bonus: 0,
             order_f: Vec::new(),
             order_n: Vec::new(),
         }
@@ -131,8 +142,22 @@ impl IncrementalCalculator {
         self.factors[f].push(cmd);
     }
 
+    /// Sets the fixed score filed by the next calculation (only the last one set counts).
+    pub(crate) fn add_fixed(&mut self, time_ms: i32, score: i32) {
+        self.pending_fixed = Some((time_ms, score));
+    }
+
+    fn fixed_at(&self, f: i32) -> Option<i32> {
+        self.fixed.iter().find(|x| x.0 == f).map(|x| x.1)
+    }
+
     /// Brings the score to the frame of `t`, undoing first down to the earliest frame that received a command.
-    pub(crate) fn calculate(&mut self, t: i32, combo: &ComboCounter) -> Result<i32, Error> {
+    pub(crate) fn calculate(
+        &mut self,
+        t: i32,
+        combo: &ComboCounter,
+        gekisou: Option<&dyn GekisouComboInfo>,
+    ) -> Result<i32, Error> {
         let g = get_frame(t);
         let mut to = if g < 0 { 0 } else { g };
         if self.max_frame <= g {
@@ -148,7 +173,15 @@ impl IncrementalCalculator {
             self.prev + 1
         };
         for f in start..=to {
-            self.execute(f as usize, combo)?;
+            self.execute(f as usize, combo, gekisou)?;
+        }
+        if let Some((ft, fs)) = self.pending_fixed.take() {
+            let ff = get_frame(ft);
+            if self.fixed_at(ff).is_some() {
+                return Err(Error::Game("two fixed scores in one frame".into()));
+            }
+            self.fixed.push((ff, fs));
+            self.score = self.score.wrapping_add(fs);
         }
         self.prev = to;
         self.added = -1;
@@ -159,10 +192,13 @@ impl IncrementalCalculator {
         for n in &self.notes[f] {
             self.score = self.score.wrapping_sub(n.added);
         }
+        if let Some(v) = self.fixed_at(f as i32) {
+            self.score = self.score.wrapping_sub(v);
+        }
         self.diffs[f].undo(&mut self.calc.state);
     }
 
-    fn execute(&mut self, f: usize, combo: &ComboCounter) -> Result<(), Error> {
+    fn execute(&mut self, f: usize, combo: &ComboCounter, gekisou: Option<&dyn GekisouComboInfo>) -> Result<(), Error> {
         let (fl, nl) = (&self.factors[f], &mut self.notes[f]);
         self.order_f.clear();
         self.order_f.extend(0..fl.len());
@@ -182,11 +218,15 @@ impl IncrementalCalculator {
             } else {
                 let n = &mut nl[self.order_n[b]];
                 let c = combo.timing_combo(n.time_ms)?;
-                let s = self.calc.note_score(c, n.life, n.time_ms, n.note_type, n.score_type, None)?;
+                let s = self.calc.note_score(c, n.life, n.time_ms, n.note_type, n.score_type, gekisou)?;
                 n.added = s;
                 self.score = self.score.wrapping_add(s);
                 b += 1;
             }
+        }
+        if let Some(v) = self.fixed_at(f as i32) {
+            self.score = self.score.wrapping_add(v);
+            self.rank_bonus = self.rank_bonus.wrapping_add(v);
         }
         Ok(())
     }

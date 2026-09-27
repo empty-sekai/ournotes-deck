@@ -1,11 +1,13 @@
-//! The skill effect state machine and the condition skill updater (snap skills).
+//! The skill effect state machine and the condition skill updater (snap, Gekisou and Gekisou support skills).
 //!
 //! An effect state moves Stay -> ExecuteFrame (started, with the trigger time) -> Executing -> EndFrame (with the
-//! finish time) -> Stay. Appliers act on ExecuteFrame and EndFrame.
+//! finish time) -> Stay. Appliers act on ExecuteFrame and EndFrame (some also on Executing). An effect with a
+//! cumulative condition carries its count in the state while it runs.
 
 use std::collections::{HashMap, VecDeque};
 
-use super::conditions::{CheckCtx, Checker};
+use super::conditions::{CheckCtx, Checker, Cumulative};
+use super::gekisou::M_ALL;
 use crate::error::Error;
 use crate::num::ceil_to_i32;
 
@@ -30,6 +32,11 @@ pub(crate) struct EffectState {
     pub finish_ms: i32,
     /// Duration added by extensions, in ms.
     pub extended_ms: f32,
+    /// The cumulative condition's count (kept after the effect ends).
+    pub cumulative_count: i64,
+    /// The cumulative condition's unit and maximum count (0 without one).
+    pub cumulative_unit: i64,
+    pub cumulative_max: i64,
 }
 
 /// The frame values the updaters read.
@@ -148,13 +155,11 @@ pub(crate) struct CondEffect {
     pub reset: Option<Checker>,
     /// Index of the effect's row data in the model.
     pub row: usize,
-    /// Counting the effect's cumulative condition fails.
-    pub count_fails: bool,
+    /// The cumulative condition (each effect updater counts its own).
+    pub cumulative: Option<Cumulative>,
 }
 
-/// An effect updater of a condition skill: its own state and release checker. (A cumulative condition only feeds
-/// Gekisou effects; it is validated when the skill is built and not counted here, except that counting a judgement
-/// count without a value fails.)
+/// An effect updater of a condition skill: its own state, release checker and cumulative counter.
 #[derive(Clone, Debug)]
 pub(crate) struct EffectUpdater {
     pub effect: usize,
@@ -162,7 +167,7 @@ pub(crate) struct EffectUpdater {
     pub state: EffectState,
     release: Option<Checker>,
     phase: i64,
-    count_fails: bool,
+    cumulative: Option<Cumulative>,
 }
 
 impl EffectUpdater {
@@ -177,10 +182,13 @@ impl EffectUpdater {
         let s0 = self.state.state;
         let checkers = UpdateCheckers { condition: None, release: self.release.as_mut() };
         let r = effect_update(&mut self.state, act, inp, trigger, checkers, finish_frame, ctx)?;
-        let s1 = self.state.state;
-        let counts = (s0 == STAY && s1 == EXECUTE_FRAME) || s0 == EXECUTE_FRAME || (s0 == EXECUTING && s1 == EXECUTING);
-        if self.count_fails && counts {
-            return Err(Error::Master("cumulative condition without a value".into()));
+        if let Some(c) = self.cumulative.as_mut() {
+            let s1 = self.state.state;
+            if (s0 == STAY && s1 == EXECUTE_FRAME) || s0 == EXECUTE_FRAME || (s0 == EXECUTING && s1 == EXECUTING) {
+                self.state.cumulative_count = c.update_count(ctx)?;
+            } else if s0 == END_FRAME {
+                c.reset();
+            }
         }
         Ok(r)
     }
@@ -206,13 +214,17 @@ pub(crate) struct ConditionSkillUpdater {
     execute_count: HashMap<i64, i64>,
     trigger_checked: bool,
     cache: Vec<Option<TriggerResult>>,
+    /// Gekisou (support) skills trigger only while a range of this mission is concerned (4: always).
+    gate: Option<i64>,
 }
 
 impl ConditionSkillUpdater {
-    /// `release(e)` builds a fresh release checker for an updater of effect `e`.
+    /// `release(e)` builds a fresh release checker for an updater of effect `e`; `gate` is the mission of a Gekisou
+    /// (support) skill.
     pub(crate) fn new(
         effects: Vec<CondEffect>,
         mut release: impl FnMut(usize) -> Result<Option<Checker>, Error>,
+        gate: Option<i64>,
     ) -> Result<ConditionSkillUpdater, Error> {
         let mut ids: Vec<i64> = effects.iter().map(|e| e.effect_id).collect();
         ids.sort_unstable();
@@ -234,13 +246,18 @@ impl ConditionSkillUpdater {
             let mut pool = Vec::with_capacity(POOL);
             for index in 0..POOL {
                 pool.push(updaters.len());
+                let mut state = EffectState::default();
+                if let Some(c) = &ef.cumulative {
+                    state.cumulative_unit = c.unit();
+                    state.cumulative_max = c.max();
+                }
                 updaters.push(EffectUpdater {
                     effect: e,
                     index,
-                    state: EffectState::default(),
+                    state,
                     release: release(e)?,
                     phase: ef.phase,
-                    count_fails: ef.count_fails,
+                    cumulative: ef.cumulative.clone(),
                 });
             }
             if ef.trigger_type == ONE_SHOT {
@@ -260,7 +277,22 @@ impl ConditionSkillUpdater {
             execute_count: HashMap::new(),
             trigger_checked: false,
             cache: vec![None; n],
+            gate,
         })
+    }
+
+    /// Whether the Gekisou gate lets the triggers be checked this frame.
+    fn gate_open(&self, ctx: &CheckCtx) -> Result<bool, Error> {
+        let Some(mission) = self.gate else { return Ok(true) };
+        if mission == M_ALL {
+            return Ok(true);
+        }
+        let c = ctx.gk.ok_or_else(|| Error::Unsupported("Gekisou skill in a live without Gekisou".into()))?.ctrl;
+        if c.state_updates.iter().any(|&i| c.ranges[i].mission == mission) {
+            return Ok(true);
+        }
+        let i = c.current_playing_index;
+        Ok(i >= 0 && c.ranges[i as usize].mission == mission)
     }
 
     pub(crate) fn begin_frame(&mut self) {
@@ -297,6 +329,9 @@ impl ConditionSkillUpdater {
         if !self.trigger_checked {
             self.trigger_checked = true;
             self.cache.iter_mut().for_each(|c| *c = None);
+            if !self.gate_open(ctx)? {
+                return self.finish_update(updated, done);
+            }
             for ef in self.effects.iter_mut() {
                 if let Some(r) = ef.reset.as_mut() {
                     if r.check(ctx)?.0 {
@@ -359,6 +394,11 @@ impl ConditionSkillUpdater {
                 *self.execute_count.entry(eid).or_insert(0) += 1;
             }
         }
+        self.finish_update(updated, done)
+    }
+
+    /// Puts the one-shot updaters that went back to Stay back on their stacks.
+    fn finish_update(&mut self, updated: Vec<usize>, done: Vec<usize>) -> Result<Vec<usize>, Error> {
         for u in done {
             let e = self.updaters[u].effect;
             self.stacks[e].push(u);

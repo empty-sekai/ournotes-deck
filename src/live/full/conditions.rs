@@ -3,12 +3,27 @@
 //! A checker answers `(hit, hit count)` and may carry an override time (the trigger time of a condition that counts
 //! notes is the chart time of the note that completed the count). Condition groups are an OR over their condition
 //! sets, each set an AND over its conditions; both stop at the first decisive item.
+//!
+//! The Gekisou conditions (7005, 7010, 7013, 7020, 7021) read the Gekisou controller and fail when asked in a live
+//! without Gekisou; the lottery result condition (7000) never hits there.
 
 use super::Performer;
+use super::gekisou::{Controller, M_ALL, M_LUCK, S_COMPLETE, S_FINISH, S_PLAYING, S_START};
 use super::life::LifeController;
 use crate::error::Error;
 use crate::live::random::{LiveRandom, SKILL};
 use crate::master::{Master, SkillTargetRow};
+use crate::num::floor_to_i32;
+
+/// The Gekisou state the checkers read in a frame.
+#[derive(Clone, Copy)]
+pub(crate) struct GkView<'a> {
+    pub ctrl: &'a Controller,
+    /// The previous frame's lottery results.
+    pub prev_lots: &'a [i64],
+    /// The previous frame's time when it drew lottery results, else 0.
+    pub prev_lot_ms: i32,
+}
 
 /// What a checker may read or advance while it is asked.
 pub(crate) struct CheckCtx<'a> {
@@ -20,10 +35,22 @@ pub(crate) struct CheckCtx<'a> {
     pub judged: &'a [(i32, i32, i32)],
     /// The frame's fired skill events: `(event index, event time)`.
     pub events: &'a [(i32, i32)],
+    /// The Gekisou state (`None` without Gekisou).
+    pub gk: Option<GkView<'a>>,
+}
+
+impl CheckCtx<'_> {
+    fn ctrl(&self, t: i64) -> Result<&Controller, Error> {
+        self.gk.map(|g| g.ctrl).ok_or_else(|| {
+            Error::Unsupported(format!("condition type {t} reads the Gekisou state of a live without Gekisou"))
+        })
+    }
 }
 
 /// Target type of member attribute targets (band, character, card type).
 const TARGET_MEMBER: i64 = 3;
+/// Target type of Gekisou mission targets.
+const TARGET_MISSION: i64 = 5;
 /// The judgement value of targets without a judgement.
 const NO_JUDGEMENT: i64 = -1;
 
@@ -53,8 +80,36 @@ pub(crate) enum Checker {
         count: i32,
         override_ms: Option<i32>,
     },
-    /// Reads the Gekisou state, which a live without Gekisou does not have: asking it fails.
-    NeedsGekisou(i64),
+    /// The previous frame drew this lottery result (hit count: how often); trigger time: that frame's time.
+    LuckLotResult {
+        target: i64,
+        override_ms: Option<i32>,
+    },
+    /// The playing range's Gekisou combo is at least the threshold; trigger time: its last combo judgement.
+    ComboAtLeast {
+        threshold: i64,
+        override_ms: Option<i32>,
+    },
+    /// A range of a target mission (none or 4: any) started this frame, once per range until it finishes.
+    RangeStart {
+        missions: Vec<i64>,
+        triggered: Vec<usize>,
+        override_ms: Option<i32>,
+    },
+    /// A range completed this frame.
+    RangeComplete,
+    /// A range of a target mission is active (started, not yet complete).
+    RangePlaying {
+        missions: Vec<i64>,
+        active: Vec<(usize, i64)>,
+        override_ms: Option<i32>,
+    },
+    /// The playing luck range is in a rush.
+    LuckRushPlaying(bool),
+}
+
+fn mission_ok(missions: &[i64], mission: i64) -> bool {
+    missions.is_empty() || missions.contains(&M_ALL) || missions.contains(&mission)
 }
 
 impl Checker {
@@ -136,8 +191,99 @@ impl Checker {
                 }
                 Ok((ok, hit))
             }
-            Checker::NeedsGekisou(t) => {
-                Err(Error::Unsupported(format!("condition type {t} reads the Gekisou state of a live without Gekisou")))
+            Checker::LuckLotResult { target, override_ms } => {
+                *override_ms = None;
+                let (lots, ms) = ctx.gk.map_or((&[][..], 0), |g| (g.prev_lots, g.prev_lot_ms));
+                let hit = lots.iter().filter(|&&r| r == *target).count() as i64;
+                if hit > 0 {
+                    *override_ms = Some(ms);
+                    return Ok((true, hit));
+                }
+                Ok((false, 0))
+            }
+            Checker::ComboAtLeast { threshold, override_ms } => {
+                *override_ms = None;
+                let c = ctx.ctrl(7005)?;
+                let idx = c.current_playing_index;
+                if idx < 0 || *threshold <= 0 {
+                    return Ok((false, 0));
+                }
+                let rs = &c.states[idx as usize];
+                if (rs.combo as i64) < *threshold {
+                    return Ok((false, 0));
+                }
+                if rs.last_combo_ms >= 0 {
+                    *override_ms = Some(rs.last_combo_ms);
+                }
+                Ok((true, 1))
+            }
+            Checker::RangeStart { missions, triggered, override_ms } => {
+                *override_ms = None;
+                let c = ctx.ctrl(7010)?;
+                for &idx in &c.state_updates {
+                    let s = c.states[idx].state;
+                    if s == S_FINISH {
+                        triggered.retain(|&x| x != idx);
+                    } else if s == S_START {
+                        if !mission_ok(missions, c.ranges[idx].mission) {
+                            continue;
+                        }
+                        if !triggered.contains(&idx) {
+                            triggered.push(idx);
+                            *override_ms = Some(c.ranges[idx].start_ms);
+                            return Ok((true, 1));
+                        }
+                    }
+                }
+                Ok((false, 0))
+            }
+            Checker::RangeComplete => {
+                let c = ctx.ctrl(7013)?;
+                let ok = c.state_updates.iter().any(|&i| c.states[i].state == S_COMPLETE);
+                Ok((ok, ok as i64))
+            }
+            Checker::RangePlaying { missions, active, override_ms } => {
+                *override_ms = None;
+                let c = ctx.ctrl(7020)?;
+                let mut first = -1i32;
+                for &idx in &c.state_updates {
+                    let s = c.states[idx].state;
+                    if s == S_START || s == S_PLAYING {
+                        if !active.iter().any(|a| a.0 == idx) {
+                            active.push((idx, c.ranges[idx].mission));
+                            if first < 0 {
+                                first = c.ranges[idx].start_ms;
+                            }
+                        }
+                    } else if s == S_COMPLETE || s == S_FINISH {
+                        active.retain(|a| a.0 != idx);
+                    }
+                }
+                if active.is_empty() {
+                    return Ok((false, 0));
+                }
+                if !missions.is_empty() && !missions.contains(&M_ALL) && !active.iter().any(|a| missions.contains(&a.1))
+                {
+                    return Ok((false, 0));
+                }
+                if first >= 0 {
+                    *override_ms = Some(first);
+                }
+                Ok((true, 1))
+            }
+            Checker::LuckRushPlaying(rush) => {
+                let c = ctx.ctrl(7021)?;
+                let idx = c.current_playing_index;
+                if idx >= 0 && c.ranges[idx as usize].mission == M_LUCK {
+                    *rush = c.states[idx as usize].luck.rush_combo != 0;
+                }
+                for &i in &c.state_updates {
+                    let s = c.states[i].state;
+                    if c.ranges[i].mission == M_LUCK && (s == S_COMPLETE || s == S_FINISH) {
+                        *rush = false;
+                    }
+                }
+                Ok((*rush, *rush as i64))
             }
         }
     }
@@ -145,7 +291,11 @@ impl Checker {
     /// The trigger time override of the last check, if any.
     pub(crate) fn override_time(&self) -> Option<i32> {
         match self {
-            Checker::NoteJudgementCount { override_ms, .. } => *override_ms,
+            Checker::NoteJudgementCount { override_ms, .. }
+            | Checker::LuckLotResult { override_ms, .. }
+            | Checker::ComboAtLeast { override_ms, .. }
+            | Checker::RangeStart { override_ms, .. }
+            | Checker::RangePlaying { override_ms, .. } => *override_ms,
             Checker::Not(inner) => inner.override_time(),
             _ => None,
         }
@@ -159,6 +309,18 @@ impl Checker {
                 *count = 0;
                 *override_ms = None;
             }
+            Checker::LuckLotResult { override_ms, .. } | Checker::ComboAtLeast { override_ms, .. } => {
+                *override_ms = None;
+            }
+            Checker::RangeStart { triggered, override_ms, .. } => {
+                triggered.clear();
+                *override_ms = None;
+            }
+            Checker::RangePlaying { active, override_ms, .. } => {
+                active.clear();
+                *override_ms = None;
+            }
+            Checker::LuckRushPlaying(rush) => *rush = false,
             _ => {}
         }
     }
@@ -168,6 +330,63 @@ impl Checker {
             Checker::NoteJudgementCount { .. } => self.reset(),
             Checker::Not(inner) if inner.count_resettable() => inner.reset_count(),
             _ => {}
+        }
+    }
+}
+
+/// A cumulative condition: the count an effect state carries while it runs (read by Gekisou effects).
+#[derive(Clone, Debug)]
+pub(crate) enum Cumulative {
+    /// `floor(Gekisou combo of the playing range / n)`, 0 outside a range (and without Gekisou).
+    ComboPerN { n: i64, values_empty: bool, max: i64 },
+    /// `floor(judged target notes counted while the effect runs / n)`.
+    JudgementPerN { n: i64, values_empty: bool, targets: Vec<i64>, max: i64, count: i32 },
+}
+
+impl Cumulative {
+    pub(crate) fn unit(&self) -> i64 {
+        match self {
+            Cumulative::ComboPerN { n, .. } | Cumulative::JudgementPerN { n, .. } => *n,
+        }
+    }
+
+    pub(crate) fn max(&self) -> i64 {
+        match self {
+            Cumulative::ComboPerN { max, .. } | Cumulative::JudgementPerN { max, .. } => *max,
+        }
+    }
+
+    pub(crate) fn update_count(&mut self, ctx: &CheckCtx) -> Result<i64, Error> {
+        match self {
+            Cumulative::ComboPerN { n, values_empty, max } => {
+                let Some(g) = ctx.gk else { return Ok(0) };
+                let idx = g.ctrl.current_playing_index;
+                let mut v = 0i64;
+                if idx >= 0 {
+                    if *values_empty {
+                        return Err(no_value());
+                    }
+                    v = floor_to_i32(g.ctrl.states[idx as usize].combo as f32 / *n as f32) as i64;
+                }
+                Ok(if v >= *max { *max } else { v })
+            }
+            Cumulative::JudgementPerN { n, values_empty, targets, max, count } => {
+                for &(_, j, _) in ctx.judged {
+                    if targets.contains(&(j as i64)) {
+                        *count = count.wrapping_add(1);
+                    }
+                }
+                if *values_empty {
+                    return Err(no_value());
+                }
+                Ok((floor_to_i32(*count as f32 / *n as f32) as i64).min(*max))
+            }
+        }
+    }
+
+    pub(crate) fn reset(&mut self) {
+        if let Cumulative::JudgementPerN { count, .. } = self {
+            *count = 0;
         }
     }
 }
@@ -207,6 +426,16 @@ impl Factory<'_> {
         let v0 = c.condition_values.first().copied();
         let targets: Vec<Option<&SkillTargetRow>> = c.condition_target_ids.iter().map(|&i| m.skill_target(i)).collect();
         let target = |i: usize| targets[i].ok_or_else(|| missing_target(c.condition_target_ids[i]));
+        let missions = || -> Result<Vec<i64>, Error> {
+            let mut out = Vec::new();
+            for i in 0..targets.len() {
+                let t = target(i)?;
+                if t.skill_target_type == TARGET_MISSION && t.gekisou_mission_type != 0 {
+                    out.push(t.gekisou_mission_type);
+                }
+            }
+            Ok(out)
+        };
         let ch = match c.condition_type {
             0 => return Ok(None),
             2001 => Checker::LifeAtLeast(v0),
@@ -237,23 +466,12 @@ impl Factory<'_> {
                 }
                 Checker::NoteJudgementCount { n, targets: judgements, count: 0, override_ms: None }
             }
-            // No lottery results in a live without Gekisou: never hits.
-            7000 => {
-                v0.ok_or_else(no_value)?;
-                Checker::Fixed(false)
-            }
-            7005 => {
-                v0.ok_or_else(no_value)?;
-                Checker::NeedsGekisou(7005)
-            }
-            // The mission targets are read when the checker is built.
-            t @ (7010 | 7020) => {
-                for i in 0..targets.len() {
-                    target(i)?;
-                }
-                Checker::NeedsGekisou(t)
-            }
-            t @ (7013 | 7021) => Checker::NeedsGekisou(t),
+            7000 => Checker::LuckLotResult { target: v0.ok_or_else(no_value)?, override_ms: None },
+            7005 => Checker::ComboAtLeast { threshold: v0.ok_or_else(no_value)?, override_ms: None },
+            7010 => Checker::RangeStart { missions: missions()?, triggered: Vec::new(), override_ms: None },
+            7013 => Checker::RangeComplete,
+            7020 => Checker::RangePlaying { missions: missions()?, active: Vec::new(), override_ms: None },
+            7021 => Checker::LuckRushPlaying(false),
             t => return Err(Error::Unsupported(format!("skill condition type {t}"))),
         };
         Ok(Some(if c.is_positive { ch } else { Checker::Not(Box::new(ch)) }))
@@ -288,24 +506,28 @@ impl Factory<'_> {
         })
     }
 
-    /// Validates a cumulative condition (id 0: none). Its count only feeds Gekisou effects, so it is not kept; the
-    /// result tells whether counting fails (a judgement count without a value), which happens when the effect first
-    /// runs.
-    pub(crate) fn cumulative(&self, cid: i64) -> Result<bool, Error> {
+    /// The cumulative condition of an effect (id 0: none).
+    pub(crate) fn cumulative(&self, cid: i64) -> Result<Option<Cumulative>, Error> {
         if cid == 0 {
-            return Ok(false);
+            return Ok(None);
         }
         let m = self.master;
         let c =
             m.cumulative_condition(cid).ok_or_else(|| Error::Master(format!("unknown cumulative condition {cid}")))?;
+        let max = if c.max_cumulative_count < 1 { i32::MAX as i64 } else { c.max_cumulative_count };
+        let n = c.condition_values.first().copied().unwrap_or(0);
+        let values_empty = c.condition_values.is_empty();
         match c.condition_type {
-            // Gekisou combo per N: 0 without Gekisou.
-            7001 => Ok(false),
+            7001 => Ok(Some(Cumulative::ComboPerN { n, values_empty, max })),
             1000 => {
+                let mut targets = Vec::with_capacity(c.condition_target_ids.len());
                 for &i in &c.condition_target_ids {
-                    m.skill_target(i).ok_or_else(|| missing_target(i))?;
+                    let j = m.skill_target(i).ok_or_else(|| missing_target(i))?.judgement;
+                    if j != NO_JUDGEMENT {
+                        targets.push(j);
+                    }
                 }
-                Ok(c.condition_values.is_empty())
+                Ok(Some(Cumulative::JudgementPerN { n, values_empty, targets, max, count: 0 }))
             }
             t => Err(Error::Unsupported(format!("cumulative condition type {t}"))),
         }
