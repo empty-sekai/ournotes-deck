@@ -1,8 +1,9 @@
-//! Exact Top-K of deck power, and of the live score built on it.
+//! Exact Top-K of deck power, and of the live scores built on it.
 //!
 //! For each leader card, the four other members are chosen by a depth-first search over characters with a
-//! prefix-sum bound; each complete member set gets its exact leader terms and its best snap assignment. See
-//! `docs/search.md` for the admissibility argument.
+//! prefix-sum bound; each complete member set gets its exact leader terms and its best snap assignment (with snap
+//! skills: its best snap placement and performance order, searched together). See `docs/search.md` for the
+//! admissibility argument.
 
 use std::time::Instant;
 
@@ -10,6 +11,7 @@ use crate::error::Error;
 use crate::search::live::LiveCtx;
 use crate::search::matching::best_assignment;
 use crate::search::pool::Pool;
+use crate::search::snaps::SnapLive;
 use crate::search::tables::Tables;
 use crate::search::topk::{Entry, NO_SNAP, TopK};
 
@@ -32,8 +34,20 @@ pub struct PowerStats {
     pub leaves: u64,
     /// Snap assignments solved.
     pub matchings: u64,
-    /// Performance orders evaluated (live score).
+    /// Deck-orders evaluated exactly (live score): orders of the per-order model, or whole-live simulations with
+    /// snap skills.
     pub orders: u64,
+}
+
+/// The live objective of a search, if any.
+#[derive(Clone, Copy)]
+pub(crate) enum LiveMode<'a> {
+    /// Deck power or skip score.
+    None,
+    /// Live score with live skills only (per-order model).
+    Order(&'a LiveCtx<'a>),
+    /// Live score with snap skills (whole-live simulation).
+    Snaps(&'a SnapLive<'a>),
 }
 
 pub(crate) struct PowerSearch<'a, 'm> {
@@ -45,8 +59,7 @@ pub(crate) struct PowerSearch<'a, 'm> {
     pub timed_out: bool,
     pub stats: PowerStats,
     pub error: Option<Error>,
-    /// Live-score objective (power objective when `None`).
-    pub live: Option<&'a LiveCtx<'a>>,
+    pub live: LiveMode<'a>,
 }
 
 struct Leader {
@@ -72,8 +85,9 @@ impl<'a, 'm> PowerSearch<'a, 'm> {
     fn open(&self, power_bound: i64) -> bool {
         let th = self.top.threshold();
         match self.live {
-            None => power_bound >= th,
-            Some(l) => th == i64::MIN || l.score_bound(power_bound) >= th,
+            LiveMode::None => power_bound >= th,
+            LiveMode::Order(l) => th == i64::MIN || l.score_bound(power_bound) >= th,
+            LiveMode::Snaps(l) => th == i64::MIN || l.score_bound(power_bound) >= th,
         }
     }
 
@@ -215,6 +229,10 @@ impl<'a, 'm> PowerSearch<'a, 'm> {
         if !self.open(fixed_part + wmax_sum) {
             return;
         }
+        if let LiveMode::Snaps(sl) = self.live {
+            self.leaf_snaps(sl, l.leader, members, fixed_part);
+            return;
+        }
         self.stats.matchings += 1;
         let (wsum, assign) = best_assignment([
             &t.w[members[0]][..],
@@ -228,8 +246,8 @@ impl<'a, 'm> PowerSearch<'a, 'm> {
         let mut ids = members.map(|m| pool.members[m].id);
         ids.sort_unstable();
         let (value, order) = match self.live {
-            None => (power, [0, 1, 2, 3, 4]),
-            Some(lc) => {
+            LiveMode::None | LiveMode::Snaps(_) => (power, [0, 1, 2, 3, 4]),
+            LiveMode::Order(lc) => {
                 let th = self.top.threshold();
                 match lc.best_order(power, &members, th, &mut self.stats) {
                     Ok(Some(x)) => x,
@@ -250,6 +268,63 @@ impl<'a, 'm> PowerSearch<'a, 'm> {
             order,
             members,
             snaps,
+        });
+    }
+
+    /// Leaf of the live objective with snap skills. The leader changes only the deck power (the performers follow
+    /// the members, whatever their slots), so the set's best representative has the leader of largest exact
+    /// member-only power (smallest id on ties); the other leaders' visits return at once.
+    fn leaf_snaps(&mut self, sl: &SnapLive, leader: usize, members: [usize; 5], fixed_part: i64) {
+        let pool = self.pool;
+        let t = self.t;
+        let mut best: Option<(i64, i64)> = None;
+        for &x in &members {
+            if !self.allowed.members[x] || self.allowed.leader.is_some_and(|l| l != x) {
+                continue;
+            }
+            let mut others: Vec<usize> = members.iter().copied().filter(|&m| m != x).collect();
+            others.sort_by_key(|&m| pool.members[m].id);
+            let set = [others[0], others[1], x, others[2], others[3]];
+            let fp = match t.exact_lead(pool, set) {
+                Ok(lead) => (0..5).map(|i| t.a[set[i]] + lead[i]).sum::<i64>(),
+                Err(e) => {
+                    self.error = Some(e);
+                    return;
+                }
+            };
+            let id = pool.members[x].id;
+            if best.is_none_or(|(bf, bid)| fp > bf || (fp == bf && id < bid)) {
+                best = Some((fp, id));
+            }
+        }
+        if best.is_none_or(|(_, id)| id != pool.members[leader].id) {
+            return;
+        }
+        self.stats.matchings += 1;
+        let th = self.top.threshold();
+        let r = sl.best(pool, t, members, fixed_part, th, self.deadline, &mut self.stats);
+        let (found, timed_out) = match r {
+            Ok(x) => x,
+            Err(e) => {
+                self.error = Some(e);
+                return;
+            }
+        };
+        if timed_out {
+            self.timed_out = true;
+        }
+        let Some(b) = found else { return };
+        let mut ids = members.map(|m| pool.members[m].id);
+        ids.sort_unstable();
+        self.top.insert(Entry {
+            value: b.score,
+            power: b.power,
+            ids,
+            leader_id: pool.members[leader].id,
+            snap_ids: b.snaps.map(|s| s.map_or(NO_SNAP, |i| pool.snaps[i].id)),
+            order: b.order,
+            members,
+            snaps: b.snaps,
         });
     }
 }

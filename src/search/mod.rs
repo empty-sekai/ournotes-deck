@@ -11,6 +11,7 @@ pub mod pool;
 mod live;
 mod matching;
 mod power;
+mod snaps;
 mod tables;
 mod topk;
 
@@ -19,7 +20,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
-use crate::live::model::{LiveModel, Play};
+use crate::live::model::{JudgementStream, LiveModel, Play};
 use crate::live::score::{ComboTable, LiveScoreSettings, get_music_score_level_factor};
 use crate::live::skip::{Chart, SkipEvaluator, skip_score};
 use crate::master::Master;
@@ -27,7 +28,8 @@ use crate::master::Master;
 pub use pool::{Deck, Pool};
 pub use power::PowerStats;
 
-use power::{Allowed, PowerSearch};
+use power::{Allowed, LiveMode, PowerSearch};
+use snaps::FullSetup;
 use tables::Tables;
 use topk::TopK;
 
@@ -38,11 +40,21 @@ pub enum Objective {
     Power { music_id: Option<i64>, event: bool },
     /// Skip score of one chart (`score_id` is its `MasterLiveMusicScore` id).
     SkipScore { score_id: i64, chart: Chart },
-    /// Score of a played live under a stated play, with live skills only. `exclude_snap_skills` must be `true`:
-    /// snap skills are not modelled, so the value is the score without them (the game adds them for every snap in
-    /// the deck; with `Constraints::no_snaps` there are none). Gekisou is off. `event`: whether the deck power
-    /// includes the held events' parameter bonuses.
-    LiveScore { score_id: i64, chart: Chart, play: Play, event: bool, exclude_snap_skills: bool },
+    /// Score of a played live, Gekisou off. With `exclude_snap_skills` the value is the score without snap skills
+    /// under a per-note play ([`PlayInput::Notes`], per-order model); without it, the score of the whole-live
+    /// simulation with live and snap skills under a judgement stream ([`PlayInput::Stream`]). `event`: whether the
+    /// deck power includes the held events' parameter bonuses.
+    LiveScore { score_id: i64, chart: Chart, play: PlayInput, event: bool, exclude_snap_skills: bool },
+}
+
+/// The play a live objective scores.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PlayInput {
+    /// Every judged note with its judgement, life and combo; for `exclude_snap_skills`.
+    Notes(Play),
+    /// A judgement stream for the whole-live simulation; for the objective with snap skills. `judgement_types[i]` is
+    /// the note judgement type of `chart.notes[i]`.
+    Stream { stream: JudgementStream, judgement_types: Vec<i32> },
 }
 
 /// Hard constraints on the decks considered.
@@ -202,9 +214,13 @@ fn objective_song<'c>(pool: &Pool, o: &'c Objective) -> Result<(Option<i64>, boo
         Objective::SkipScore { score_id, chart } => {
             (Some(music_of_score(pool.master, *score_id)?), false, Some(SkipModel::new(pool.master, *score_id, chart)?))
         }
-        Objective::LiveScore { score_id, event, exclude_snap_skills, .. } => {
-            if !*exclude_snap_skills {
-                return Err(Error::Unsupported("live score with snap skills".into()));
+        Objective::LiveScore { score_id, event, exclude_snap_skills, play, .. } => {
+            match (exclude_snap_skills, play) {
+                (true, PlayInput::Notes(_)) | (false, PlayInput::Stream { .. }) => {}
+                (true, _) => return Err(Error::Input("a live score without snap skills needs a per-note play".into())),
+                (false, _) => {
+                    return Err(Error::Input("a live score with snap skills needs a judgement stream".into()));
+                }
             }
             (Some(music_of_score(pool.master, *score_id)?), *event, None)
         }
@@ -212,13 +228,34 @@ fn objective_song<'c>(pool: &Pool, o: &'c Objective) -> Result<(Option<i64>, boo
 }
 
 fn live_model(pool: &Pool, o: &Objective) -> Result<Option<LiveModel>, Error> {
-    let Objective::LiveScore { score_id, chart, play, .. } = o else { return Ok(None) };
+    let Objective::LiveScore { score_id, chart, play: PlayInput::Notes(play), exclude_snap_skills: true, .. } = o
+    else {
+        return Ok(None);
+    };
     let row =
         pool.master.live_music_score(*score_id).ok_or_else(|| Error::Input(format!("unknown chart {score_id}")))?;
     Ok(Some(LiveModel::new(pool.master, row.music_score_level as i32, chart, play)?))
 }
 
-/// Deck power and live score of one deck under a live objective (the score through the general calculator).
+/// The whole-live simulation setup of a live objective with snap skills.
+fn full_setup(pool: &Pool, o: &Objective) -> Result<Option<FullSetup>, Error> {
+    let Objective::LiveScore {
+        score_id,
+        chart,
+        play: PlayInput::Stream { stream, judgement_types },
+        exclude_snap_skills: false,
+        ..
+    } = o
+    else {
+        return Ok(None);
+    };
+    let row =
+        pool.master.live_music_score(*score_id).ok_or_else(|| Error::Input(format!("unknown chart {score_id}")))?;
+    Ok(Some(FullSetup::new(pool.master, row.music_score_level as i32, chart, stream, judgement_types)?))
+}
+
+/// Deck power and score of one deck under an objective (a live score through the general calculator, or through the
+/// whole-live simulation with snap skills).
 pub fn evaluate(pool: &Pool, deck: &Deck, objective: &Objective) -> Result<(i32, Option<i32>), Error> {
     let (music_id, event, skip) = objective_song(pool, objective)?;
     let song = music_id.map(|id| pool.song(id)).transpose()?;
@@ -226,8 +263,11 @@ pub fn evaluate(pool: &Pool, deck: &Deck, objective: &Objective) -> Result<(i32,
     if let Some(m) = skip {
         return Ok((power, Some(m.score(power)?)));
     }
+    if let Some(setup) = full_setup(pool, objective)? {
+        return Ok((power, Some(setup.score(pool.master, &snaps::deck_performers(pool, deck)?, power)?)));
+    }
     let Some(model) = live_model(pool, objective)? else { return Ok((power, None)) };
-    let Objective::LiveScore { play, .. } = objective else { unreachable!() };
+    let Objective::LiveScore { play: PlayInput::Notes(play), .. } = objective else { unreachable!() };
     let perf: Vec<(i64, i64)> = deck
         .performance_order
         .iter()
@@ -252,6 +292,16 @@ pub fn search(pool: &Pool, req: &SearchRequest) -> Result<SearchOutcome, Error> 
         None => None,
         Some(m) => Some(live::LiveCtx::new(pool.master, pool, m)?),
     };
+    let setup = full_setup(pool, &req.objective)?;
+    let snap_live = match &setup {
+        None => None,
+        Some(s) => Some(snaps::SnapLive::new(pool, &t, &allowed.members, s)?),
+    };
+    let mode = match (&live_ctx, &snap_live) {
+        (Some(l), _) => LiveMode::Order(l),
+        (None, Some(s)) => LiveMode::Snaps(s),
+        (None, None) => LiveMode::None,
+    };
     let mut s = PowerSearch {
         pool,
         t: &t,
@@ -261,7 +311,7 @@ pub fn search(pool: &Pool, req: &SearchRequest) -> Result<SearchOutcome, Error> 
         timed_out: false,
         stats: PowerStats::default(),
         error: None,
-        live: live_ctx.as_ref(),
+        live: mode,
     };
     s.run();
     if let Some(e) = s.error {
@@ -280,6 +330,17 @@ pub fn search(pool: &Pool, req: &SearchRequest) -> Result<SearchOutcome, Error> 
             )));
         }
         let score = match (&skip, &live_ctx, &req.objective) {
+            _ if setup.is_some() => {
+                let s = setup.as_ref().expect("setup");
+                let v = s.score(pool.master, &snaps::deck_performers(pool, &deck)?, full.power())?;
+                if v as i64 != e.value {
+                    return Err(Error::Domain(format!(
+                        "live score {} differs from the simulation of the deck {v}",
+                        e.value
+                    )));
+                }
+                Some(v)
+            }
             (Some(m), _, _) => {
                 let v = m.score_reference(full.power())?;
                 if v != m.score(full.power())? {
@@ -287,7 +348,7 @@ pub fn search(pool: &Pool, req: &SearchRequest) -> Result<SearchOutcome, Error> 
                 }
                 Some(v)
             }
-            (None, Some(lc), Objective::LiveScore { play, .. }) => {
+            (None, Some(lc), Objective::LiveScore { play: PlayInput::Notes(play), .. }) => {
                 let v = lc.model.score_reference(full.power(), play, &lc.commands(&e.members, &e.order))?;
                 if v as i64 != e.value {
                     return Err(Error::Domain(format!(

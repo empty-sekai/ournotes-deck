@@ -4,7 +4,7 @@ mod common;
 
 use ournotes_deck::Error;
 use ournotes_deck::data::{DeckData, FORMAT};
-use ournotes_deck::live::model::Play;
+use ournotes_deck::live::model::{JudgementStream, Play};
 use ournotes_deck::live::score::PERFECT;
 use serde_json::{Value, json};
 
@@ -150,4 +150,22 @@ fn theoretical_best_play() {
     t["rows"][0][col] = json!(10);
     let d = load(&v).unwrap();
     assert!(matches!(Play::theoretical_best(&d.master, &chart), Err(Error::Unsupported(_))));
+}
+
+#[test]
+fn theoretical_best_stream() {
+    let d = load(&document(5, vec![chart_json(1004)])).unwrap();
+    let chart = d.chart(1004).unwrap();
+    let s = JudgementStream::theoretical_best(&chart);
+    // 60 fps frames until 2 s after the last judged note or skill event (the event at 3100 ms)
+    assert_eq!(&s.frames[..4], &[0, 16, 33, 50]);
+    assert_eq!((s.frames.len(), *s.frames.last().unwrap()), (307, 5100));
+    // every judged note Perfect in the first frame reaching its chart time, in (time, id) order
+    assert_eq!(
+        s.judged,
+        vec![[60, 1, 5, 1000], [60, 2, 5, 1000], [90, 3, 5, 1500], [120, 4, 5, 2000], [180, 5, 5, 3000]]
+    );
+    assert_eq!((s.base_seed, s.assist), (0, false));
+    let play = s.to_live_play().unwrap();
+    assert_eq!(play.frames.iter().map(|f| f.judged.len()).sum::<usize>(), 5);
 }

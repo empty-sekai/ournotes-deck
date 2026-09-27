@@ -5,16 +5,18 @@ use std::time::Duration;
 
 use ournotes_deck::cards::Roster;
 use ournotes_deck::data::DeckData;
-use ournotes_deck::live::model::Play;
-use ournotes_deck::search::{Constraints, Objective, Pool, SearchRequest, search};
+use ournotes_deck::live::model::{JudgementStream, Play};
+use ournotes_deck::search::{Constraints, Objective, PlayInput, Pool, SearchRequest, search};
 use serde_json::json;
 
 const USAGE: &str = "usage:
   ournotes-deck power --data FILE --roster FILE [--music ID] [--event] [common options]
   ournotes-deck skip  --data FILE --roster FILE --score ID [common options]
-  ournotes-deck live  --data FILE --roster FILE --score ID --exclude-snap-skills [--play FILE] [--event]
+  ournotes-deck live  --data FILE --roster FILE --score ID [--exclude-snap-skills] [--play FILE] [--event]
                       [common options]
---data is a deck data file (nnnotes.deck-data/1); --play defaults to the theoretical best play.
+--data is a deck data file (nnnotes.deck-data/1). live scores the whole-live simulation with snap skills, where
+--play is a judgement stream; with --exclude-snap-skills it scores live skills only, where --play is a per-note
+play. --play defaults to the theoretical best play.
 common options: -k N (default 10), --leader ID, --include ID[,ID...], --exclude ID[,ID...],
                 --exclude-snaps ID[,ID...], --no-snaps, --time-limit-ms N";
 
@@ -81,9 +83,22 @@ fn run(args: &[String]) -> Result<serde_json::Value, String> {
         _ => {
             let score_id = score.ok_or("--score is required")?;
             let chart = data.chart(score_id).map_err(|e| e.to_string())?;
-            let play = match play {
-                Some(p) => serde_json::from_str::<Play>(&read(&p)?).map_err(|e| format!("play: {e}"))?,
-                None => Play::theoretical_best(&data.master, &chart).map_err(|e| e.to_string())?,
+            let play = if exclude_snap_skills {
+                PlayInput::Notes(match play {
+                    Some(p) => serde_json::from_str::<Play>(&read(&p)?).map_err(|e| format!("play: {e}"))?,
+                    None => Play::theoretical_best(&data.master, &chart).map_err(|e| e.to_string())?,
+                })
+            } else {
+                let stream = match play {
+                    Some(p) => serde_json::from_str::<JudgementStream>(&read(&p)?).map_err(|e| format!("play: {e}"))?,
+                    None => JudgementStream::theoretical_best(&chart),
+                };
+                let judgement_types = data
+                    .data_chart(score_id)
+                    .ok_or_else(|| format!("no chart for score id {score_id}"))?
+                    .judgement_types
+                    .clone();
+                PlayInput::Stream { stream, judgement_types }
             };
             Objective::LiveScore { score_id, chart, play, event, exclude_snap_skills }
         }

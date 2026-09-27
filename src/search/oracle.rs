@@ -1,14 +1,17 @@
 //! Exhaustive enumeration of every legal deck, for validating the search on small pools.
 //!
-//! It evaluates every (member set, leader, snap assignment) with the full deck-power path, keeps the best
-//! representative of each member set under the canonical order and sorts the sets. It shares no pruning, bound,
-//! decomposition or Top-K code with the search; the per-deck evaluation is the crate's regular one.
+//! It evaluates every (member set, leader, snap assignment) with the full deck-power path (and, for a live score,
+//! every performance order: with the per-order model, or with the whole-live simulation when snap skills count),
+//! keeps the best representative of each member set under the canonical order and sorts the sets. It shares no
+//! pruning, bound, decomposition, classification or Top-K code with the search; the per-deck evaluation is the
+//! crate's regular one.
 
 use std::collections::HashMap;
 
 use crate::error::Error;
 use crate::search::pool::{Deck, Pool};
-use crate::search::{Objective, RankedDeck, SearchRequest, live_model, objective_song, resolve_allowed};
+use crate::search::snaps::deck_performers;
+use crate::search::{Objective, RankedDeck, SearchRequest, full_setup, live_model, objective_song, resolve_allowed};
 
 /// A visitor of one snap assignment (the snap of each slot).
 type Visit<'a> = dyn FnMut(&[Option<usize>; 5]) -> Result<(), Error> + 'a;
@@ -19,6 +22,7 @@ pub fn brute_force(pool: &Pool, req: &SearchRequest) -> Result<(Vec<RankedDeck>,
     let (music_id, event, skip) = objective_song(pool, &req.objective)?;
     let live = matches!(req.objective, Objective::LiveScore { .. });
     let model = live_model(pool, &req.objective)?;
+    let full = full_setup(pool, &req.objective)?;
     let song = music_id.map(|id| pool.song(id)).transpose()?;
     let n = pool.members.len();
     let cand: Vec<usize> = (0..n).filter(|&i| allowed.members[i]).collect();
@@ -90,7 +94,9 @@ pub fn brute_force(pool: &Pool, req: &SearchRequest) -> Result<(Vec<RankedDeck>,
                 loop {
                     evaluated += 1;
                     let deck = Deck { members, snaps: *a, performance_order: order };
-                    let score = if live {
+                    let score = if let Some(f) = &full {
+                        Some(f.score(pool.master, &deck_performers(pool, &deck)?, p)?)
+                    } else if live {
                         let perf: Vec<(i64, i64)> = order
                             .iter()
                             .map(|&s| {

@@ -19,7 +19,10 @@ Deck power, skip score and live score for BanG Dream! Our Notes, and an exact To
 - **Event points**: event bonuses, score ranks, boosts and the event-point amount the game client computes. The game
   server decides the awarded amount; this crate reproduces the client's own computation.
 - **Search**: the best K decks for deck power (with or without a song, with or without event parameters), for the
-  skip score and for the live score with live skills only, one result per set of five member cards.
+  skip score and for the live score, one result per set of five member cards. The live score is the whole-live
+  simulation with live skills and snap skills (Gekisou off) under a judgement stream, or, with snap skills excluded,
+  the score of a per-note play with live skills only. With snap skills the search simulates candidate decks, so it is
+  slower, and streams with many missed or late notes can take much longer; a time limit bounds such requests.
 
 ## Correctness
 
@@ -47,7 +50,11 @@ each with Gekisou off and on, including 1,048 and 1,267 real charts played in fu
 bounds that are proven admissible under the game's arithmetic (proofs in [docs/search.md](docs/search.md)). Search
 results are compared item by item with an independent exhaustive enumeration, which shares no bound, decomposition
 or Top-K code with the search. On real cards and charts, 25,600 requests covering about 450 million decks showed 0
-mismatches. A search that reaches its time limit returns `TimedOut`, with legal and exactly evaluated decks but no
+mismatches. For the live score with snap skills the enumeration simulates every member set, leader, snap placement
+and performance order: on real cards and charts, with the default and random judgement streams, 1,280 requests over
+2.3 million simulated decks and orders, and on synthetic pools whose snap skills change the ranking, 2,640 requests
+over 115 million, showed 0 mismatches.
+A search that reaches its time limit returns `TimedOut`, with legal and exactly evaluated decks but no
 ranking claim. Inputs outside the proven range, unknown cards, rules the game would reject and parts of the game that
 are not modelled are reported as errors.
 
@@ -69,9 +76,18 @@ card box:
 }
 ```
 
-`level` may be replaced by `exp`. Charts are selected by score id (`MasterLiveMusicScore._id`). The live score
-defaults to the theoretical best play: every judged note Perfect (with Gekisou off the game judges no Just), a full
-combo and no life lost. Another play can be given as
+`level` may be replaced by `exp`. Charts are selected by score id (`MasterLiveMusicScore._id`).
+
+The live score with snap skills plays a judgement stream:
+`{"frames": [0, 16, 33], "judged": [[frame, noteId, judgement, judgementTimeMs]], "baseSeed": 0, "assist": false}`.
+`frames` holds the music time of each frame in ms (non-decreasing); each `judged` row judges a note in frame
+`frames[frame]`, with its judgement before conversion (1 Miss, 2 Bad, 3 Good, 4 Great, 5 Perfect, 6 Just); life,
+combo and skills follow from the simulation. The default stream is the theoretical best: frames at 60 fps
+(`floor(i * 1000 / 60)` ms) until 2000 ms after the last judged note or skill event, and every judged note Perfect,
+at its chart time, in the first frame that reaches it (with Gekisou off the game judges no Just).
+
+The live score with snap skills excluded defaults to the theoretical best as a per-note play: every judged note
+Perfect, a full combo and no life lost. Another play can be given as
 `{"notes": [{"noteId", "timeMs", "noteType", "scoreType", "life", "combo"}], "lifeAtEvent": [...], "assist"}`
 (score types: 1 Just, 2 Perfect, 3 Great, 4 Good, 5 Bad, 6 Miss).
 
@@ -102,8 +118,12 @@ for deck in &out.results {
 ```sh
 ournotes-deck power --data deck-data.json --roster box.json -k 10 [--music ID] [--event]
 ournotes-deck skip  --data deck-data.json --roster box.json --score SCORE_ID -k 10
+ournotes-deck live  --data deck-data.json --roster box.json --score SCORE_ID [--play stream.json] -k 10
 ournotes-deck live  --data deck-data.json --roster box.json --score SCORE_ID --exclude-snap-skills [--play play.json] -k 10
 ```
+
+`live` scores with snap skills and reads `--play` as a judgement stream; with `--exclude-snap-skills` it scores live
+skills only and reads `--play` as a per-note play.
 
 Constraints: `--leader ID`, `--include ID,...`, `--exclude ID,...`, `--exclude-snaps ID,...`, `--no-snaps`,
 `--time-limit-ms N`. The output is JSON.
@@ -112,7 +132,9 @@ Constraints: `--leader ID`, `--include ID,...`, `--exclude ID,...`, `--exclude-s
 
 `cargo test` runs the unit tests, reads synthetic deck data files and compares the search with exhaustive
 enumeration on small synthetic pools. `OURNOTES_DECK_ORACLE_CASES`, `OURNOTES_DECK_ORACLE_SEED0`,
-`OURNOTES_DECK_ORACLE_MEMBERS` and `OURNOTES_DECK_ORACLE_SNAPS` enlarge that comparison.
+`OURNOTES_DECK_ORACLE_MEMBERS` and `OURNOTES_DECK_ORACLE_SNAPS` enlarge that comparison. For the live score with snap
+skills, `OURNOTES_DECK_SNAPS_CASES`, `OURNOTES_DECK_SNAPS_SEED0`, `OURNOTES_DECK_SNAPS_MEMBERS`,
+`OURNOTES_DECK_SNAPS_SNAPS`, `OURNOTES_DECK_SNAPS_NOTES` and `OURNOTES_DECK_SNAPS_VARIANTS` do the same.
 
 ## Licence
 

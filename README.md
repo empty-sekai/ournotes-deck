@@ -12,7 +12,9 @@ BanG Dream! Our Notes 的综合力、跳过分数与演出分数计算，以及�
 - **演出分数**：单个音符分数、帧、连击加成表、倍率指令，以及逐帧的整场演出（`live::full`）：判定转换、连击、血量（回复、护盾、
   归零）、分数计算器（包括迟到判定引起的回退重算），以及演出技能与 snap 技能的条件和效果。撃奏（区间状态、撃奏连击与 Just 计数、幸运抽签、排名加成，以及撃奏技能与撃奏 snap 技能）也已建模；搜索目前只支持撃奏关闭。
 - **活动点数**：活动加成、评级、加成道具倍率，以及游戏客户端计算的活动点数。实际发放量由游戏服务器决定；本库复现的是客户端自身的计算。
-- **搜索**：综合力（可带或不带歌曲、可带或不带活动参数）、跳过分数，以及仅含演出技能的演出分数的前 K 个编成，每组 5 张成员卡只保留一个结果。
+- **搜索**：综合力（可带或不带歌曲、可带或不带活动参数）、跳过分数与演出分数的前 K 个编成，每组 5 张成员卡只保留一个结果。
+  演出分数是判定序列下含演出技能与 snap 技能的整场模拟（撃奏关闭）；排除 snap 技能时，则是逐音符打法下只含演出技能的分数。
+  含 snap 技能时搜索要模拟候选编成，因此较慢；漏判或迟判较多的判定序列可能慢得多，可用时间上限约束这类请求。
 
 ## 正确性
 
@@ -34,7 +36,10 @@ BanG Dream! Our Notes 的综合力、跳过分数与演出分数计算，以及�
 
 **搜索精确。** `Complete` 的搜索结果恰为全部合法编成上的规范 Top-K。剪枝只使用在游戏运算下已证明可采纳的上界（证明见
 [docs/search.md](docs/search.md)）。搜索结果与独立的穷举实现逐项比较，穷举不共用任何上界、分解或 Top-K 代码：在真实卡牌与谱面上
-比较了 25,600 组请求、共约 4.5 亿个编成，差异为 0。达到时间上限的搜索返回 `TimedOut`，其中的编成合法且数值精确，但不保证排名。
+比较了 25,600 组请求、共约 4.5 亿个编成，差异为 0。
+含 snap 技能的演出分数，穷举会模拟每一组成员、队长、snap 配置与演出顺序：在真实卡牌与谱面上（默认与随机判定序列）比较了
+1,280 组请求、共模拟约 230 万个编成与顺序，在 snap 技能会改变排名的合成卡池上比较了 2,640 组请求、共约 1.15 亿个，差异均为 0。
+达到时间上限的搜索返回 `TimedOut`，其中的编成合法且数值精确，但不保证排名。
 超出已证明范围的输入、未知卡牌、游戏会拒绝的规则以及尚未建模的部分，都以错误返回。
 
 **尚未验证的部分。** 整场演出如何由各单元按帧拼成，没有与游戏整体对照：这需要一份真机录制的对局（随机种子、帧时间与逐音符
@@ -53,8 +58,16 @@ master 数据的相关表与全部谱面），以及用户的卡牌持有情况�
 }
 ```
 
-`level` 可以换成 `exp`。谱面按 score id（`MasterLiveMusicScore._id`）选择。演出分数默认使用理论最佳打法：每个判定音符都是
-Perfect（撃奏关闭时游戏不判 Just），全连且不掉血。也可以另给一条判定序列
+`level` 可以换成 `exp`。谱面按 score id（`MasterLiveMusicScore._id`）选择。
+
+含 snap 技能的演出分数按判定序列模拟：
+`{"frames": [0, 16, 33], "judged": [[frame, noteId, judgement, judgementTimeMs]], "baseSeed": 0, "assist": false}`。
+`frames` 是每一帧的乐曲时间（毫秒，不减）；`judged` 的每一行表示某个音符在第 `frames[frame]` 帧判定，判定为转换前的判定
+（1 Miss、2 Bad、3 Good、4 Great、5 Perfect、6 Just）；血量、连击与技能由模拟得出。默认判定序列为理论最佳：以 60 fps
+取帧（`floor(i * 1000 / 60)` 毫秒），直到最后一个判定音符或技能事件之后 2000 毫秒；每个判定音符在第一个到达其谱面时间的帧
+判为 Perfect，判定时间取谱面时间（撃奏关闭时游戏不判 Just）。
+
+排除 snap 技能的演出分数默认使用逐音符形式的理论最佳打法：每个判定音符都是 Perfect，全连且不掉血。也可以另给一份打法
 `{"notes": [{"noteId", "timeMs", "noteType", "scoreType", "life", "combo"}], "lifeAtEvent": [...], "assist"}`
 （判定类型：1 Just、2 Perfect、3 Great、4 Good、5 Bad、6 Miss）。
 
@@ -85,8 +98,11 @@ for deck in &out.results {
 ```sh
 ournotes-deck power --data deck-data.json --roster box.json -k 10 [--music ID] [--event]
 ournotes-deck skip  --data deck-data.json --roster box.json --score SCORE_ID -k 10
+ournotes-deck live  --data deck-data.json --roster box.json --score SCORE_ID [--play stream.json] -k 10
 ournotes-deck live  --data deck-data.json --roster box.json --score SCORE_ID --exclude-snap-skills [--play play.json] -k 10
 ```
+
+`live` 默认计入 snap 技能，`--play` 为判定序列；加 `--exclude-snap-skills` 时只计演出技能，`--play` 为逐音符打法。
 
 约束：`--leader ID`、`--include ID,...`、`--exclude ID,...`、`--exclude-snaps ID,...`、`--no-snaps`、
 `--time-limit-ms N`。输出为 JSON。
@@ -95,7 +111,9 @@ ournotes-deck live  --data deck-data.json --roster box.json --score SCORE_ID --e
 
 `cargo test` 运行单元测试，读取合成的 deck data 文件，并在小规模合成卡池上将搜索结果与穷举结果逐项比较。
 可用 `OURNOTES_DECK_ORACLE_CASES`、`OURNOTES_DECK_ORACLE_SEED0`、`OURNOTES_DECK_ORACLE_MEMBERS`、
-`OURNOTES_DECK_ORACLE_SNAPS` 扩大比较规模。
+`OURNOTES_DECK_ORACLE_SNAPS` 扩大比较规模。含 snap 技能的演出分数可用 `OURNOTES_DECK_SNAPS_CASES`、
+`OURNOTES_DECK_SNAPS_SEED0`、`OURNOTES_DECK_SNAPS_MEMBERS`、`OURNOTES_DECK_SNAPS_SNAPS`、`OURNOTES_DECK_SNAPS_NOTES`、
+`OURNOTES_DECK_SNAPS_VARIANTS` 扩大比较规模。
 
 ## 许可证
 

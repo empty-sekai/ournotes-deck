@@ -1,12 +1,18 @@
-//! Score of a played live under a stated play, with live skills only.
+//! Plays of a live: the per-note play of the per-order model, and the judgement stream of the whole-live simulation.
 //!
-//! Model: Gekisou off and snap (support) skills excluded; the play gives every judged note (judgement, life at the
-//! judgement, the combo the score reads) and the life in the frame where each skill event fires. The result is the
-//! score with every factor command applied once in frame order. The game recalculates frames when a command lands
-//! in a frame it already scored; when such a frame already held factor commands, its float state can differ from
-//! this result in the last bit.
+//! [`LiveModel`] scores a stated play with live skills only. Model: Gekisou off and snap (support) skills excluded;
+//! the play gives every judged note (judgement, life at the judgement, the combo the score reads) and the life in the
+//! frame where each skill event fires. The result is the score with every factor command applied once in frame
+//! order. The game recalculates frames when a command lands in a frame it already scored; when such a frame already
+//! held factor commands, its float state can differ from this result in the last bit.
+//!
+//! [`JudgementStream`] is the input of the whole-live simulation ([`crate::live::full`]): the frames of a play and
+//! the notes judged in each; life, combo and skills then follow from the simulation.
+
+use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
+use crate::live::full::{JudgedNote, LivePlay, PlayFrame};
 use crate::live::score::{
     COMBO, ComboTable, LiveScoreCalculator, LiveScoreSettings, PERFECT, get_frame, get_luck_factor_percent,
 };
@@ -16,7 +22,7 @@ use crate::master::Master;
 use crate::num::{floor_to_i32, min_ignoring_nan, trunc_to_i32};
 
 /// A stated play.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Play {
     /// Every judged note.
@@ -75,6 +81,92 @@ impl Play {
         }
         let events = chart.skill_events.iter().map(|e| e.index.max(0) as usize + 1).max().unwrap_or(0);
         Ok(Play { notes, life_at_event: vec![base; events], assist: false })
+    }
+}
+
+/// Frame rate of [`JudgementStream::theoretical_best`].
+pub const THEORETICAL_FPS: i64 = 60;
+/// How long [`JudgementStream::theoretical_best`] keeps playing after the last judged note and the last skill event.
+pub const THEORETICAL_TAIL_MS: i32 = 2000;
+
+/// A judgement stream: the frames of a play, the notes judged in each frame, the live's random seed and the assist
+/// flag. It is the play of the whole-live simulation; life, combo and skills follow from the simulation.
+///
+/// JSON (`camelCase`):
+///
+/// ```json
+/// {"frames": [0, 16, 33, 50], "judged": [[2, 1, 5, 1030], [3, 2, 4, 1047]], "baseSeed": 0, "assist": false}
+/// ```
+///
+/// `frames` holds the music time of each frame in ms, in play order (non-decreasing). Each `judged` row is
+/// `[frame, noteId, judgement, judgementTimeMs]`: the note is judged in frame `frames[frame]` with the note judgement
+/// before skill conversion (`NoteSimulateJudgement`: 1 Miss, 2 Bad, 3 Good, 4 Great, 5 Perfect, 6 Just) at the given
+/// judgement time; the rows of one frame are judged in the order they appear. `baseSeed` (default 0) seeds the
+/// live's random streams; `assist` (default false) scales every note by the assist percentage.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JudgementStream {
+    pub frames: Vec<i32>,
+    #[serde(default)]
+    pub judged: Vec<[i32; 4]>,
+    #[serde(default)]
+    pub base_seed: i32,
+    #[serde(default)]
+    pub assist: bool,
+}
+
+impl JudgementStream {
+    /// The default play ("theoretical best") of a live with Gekisou off, at [`THEORETICAL_FPS`]: frame `k` is at
+    /// `floor(k * 1000 / 60)` ms for `k = 0, 1, ...` while that time is at most `T + 2000`, with `T` the latest time of
+    /// a judged note or a skill event (0 when earlier); every judged note is judged Perfect in the first frame whose
+    /// time reaches its chart time, with the chart time as its judgement time, in the order (chart time, note id)
+    /// within a frame. Gekisou off never enables the Just judgement, so Perfect is the highest; the random seed is 0.
+    pub fn theoretical_best(chart: &Chart) -> JudgementStream {
+        let mut judged: Vec<_> = chart.notes.iter().filter(|n| is_judgement_note(n.note_type)).collect();
+        judged.sort_by_key(|n| (n.time_ms, n.id));
+        let last =
+            judged.iter().map(|n| n.time_ms).chain(chart.skill_events.iter().map(|e| e.time_ms)).fold(0i32, i32::max);
+        let end = last as i64 + THEORETICAL_TAIL_MS as i64;
+        let mut frames = Vec::new();
+        let mut k = 0i64;
+        loop {
+            let t = k * 1000 / THEORETICAL_FPS;
+            if t > end {
+                break;
+            }
+            frames.push(t as i32);
+            k += 1;
+        }
+        let rows = judged
+            .iter()
+            .map(|n| {
+                let f = frames.partition_point(|&t| t < n.time_ms);
+                [f as i32, n.id, SIMULATE_PERFECT as i32, n.time_ms]
+            })
+            .collect();
+        JudgementStream { frames, judged: rows, base_seed: 0, assist: false }
+    }
+
+    /// Checks the stream (frame indexes in range, non-decreasing frame times, judgements 1..=6) and builds the play
+    /// the simulation reads.
+    pub fn to_live_play(&self) -> Result<LivePlay, Error> {
+        if self.frames.windows(2).any(|w| w[1] < w[0]) {
+            return Err(Error::Input("judgement stream: frame times decrease".into()));
+        }
+        let mut frames: Vec<PlayFrame> =
+            self.frames.iter().map(|&t| PlayFrame { time_ms: t, judged: Vec::new() }).collect();
+        for r in &self.judged {
+            let [f, note_id, judgement, judgement_time_ms] = *r;
+            let frame = usize::try_from(f)
+                .ok()
+                .and_then(|i| frames.get_mut(i))
+                .ok_or_else(|| Error::Input(format!("judgement stream: frame {f} out of range")))?;
+            if !(1..=6).contains(&judgement) {
+                return Err(Error::Input(format!("judgement stream: judgement {judgement} outside 1..=6")));
+            }
+            frame.judged.push(JudgedNote { note_id, judgement, judgement_time_ms });
+        }
+        Ok(LivePlay { frames, base_seed: self.base_seed })
     }
 }
 

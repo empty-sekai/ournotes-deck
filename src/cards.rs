@@ -224,6 +224,8 @@ pub struct SnapView {
     pub character_band_ids: Vec<Option<i64>>,
     pub power_bonus_percent: CardPower,
     pub support_skill_ids: [i64; 2],
+    /// Levels of the two support skills at the snap's rank (`None` when the rank has no row).
+    pub support_skill_levels: Option<[i64; 2]>,
     pub gekisou_support_skill_ids: [i64; 2],
 }
 
@@ -236,6 +238,7 @@ impl SnapView {
         }
         .ok_or_else(|| Error::Input(format!("no level row for snap {}", owned.id)))?;
         let max = [row.performance_power_max, row.technic_power_max, row.visual_power_max];
+        let rank_row = master.support_card_ranks.iter().find(|r| r.group == row.rank_group && r.rank == owned.rank);
         Ok(SnapView {
             id: owned.id,
             card_type: row.card_type,
@@ -247,8 +250,21 @@ impl SnapView {
             character_band_ids: row.character_ids.iter().map(|&c| master.character(c).map(|r| r.band_id)).collect(),
             power_bonus_percent: support_level_percent(level_rates(level_row), max),
             support_skill_ids: [row.support_skill_id_01, row.support_skill_id_02],
+            support_skill_levels: rank_row.map(|r| [r.support_skill_01_level, r.support_skill_02_level]),
             gekisou_support_skill_ids: [row.gekisou_support_skill_id_01, row.gekisou_support_skill_id_02],
         })
+    }
+
+    /// The support skills `(id, level)` the snap brings to a live, in order (skill id 0 is no skill).
+    pub fn support_skills(&self) -> Result<Vec<(i64, i64)>, Error> {
+        let ids = self.support_skill_ids;
+        if ids.iter().all(|&id| id == 0) {
+            return Ok(Vec::new());
+        }
+        let levels = self
+            .support_skill_levels
+            .ok_or_else(|| Error::Input(format!("snap {}: no rank row for its support skill levels", self.id)))?;
+        Ok(ids.iter().zip(levels).filter(|(id, _)| **id != 0).map(|(&id, lv)| (id, lv)).collect())
     }
 
     /// The slot view of this snap.

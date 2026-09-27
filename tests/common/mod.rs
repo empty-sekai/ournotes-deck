@@ -391,3 +391,202 @@ pub fn play(rng: &mut Rng, chart: &Chart) -> ournotes_deck::live::model::Play {
     let life_at_event = (0..5).map(|_| rng.range(300, 1000) as i32).collect();
     ournotes_deck::live::model::Play { notes, life_at_event, assist: rng.chance(0.2) }
 }
+
+/// Sets columns of every row of table `name`.
+fn set_column(s: &mut Synth, name: &str, f: &mut dyn FnMut(&mut Value)) {
+    for (n, v) in s.tables.iter_mut() {
+        if n == name {
+            for r in v.as_array_mut().unwrap() {
+                f(r);
+            }
+        }
+    }
+}
+
+fn replace_table(s: &mut Synth, name: &str, v: Value) {
+    s.tables.retain(|(n, _)| n != name);
+    s.tables.push((name.to_string(), v));
+}
+
+fn extend_table(s: &mut Synth, name: &str, rows: Vec<Value>) {
+    for (n, v) in s.tables.iter_mut() {
+        if n == name {
+            v.as_array_mut().unwrap().extend(rows);
+            return;
+        }
+    }
+    s.tables.push((name.to_string(), Value::Array(rows)));
+}
+
+/// Snap skill kinds of [`synth_snaps`] (support skill id = kind): 1 extension of the paired member's live skill for
+/// band-1 members, 2 a shorter one for the others, 3 note score up, 4 Perfect score up for card type 1, 5 life
+/// recovery, 6 Great and Good to Perfect conversion (limited), 7 note score up on a score rank change (never fires),
+/// 8 guard at low life, 9 note score up every 4 Perfect judgements, 10 note score up on a coin flip, 11 an
+/// unconditional extension.
+pub const SNAP_SKILLS: i64 = 11;
+
+/// [`synth`] with the tables of the whole-live simulation and snap (support) skills; every snap gets one or two
+/// support skills of the kinds in `kinds` (every kind when empty).
+pub fn synth_snaps(rng: &mut Rng, members: i64, snaps: i64, kinds: &[i64]) -> Synth {
+    let mut s = synth(rng, members, snaps);
+    extend_table(
+        &mut s,
+        "MasterLiveSettings",
+        vec![
+            json!({"_id": 10, "_key": "life_base", "_value": "1000"}),
+            json!({"_id": 11, "_key": "life_denger", "_value": "300"}),
+        ],
+    );
+    set_column(&mut s, "MasterLiveJudgementParameter", &mut |r| {
+        let d = match r["_noteSimulateJudgement"].as_i64().unwrap() {
+            2 => 60,
+            1 => 140,
+            _ => 0,
+        };
+        r["_damage"] = json!(d);
+    });
+    replace_table(
+        &mut s,
+        "MasterLiveJudgementTiming",
+        json!([
+            {"_id": 1, "_noteJudgementType": 1, "_noteSimulateJudgement": 6},
+            {"_id": 2, "_noteJudgementType": 1, "_noteSimulateJudgement": 5},
+            {"_id": 3, "_noteJudgementType": 2, "_noteSimulateJudgement": 5},
+        ]),
+    );
+    replace_table(
+        &mut s,
+        "MasterSkillEffectSetting",
+        json!([
+            {"_id": 1, "_skillEffectType": 2000, "_phase": 2}, {"_id": 2, "_skillEffectType": 2004, "_phase": 2},
+            {"_id": 3, "_skillEffectType": 3001, "_phase": 1}, {"_id": 4, "_skillEffectType": 3003, "_phase": 2},
+            {"_id": 5, "_skillEffectType": 12006, "_phase": 2}, {"_id": 6, "_skillEffectType": 15000, "_phase": 2},
+        ]),
+    );
+    extend_table(
+        &mut s,
+        "MasterSkillTarget",
+        vec![
+            json!({"_id": 30, "_skillTargetType": 3, "_bandID": 1}),
+            json!({"_id": 31, "_skillTargetType": 3, "_cardType": 1}),
+            json!({"_id": 42, "_skillTargetType": 4, "_judgement": 4}),
+            json!({"_id": 43, "_skillTargetType": 4, "_judgement": 3}),
+        ],
+    );
+    let cond = |id: i64, ty: i64, values: Value, positive: bool, targets: Value| {
+        json!({"_id": id, "_conditionType": ty, "_conditionValues": values, "_isPositive": positive,
+               "_conditionTargetIDs": targets})
+    };
+    extend_table(
+        &mut s,
+        "MasterSkillCondition",
+        vec![
+            cond(61, 4010, json!([]), true, json!([])),
+            cond(70, 5000, json!([]), true, json!([30])),
+            cond(71, 5000, json!([]), false, json!([30])),
+            cond(72, 5000, json!([]), true, json!([31])),
+            cond(73, 8000, json!([]), true, json!([])),
+            cond(74, 2003, json!([700]), true, json!([])),
+            cond(75, 1030, json!([4]), true, json!([12])),
+            cond(76, 4011, json!([50]), true, json!([])),
+        ],
+    );
+    extend_table(
+        &mut s,
+        "MasterSkillConditionSet",
+        [(53, 61), (60, 70), (61, 71), (62, 72), (63, 73), (64, 74), (65, 75), (66, 76)]
+            .iter()
+            .map(|&(g, c)| json!({"_id": g, "_group": g, "_conditionIds": [c]}))
+            .collect(),
+    );
+    // (trigger group, condition group, effect type, activation s, value per level, targets, limit)
+    let kinds_rows: [(i64, i64, i64, f64, i64, Value, i64); 11] = [
+        (53, 60, 15000, 0.0, 700, json!([]), 0),
+        (53, 61, 15000, 0.0, 300, json!([]), 0),
+        (53, 0, 2000, 3.0, 250, json!([]), 0),
+        (53, 62, 2004, 4.0, 900, json!([12]), 0),
+        (53, 0, 3001, 0.0, 120, json!([]), 0),
+        (53, 0, 12006, 5.0, 5, json!([42, 43]), 3),
+        (63, 0, 2000, 5.0, 600, json!([]), 0),
+        (64, 0, 3003, 5.0, 0, json!([]), 1),
+        (65, 0, 2000, 1.0, 150, json!([]), 0),
+        (66, 0, 2000, 2.0, 200, json!([]), 0),
+        (53, 0, 15000, 0.0, 450, json!([]), 0),
+    ];
+    let mut rows = Vec::new();
+    let mut id = 1;
+    for (k, (trig, cond, ty, act, per, targets, limit)) in kinds_rows.iter().enumerate() {
+        for level in 1..=5i64 {
+            let value = if *ty == 12006 { *per } else { per * level };
+            rows.push(json!({"_id": id, "_supportSkillID": k as i64 + 1, "_level": level, "_skillTriggerType": 1,
+                "_skillTriggerConditionGroup": trig, "_skillConditionGroup": cond, "_skillReleaseConditionGroup": 0,
+                "_skillTargetIDs": targets, "_skillEffectType": ty, "_activationTimeSecond": act,
+                "_effectValue": value, "_maxEffectValue": 0, "_effectLimitCount": limit,
+                "_skillCumulativeConditionID": 0, "_effectExecuteLimitCount": 0,
+                "_effectExecuteLimitResetConditionGroup": 0}));
+            id += 1;
+        }
+    }
+    replace_table(&mut s, "MasterSupportSkillEffect", Value::Array(rows));
+    let kinds: Vec<i64> = if kinds.is_empty() { (1..=SNAP_SKILLS).collect() } else { kinds.to_vec() };
+    set_column(&mut s, "MasterSupportCard", &mut |r| {
+        let a = kinds[rng.below(kinds.len() as u64) as usize];
+        let b = if rng.chance(0.6) { kinds[rng.below(kinds.len() as u64) as usize] } else { 0 };
+        r["_supportSkillId01"] = json!(a);
+        r["_supportSkillId02"] = json!(if b == a { 0 } else { b });
+    });
+    set_column(&mut s, "MasterSupportCardRank", &mut |r| {
+        let rank = r["_rank"].as_i64().unwrap();
+        r["_supportSkill01Level"] = json!(rank);
+        r["_supportSkill02Level"] = json!(6 - rank);
+    });
+    s
+}
+
+/// A short synthetic chart with note judgement types (the whole-live simulation plays every frame, so the tests keep
+/// charts short). With `repeat`, one performance position gets a second skill event.
+pub fn short_chart(rng: &mut Rng, notes: usize, repeat: bool) -> (Chart, Vec<i32>) {
+    let types = [1, 20, 21, 40, 120];
+    let mut t = rng.range(0, 300) as i32;
+    let notes: Vec<ChartNote> = (0..notes)
+        .map(|i| {
+            t += rng.range(0, 90) as i32;
+            ChartNote { id: i as i32 + 1, time_ms: t, note_type: types[rng.below(5) as usize] }
+        })
+        .collect();
+    let last = notes.last().map_or(0, |n| n.time_ms);
+    let mut skill_events: Vec<SkillEvent> =
+        (0..5).map(|k| SkillEvent { index: k, time_ms: rng.range(0, last as i64) as i32 }).collect();
+    if repeat {
+        skill_events.push(SkillEvent { index: rng.range(0, 4) as i32, time_ms: rng.range(0, last as i64) as i32 });
+    }
+    let jt = notes.iter().map(|_| if rng.chance(0.8) { 1 } else { 2 }).collect();
+    (Chart { converted_note_count: notes.len().max(1) as i32, last_timing_note_ms: last, notes, skill_events }, jt)
+}
+
+/// A random judgement stream of a chart: `fps` frames from before the first note to after the last, each judged
+/// note in the frame reaching its chart time or up to two frames later, random judgements (with Misses and Bads that
+/// cost life) and a random seed.
+pub fn random_stream(rng: &mut Rng, chart: &Chart, fps: i64) -> ournotes_deck::live::model::JudgementStream {
+    let last = chart.notes.iter().map(|n| n.time_ms).max().unwrap_or(0) as i64;
+    let end = last + rng.range(200, 1500);
+    let start = -rng.range(0, 100);
+    let frames: Vec<i32> = (0..).map(|k| start + k * 1000 / fps).take_while(|&t| t <= end).map(|t| t as i32).collect();
+    let mut notes: Vec<&ChartNote> =
+        chart.notes.iter().filter(|n| ournotes_deck::live::skip::is_judgement_note(n.note_type)).collect();
+    notes.sort_by_key(|n| (n.time_ms, n.id));
+    let mut judged = Vec::new();
+    for n in notes {
+        let f = frames.partition_point(|&t| t < n.time_ms);
+        let f = (f + rng.below(3) as usize).min(frames.len() - 1);
+        let j = [5, 5, 5, 5, 4, 4, 3, 2, 1, 6][rng.below(10) as usize];
+        judged.push([f as i32, n.id, j, n.time_ms + rng.range(-30, 30) as i32]);
+    }
+    judged.sort_by_key(|r| r[0]);
+    ournotes_deck::live::model::JudgementStream {
+        frames,
+        judged,
+        base_seed: rng.range(-1000, 1000) as i32,
+        assist: rng.chance(0.2),
+    }
+}
