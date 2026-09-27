@@ -296,6 +296,52 @@ row!(
 );
 
 row!(
+    /// `MasterSupportSkillEffect` (snap skills).
+    SupportSkillEffectRow {
+        id: i64 = "_id",
+        support_skill_id: i64 = "_supportSkillID",
+        level: i64 = "_level",
+        skill_trigger_type: i64 = "_skillTriggerType",
+        skill_trigger_condition_group: i64 = "_skillTriggerConditionGroup",
+        skill_condition_group: i64 = "_skillConditionGroup",
+        skill_release_condition_group: i64 = "_skillReleaseConditionGroup",
+        #[serde(deserialize_with = "null_vec")]
+        skill_target_ids: Vec<i64> = "_skillTargetIDs",
+        skill_effect_type: i64 = "_skillEffectType",
+        #[serde(deserialize_with = "f32_text")]
+        activation_time_second: f32 = "_activationTimeSecond",
+        effect_value: i64 = "_effectValue",
+        max_effect_value: i64 = "_maxEffectValue",
+        effect_limit_count: i64 = "_effectLimitCount",
+        skill_cumulative_condition_id: i64 = "_skillCumulativeConditionID",
+        effect_execute_limit_count: i64 = "_effectExecuteLimitCount",
+        effect_execute_limit_reset_condition_group: i64 = "_effectExecuteLimitResetConditionGroup",
+    }
+);
+
+row!(
+    /// `MasterSkillEffectSetting` (the update phase of each effect type).
+    SkillEffectSettingRow {
+        id: i64 = "_id",
+        skill_effect_type: i64 = "_skillEffectType",
+        phase: i64 = "_phase",
+    }
+);
+
+row!(
+    /// `MasterLiveJudgementTiming` (judgement windows per note judgement type).
+    LiveJudgementTimingRow {
+        id: i64 = "_id",
+        assist_level: i64 = "_assistLevel",
+        judgement_priority: i64 = "_judgementPriority",
+        note_judgement_type: i64 = "_noteJudgementType",
+        note_simulate_judgement: i64 = "_noteSimulateJudgement",
+        before_ms: i64 = "_beforeMs",
+        after_ms: i64 = "_afterMs",
+    }
+);
+
+row!(
     /// `MasterLiveMusic` (the columns the power and score code read).
     LiveMusicRow {
         id: i64 = "_id",
@@ -535,6 +581,9 @@ pub struct Master {
     pub live_music_boost_bonuses: Vec<BoostBonusRow>,
     pub challenge_music_boost_bonuses: Vec<BoostBonusRow>,
     pub live_score_ranks: Vec<LiveScoreRankRow>,
+    pub support_skill_effects: Vec<SupportSkillEffectRow>,
+    pub skill_effect_settings: Vec<SkillEffectSettingRow>,
+    pub live_judgement_timings: Vec<LiveJudgementTimingRow>,
     index: Index,
 }
 
@@ -597,6 +646,9 @@ pub const TABLES: &[&str] = &[
     "MasterLiveMusicBoostBonus",
     "MasterChallengeMusicBoostBonus",
     "MasterLiveScoreRank",
+    "MasterSupportSkillEffect",
+    "MasterSkillEffectSetting",
+    "MasterLiveJudgementTiming",
 ];
 
 fn parse_table<T: DeserializeOwned>(name: &str, text: Option<&str>) -> Result<Vec<T>, Error> {
@@ -670,6 +722,9 @@ impl Master {
                 get("MasterChallengeMusicBoostBonus"),
             )?,
             live_score_ranks: parse_table("MasterLiveScoreRank", get("MasterLiveScoreRank"))?,
+            support_skill_effects: parse_table("MasterSupportSkillEffect", get("MasterSupportSkillEffect"))?,
+            skill_effect_settings: parse_table("MasterSkillEffectSetting", get("MasterSkillEffectSetting"))?,
+            live_judgement_timings: parse_table("MasterLiveJudgementTiming", get("MasterLiveJudgementTiming"))?,
             index: Index::default(),
         };
         m.reindex()?;
