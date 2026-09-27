@@ -11,20 +11,48 @@ Deck power, skip score and live score for BanG Dream! Our Notes, and an exact To
   parameters) and the deck total, with the game's integer and binary32 float arithmetic, including its rounding and
   floor conversions.
 - **Skip score**: the score of a skipped live for a chart.
-- **Live score** (partial): the per-note score, frames, the combo bonus table, the factor commands of live skills
-  and the resulting score of a judgement stream. Snap skills and Gekisou are not modelled yet and are reported as
-  unsupported.
+- **Live score**: the per-note score, frames, the combo bonus table, factor commands, and the whole live frame by
+  frame (`live::full`): judgement conversion, combo, life (recovery, guard, life zero), the score calculator
+  (including the rewind a late judgement causes), and the conditions and effects of live skills and snap skills.
+  Gekisou is not modelled yet and is reported as unsupported.
 - **Event points**: event bonuses, score ranks, boosts and the event-point amount the game client computes. The game
   server decides the awarded amount; this crate reproduces the client's own computation.
 - **Search**: the best K decks for deck power (with or without a song, with or without event parameters), for the
   skip score and for the live score with live skills only, one result per set of five member cards.
 
-## Exactness
+## Correctness
 
-A `Complete` search result is exactly the canonical Top-K over every legal deck; pruning uses only bounds that are
-proven admissible under the game's arithmetic (see [docs/search.md](docs/search.md)). A search that reaches its time
-limit returns `TimedOut` with legal, exactly evaluated decks and no ranking claim. Inputs outside the proven range,
-unknown cards, rules the game would reject and parts of the game that are not modelled are reported as errors.
+Correctness has three layers, and each shows something different.
+
+**Agreement with the game.** Every calculation follows the game client's code function by function. Each unit is
+then checked against the client's own implementation: the client's arm64 native functions run in an emulator on the
+same inputs, and the results are compared bit for bit (floats by their bits, with integer overflow and the paths that
+throw compared too). The checks cover:
+- the deck-power primitives and the slot calculation;
+- note scores, frames and the combo bonus;
+- factor commands and the score calculator's rewind;
+- the conditions and effects of live skills and snap skills;
+- life, combo and judgement;
+- randomness;
+- score ranks and event points.
+
+There are millions of generated inputs, real master rows among them, and 0 mismatches. Deliberately broken variants
+were run alongside, to confirm that the comparison does catch differences. The five-slot sum and the
+bonus builders are integer code; they were not run on their own, and are ported function by function. This crate is
+then compared with that checked model, also with 0 mismatches: more than 50,000 whole-live frame-by-frame scenarios,
+including 1,048 real charts played in full.
+
+**Exact search.** A `Complete` search result is exactly the canonical Top-K over every legal deck. Pruning uses only
+bounds that are proven admissible under the game's arithmetic (proofs in [docs/search.md](docs/search.md)). Search
+results are compared item by item with an independent exhaustive enumeration, which shares no bound, decomposition
+or Top-K code with the search. On real cards and charts, 25,600 requests covering about 450 million decks showed 0
+mismatches. A search that reaches its time limit returns `TimedOut`, with legal and exactly evaluated decks but no
+ranking claim. Inputs outside the proven range, unknown cards, rules the game would reject and parts of the game that
+are not modelled are reported as errors.
+
+**Not yet verified.** How the units combine, frame by frame, into a whole live has not been compared with the game as
+a whole. That needs a recording of a play on a device: the random seed, frame times and each note's judgement.
+Gekisou is not modelled yet.
 
 ## Data
 
