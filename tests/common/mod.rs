@@ -588,5 +588,6 @@ pub fn random_stream(rng: &mut Rng, chart: &Chart, fps: i64) -> ournotes_deck::l
         judged,
         base_seed: rng.range(-1000, 1000) as i32,
         assist: rng.chance(0.2),
+        delta_times: None,
     }
 }

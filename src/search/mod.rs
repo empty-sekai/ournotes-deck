@@ -48,7 +48,7 @@ pub enum Objective {
 }
 
 /// The play a live objective scores.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PlayInput {
     /// Every judged note with its judgement, life and combo; for `exclude_snap_skills`.
     Notes(Play),

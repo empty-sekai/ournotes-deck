@@ -284,8 +284,9 @@ fn stream_json_round_trip() {
     assert_eq!(back, s);
     let play = s.to_live_play().unwrap();
     assert_eq!(play.frames[1].judged.len(), 1);
-    let bad = JudgementStream { frames: vec![5, 3], judged: vec![], base_seed: 0, assist: false };
+    let bad = JudgementStream { frames: vec![5, 3], judged: vec![], base_seed: 0, assist: false, delta_times: None };
     assert!(matches!(bad.to_live_play(), Err(Error::Input(_))));
-    let bad = JudgementStream { frames: vec![0], judged: vec![[1, 1, 5, 0]], base_seed: 0, assist: false };
+    let bad =
+        JudgementStream { frames: vec![0], judged: vec![[1, 1, 5, 0]], base_seed: 0, assist: false, delta_times: None };
     assert!(matches!(bad.to_live_play(), Err(Error::Input(_))));
 }

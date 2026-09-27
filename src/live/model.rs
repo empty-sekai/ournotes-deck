@@ -9,10 +9,12 @@
 //! [`JudgementStream`] is the input of the whole-live simulation ([`crate::live::full`]): the frames of a play and
 //! the notes judged in each; life, combo and skills then follow from the simulation.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
-use crate::live::full::{JudgedNote, LivePlay, PlayFrame};
+use crate::live::full::{GekisouSetup, JudgedNote, LivePlay, PlayFrame};
 use crate::live::score::{
     COMBO, ComboTable, LiveScoreCalculator, LiveScoreSettings, PERFECT, get_frame, get_luck_factor_percent,
 };
@@ -88,6 +90,15 @@ impl Play {
 pub const THEORETICAL_FPS: i64 = 60;
 /// How long [`JudgementStream::theoretical_best`] keeps playing after the last judged note and the last skill event.
 pub const THEORETICAL_TAIL_MS: i32 = 2000;
+/// Frame delta time in seconds of the default plays, and of a judgement stream without `deltaTimes`.
+pub const THEORETICAL_DT: f32 = 1.0 / 60.0;
+
+/// Judgement of the Just result.
+const SIMULATE_JUST: i32 = 6;
+/// The Gekisou mission that counts Just judgements.
+const MISSION_JUST_COUNT: i64 = 3;
+/// A live has at most three Gekisou ranges.
+const MAX_FEVERS: usize = 3;
 
 /// A judgement stream: the frames of a play, the notes judged in each frame, the live's random seed and the assist
 /// flag. It is the play of the whole-live simulation; life, combo and skills follow from the simulation.
@@ -102,8 +113,10 @@ pub const THEORETICAL_TAIL_MS: i32 = 2000;
 /// `[frame, noteId, judgement, judgementTimeMs]`: the note is judged in frame `frames[frame]` with the note judgement
 /// before skill conversion (`NoteSimulateJudgement`: 1 Miss, 2 Bad, 3 Good, 4 Great, 5 Perfect, 6 Just) at the given
 /// judgement time; the rows of one frame are judged in the order they appear. `baseSeed` (default 0) seeds the
-/// live's random streams; `assist` (default false) scales every note by the assist percentage.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// live's random streams; `assist` (default false) scales every note by the assist percentage. The optional
+/// `deltaTimes` holds the delta time in seconds of each frame (default [`THEORETICAL_DT`] for every frame); only a
+/// live with Gekisou reads it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JudgementStream {
     pub frames: Vec<i32>,
@@ -113,6 +126,83 @@ pub struct JudgementStream {
     pub base_seed: i32,
     #[serde(default)]
     pub assist: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta_times: Option<Vec<f32>>,
+}
+
+/// When a live with Gekisou enables the Just judgement, and for which notes. Every fever is one Gekisou range; the
+/// Just judgement is enabled while a range with the Just-count mission is playing: from the first frame whose time
+/// reaches the fever's start (the fever turns on) up to, not including, the first later frame whose time reaches the
+/// fever's end (the fever turns off). A note can be judged Just only when its note judgement type has a Just timing
+/// row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JustRule {
+    types: HashSet<i32>,
+    /// Every fever `(start, end)` in chart order, and whether its range counts Just judgements.
+    fevers: Vec<(i32, i32, bool)>,
+}
+
+impl JustRule {
+    /// The rule of a live: the Just timing rows of the master and the song's fevers and missions.
+    pub fn new(master: &Master, setup: &GekisouSetup) -> Result<JustRule, Error> {
+        if setup.fevers.len() > MAX_FEVERS {
+            return Err(Error::Unsupported("more than three fevers".into()));
+        }
+        let mut fevers = Vec::with_capacity(setup.fevers.len());
+        for (i, &(start, end)) in setup.fevers.iter().enumerate() {
+            let m = *setup.missions.get(i).ok_or_else(|| Error::Input("fewer missions than fevers".into()))?;
+            fevers.push((start, end, m == MISSION_JUST_COUNT));
+        }
+        let types = master
+            .live_judgement_timings
+            .iter()
+            .filter(|r| r.note_simulate_judgement == SIMULATE_JUST as i64)
+            .map(|r| r.note_judgement_type as i32)
+            .collect();
+        Ok(JustRule { types, fevers })
+    }
+
+    /// Frame index windows `[first, last)` in which the Just judgement is enabled, for a play with these frame times.
+    pub fn windows(&self, frames: &[i32]) -> Vec<(usize, usize)> {
+        self.fevers
+            .iter()
+            .filter(|f| f.2)
+            .filter_map(|&(start, end, _)| {
+                let first = frames.iter().position(|&t| t >= start)?;
+                let last = frames[first + 1..].iter().position(|&t| t >= end).map_or(frames.len(), |p| first + 1 + p);
+                Some((first, last))
+            })
+            .collect()
+    }
+
+    /// Whether a note judgement type has a Just timing row.
+    pub fn allows(&self, judgement_type: i32) -> bool {
+        self.types.contains(&judgement_type)
+    }
+
+    /// The latest fever end (0 without fevers).
+    fn last_fever_end(&self) -> i32 {
+        self.fevers.iter().map(|f| f.1).fold(0, i32::max)
+    }
+}
+
+fn in_windows(windows: &[(usize, usize)], frame: usize) -> bool {
+    windows.iter().any(|&(first, last)| first <= frame && frame < last)
+}
+
+/// Frame times at [`THEORETICAL_FPS`] from 0 up to `end` ms.
+fn theoretical_frames(end: i64) -> Vec<i32> {
+    let mut frames = Vec::new();
+    let mut k = 0i64;
+    loop {
+        let t = k * 1000 / THEORETICAL_FPS;
+        if t > end {
+            break;
+        }
+        frames.push(t as i32);
+        k += 1;
+    }
+    frames
 }
 
 impl JudgementStream {
@@ -126,17 +216,7 @@ impl JudgementStream {
         judged.sort_by_key(|n| (n.time_ms, n.id));
         let last =
             judged.iter().map(|n| n.time_ms).chain(chart.skill_events.iter().map(|e| e.time_ms)).fold(0i32, i32::max);
-        let end = last as i64 + THEORETICAL_TAIL_MS as i64;
-        let mut frames = Vec::new();
-        let mut k = 0i64;
-        loop {
-            let t = k * 1000 / THEORETICAL_FPS;
-            if t > end {
-                break;
-            }
-            frames.push(t as i32);
-            k += 1;
-        }
+        let frames = theoretical_frames(last as i64 + THEORETICAL_TAIL_MS as i64);
         let rows = judged
             .iter()
             .map(|n| {
@@ -144,7 +224,98 @@ impl JudgementStream {
                 [f as i32, n.id, SIMULATE_PERFECT as i32, n.time_ms]
             })
             .collect();
-        JudgementStream { frames, judged: rows, base_seed: 0, assist: false }
+        JudgementStream { frames, judged: rows, base_seed: 0, assist: false, delta_times: None }
+    }
+
+    /// The default play ("theoretical best") of a live with Gekisou on, at [`THEORETICAL_FPS`] with delta time
+    /// [`THEORETICAL_DT`]: frame `k` is at `floor(k * 1000 / 60)` ms while that time is at most `T + 2000`, with `T` the
+    /// latest time of a judged note, a skill event or a fever end (0 when earlier), so that every Gekisou range
+    /// completes. Every judged note is judged in the first frame whose time reaches its chart time, with the chart time
+    /// as its judgement time, in the order (chart time, note id) within a frame. A note is judged Just when the rule
+    /// allows its judgement type and the Just judgement is enabled in its frame ([`JustRule`]), else Perfect; the
+    /// random seed is 0. `judgement_types[i]` is the note judgement type of `chart.notes[i]`.
+    pub fn theoretical_best_gekisou(
+        chart: &Chart,
+        judgement_types: &[i32],
+        rule: &JustRule,
+    ) -> Result<JudgementStream, Error> {
+        check_types(chart, judgement_types)?;
+        let mut judged: Vec<_> =
+            chart.notes.iter().zip(judgement_types).filter(|(n, _)| is_judgement_note(n.note_type)).collect();
+        judged.sort_by_key(|(n, _)| (n.time_ms, n.id));
+        let last = judged
+            .iter()
+            .map(|(n, _)| n.time_ms)
+            .chain(chart.skill_events.iter().map(|e| e.time_ms))
+            .fold(rule.last_fever_end().max(0), i32::max);
+        let frames = theoretical_frames(last as i64 + THEORETICAL_TAIL_MS as i64);
+        let windows = rule.windows(&frames);
+        let rows = judged
+            .iter()
+            .map(|&(n, &jt)| {
+                let f = frames.partition_point(|&t| t < n.time_ms);
+                let j =
+                    if rule.allows(jt) && in_windows(&windows, f) { SIMULATE_JUST } else { SIMULATE_PERFECT as i32 };
+                [f as i32, n.id, j, n.time_ms]
+            })
+            .collect();
+        Ok(JudgementStream { frames, judged: rows, base_seed: 0, assist: false, delta_times: None })
+    }
+
+    /// The delta time in seconds of every frame: `deltaTimes`, or [`THEORETICAL_DT`] for every frame without it. An
+    /// Input error when the lengths differ or a delta time is negative or not finite.
+    pub fn delta_times(&self) -> Result<Vec<f32>, Error> {
+        match &self.delta_times {
+            None => Ok(vec![THEORETICAL_DT; self.frames.len()]),
+            Some(d) => {
+                if d.len() != self.frames.len() {
+                    return Err(Error::Input(format!(
+                        "judgement stream: {} delta times for {} frames",
+                        d.len(),
+                        self.frames.len()
+                    )));
+                }
+                if d.iter().any(|x| !x.is_finite() || *x < 0.0) {
+                    return Err(Error::Input("judgement stream: a delta time is negative or not finite".into()));
+                }
+                Ok(d.clone())
+            }
+        }
+    }
+
+    /// Checks every raw Just of the stream against a live with Gekisou: an Input error when a Just is given to a note
+    /// whose judgement type has no Just timing row, or in a frame where the Just judgement is not enabled.
+    /// `judgement_types[i]` is the note judgement type of `chart.notes[i]`.
+    pub fn check_just(&self, chart: &Chart, judgement_types: &[i32], rule: &JustRule) -> Result<(), Error> {
+        check_types(chart, judgement_types)?;
+        let windows = rule.windows(&self.frames);
+        for r in &self.judged {
+            let [f, note_id, judgement, _] = *r;
+            if judgement != SIMULATE_JUST {
+                continue;
+            }
+            let frame = usize::try_from(f)
+                .ok()
+                .filter(|&i| i < self.frames.len())
+                .ok_or_else(|| Error::Input(format!("judgement stream: frame {f} out of range")))?;
+            let jt = chart
+                .notes
+                .iter()
+                .position(|n| n.id == note_id)
+                .map(|i| judgement_types[i])
+                .ok_or_else(|| Error::Input(format!("judgement stream: unknown note {note_id}")))?;
+            if !rule.allows(jt) {
+                return Err(Error::Input(format!(
+                    "judgement stream: Just for note {note_id}, whose judgement type {jt} has no Just judgement"
+                )));
+            }
+            if !in_windows(&windows, frame) {
+                return Err(Error::Input(format!(
+                    "judgement stream: Just for note {note_id} in frame {f}, where the Just judgement is not enabled"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Checks the stream (frame indexes in range, non-decreasing frame times, judgements 1..=6) and builds the play
@@ -168,6 +339,17 @@ impl JudgementStream {
         }
         Ok(LivePlay { frames, base_seed: self.base_seed })
     }
+}
+
+fn check_types(chart: &Chart, judgement_types: &[i32]) -> Result<(), Error> {
+    if judgement_types.len() != chart.notes.len() {
+        return Err(Error::Input(format!(
+            "{} note judgement types for {} chart notes",
+            judgement_types.len(),
+            chart.notes.len()
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug)]

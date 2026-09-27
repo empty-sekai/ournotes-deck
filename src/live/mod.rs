@@ -4,5 +4,6 @@ pub mod full;
 pub mod model;
 pub mod random;
 pub mod score;
+pub mod seeds;
 pub mod skill;
 pub mod skip;

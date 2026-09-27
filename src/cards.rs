@@ -227,6 +227,8 @@ pub struct SnapView {
     /// Levels of the two support skills at the snap's rank (`None` when the rank has no row).
     pub support_skill_levels: Option<[i64; 2]>,
     pub gekisou_support_skill_ids: [i64; 2],
+    /// Levels of the two Gekisou support skills at the snap's rank (`None` when the rank has no row).
+    pub gekisou_support_skill_levels: Option<[i64; 2]>,
 }
 
 impl SnapView {
@@ -252,6 +254,8 @@ impl SnapView {
             support_skill_ids: [row.support_skill_id_01, row.support_skill_id_02],
             support_skill_levels: rank_row.map(|r| [r.support_skill_01_level, r.support_skill_02_level]),
             gekisou_support_skill_ids: [row.gekisou_support_skill_id_01, row.gekisou_support_skill_id_02],
+            gekisou_support_skill_levels: rank_row
+                .map(|r| [r.gekisou_support_skill_01_level, r.gekisou_support_skill_02_level]),
         })
     }
 
@@ -264,6 +268,19 @@ impl SnapView {
         let levels = self
             .support_skill_levels
             .ok_or_else(|| Error::Input(format!("snap {}: no rank row for its support skill levels", self.id)))?;
+        Ok(ids.iter().zip(levels).filter(|(id, _)| **id != 0).map(|(&id, lv)| (id, lv)).collect())
+    }
+
+    /// The Gekisou support skills `(id, level)` the snap brings to a live with Gekisou, in order (skill id 0 is no
+    /// skill). The live only runs them for a member with a Gekisou skill.
+    pub fn gekisou_support_skills(&self) -> Result<Vec<(i64, i64)>, Error> {
+        let ids = self.gekisou_support_skill_ids;
+        if ids.iter().all(|&id| id == 0) {
+            return Ok(Vec::new());
+        }
+        let levels = self.gekisou_support_skill_levels.ok_or_else(|| {
+            Error::Input(format!("snap {}: no rank row for its Gekisou support skill levels", self.id))
+        })?;
         Ok(ids.iter().zip(levels).filter(|(id, _)| **id != 0).map(|(&id, lv)| (id, lv)).collect())
     }
 
