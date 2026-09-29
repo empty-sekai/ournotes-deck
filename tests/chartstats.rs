@@ -66,11 +66,20 @@ fn chart_json_fevers(score_id: i64, n: i32, rng: &mut common::Rng, fevers: &[(i3
     )
 }
 
-/// The synthetic master; with `extra`, also live skill 4 (2000 on the confirmed rank, condition 7012) and 5 (2000
-/// on a Gekisou combo, condition 7005), one level each.
-fn document_with(charts: Vec<Value>, full_combo: i64, extra: bool) -> Value {
+/// The judged notes of a chart (its full combo).
+fn judged_of(chart: &Value) -> i64 {
+    let ops = chart["notes"]["op"].as_array().unwrap();
+    ops.iter().filter(|o| ![0, 80, 82, 100, 103, 121, 122, 123].contains(&o.as_i64().unwrap())).count() as i64
+}
+
+/// The synthetic master and these charts; with `extra`, also live skill 4 (2000 on the confirmed rank, condition
+/// 7012) and 5 (2000 on a Gekisou combo, condition 7005), one level each.
+fn document_with(charts: Vec<Value>, extra: bool) -> Value {
     let mut rng = common::Rng::new(7);
-    let mut s = common::synth(&mut rng, 12, 4);
+    document_from(charts, extra, common::synth(&mut rng, 12, 4))
+}
+
+fn document_from(charts: Vec<Value>, extra: bool, mut s: common::Synth) -> Value {
     if extra {
         let mut push = |table: &str, rows: Value| {
             let t = s.tables.iter_mut().find(|(n, _)| n == table).unwrap();
@@ -98,10 +107,14 @@ fn document_with(charts: Vec<Value>, full_combo: i64, extra: bool) -> Value {
     for (name, rows) in &s.tables {
         master.insert(name.clone(), columns(rows));
     }
-    master.insert(
-        "MasterLiveMusicScore".into(),
-        columns(&json!([{"_id": 1004, "_musicScoreTextFileName": "x", "_musicScoreLevel": 24, "_fullComboCount": full_combo}])),
-    );
+    let scores: Vec<Value> = charts
+        .iter()
+        .map(|c| {
+            json!({"_id": c["scoreId"], "_musicScoreTextFileName": "x", "_musicScoreLevel": 24,
+                   "_fullComboCount": judged_of(c)})
+        })
+        .collect();
+    master.insert("MasterLiveMusicScore".into(), columns(&Value::Array(scores)));
     master.insert(
         "MasterLiveComboScoreBonus".into(),
         columns(&json!([{"_id": 1, "_comboBonusType": 0, "_requiredComboCount": 10, "_bonusFactor": 0.01},
@@ -176,9 +189,7 @@ fn data_fevers(n: i32, fevers: &[(i32, i32)]) -> (DeckData, i32) {
 fn data_with(n: i32, fevers: &[(i32, i32)], extra: bool) -> (DeckData, i32) {
     let mut rng = common::Rng::new(11);
     let (chart, last) = chart_json_fevers(1004, n, &mut rng, fevers);
-    let ops = chart["notes"]["op"].as_array().unwrap();
-    let judged = ops.iter().filter(|o| ![0, 80, 82, 100, 103, 121, 122, 123].contains(&o.as_i64().unwrap())).count();
-    (DeckData::from_json(&document_with(vec![chart], judged as i64, extra).to_string()).unwrap(), last)
+    (DeckData::from_json(&document_with(vec![chart], extra).to_string()).unwrap(), last)
 }
 
 const FEVERS: [(i32, i32); 3] = [(8000, 16000), (24000, 32000), (42000, 50000)];
@@ -238,6 +249,10 @@ fn measured_weights_predict_whole_live_simulations() {
             if i != 1 {
                 assert_eq!(r.lot_results, [0; 4]);
             }
+            // the luck points (the luck mission's rank figure) come from the lottery alone without skills: 5 per
+            // Hit, 10 per Super Hit or Critical
+            let [_, hit, super_hit, critical] = r.lot_results;
+            assert_eq!(r.luck_points, 5 * hit + 10 * (super_hit + critical), "range {i}");
         }
         assert_eq!((seed.ranges[0].just_count, seed.ranges[1].just_count), (0, 0));
         assert_eq!(seed.ranges[2].just_count, s.just_notes);
@@ -254,6 +269,7 @@ fn measured_weights_predict_whole_live_simulations() {
         assert!(seed.weights[0].iter().all(|&w| w > 0.0), "{:?}", seed.weights[0]);
     }
     assert!(s.seeds[0].ranges[1].lot_results.iter().sum::<i32>() > 0);
+    assert!(s.seeds.iter().all(|x| x.ranges[1].luck_points > 0 && x.ranges[0].luck_points == 0));
 
     // real decks: the master's live skills 1 (2000) and 2 (2004) at their levels, simulated directly
     let chart = d.chart(1004).unwrap();
@@ -337,6 +353,26 @@ fn a_chart_without_luck_ranges_has_one_seed() {
     }
 }
 
+/// A combo range alone: nothing is drawn, so one seed; no Just-count range, so the Perfect play is the play; no luck
+/// range, so no luck point and no lottery result.
+#[test]
+fn a_combo_range_alone_has_one_seed_without_just_or_luck() {
+    let (d, _) = data_fevers(400, &FEVERS[..1]);
+    let kinds = chartstats::kinds(&d.master);
+    let s = chartstats::chart_stats(&d.master, &d.charts[0], &kinds, 8).unwrap();
+    assert_eq!((s.ranges.len(), s.ranges[0].mission, s.just_notes), (1, 1, 0));
+    assert_eq!(s.seeds.iter().map(|x| x.seed).collect::<Vec<_>>(), [0]);
+    let seed = &s.seeds[0];
+    assert_eq!(seed.score_perfect, seed.score);
+    let r = &seed.ranges[0];
+    assert!(r.range_score > 0 && r.max_combo > 0);
+    assert_eq!((r.range_score_perfect, r.just_count), (r.range_score, 0));
+    assert_eq!((r.luck_points, r.lot_results), (0, [0; 4]));
+    assert!((seed.check.exact as f64 - seed.check.predicted).abs() <= seed.check.bound);
+    let rc = seed.rank_check.as_ref().expect("a rank check");
+    assert!((rc.exact as f64 - rc.predicted).abs() <= rc.bound, "{rc:?}");
+}
+
 #[test]
 fn more_than_three_fevers_cannot_be_played() {
     let fevers = [(8000, 10000), (20000, 22000), (30000, 32000), (40000, 42000)];
@@ -377,7 +413,7 @@ fn skip_coefficient_bounds_the_skip_score() {
 fn document_lists_kinds_and_charts() {
     let (d, _) = data_fevers(80, &FEVERS);
     let v = chartstats::document(&d, Some(2)).unwrap();
-    assert_eq!(v["format"], "ournotes-deck.chart-stats/2");
+    assert_eq!(v["format"], chartstats::FORMAT);
     assert_eq!(v["source"]["region"], "test");
     assert_eq!(v["model"]["power"], POWER);
     assert_eq!(v["kinds"].as_array().unwrap().len(), 4);
@@ -396,6 +432,8 @@ fn document_lists_kinds_and_charts() {
     let rw = seed["rangeWeights"].as_array().unwrap();
     assert_eq!((rw.len(), rw[0].as_array().unwrap().len(), rw[0][0].as_array().unwrap().len()), (4, 5, 3));
     assert_eq!(seed["rankCheck"]["ranks"].as_array().unwrap().len(), 3);
+    // the luck points of every range, with or without a luck mission
+    assert!(seed["ranges"].as_array().unwrap().iter().all(|r| r["luckPoints"].is_i64()));
     let off = c["offSeeds"].as_array().unwrap();
     assert_eq!(off.len(), 1);
     assert_eq!(off[0].as_object().unwrap().keys().collect::<Vec<_>>(), ["check", "score", "seed", "weights"]);
@@ -680,4 +718,558 @@ fn kinds_on_the_rank_or_the_gekisou_state() {
     assert!(off.weights[5].is_none() && off.weights.iter().enumerate().all(|(i, w)| i == 5 || w.is_some()));
     assert!(off.check.deck.iter().flatten().all(|&(ki, _)| ki != 5));
     assert!((off.check.exact as f64 - off.check.predicted).abs() <= off.check.bound);
+}
+
+/// The command line: `--charts` keeps these score ids, `--jobs N` measures N charts at once and writes the same
+/// document as one at a time, the library's; `-o` writes it to a file.
+#[test]
+fn the_command_line_measures_the_charts_it_keeps() {
+    let mut rng = common::Rng::new(11);
+    let charts = vec![
+        chart_json_fevers(1002, 120, &mut rng, &[]).0,
+        chart_json_fevers(1003, 120, &mut rng, &FEVERS[..1]).0,
+        chart_json_fevers(1004, 120, &mut rng, &FEVERS).0,
+    ];
+    let text = document_with(charts, false).to_string();
+    let dir = std::env::temp_dir().join(format!("chart-stats-cli-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("data.json");
+    std::fs::write(&file, &text).unwrap();
+    let run = |extra: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_ournotes-deck"))
+            .arg("chart-stats")
+            .arg("--data")
+            .arg(&file)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+    let doc = |extra: &[&str]| -> Value {
+        let o = run(extra);
+        assert!(o.status.success(), "{extra:?}: {}", String::from_utf8_lossy(&o.stderr));
+        serde_json::from_slice(&o.stdout).unwrap()
+    };
+    let one = doc(&["--seeds", "2"]);
+    assert_eq!(one["format"], chartstats::FORMAT);
+    let ids: Vec<i64> = one["charts"].as_array().unwrap().iter().map(|c| c["scoreId"].as_i64().unwrap()).collect();
+    assert_eq!(ids, [1002, 1003, 1004]);
+    let data = DeckData::from_json(&text).unwrap();
+    let options = chartstats::Options { seeds: 2, ..chartstats::Options::default() };
+    assert_eq!(one, chartstats::document_with(&data, &options).unwrap());
+    assert_eq!(doc(&["--seeds", "2", "--jobs", "2"]), one);
+    // --charts keeps the listed charts in the file's order; unknown ids keep nothing
+    let kept = doc(&["--seeds", "2", "--charts", "1004,1002,999", "--jobs", "3"]);
+    assert_eq!(kept["charts"].as_array().unwrap(), &[one["charts"][0].clone(), one["charts"][2].clone()]);
+    assert!(doc(&["--charts", "999"])["charts"].as_array().unwrap().is_empty());
+    // -o writes the document and prints nothing
+    let out = dir.join("out.json");
+    let o = run(&["--seeds", "2", "--charts", "1003", "-o", out.to_str().unwrap()]);
+    assert!(o.status.success() && o.stdout.is_empty(), "{}", String::from_utf8_lossy(&o.stderr));
+    let written: Value = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    assert_eq!(written["charts"].as_array().unwrap(), &[one["charts"][1].clone()]);
+    // bad values fail
+    for bad in [&["--seeds", "0"][..], &["--jobs", "x"], &["--charts", "a,b"], &["--x"]] {
+        let o = run(bad);
+        assert!(!o.status.success() && o.stdout.is_empty(), "{bad:?}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+// Aptitude fixtures: short charts and synthetic skills, levels and bands only.
+const APT_FEVERS: [(i32, i32); 3] = [(1000, 1800), (2800, 3600), (4600, 5400)];
+
+fn aptitude_json(fevers: &[(i32, i32)]) -> Value {
+    let mut s = common::synth(&mut common::Rng::new(7), 12, 6);
+    common::extend_table(
+        &mut s,
+        "MasterSkillTarget",
+        vec![
+            json!({"_id":55,"_skillTargetType":5,"_gekisouMissionType":1}),
+            json!({"_id":56,"_skillTargetType":5,"_gekisouMissionType":2}),
+            json!({"_id":57,"_skillTargetType":5,"_gekisouMissionType":3}),
+            json!({"_id":58,"_skillTargetType":3,"_bandID":1}),
+            json!({"_id":59,"_skillTargetType":3,"_bandID":2}),
+            json!({"_id":60,"_skillTargetType":4,"_judgement":4}),
+        ],
+    );
+    common::extend_table(
+        &mut s,
+        "MasterSkillCondition",
+        (0..5)
+            .map(|i| {
+                json!({
+                    "_id":80+i,"_conditionType":if i<3 {7010} else {5000},"_conditionValues":[],
+                    "_isPositive":true,"_conditionTargetIDs":[55+i]
+                })
+            })
+            .collect(),
+    );
+    common::extend_table(
+        &mut s,
+        "MasterSkillConditionSet",
+        (0..5)
+            .map(|i| {
+                json!({
+                    "_id":250+i,"_group":250+i,"_conditionIds":[80+i]
+                })
+            })
+            .collect(),
+    );
+    // 1 and 2 have identical highest-level effects, but different level numbers and lower-level effects.
+    let skills =
+        [(1, 1, 3, 12000, 8), (2, 1, 5, 12000, 8), (3, 2, 2, 11001, 30000), (4, 3, 2, 13000, 2), (5, 2, 2, 11002, 17)];
+    common::replace_table(
+        &mut s,
+        "MasterGekisouSkill",
+        skills.iter().map(|&(id, m, _, _, _)| json!({"_id":id,"_gekisouMissionType":m})).collect(),
+    );
+    let mut rows = Vec::new();
+    for &(id, mission, level, ty, value) in &skills {
+        for (lv, v) in [(1, 1), (level, value)] {
+            rows.push(json!({"_id":rows.len()+1,"_gekisouSkillID":id,"_level":lv,
+                "_skillTriggerType":1,"_skillTriggerConditionGroup":249+mission,
+                "_skillEffectType":ty,"_activationTimeSecond":1.2,"_effectValue":v}));
+        }
+    }
+    common::replace_table(&mut s, "MasterGekisouSkillEffect", Value::Array(rows));
+    common::set_column(&mut s, "MasterMemberCard", &mut |r| {
+        r["_gekisouSkillID"] = json!(1 + (r["_id"].as_i64().unwrap() - 1) % 5);
+    });
+    // Support 1 and 2 differ only in band. Rank 5 chooses level 3, NOT the highest effect level 5.
+    common::replace_table(
+        &mut s,
+        "MasterGekisouSupportSkill",
+        (1..=5).map(|id| json!({"_id":id,"_gekisouMissionType":if id==5 {3} else {1}})).collect(),
+    );
+    let mut rows = Vec::new();
+    for id in 1..=5 {
+        for level in [1, 3, 5] {
+            rows.push(json!({"_id":rows.len()+1,"_gekisouSupportSkillID":id,"_level":level,
+                "_skillTriggerType":1,"_skillTriggerConditionGroup":if id==5 {252} else {250},
+                "_skillConditionGroup":if id<=2 {252+id} else {0},
+                "_skillEffectType":match id {1|2=>2000,3=>12004,4=>12006,_=>4004},
+                "_activationTimeSecond":1.2,"_effectValue":if id<=2 {1000*level} else {5},
+                "_effectLimitCount":if id==3 || id==4 {3} else {0},
+                "_skillTargetIDs":if id==3 || id==4 {vec![60]} else {vec![]}}));
+        }
+    }
+    common::replace_table(&mut s, "MasterGekisouSupportSkillEffect", Value::Array(rows));
+    common::set_column(&mut s, "MasterSupportCard", &mut |r| {
+        r["_gekisouSupportSkillId01"] = json!(1 + (r["_id"].as_i64().unwrap() - 1) % 5);
+    });
+    common::set_column(&mut s, "MasterSupportCardRank", &mut |r| {
+        r["_gekisouSupportSkill01Level"] = json!(if r["_rank"] == 5 { 3 } else { 1 });
+    });
+    let chart = json!({"scoreId":1004,"asset":{"key":"synthetic","sha256":"0".repeat(64)},
+        "notes":{"id":(1..=64).collect::<Vec<_>>(),"op":vec![1;64],
+            "judgementType":(1..=64).map(|i|if i%4==0 {21} else {1}).collect::<Vec<_>>(),
+            "timeMs":(1..=64).map(|i|i*100).collect::<Vec<_>>()},
+        "skillEvents":{"timeMs":[900,1200,2700,4500,5400]},
+        "fevers":{"startMs":fevers.iter().map(|f|f.0).collect::<Vec<_>>(),
+            "endMs":fevers.iter().map(|f|f.1).collect::<Vec<_>>()}});
+    document_from(vec![chart], false, s)
+}
+
+fn aptitude_data(fevers: &[(i32, i32)]) -> DeckData {
+    DeckData::from_json(&aptitude_json(fevers).to_string()).unwrap()
+}
+
+fn aptitude_options(max_seeds: usize, cross_seeds: usize) -> chartstats::Options {
+    chartstats::Options { seeds: 4, aptitude: Some(chartstats::AptitudeOptions { max_seeds, cross_seeds }) }
+}
+
+fn shape_for(shapes: &[chartstats::Shape], source: &str, skill: i64) -> usize {
+    shapes.iter().find(|s| s.source == source && s.skills.iter().any(|x| x.id == skill)).unwrap().id
+}
+
+#[test]
+fn aptitude_shapes_deduplicate_effects_and_abstract_bands() {
+    let d = aptitude_data(&APT_FEVERS);
+    let h = chartstats::aptitude_header(&d.master, &chartstats::kinds(&d.master), &Default::default());
+    assert_eq!(h.plain_kind, Some(0));
+    assert_eq!(h.seed_rule.deterministic_test, 4);
+    assert_eq!(h.seed_rule.batches, [32, 64, 128, 256, 512, 1024]);
+    assert_eq!(h.seed_rule.cross_seeds, 64);
+    assert_eq!((h.seed_rule.relative, h.seed_rule.baseline), (0.01, 0.001));
+    assert_eq!(h.shapes.len(), 8);
+    assert_eq!(h.shapes.iter().map(|s| s.id).collect::<Vec<_>>(), (0..8).collect::<Vec<_>>());
+    let member = &h.shapes[shape_for(&h.shapes, "member", 1)];
+    assert_eq!(member.skills.iter().map(|s| (s.id, s.level)).collect::<Vec<_>>(), [(1, 3), (2, 5)]);
+    assert!(!member.band_condition);
+    assert!(member.skills.iter().all(|s| s.member_target_ids.is_none() && s.band_ids.is_none()));
+    let support = &h.shapes[shape_for(&h.shapes, "support", 1)];
+    assert_eq!(support.id, shape_for(&h.shapes, "support", 2));
+    assert!(support.band_condition);
+    assert_eq!(support.skills.iter().map(|s| (s.id, s.level)).collect::<Vec<_>>(), [(1, 3), (2, 3)]);
+    for (i, s) in support.skills.iter().enumerate() {
+        assert_eq!(s.member_target_ids, Some(vec![58 + i as i64]));
+        assert_eq!(s.band_ids, Some(vec![1 + i as i64]));
+    }
+    assert_eq!(support.effects[0].condition[0][0].condition_type, 5000);
+    assert!(support.effects[0].condition[0][0].target_ids.is_none());
+    assert_eq!(support.effects[0].effect_value, 3000);
+    let mut empty = d;
+    empty.charts.clear();
+    let doc = chartstats::document_with(&empty, &aptitude_options(48, 7)).unwrap();
+    assert!(doc["charts"].as_array().unwrap().is_empty());
+    assert_eq!(doc["gekisouAptitude"]["seedRule"]["batches"], json!([32, 48]));
+    assert_eq!(doc["gekisouAptitude"]["shapes"], serde_json::to_value(h.shapes).unwrap());
+}
+
+#[test]
+fn aptitude_variants_gate_missions_measure_bands_and_zero_effects() {
+    let d = aptitude_data(&APT_FEVERS[..1]);
+    let shapes = chartstats::shapes(&d.master);
+    let s =
+        chartstats::chart_stats_with(&d.master, &d.charts[0], &chartstats::kinds(&d.master), &aptitude_options(32, 4))
+            .unwrap();
+    let a = s.gekisou_aptitude.as_ref().unwrap();
+    assert_eq!(a.variants.len(), 5);
+    let keys: Vec<_> = a.variants.iter().map(|v| (v.shape, v.band_match)).collect();
+    let support = shape_for(&shapes, "support", 1);
+    assert_eq!(
+        keys,
+        vec![
+            (shape_for(&shapes, "member", 1), None),
+            (support, Some(true)),
+            (support, Some(false)),
+            (shape_for(&shapes, "support", 3), None),
+            (shape_for(&shapes, "support", 4), None)
+        ]
+    );
+    for v in &a.variants {
+        assert_eq!(shapes[v.shape].mission, 1);
+        assert!(v.deterministic && v.se_target_met);
+        assert_eq!((v.seeds, v.cross_seeds, v.check.seed), (1, 1, 0));
+        assert_eq!(v.score, v.score_perfect);
+        assert_eq!(v.tail, v.tail_perfect);
+        assert_eq!(v.score[1], 0.0);
+        assert_eq!(v.converted, [0.0, 0.0]);
+        assert_eq!(v.ranges[0].luck_points, [0.0, 0.0]);
+        assert!(
+            (v.score[0] - v.tail[0] - v.ranges.iter().map(|r| r.range_score[0] + r.rank_bonus[0]).sum::<f64>()).abs()
+                < 1e-9
+        );
+        assert!((v.check.exact as f64 - v.check.predicted).abs() <= v.check.bound, "{v:?}");
+        assert!(v.check.ranks.iter().all(|r| (1..=5).contains(r)));
+        assert_eq!(v.weights.as_ref().unwrap().len(), 5);
+        assert_eq!(v.range_weights.as_ref().unwrap().len(), 5);
+        if v.band_match == Some(false) || [12004, 12006].contains(&shapes[v.shape].effects[0].effect_type) {
+            assert_eq!(v.score, [0.0, 0.0]);
+            assert_eq!(v.tail, [0.0, 0.0]);
+            assert!(v.weights.as_ref().unwrap().iter().all(|w| *w == [0.0, 0.0]));
+        }
+    }
+    assert!(a.variants.iter().find(|v| v.shape == support && v.band_match == Some(true)).unwrap().score[0] > 0.0);
+    assert_eq!((a.factors[0].just_notes, a.factors[0].perfect_notes, a.factors[0].lotteries), (0, 0, [0.0, 0.0]));
+}
+
+/// Direct engine run, assembling a performer independently of the aptitude implementation.
+fn aptitude_run(
+    d: &DeckData,
+    performer: Option<Performer>,
+    seed: i32,
+    perfect: bool,
+) -> (i32, Vec<full::GekisouRange>) {
+    let chart = d.chart(1004).unwrap();
+    let setup = GekisouSetup { fevers: d.charts[0].fevers.clone(), missions: vec![1, 2, 3] };
+    let rule = JustRule::new(&d.master, &setup).unwrap();
+    let mut stream = JudgementStream::theoretical_best_gekisou(&chart, &d.charts[0].judgement_types, &rule).unwrap();
+    if perfect {
+        for j in &mut stream.judged {
+            if j[2] == 6 {
+                j[2] = 5;
+            }
+        }
+    }
+    let dt = stream.delta_times().unwrap();
+    let mut play = stream.to_live_play().unwrap();
+    play.base_seed = seed;
+    let params = LiveParams {
+        total_power: POWER,
+        music_level: 24,
+        converted_note_count: chart.converted_note_count,
+        music_length_ms: chart.last_timing_note_ms + 1000,
+        score_music_length_ms: None,
+        assist_factor: 1.0,
+        skill_target_music_type: 1,
+    };
+    let mut deck: Vec<_> = performer.into_iter().collect();
+    deck.resize(5, Performer::default());
+    let events: Vec<_> = chart.skill_events.iter().map(|e| (e.index, e.time_ms)).collect();
+    let mut model = full::LiveModel::new_gekisou(&d.master, &deck, &notes_of(d), &events, params, &setup).unwrap();
+    let score = model.run_timed(&play, &dt).unwrap();
+    (score, model.gekisou_ranges())
+}
+
+#[test]
+fn aptitude_support_uses_an_empty_host_and_exact_tail() {
+    let mut d = aptitude_data(&APT_FEVERS[..1]);
+    let kinds = chartstats::kinds(&d.master);
+    let s = chartstats::chart_stats_with(&d.master, &d.charts[0], &kinds, &aptitude_options(32, 4)).unwrap();
+    let shape = shape_for(&chartstats::shapes(&d.master), "support", 1);
+    let v = s
+        .gekisou_aptitude
+        .as_ref()
+        .unwrap()
+        .variants
+        .iter()
+        .find(|v| v.shape == shape && v.band_match == Some(true))
+        .unwrap();
+    // A different synthetic id: the host's identity is irrelevant; its lack of effects is not.
+    d.master.gekisou_skills.push(ournotes_deck::master::SkillRow {
+        id: -999,
+        gekisou_mission_type: 1,
+        ..Default::default()
+    });
+    d.master.reindex().unwrap();
+    let host = Performer {
+        band_id: 1,
+        gekisou_skill: Some((-999, 1)),
+        gekisou_support_skills: vec![(1, 3)],
+        ..Default::default()
+    };
+    let (base, br) = aptitude_run(&d, None, 0, false);
+    let (with, wr) = aptitude_run(&d, Some(host.clone()), 0, false);
+    let rs = |r: &full::GekisouRange| r.end_score - r.start_score;
+    assert_eq!(v.score, [f64::from(with - base), 0.0]);
+    assert_eq!(v.ranges[0].range_score, [f64::from(rs(&wr[0]) - rs(&br[0])), 0.0]);
+    assert_eq!(v.tail[0], f64::from(with - base) - v.ranges[0].range_score[0] - v.ranges[0].rank_bonus[0]);
+    assert!(v.tail[0] > 0.0, "skill lasts beyond the range end");
+    let (without_host, _) = aptitude_run(&d, Some(Performer { gekisou_skill: None, ..host.clone() }), 0, false);
+    assert_eq!(without_host, base, "support is gated off without a member skill");
+    let (real_host, _) = aptitude_run(&d, Some(Performer { gekisou_skill: Some((1, 3)), ..host }), 0, false);
+    assert_ne!(real_host, with, "borrowing a real card contaminates the single-skill measurement");
+}
+
+fn test_mean_se(values: &[f64]) -> [f64; 2] {
+    let n = values.len() as f64;
+    let mean = values.iter().sum::<f64>() / n;
+    [
+        mean,
+        if n == 1.0 { 0.0 } else { (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n * (n - 1.0))).sqrt() },
+    ]
+}
+
+#[test]
+fn aptitude_seed_statistics_match_paired_full_runs() {
+    let d = aptitude_data(&APT_FEVERS);
+    let shapes = chartstats::shapes(&d.master);
+    let options = aptitude_options(64, 4);
+    let s = chartstats::chart_stats_with(&d.master, &d.charts[0], &[], &options).unwrap();
+    let a = s.gekisou_aptitude.as_ref().unwrap();
+    let v = a.variants.iter().find(|v| v.shape == shape_for(&shapes, "member", 3)).unwrap();
+    assert!(!v.deterministic);
+    assert!([32, 64].contains(&v.seeds));
+    assert!(v.weights.is_none() && v.range_weights.is_none());
+    assert!(v.check.deck.iter().all(Option::is_none));
+    let mut scores = Vec::new();
+    let mut bases = Vec::new();
+    let mut tails = Vec::new();
+    for seed in ournotes_deck::live::seeds::published_seeds(v.seeds) {
+        let (base, br) = aptitude_run(&d, None, seed, false);
+        let (with, wr) =
+            aptitude_run(&d, Some(Performer { gekisou_skill: Some((3, 2)), ..Default::default() }), seed, false);
+        scores.push(f64::from(with - base));
+        bases.push(f64::from(base));
+        let range_delta: i32 = wr
+            .iter()
+            .zip(br)
+            .map(|(x, y)| {
+                x.end_score - x.start_score - y.end_score + y.start_score + x.rank_bonus.unwrap_or(0)
+                    - y.rank_bonus.unwrap_or(0)
+            })
+            .sum();
+        tails.push(f64::from(with - base - range_delta));
+    }
+    for (reported, actual) in [(v.score, test_mean_se(&scores)), (v.tail, test_mean_se(&tails))] {
+        for i in 0..2 {
+            assert!((reported[i] - actual[i]).abs() <= 0.000501, "{reported:?} {actual:?}");
+        }
+    }
+    let met = |scores: &[f64], bases: &[f64]| {
+        let [m, se] = test_mean_se(scores);
+        se <= (m.abs() * 0.01).max(test_mean_se(bases)[0] * 0.001)
+    };
+    assert_eq!(v.se_target_met, met(&scores, &bases));
+    if v.seeds == 64 {
+        assert!(!met(&scores[..32], &bases[..32]));
+    }
+    assert!(
+        (v.score[0] - v.tail[0] - v.ranges.iter().map(|r| r.range_score[0] + r.rank_bonus[0]).sum::<f64>()).abs()
+            < 0.004
+    );
+    for v in &a.variants {
+        assert!((v.check.exact as f64 - v.check.predicted).abs() <= v.check.bound);
+        if [13000, 11002, 4004].contains(&shapes[v.shape].effects[0].effect_type) {
+            assert_eq!(v.score, [0.0, 0.0]);
+        }
+        if v.deterministic {
+            assert_eq!((v.seeds, v.se_target_met, v.score[1]), (1, true, 0.0));
+        }
+    }
+    let just = a.variants.iter().find(|v| v.shape == shape_for(&shapes, "member", 4)).unwrap();
+    assert!(just.ranges[2].just_count[0] > 0.0);
+    let points = a.variants.iter().find(|v| v.shape == shape_for(&shapes, "member", 5)).unwrap();
+    assert_eq!(points.ranges[1].luck_points, [17.0, 0.0]);
+    // Factors' lottery moments use the baseline seeds, not the adaptive variant seed count.
+    let lots: Vec<_> = s.seeds.iter().map(|s| s.ranges[1].lot_results.iter().sum::<i32>() as f64).collect();
+    assert_eq!(a.factors[1].lotteries, test_mean_se(&lots));
+    assert_eq!(a.factors[2].judged_notes, a.factors[2].just_notes + a.factors[2].perfect_notes);
+    assert!(a.factors[2].just_notes > 0 && a.factors[2].perfect_notes > 0);
+}
+
+fn assert_keys(v: &Value, keys: &[&str]) {
+    let actual: std::collections::BTreeSet<_> = v.as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(actual, keys.iter().copied().collect());
+}
+
+#[test]
+fn aptitude_document_serialization_and_null_cases() {
+    let d = aptitude_data(&APT_FEVERS[..1]);
+    let options = aptitude_options(32, 4);
+    let v = chartstats::document_with(&d, &options).unwrap();
+    assert_eq!(v["format"], "ournotes-deck.chart-stats/2");
+    assert!(v["model"]["gekisouAptitude"].as_str().is_some_and(|s| !s.contains("  ")));
+    let h = &v["gekisouAptitude"];
+    assert_keys(h, &["plainKind", "host", "seedRule", "shapes"]);
+    assert_keys(&h["seedRule"], &["deterministicTest", "batches", "relative", "baseline", "crossSeeds"]);
+    let shape = &h["shapes"][0];
+    assert_keys(shape, &["id", "source", "mission", "bandCondition", "effects", "skills"]);
+    assert_keys(&shape["skills"][0], &["id", "level", "memberTargetIds", "bandIds"]);
+    assert_keys(
+        &shape["effects"][0],
+        &[
+            "effectType",
+            "triggerType",
+            "activationTimeSecond",
+            "effectValue",
+            "maxEffectValue",
+            "effectLimitCount",
+            "effectExecuteLimitCount",
+            "skillTargetIds",
+            "trigger",
+            "condition",
+            "release",
+            "reset",
+            "cumulative",
+        ],
+    );
+    assert_keys(&shape["effects"][0]["trigger"][0][0], &["type", "values", "positive", "targetIds"]);
+    let a = &v["charts"][0]["gekisouAptitude"];
+    assert_keys(a, &["factors", "variants"]);
+    assert_keys(
+        &a["factors"][0],
+        &["judgedNotes", "justNotes", "perfectNotes", "tailNotes", "comboAtStart", "lotteries"],
+    );
+    let x = &a["variants"][0];
+    assert_keys(
+        x,
+        &[
+            "shape",
+            "bandMatch",
+            "deterministic",
+            "seeds",
+            "seTargetMet",
+            "crossSeeds",
+            "score",
+            "scorePerfect",
+            "tail",
+            "tailPerfect",
+            "converted",
+            "ranges",
+            "weights",
+            "rangeWeights",
+            "check",
+        ],
+    );
+    assert_keys(
+        &x["ranges"][0],
+        &["rangeScore", "rankBonus", "rangeScorePerfect", "maxCombo", "justCount", "luckPoints"],
+    );
+    assert_keys(&x["check"], &["seed", "ranks", "deck", "exact", "predicted", "bound"]);
+    for key in ["score", "scorePerfect", "tail", "tailPerfect", "converted"] {
+        assert_eq!(x[key].as_array().unwrap().len(), 2);
+    }
+    assert!(v["charts"][0].get("gekisou").is_none());
+    let disabled = chartstats::document_with(&d, &chartstats::Options { aptitude: None, ..options }).unwrap();
+    assert_eq!(disabled.get("gekisouAptitude"), Some(&Value::Null));
+    assert_eq!(disabled["charts"][0].get("gekisouAptitude"), Some(&Value::Null));
+    assert_eq!(v["charts"][0]["seeds"], disabled["charts"][0]["seeds"]);
+    assert_eq!(v["charts"][0]["offSeeds"], disabled["charts"][0]["offSeeds"]);
+    for fevers in [vec![], vec![(1000, 1800), (2800, 3600), (4600, 5400), (5800, 6000)]] {
+        let data = aptitude_data(&fevers);
+        let result = chartstats::document_with(&data, &options).unwrap();
+        assert_eq!(result["charts"][0].get("gekisouAptitude"), Some(&Value::Null));
+    }
+    let (plain, _) = data_fevers(40, &FEVERS);
+    let no_skills = chartstats::document_with(&plain, &options).unwrap();
+    assert_eq!(no_skills["charts"][0].get("gekisouAptitude"), Some(&Value::Null));
+}
+
+#[test]
+fn aptitude_rare_probability_is_not_proven_deterministic_by_four_equal_samples() {
+    let mut d = aptitude_data(&APT_FEVERS[..1]);
+    // A 1% score-up on range start: the first four published seeds happen to miss it.
+    d.master.skill_conditions.push(
+        serde_json::from_value(json!({"_id":900,"_conditionType":4011,
+        "_conditionValues":[1],"_conditionTargetIDs":[],"_isPositive":true}))
+        .unwrap(),
+    );
+    d.master
+        .skill_condition_sets
+        .push(serde_json::from_value(json!({"_id":900,"_group":900,"_conditionIds":[80,900]})).unwrap());
+    d.master.gekisou_skill_effects.retain(|r| r.skill_id == 1);
+    d.master.gekisou_support_skill_effects.clear();
+    for r in &mut d.master.gekisou_skill_effects {
+        r.skill_trigger_condition_group = 900;
+        r.skill_effect_type = 2000;
+        r.effect_value = 10000;
+    }
+    d.master.reindex().unwrap();
+    for seed in ournotes_deck::live::seeds::published_seeds(4) {
+        let (base, _) = aptitude_run(&d, None, seed, false);
+        let (with, _) =
+            aptitude_run(&d, Some(Performer { gekisou_skill: Some((1, 3)), ..Default::default() }), seed, false);
+        assert_eq!(with, base, "fixture must have four equal zero increments");
+    }
+    let s = chartstats::chart_stats_with(&d.master, &d.charts[0], &[], &aptitude_options(32, 4)).unwrap();
+    let v = &s.gekisou_aptitude.as_ref().unwrap().variants[0];
+    assert!(!v.deterministic, "four equal samples do not prove a probability condition deterministic");
+    assert_eq!(v.seeds, 32);
+}
+
+#[test]
+fn aptitude_cli_flags_disable_and_bound_measurements() {
+    let dir = std::env::temp_dir().join(format!("aptitude-cli-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("data.json");
+    std::fs::write(&path, aptitude_json(&APT_FEVERS).to_string()).unwrap();
+    let run = |extra: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_ournotes-deck"))
+            .args(["chart-stats", "--data"])
+            .arg(&path)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+    let o = run(&["--no-gekisou-aptitude"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let off: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(off.get("gekisouAptitude"), Some(&Value::Null));
+    assert_eq!(off["charts"][0].get("gekisouAptitude"), Some(&Value::Null));
+    let o = run(&["--aptitude-max-seeds", "32", "--aptitude-cross-seeds", "2"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["gekisouAptitude"]["seedRule"]["batches"], json!([32]));
+    assert_eq!(v["gekisouAptitude"]["seedRule"]["crossSeeds"], 2);
+    for x in v["charts"][0]["gekisouAptitude"]["variants"].as_array().unwrap() {
+        let seeds = x["seeds"].as_u64().unwrap();
+        assert!(seeds == 1 || seeds == 32);
+        assert_eq!(x["crossSeeds"].as_u64().unwrap(), seeds.min(2));
+        assert!(x["check"]["predicted"].is_number());
+    }
+    for args in [["--aptitude-max-seeds", "0"], ["--aptitude-max-seeds", "x"], ["--aptitude-cross-seeds", "x"]] {
+        assert!(!run(&args).status.success());
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }

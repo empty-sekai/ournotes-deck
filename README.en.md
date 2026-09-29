@@ -131,18 +131,23 @@ Constraints: `--leader ID`, `--include ID,...`, `--exclude ID,...`, `--exclude-s
 Chart statistics:
 
 ```sh
-ournotes-deck chart-stats --data deck-data.json [--seeds 8] -o chart-stats.json
+ournotes-deck chart-stats --data deck-data.json [--seeds 8] [--charts ID,...] [--jobs N] -o chart-stats.json
 ```
 
 measures every chart's deck-independent numbers on the whole-live simulation (`ournotes-deck.chart-stats/2`) in
 two scenarios: Gekisou on (`seeds`, as a Battle Live plays) and Gekisou off (`offSeeds`, as a solo live such as Free
-Live or Challenge Live plays).
+Live or Challenge Live plays). `--charts` measures the listed score ids only (in the file's order; ids the file does
+not have are ignored); `--jobs N` measures N charts at once and writes the same document as one at a time. Without
+`-o` the document goes to the standard output.
 
 With Gekisou on, the play is the theoretical best play with Gekisou: every note judged at its time, Just inside the
-Just-count ranges and Perfect elsewhere, rank 1 in every range. Per seed: the exact no-skill score and the Gekisou
-ranges' results, and for every score-up kind of the master (2000 / 2002 / 2004 / 2005 rows grouped by type,
-duration, targets and conditions, see `kinds`) at every performance position the score gained at factor 1 per unit
-of deck power (`weights[kind][k]`). A deck scores about `P × (score / power + Σ factor_k × weights[kind_k][k])`;
+Just-count ranges and Perfect elsewhere, rank 1 in every range. Per seed: the exact no-skill score; the Gekisou
+ranges' results (`ranges`: the range score, the rank 1 bonus, the largest Gekisou combo `maxCombo`, the Just count
+`justCount`, the luck points `luckPoints` and the lottery results `lotResults`; the combo, Just and luck missions
+rank by `maxCombo`, `justCount` and `luckPoints`, and without skills the luck points come from the lottery of the
+luck ranges alone, 0 elsewhere); and for every score-up kind of the master (2000 / 2002 / 2004 / 2005 rows grouped by
+type, duration, targets and conditions, see `kinds`) at every performance position the score gained at factor 1 per
+unit of deck power (`weights[kind][k]`). A deck scores about `P × (score / power + Σ factor_k × weights[kind_k][k])`;
 every seed checks this on a random deck of the master's own values at another power and fails beyond the flooring
 bound. Charts with a luck range are given on the first N published seeds (`--seeds`, default 8), which is not a
 native expectation; a chart with more than three fevers, where the game fails when the fourth starts, is
@@ -161,6 +166,65 @@ seed also gives the no-skill score and range scores of the same play with every 
 With Gekisou off, the play is the theoretical best play (every note Perfect at its time), seed 0, without Just, luck,
 Gekisou combo or rank bonus; `score`, `weights` and a check as above. A kind whose conditions read the Gekisou state
 cannot play without Gekisou and has null weights.
+
+
+### Gekisou skill aptitude
+
+Statistics also include each skill's aptitude for a chart, without selecting a best formation or changing `seeds`
+or `offSeeds`. The file-level `gekisouAptitude` holds shapes and measurement rules; each chart's
+`charts[].gekisouAptitude` holds range `factors` and the `variants` of its missions. It is null for a chart with no
+Gekisou range, one unplayable with Gekisou, or a master without measurable skills. These are additional fields;
+the format remains `ournotes-deck.chart-stats/2`.
+
+```sh
+ournotes-deck chart-stats --data deck-data.json --aptitude-max-seeds 128 --aptitude-cross-seeds 32 -o stats.json
+ournotes-deck chart-stats --data deck-data.json --no-gekisou-aptitude -o baseline.json
+```
+
+- `--aptitude-max-seeds N`: at most N seeds for a random increment, default 1024; stop earlier at the SE target.
+- `--aptitude-cross-seeds N`: at most the first N seeds for ordinary skill cross terms, default 64.
+- `--no-gekisou-aptitude`: skip aptitude measurement; both file-level and per-chart `gekisouAptitude` are null.
+  Existing statistics are still produced.
+
+Shapes deduplicate by source, mission and effect parameters. Member skills use their highest level; support skills
+use the level at the snap's highest rank, not necessarily the highest level in the effect table. Support skills
+that differ only in their band targets share a shape, preserving `skills[].memberTargetIds` / `bandIds`, and are
+measured both with `bandMatch: true` and `false`. Each support skill has a **synthetic, effect-free member Gekisou
+skill** of its own mission as host, never a real card whose effects could contaminate the increment. Each run plays
+one member or support skill alone through the whole-live engine.
+
+`score`, `scorePerfect`, `tail` and range increments are `[mean, standard error of the mean]`: with-skill minus
+without-skill on the same seed, at `model.power`. `tail = Δscore − Σ(ΔrangeScore + ΔrankBonus)` includes gains outside
+the range score frames, such as effects persisting after the range ends. `factors` lists range note counts,
+entering combos and baseline lottery counts. `weights` gives changes in the plain ordinary kind's weight at each
+position; `rangeWeights` gives the corresponding range changes, not full formation weights. Both are null without
+a plain kind. Each variant's `check` uses its first measured seed, random ranks and an ordinary-skill deck at
+another power to validate the linear prediction; exceeding its flooring bound fails the measurement.
+
+Random increments use batches of 32, 64, 128, 256, 512 and 1024 seeds, capped by the option, until Δscore's SE is at
+most `max(1% × |mean increment|, 0.1% × mean no-skill score)`. At the cap, `seTargetMet` reports whether this target
+was met. Deterministic increments report one seed and zero SE; four identical samples alone cannot establish that
+a random skill is deterministic. The seed mean is not the game's expectation: its seed law is unknown, and SE
+does not measure model error. Cross terms can use fewer seeds, reported as `crossSeeds` per variant.
+
+**Model limits:**
+
+- Only `battleLiveScore` changes, not the separately reported `soloScore`; Free Live has no aptitude gain.
+- **Do not add increments of multiple skills.** Gekisou combo saturation, luck gauge/rush interactions and
+  Just-count-dependent support triggers can all break additivity.
+- The theoretical best play has no Great or Miss: combo protection 12004, Great-to-Perfect 12006 and judgement
+  window extension 4004 have zero effect here. Just-count effects 13000/13002 and luck-point effect 11002 can change
+  range indicators without increasing score. Shapes of other missions are gated off and omitted on this chart.
+- Ordinary-skill factors and rank changes use the linear formula, with rank rounding differences checked by
+  `check`. Below 100% Just, interpolation of the no-ordinary-skill increment between Just and Perfect plays is
+  approximate: conversion 13005, per-Just support 2001 and Just-count effect 13002 are nonlinear. Perfect-play
+  cross weights are not measured, so full aptitude with nonzero ordinary skills is unavailable below 100% Just.
+  Scaling by `1 − 0.2q` for Great proportion q is also approximate.
+
+Library callers can use `chart_stats_with` / `document_with` with
+`Options { seeds, aptitude: Some(AptitudeOptions { max_seeds, cross_seeds }) }`; `aptitude: None` disables it.
+A `DeckData` without charts still produces the shape header, also available through
+`aptitude_header(master, kinds, options)`.
 
 ## Tests
 
