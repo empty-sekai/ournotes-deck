@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer};
 
 use crate::error::Error;
 
@@ -30,7 +30,7 @@ fn f32_text<'de, D: Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
 macro_rules! row {
     ($(#[$m:meta])* $name:ident { $($(#[$fm:meta])* $f:ident : $t:ty = $json:literal),* $(,)? }) => {
         $(#[$m])*
-        #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Default, Deserialize)]
         #[serde(default)]
         pub struct $name {
             $($(#[$fm])* #[serde(rename = $json)] pub $f: $t,)*
@@ -208,7 +208,7 @@ row!(
 );
 
 /// `MasterSkillCondition`.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct SkillConditionRow {
     #[serde(rename = "_id", default)]
     pub id: i64,

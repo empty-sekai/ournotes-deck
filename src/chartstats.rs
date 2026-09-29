@@ -47,11 +47,11 @@
 
 use serde::Serialize;
 
-mod gekisou_skills;
+mod aptitude;
 
-pub use gekisou_skills::{
-    Catalog, CatalogMember, CatalogSnap, FormationSlot, GekisouHeader, GekisouRangeResult, GekisouSeed, GekisouStats,
-    SCREEN_SEEDS, Search, SearchOption, SkillLevel, plain_kind,
+pub use aptitude::{
+    AptitudeHeader, AptitudeOptions, ChartAptitude, Condition, Cumulative, Effect, RangeDelta, RangeFactors, SeedRule,
+    Shape, ShapeSkill, Variant, VariantCheck, aptitude_header, shapes,
 };
 
 use crate::data::{DataChart, DeckData};
@@ -67,15 +67,13 @@ use crate::num::ceil_to_i32;
 use crate::scenario::Scenario;
 
 /// Output format name.
-pub const FORMAT: &str = "ournotes-deck.chart-stats/3";
+pub const FORMAT: &str = "ournotes-deck.chart-stats/2";
 /// Deck power of the measurements (a power range of real decks).
 pub const POWER: i32 = 300_000;
 /// Deck power of the check deck.
 pub const CHECK_POWER: i32 = 1_000_003;
 /// Default number of seeds when a chart has a luck range.
 pub const GEKISOU_SEEDS: usize = 8;
-/// Default number of seeds of a luck chart's best formation (`charts[].gekisou.seeds`).
-pub const FORMATION_SEEDS: usize = 32;
 /// The effect value of factor 1 (`value / 10000`).
 pub const UNIT_VALUE: i64 = 10000;
 /// The most fevers a live can play: the game keeps three Gekisou ranges (`LiveMusicScore.GetGekisouRanges`
@@ -441,10 +439,10 @@ pub struct ChartStats {
     /// Why the game cannot play the chart with Gekisou (Gekisou off plays it).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unplayable: Option<String>,
-    /// The best Gekisou skill formation for the default scenario and its measurements ([`GekisouStats`]); `None` when
-    /// the chart is unplayable with Gekisou, has no Gekisou range, the master has no Gekisou skill or the statistics
-    /// leave the Gekisou skills out.
-    pub gekisou: Option<GekisouStats>,
+    /// The chart's aptitude for Gekisou skills: what each Gekisou (support) skill shape adds alone ([`ChartAptitude`]);
+    /// `None` when the chart is unplayable with Gekisou, has no Gekisou range, the master has no Gekisou skill or the
+    /// statistics leave the aptitude out.
+    pub gekisou_aptitude: Option<ChartAptitude>,
 }
 
 /// What the chart statistics measure.
@@ -452,14 +450,13 @@ pub struct ChartStats {
 pub struct Options {
     /// The size of the seed set of a chart with a luck range.
     pub seeds: usize,
-    /// The size of the seed set of a luck chart's best formation (at least `seeds`; its first seeds are the chart's);
-    /// `None`: no Gekisou skills.
-    pub formation_seeds: Option<usize>,
+    /// The aptitude for Gekisou skills; `None`: left out.
+    pub aptitude: Option<AptitudeOptions>,
 }
 
 impl Default for Options {
     fn default() -> Options {
-        Options { seeds: GEKISOU_SEEDS, formation_seeds: Some(FORMATION_SEEDS) }
+        Options { seeds: GEKISOU_SEEDS, aptitude: Some(AptitudeOptions::default()) }
     }
 }
 
@@ -595,6 +592,22 @@ impl Live<'_> {
         seed: i32,
         ranks: Option<&[(i32, i64)]>,
     ) -> Result<(i32, Vec<full::GekisouRange>), Error> {
+        let (score, ranges, _) = self.run_counted(play, master, formation, skills, power, seed, ranks)?;
+        Ok((score, ranges))
+    }
+
+    /// [`Live::run_deck`], also the number of judgements converted by skills.
+    #[allow(clippy::too_many_arguments)]
+    fn run_counted(
+        &self,
+        play: &LivePlay,
+        master: &Master,
+        formation: &[Performer],
+        skills: &[Option<i64>],
+        power: i32,
+        seed: i32,
+        ranks: Option<&[(i32, i64)]>,
+    ) -> Result<(i32, Vec<full::GekisouRange>, u64), Error> {
         let deck: Vec<Performer> = (0..skills.len().max(formation.len()))
             .map(|k| Performer {
                 live_skill: skills.get(k).copied().flatten().map(|id| (id, 1)),
@@ -609,7 +622,8 @@ impl Live<'_> {
                 return Err(Error::Input("ranks without Gekisou".into()));
             }
             let mut lm = full::LiveModel::new(master, &deck, self.notes, self.events, params)?;
-            return Ok((lm.run(&play)?, Vec::new()));
+            let score = lm.run(&play)?;
+            return Ok((score, Vec::new(), lm.converted_judgements()));
         };
         let mut lm = match ranks {
             None => full::LiveModel::new_gekisou(master, &deck, self.notes, self.events, params, &g.setup)?,
@@ -623,7 +637,7 @@ impl Live<'_> {
             }
         };
         let score = lm.run_timed(&play, &g.dt)?;
-        Ok((score, lm.gekisou_ranges()))
+        Ok((score, lm.gekisou_ranges(), lm.converted_judgements()))
     }
 
     /// A master with these skills added, `(live skill id, kind, value)`, one effect row each.
@@ -813,7 +827,7 @@ impl Live<'_> {
 }
 
 /// The statistics of one chart for these kinds; `seeds` is the size of the seed set when a range is a luck range; the
-/// best Gekisou skill formation on [`FORMATION_SEEDS`] seeds.
+/// aptitude for Gekisou skills with the default [`AptitudeOptions`].
 pub fn chart_stats(master: &Master, chart: &DataChart, kinds: &[Kind], seeds: usize) -> Result<ChartStats, Error> {
     chart_stats_with(master, chart, kinds, &Options { seeds, ..Options::default() })
 }
@@ -824,43 +838,6 @@ pub fn chart_stats_with(
     chart: &DataChart,
     kinds: &[Kind],
     options: &Options,
-) -> Result<ChartStats, Error> {
-    chart_stats_inner(master, chart, kinds, options, None)
-}
-
-/// A search probe: `f` gets the chart's formation search (screened on the first [`SCREEN_SEEDS`] of `seeds` seeds)
-/// instead of the chart's Gekisou skill statistics; `None` when the chart has none. Diagnostics, not a stable
-/// interface.
-#[doc(hidden)]
-pub fn search_probe<R>(
-    master: &Master,
-    chart: &DataChart,
-    kinds: &[Kind],
-    seeds: usize,
-    f: impl FnOnce(&mut Search<'_, '_>) -> Result<R, Error>,
-) -> Result<Option<R>, Error> {
-    let mut f = Some(f);
-    let mut out = None;
-    let mut hook = |s: &mut Search<'_, '_>| -> Result<(), Error> {
-        if let Some(f) = f.take() {
-            out = Some(f(s)?);
-        }
-        Ok(())
-    };
-    let options = Options { seeds, formation_seeds: Some(seeds) };
-    chart_stats_inner(master, chart, kinds, &options, Some(&mut hook))?;
-    Ok(out)
-}
-
-/// A hook that gets a chart's formation search.
-type SearchHook<'h> = &'h mut dyn FnMut(&mut Search<'_, '_>) -> Result<(), Error>;
-
-fn chart_stats_inner(
-    master: &Master,
-    chart: &DataChart,
-    kinds: &[Kind],
-    options: &Options,
-    probe: Option<SearchHook<'_>>,
 ) -> Result<ChartStats, Error> {
     let seeds = options.seeds;
     let settings = LiveScoreSettings::from_master(master)?;
@@ -923,7 +900,7 @@ fn chart_stats_inner(
         seeds: Vec::new(),
         off_seeds: Vec::new(),
         unplayable: None,
-        gekisou: None,
+        gekisou_aptitude: None,
     };
     let notes: Vec<LiveNote> = c
         .notes
@@ -1001,30 +978,18 @@ fn chart_stats_inner(
         out.seeds.push(s);
     }
 
-    // the best Gekisou skill formation
-    if let Some(n) = options.formation_seeds {
-        let catalog = Catalog::new(master);
-        if catalog.has_skills() && !out.ranges.is_empty() {
-            let gk_seeds = if luck { published_seeds(n.max(seeds).max(1)) } else { vec![0] };
-            let inputs = gekisou_skills::GkInputs {
-                seeds: &out.seeds,
-                gk_seeds: &gk_seeds,
-                linear,
-                score_id: chart.score_id,
-                judged,
-            };
-            match probe {
-                Some(hook) => hook(&mut gekisou_skills::search(&live, kinds, &out.ranges, &catalog, &out.seeds)?)?,
-                None => {
-                    out.gekisou = Some(gekisou_skills::gekisou_stats(&live, kinds, &out.ranges, &catalog, &inputs)?)
-                }
-            }
+    // the aptitude for Gekisou skills
+    if let Some(a) = &options.aptitude {
+        let shapes = shapes(master);
+        if !shapes.is_empty() && !out.ranges.is_empty() {
+            let inputs = aptitude::Inputs { seeds: &out.seeds, linear, score_id: chart.score_id, judged, options: a };
+            out.gekisou_aptitude = Some(aptitude::chart_aptitude(&live, kinds, &out.ranges, &shapes, &inputs)?);
         }
     }
     Ok(out)
 }
 
-/// The statistics of every chart of a deck data file (score id order) as the `ournotes-deck.chart-stats/3` document;
+/// The statistics of every chart of a deck data file (score id order) as the `ournotes-deck.chart-stats/2` document;
 /// `seeds` is the size of the seed set of charts with a luck range (default [`GEKISOU_SEEDS`]).
 pub fn document(data: &DeckData, seeds: Option<usize>) -> Result<serde_json::Value, Error> {
     document_with(data, &Options { seeds: seeds.unwrap_or(GEKISOU_SEEDS), ..Options::default() })
@@ -1032,7 +997,7 @@ pub fn document(data: &DeckData, seeds: Option<usize>) -> Result<serde_json::Val
 
 /// [`document`] with these options.
 pub fn document_with(data: &DeckData, options: &Options) -> Result<serde_json::Value, Error> {
-    if options.seeds == 0 || options.formation_seeds == Some(0) {
+    if options.seeds == 0 || options.aptitude.as_ref().is_some_and(|a| a.max_seeds == 0) {
         return Err(Error::Input("an empty seed set".into()));
     }
     let kinds = kinds(&data.master);
@@ -1071,9 +1036,9 @@ pub fn document_with(data: &DeckData, options: &Options) -> Result<serde_json::V
             "off": "offSeeds: Gekisou off (no Just, luck, Gekisou combo or rank bonus), theoretical best play (every \
                     note Perfect at its time), seed 0, every chart; the same formula on its score and weights, a \
                     kind whose conditions read the Gekisou state has null weights; checked",
-            "gekisou": "charts[].gekisou: the best Gekisou skill formation for the default scenario (Gekisou on, rank 1                         everywhere, the theoretical best play, the plain kind at factor 1 at every position) and its                         seeds, each shaped as seeds[i] and measured on the whole-live simulation with the formation                         (weights of the plain kind only); checked per seed like seeds[i]; Gekisou skills act in                         Gekisou lives only, never with Gekisou off",
+            "gekisouAptitude": aptitude::MODEL,
         },
-        "gekisouSkills": options.formation_seeds.map(|n| GekisouHeader::new(&kinds, n.max(options.seeds))),
+        "gekisouAptitude": options.aptitude.as_ref().map(|a| aptitude_header(&data.master, &kinds, a)),
         "kinds": kinds,
         "charts": charts,
     }))
