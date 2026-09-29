@@ -148,8 +148,8 @@ ournotes-deck chart-stats --data deck-data.json --aptitude-max-seeds 128 --aptit
 ournotes-deck chart-stats --data deck-data.json --no-gekisou-aptitude -o baseline.json
 ```
 
-- `--aptitude-max-seeds N`：随机增量最多测 N 个种子，默认 1024；标准误足够小时提前停止。
-- `--aptitude-cross-seeds N`：普通技能交叉项最多测前 N 个种子，默认 64。
+- `--aptitude-max-seeds N`：随机增量最多测 N 个种子，默认 1024，N 至少为 2；标准误足够小时提前停止。
+- `--aptitude-cross-seeds N`：普通技能交叉项最多测前 N 个种子，默认 64，N 至少为 1。
 - `--no-gekisou-aptitude`：跳过适性测量，文件级和每谱的 `gekisouAptitude` 都为 null，原有统计照常输出。
 
 形状按来源、任务与效果参数去重。成员技能取该技能的最高等级；小卡技能取最高突破对应的等级，不直接取效果表最高等级。
@@ -165,7 +165,7 @@ ournotes-deck chart-stats --data deck-data.json --no-gekisou-aptitude -o baselin
 随机增量按 32、64、128、256、512、1024 个种子逐级测量（受最大种子参数限制），当 Δscore 的标准误不超过
 `max(增量均值绝对值 × 1%, 无技能总分均值 × 0.1%)` 时停止；到上限仍不满足则 `seTargetMet: false`。确定性增量报一个
 种子、标准误 0；四个种子恰好相等本身不能证明随机技能是确定性的。种子均值不是游戏的期望，真实种子分布未知，标准误也
-不表示模型误差。交叉项可能使用更少种子，见各变体的 `crossSeeds`。
+不表示模型误差。交叉项可能使用更少种子，见各变体的 `crossSeeds`；无普通 kind 时该值为 0。达到标准误目标可能只是满足基线 0.1%的绝对目标，不代表达到增量 1%的相对精度，也不能据小增量均值的正负断言技能一定有益或有害。
 
 **模型边界：**
 

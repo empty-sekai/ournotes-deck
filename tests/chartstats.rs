@@ -1268,8 +1268,73 @@ fn aptitude_cli_flags_disable_and_bound_measurements() {
         assert_eq!(x["crossSeeds"].as_u64().unwrap(), seeds.min(2));
         assert!(x["check"]["predicted"].is_number());
     }
-    for args in [["--aptitude-max-seeds", "0"], ["--aptitude-max-seeds", "x"], ["--aptitude-cross-seeds", "x"]] {
+    for args in [
+        ["--aptitude-max-seeds", "0"],
+        ["--aptitude-max-seeds", "1"],
+        ["--aptitude-max-seeds", "x"],
+        ["--aptitude-cross-seeds", "0"],
+        ["--aptitude-cross-seeds", "x"],
+    ] {
         assert!(!run(&args).status.success());
     }
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn aptitude_rejects_empty_sampling_at_both_library_entry_points() {
+    let d = aptitude_data(&APT_FEVERS[..1]);
+    let kinds = chartstats::kinds(&d.master);
+    for options in [
+        aptitude_options(32, 0),
+        aptitude_options(0, 4),
+        aptitude_options(1, 4),
+        chartstats::Options { seeds: 0, ..aptitude_options(32, 4) },
+    ] {
+        assert!(chartstats::document_with(&d, &options).is_err(), "{options:?}");
+        assert!(chartstats::chart_stats_with(&d.master, &d.charts[0], &kinds, &options).is_err(), "{options:?}");
+        let mut empty = d.clone();
+        empty.charts.clear();
+        assert!(chartstats::document_with(&empty, &options).is_err(), "empty file: {options:?}");
+    }
+}
+
+#[test]
+fn aptitude_without_plain_kind_has_no_cross_terms() {
+    let d = aptitude_data(&APT_FEVERS[..1]);
+    let s = chartstats::chart_stats_with(&d.master, &d.charts[0], &[], &aptitude_options(32, 4)).unwrap();
+    for v in &s.gekisou_aptitude.as_ref().unwrap().variants {
+        assert!(v.weights.is_none() && v.range_weights.is_none());
+        assert_eq!(v.cross_seeds, 0);
+        assert!(v.check.deck.iter().all(Option::is_none));
+        assert!(v.check.predicted.is_finite() && v.check.bound.is_finite() && v.check.bound >= 0.0);
+    }
+}
+
+#[test]
+fn aptitude_cumulative_just_bonus_changes_indicators_not_score() {
+    let mut d = aptitude_data(&APT_FEVERS);
+    d.master.gekisou_skill_effects.retain(|r| r.skill_id == 4);
+    d.master.gekisou_support_skill_effects.clear();
+    d.master.cumulative_conditions.push(
+        serde_json::from_value(json!({"_id":900,
+        "_skillCumulativeConditionType":7000,"_conditionValues":[2],"_conditionTargetIDs":[],
+        "_maxCumulativeCount":100}))
+        .unwrap(),
+    );
+    for r in &mut d.master.gekisou_skill_effects {
+        r.skill_effect_type = 13002;
+        r.skill_cumulative_condition_id = 900;
+        r.effect_value = 1;
+        r.max_effect_value = 100;
+    }
+    d.master.reindex().unwrap();
+    let h = chartstats::aptitude_header(&d.master, &[], &Default::default());
+    let cumulative = serde_json::to_value(&h.shapes[0].effects[0].cumulative).unwrap();
+    assert_keys(&cumulative, &["type", "values", "targetIds", "maxCumulativeCount"]);
+    assert_eq!(cumulative["values"], json!([2]));
+    let s = chartstats::chart_stats_with(&d.master, &d.charts[0], &[], &aptitude_options(32, 4)).unwrap();
+    let v = &s.gekisou_aptitude.as_ref().unwrap().variants[0];
+    assert_eq!(v.score, [0.0, 0.0]);
+    assert_eq!(v.score_perfect, [0.0, 0.0]);
+    assert!(v.ranges[2].just_count[0] > 0.0);
 }
