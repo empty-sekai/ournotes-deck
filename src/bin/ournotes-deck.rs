@@ -18,7 +18,8 @@ const USAGE: &str = "usage:
   ournotes-deck skip  --data FILE --roster FILE --score ID [common options]
   ournotes-deck live  --data FILE --roster FILE --score ID [--exclude-snap-skills] [--play FILE] [--event]
                       [--gekisou (--seeds N | --seed-list S[,S...])] [common options]
-  ournotes-deck chart-stats --data FILE [--seeds N] [-o FILE]
+  ournotes-deck chart-stats --data FILE [--seeds N] [--formation-seeds N | --no-gekisou-skills]
+                      [--charts ID[,ID...]] [--jobs N] [-o FILE]
 --data is a deck data file (nnnotes.deck-data/1). live scores the whole-live simulation with snap skills, where
 --play is a judgement stream; with --exclude-snap-skills it scores live skills only, where --play is a per-note
 play. --play defaults to the theoretical best play. --gekisou plays the live with Gekisou on and ranks by the sum
@@ -30,9 +31,11 @@ conditional items also require --resource-type ID --resource-id ID and context.e
 scenario options: --scenario free|mission|battle|arena|challenge --scenario-music ID --context FILE
 --scenario-music is the special row ID for arena/challenge; --score always denotes the base chart.
 --context uses explicit powerSnapshot.eventIds and separate resultClock normalized DateTime ticks.
-chart-stats measures every chart on the whole-live simulation (ournotes-deck.chart-stats/2): the no-skill score and
+chart-stats measures every chart on the whole-live simulation (ournotes-deck.chart-stats/3): the no-skill score and
 the weight of every score-up kind at every position, with Gekisou on per seed (--seeds N for charts with a luck range,
-default 8; rank 1, range weights for the other ranks, the Perfect play's scores) and with Gekisou off (offSeeds).
+default 8; rank 1, range weights for the other ranks, the Perfect play's scores) and with Gekisou off (offSeeds); and
+each chart's best Gekisou skill formation measured on --formation-seeds N seeds of a luck chart (default 32, the
+first --seeds of them the chart's seeds). --charts keeps only these score ids; --jobs N measures N charts at once.
 common options: -k N (default 10), --leader ID, --include ID[,ID...], --exclude ID[,ID...],
                 --exclude-snaps ID[,ID...], --no-snaps, --time-limit-ms N";
 
@@ -46,6 +49,8 @@ fn read(path: &str) -> Result<String, String> {
 
 fn chart_stats(args: &[String]) -> Result<Option<serde_json::Value>, String> {
     let (mut data, mut seeds, mut out) = (None, None, None);
+    let mut options = ournotes_deck::chartstats::Options::default();
+    let (mut only, mut jobs): (Option<Vec<i64>>, usize) = (None, 1);
     let mut i = 0;
     while i < args.len() {
         let a = args[i].as_str();
@@ -56,14 +61,31 @@ fn chart_stats(args: &[String]) -> Result<Option<serde_json::Value>, String> {
         match a {
             "--data" => data = Some(val()?),
             "--seeds" => seeds = Some(val()?.trim().parse::<usize>().map_err(|_| "bad --seeds".to_string())?),
+            "--formation-seeds" => {
+                let n = val()?.trim().parse::<usize>().map_err(|_| "bad --formation-seeds".to_string())?;
+                options.formation_seeds = Some(n);
+            }
+            "--no-gekisou-skills" => options.formation_seeds = None,
+            "--charts" => only = Some(ids(&val()?)?),
+            "--jobs" => jobs = val()?.trim().parse::<usize>().map_err(|_| "bad --jobs".to_string())?.max(1),
             "-o" | "--out" => out = Some(val()?),
             "-h" | "--help" => return Err(USAGE.into()),
             other => return Err(format!("unknown option {other}\n{USAGE}")),
         }
         i += 1;
     }
-    let data = DeckData::from_path(data.ok_or("--data is required")?).map_err(|e| e.to_string())?;
-    let doc = ournotes_deck::chartstats::document(&data, seeds).map_err(|e| e.to_string())?;
+    let mut data = DeckData::from_path(data.ok_or("--data is required")?).map_err(|e| e.to_string())?;
+    if let Some(only) = &only {
+        data.charts.retain(|c| only.contains(&c.score_id));
+    }
+    if let Some(n) = seeds {
+        options.seeds = n;
+    }
+    let doc = if jobs <= 1 {
+        ournotes_deck::chartstats::document_with(&data, &options).map_err(|e| e.to_string())?
+    } else {
+        chart_stats_parallel(data, &options, jobs)?
+    };
     match out {
         Some(path) => {
             let mut text = serde_json::to_string(&doc).expect("json");
@@ -73,6 +95,48 @@ fn chart_stats(args: &[String]) -> Result<Option<serde_json::Value>, String> {
         }
         None => Ok(Some(doc)),
     }
+}
+
+/// The chart-stats document with `jobs` charts measured at once (the same document as one at a time).
+fn chart_stats_parallel(
+    mut data: DeckData,
+    options: &ournotes_deck::chartstats::Options,
+    jobs: usize,
+) -> Result<serde_json::Value, String> {
+    use ournotes_deck::chartstats;
+    let charts = std::mem::take(&mut data.charts);
+    let mut doc = chartstats::document_with(&data, options).map_err(|e| e.to_string())?;
+    let kinds = chartstats::kinds(&data.master);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results: Vec<std::sync::Mutex<Option<Result<chartstats::ChartStats, String>>>> =
+        charts.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..jobs.min(charts.len().max(1)) {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(c) = charts.get(i) else { break };
+                    let t = std::time::Instant::now();
+                    let r = chartstats::chart_stats_with(&data.master, c, &kinds, options)
+                        .map_err(|e| format!("chart {}: {e}", c.score_id));
+                    eprintln!(
+                        "chart {} {:.1} s{}",
+                        c.score_id,
+                        t.elapsed().as_secs_f64(),
+                        if r.is_err() { " FAILED" } else { "" }
+                    );
+                    *results[i].lock().expect("lock") = Some(r);
+                }
+            });
+        }
+    });
+    let mut out = Vec::with_capacity(charts.len());
+    for r in results {
+        let r = r.into_inner().expect("lock").ok_or("a chart was not measured")?;
+        out.push(serde_json::to_value(r?).expect("json"));
+    }
+    doc["charts"] = serde_json::Value::Array(out);
+    Ok(doc)
 }
 
 fn run(args: &[String]) -> Result<serde_json::Value, String> {
