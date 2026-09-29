@@ -34,9 +34,12 @@ scenario options: --scenario free|mission|battle|arena|challenge --scenario-musi
 chart-stats measures every chart on the whole-live simulation (ournotes-deck.chart-stats/2): the no-skill score and
 the weight of every score-up kind at every position, with Gekisou on per seed (--seeds N for charts with a luck range,
 default 8; rank 1, range weights for the other ranks, the Perfect play's scores) and with Gekisou off (offSeeds); and
-the chart's aptitude for Gekisou skills: every Gekisou skill shape of its missions alone (at most
---aptitude-max-seeds seeds, default 1024; the cross term on --aptitude-cross-seeds, default 64).
---charts keeps only these score ids; --jobs N measures N charts at once.
+the chart's aptitude for Gekisou skills: each skill shape of its missions measured alone, not a best formation.
+--aptitude-max-seeds N caps adaptive sampling (default 1024); --aptitude-cross-seeds N caps ordinary-skill cross
+terms (default 64). --no-gekisou-aptitude skips aptitude, leaving both aptitude fields null; baseline stats remain.
+Increments are seed means with standard errors, not the game's expectation; multiple skill increments cannot be added.
+--charts keeps the listed score ids in file order; --jobs N measures N charts at once (default 1).
+-o FILE writes JSON to a file; without it JSON goes to stdout.
 common options: -k N (default 10), --leader ID, --include ID[,ID...], --exclude ID[,ID...],
                 --exclude-snaps ID[,ID...], --no-snaps, --time-limit-ms N";
 

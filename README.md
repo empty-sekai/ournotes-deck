@@ -110,14 +110,17 @@ ournotes-deck live  --data deck-data.json --roster box.json --score SCORE_ID --e
 谱面统计：
 
 ```sh
-ournotes-deck chart-stats --data deck-data.json [--seeds 8] -o chart-stats.json
+ournotes-deck chart-stats --data deck-data.json [--seeds 8] [--charts ID,...] [--jobs N] -o chart-stats.json
 ```
 
 在整场模拟上实测每张谱面与卡组无关的量（`ournotes-deck.chart-stats/2`），分两种场景：激走开启（`seeds`，撃奏ライブ
-的打法）与激走关闭（`offSeeds`，自由 Live、挑战 Live 等单人 Live 的打法）。
+的打法）与激走关闭（`offSeeds`，自由 Live、挑战 Live 等单人 Live 的打法）。`--charts` 只测列出的 score id（按文件中的
+顺序输出，文件里没有的 id 忽略）；`--jobs N` 同时测 N 张谱面，输出与逐张测量完全相同。不给 `-o` 时输出到标准输出。
 
 激走开启时打法为激走理论最佳：每个音符按准点判定，Just 任务区间内为 Just，其余为 Perfect，每个区间取名次 1。每个
-种子给出：无技能的精确得分与各激走区间结果；master 中每种加分效果（2000 / 2002 / 2004 / 2005，按类型、时长、目标、
+种子给出：无技能的精确得分；各激走区间的结果（`ranges`：区间得分、名次 1 加成、最大激走连击 `maxCombo`、Just 数
+`justCount`、幸运点数 `luckPoints`、抽签结果 `lotResults`；前三个计数分别是连击、Just、幸运任务的名次指标；无技能时幸运点数
+只来自幸运区间的抽签，其他区间为 0）；master 中每种加分效果（2000 / 2002 / 2004 / 2005，按类型、时长、目标、
 条件分组，见 `kinds`）在每个演出位上因子为 1 时的得分增量除以综合力（`weights[kind][k]`）。卡组得分约为
 `P × (score / power + Σ factor_k × weights[kind_k][k])`，每个种子都用 master 真实数值的随机卡组在另一综合力下实跑校验，
 偏差超出取整上限即报错。有幸运区间的谱面按前 N 个发布种子给出（`--seeds`，默认 8），这不是原生期望；超过三段 fever
@@ -132,6 +135,50 @@ ournotes-deck chart-stats --data deck-data.json [--seeds 8] -o chart-stats.json
 
 激走关闭时打法为理论最佳（每个音符准点 Perfect），种子 0，没有 Just、幸运、激走连击和名次加成；给出同形的 `score`、
 `weights` 与校验。条件读取激走状态的效果种类在激走关闭时无法演出，其权重为 null。
+
+
+### 激走技能适性
+
+统计默认还给出单技能适性，不选择最佳编成，也不改变上面的 `seeds` / `offSeeds`。文件级 `gekisouAptitude` 是形状表和
+测量规则；每谱 `charts[].gekisouAptitude` 是谱面因子 `factors` 与该谱任务对应的变体 `variants`。没有激走区间、不能开
+激走或没有可测技能时，每谱字段为 null。格式仍是 `ournotes-deck.chart-stats/2`，这些都是新增字段。
+
+```sh
+ournotes-deck chart-stats --data deck-data.json --aptitude-max-seeds 128 --aptitude-cross-seeds 32 -o stats.json
+ournotes-deck chart-stats --data deck-data.json --no-gekisou-aptitude -o baseline.json
+```
+
+- `--aptitude-max-seeds N`：随机增量最多测 N 个种子，默认 1024；标准误足够小时提前停止。
+- `--aptitude-cross-seeds N`：普通技能交叉项最多测前 N 个种子，默认 64。
+- `--no-gekisou-aptitude`：跳过适性测量，文件级和每谱的 `gekisouAptitude` 都为 null，原有统计照常输出。
+
+形状按来源、任务与效果参数去重。成员技能取该技能的最高等级；小卡技能取最高突破对应的等级，不直接取效果表最高等级。
+支援技能仅差乐队目标时归为同一形状，保留 `skills[].memberTargetIds` / `bandIds`；每谱分别测 `bandMatch: true/false`。
+支援技能的宿主统一使用同任务的**合成空激走技能**，不借真卡，不混入成员技能收益。每次只带一个成员或支援技能，整局实跑。
+
+变体的 `score`、`scorePerfect`、`tail`、区间增量等均为 `[均值, 均值标准误]`，是同种子下「带技能 − 不带技能」的差，
+综合力固定为 `model.power`。`tail = Δscore − Σ(ΔrangeScore + ΔrankBonus)` 表示区间外收益，包含技能延续到区间结束后的
+尾部；`factors` 给出各区间音符数、进入时连击和基线抽签次数，用来解释适性。`weights` 是普通技能 `plainKind` 各位置权重
+的变化，`rangeWeights` 是对应区间权重变化；不是完整编成权重，没有普通 kind 时两者为 null。每个变体的 `check` 用首个
+测量种子、随机名次与随机普通技能卡组，在另一综合力下验证线性预测，超出取整界时报错。
+
+随机增量按 32、64、128、256、512、1024 个种子逐级测量（受最大种子参数限制），当 Δscore 的标准误不超过
+`max(增量均值绝对值 × 1%, 无技能总分均值 × 0.1%)` 时停止；到上限仍不满足则 `seTargetMet: false`。确定性增量报一个
+种子、标准误 0；四个种子恰好相等本身不能证明随机技能是确定性的。种子均值不是游戏的期望，真实种子分布未知，标准误也
+不表示模型误差。交叉项可能使用更少种子，见各变体的 `crossSeeds`。
+
+**模型边界：**
+
+- 只影响撃奏ライブ的 `battleLiveScore`，不影响另行上报的 `soloScore`，自由 Live 不加适性收益。
+- 只测单技能，**多个技能增量不能相加**：激走连击封顶、幸运槽与 rush 支援交互、Just 数改变相关支援触发等都会破坏可加性。
+- 理论最佳打法没有 Great / Miss，12004 连击保护、12006 Great→Perfect、4004 判定窗扩大在此为零；13000 / 13002
+  Just 数加成与 11002 幸运点数加成可改变区间指标，但不直接增加得分。任务不符的形状因门控为零，不列进该谱变体。
+- 普通技能倍率与名次沿用线性式，名次增量每区间有取整差，由 `check` 验证。Just 率不足 100% 时，仅能给出无普通技能增量的 Just / Perfect 插值估计，
+  13005 转换、每 Just 的 2001 支援及 13002 的 Just 数变化不能按比例精确缩放。未测 Perfect 打法的交叉权重，因此普通技能非零时不提供低于 100% Just 的完整适性；Great 比例乘 `1 − 0.2q` 也只是近似。
+
+库调用可用 `chart_stats_with` / `document_with` 与
+`Options { seeds, aptitude: Some(AptitudeOptions { max_seeds, cross_seeds }) }`；`aptitude: None` 关闭适性。
+不含谱面的 `DeckData` 也可以生成形状表，或直接调用 `aptitude_header(master, kinds, options)`。
 
 ## 测试
 
