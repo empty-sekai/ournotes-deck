@@ -265,12 +265,12 @@ impl PowerCalculator {
                     self.music_type_base.wrapping_add(rank_type_rate).wrapping_add(mu.type_bonus_rate),
                 );
             }
-            if let (Some(mtags), Some(stags)) = (m.best_music_tag_ids, mu.best_music_tag_ids) {
-                if mtags.iter().any(|a| stags.contains(a)) {
-                    pct_mtag = CardPower::bp_single(
-                        self.music_tag_base.wrapping_add(rank_tag_rate).wrapping_add(mu.tag_bonus_rate),
-                    );
-                }
+            if let (Some(mtags), Some(stags)) = (m.best_music_tag_ids, mu.best_music_tag_ids)
+                && mtags.iter().any(|a| stags.contains(a))
+            {
+                pct_mtag = CardPower::bp_single(
+                    self.music_tag_base.wrapping_add(rank_tag_rate).wrapping_add(mu.tag_bonus_rate),
+                );
             }
         }
         let mtype = b.mul(pct_mtype).to_floor();

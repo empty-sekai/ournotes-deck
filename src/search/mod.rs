@@ -295,12 +295,12 @@ fn validate_live_input(o: &Objective) -> Result<(), Error> {
             if *exclude_snap_skills {
                 return Err(Error::Input("a live score with Gekisou on counts snap skills".into()));
             }
-            if let PlayInput::Stream { stream, .. } = play {
-                if stream.base_seed != 0 {
-                    return Err(Error::Input(
-                        "a live score with Gekisou on takes its seeds from the seed set, not the stream".into(),
-                    ));
-                }
+            if let PlayInput::Stream { stream, .. } = play
+                && stream.base_seed != 0
+            {
+                return Err(Error::Input(
+                    "a live score with Gekisou on takes its seeds from the seed set, not the stream".into(),
+                ));
             }
         }
         match (exclude_snap_skills, play) {

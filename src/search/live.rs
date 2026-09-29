@@ -210,10 +210,10 @@ impl<'a> LiveCtx<'a> {
         }
         let mut best: Option<(i64, [usize; 5])> = None;
         for (bound, order) in cands {
-            if let Some(b) = best {
-                if bound < b.0 {
-                    break;
-                }
+            if let Some(b) = best
+                && bound < b.0
+            {
+                break;
             }
             let mut cmds = Vec::new();
             for (e, &idx) in self.event_index.iter().enumerate() {

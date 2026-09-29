@@ -1476,15 +1476,15 @@ impl LiveModel {
             // effect state whose type TryGetApplier does not find.
             return Ok(());
         }
-        if matches!(effect_type, 4000..=4004 | 13001) {
-            if let Some(runtime) = self.raw_runtime.as_mut() {
-                if let Some(time) = runtime.update_effect(key, st.state, &self.rows[ri])? {
-                    let state = self.state_mut(item);
-                    state.state = END_FRAME;
-                    state.finish_ms = time;
-                }
-                return Ok(());
+        if matches!(effect_type, 4000..=4004 | 13001)
+            && let Some(runtime) = self.raw_runtime.as_mut()
+        {
+            if let Some(time) = runtime.update_effect(key, st.state, &self.rows[ri])? {
+                let state = self.state_mut(item);
+                state.state = END_FRAME;
+                state.finish_ms = time;
             }
+            return Ok(());
         }
         if gk_skill || gk_type {
             let done = self.apply_gekisou(ri, &mut st, owner, key);
@@ -1581,10 +1581,10 @@ impl LiveModel {
                         return Err(Error::Game("duplicate damage reduction effect state".into()));
                     }
                     self.life_reductions.insert(key, id);
-                } else if st.state == END_FRAME {
-                    if let Some(id) = self.life_reductions.remove(&key) {
-                        self.life.disable_damage_reduction(st.finish_ms, id)?;
-                    }
+                } else if st.state == END_FRAME
+                    && let Some(id) = self.life_reductions.remove(&key)
+                {
+                    self.life.disable_damage_reduction(st.finish_ms, id)?;
                 }
             }
             3001 => {
@@ -1758,10 +1758,11 @@ impl LiveModel {
                     }
                     let id = c.enable_combo_protect(st.execute_ms, row.effect_limit_count, (mask & 0xFF) as i32);
                     ga.add(key, id)?;
-                } else if s == END_FRAME && !ga.exhausted.remove(&key) {
-                    if let Some(id) = ga.ids.remove(&key) {
-                        c.disable_combo_protect(st.finish_ms, id);
-                    }
+                } else if s == END_FRAME
+                    && !ga.exhausted.remove(&key)
+                    && let Some(id) = ga.ids.remove(&key)
+                {
+                    c.disable_combo_protect(st.finish_ms, id);
                 }
             }
             11005 => {
@@ -1771,22 +1772,23 @@ impl LiveModel {
                     let id = c.machine.enable_minimum(minimum_result_of(v), row.effect_limit_count);
                     ga.add(key, id)?;
                 } else if s == EXECUTING {
-                    if let Some(&id) = ga.ids.get(&key) {
-                        if !c.machine.is_minimum_active(id) {
-                            let mut t = c.machine.take_last_consumed(id);
-                            if t < 0 {
-                                t = frame_t;
-                            }
-                            c.machine.disable_minimum(id);
-                            ga.ids.remove(&key);
-                            ga.exhausted.insert(key);
-                            ga.limit_finished.insert(key, t);
+                    if let Some(&id) = ga.ids.get(&key)
+                        && !c.machine.is_minimum_active(id)
+                    {
+                        let mut t = c.machine.take_last_consumed(id);
+                        if t < 0 {
+                            t = frame_t;
                         }
-                    }
-                } else if s == END_FRAME && !ga.exhausted.remove(&key) {
-                    if let Some(id) = ga.ids.remove(&key) {
                         c.machine.disable_minimum(id);
+                        ga.ids.remove(&key);
+                        ga.exhausted.insert(key);
+                        ga.limit_finished.insert(key, t);
                     }
+                } else if s == END_FRAME
+                    && !ga.exhausted.remove(&key)
+                    && let Some(id) = ga.ids.remove(&key)
+                {
+                    c.machine.disable_minimum(id);
                 }
             }
             2001 => {
