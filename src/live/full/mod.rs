@@ -49,9 +49,9 @@ pub use gekisou::{
 mod life;
 mod raw_runtime;
 pub use raw_runtime::{RELAX_TARGET_JUDGEMENTS, RawJudgedNote, RawJudgementRuntime};
+mod range_frames;
 mod scorecalc;
-mod window;
-pub use window::{NoteEval, RangeFrames, WindowNote, window_note_scores};
+pub use range_frames::RangeFrames;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 

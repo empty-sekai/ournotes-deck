@@ -18,8 +18,8 @@ const USAGE: &str = "usage:
   ournotes-deck skip  --data FILE --roster FILE --score ID [common options]
   ournotes-deck live  --data FILE --roster FILE --score ID [--exclude-snap-skills] [--play FILE] [--event]
                       [--gekisou (--seeds N | --seed-list S[,S...])] [common options]
-  ournotes-deck chart-stats --data FILE [--seeds N] [--formation-seeds N | --no-gekisou-skills]
-                      [--charts ID[,ID...]] [--jobs N] [-o FILE]
+  ournotes-deck chart-stats --data FILE [--seeds N] [--no-gekisou-aptitude] [--aptitude-max-seeds N]
+                      [--aptitude-cross-seeds N] [--charts ID[,ID...]] [--jobs N] [-o FILE]
 --data is a deck data file (nnnotes.deck-data/1). live scores the whole-live simulation with snap skills, where
 --play is a judgement stream; with --exclude-snap-skills it scores live skills only, where --play is a per-note
 play. --play defaults to the theoretical best play. --gekisou plays the live with Gekisou on and ranks by the sum
@@ -31,11 +31,12 @@ conditional items also require --resource-type ID --resource-id ID and context.e
 scenario options: --scenario free|mission|battle|arena|challenge --scenario-music ID --context FILE
 --scenario-music is the special row ID for arena/challenge; --score always denotes the base chart.
 --context uses explicit powerSnapshot.eventIds and separate resultClock normalized DateTime ticks.
-chart-stats measures every chart on the whole-live simulation (ournotes-deck.chart-stats/3): the no-skill score and
+chart-stats measures every chart on the whole-live simulation (ournotes-deck.chart-stats/2): the no-skill score and
 the weight of every score-up kind at every position, with Gekisou on per seed (--seeds N for charts with a luck range,
 default 8; rank 1, range weights for the other ranks, the Perfect play's scores) and with Gekisou off (offSeeds); and
-each chart's best Gekisou skill formation measured on --formation-seeds N seeds of a luck chart (default 32, the
-first --seeds of them the chart's seeds). --charts keeps only these score ids; --jobs N measures N charts at once.
+the chart's aptitude for Gekisou skills: every Gekisou skill shape of its missions alone (at most
+--aptitude-max-seeds seeds, default 1024; the cross term on --aptitude-cross-seeds, default 64).
+--charts keeps only these score ids; --jobs N measures N charts at once.
 common options: -k N (default 10), --leader ID, --include ID[,ID...], --exclude ID[,ID...],
                 --exclude-snaps ID[,ID...], --no-snaps, --time-limit-ms N";
 
@@ -61,11 +62,16 @@ fn chart_stats(args: &[String]) -> Result<Option<serde_json::Value>, String> {
         match a {
             "--data" => data = Some(val()?),
             "--seeds" => seeds = Some(val()?.trim().parse::<usize>().map_err(|_| "bad --seeds".to_string())?),
-            "--formation-seeds" => {
-                let n = val()?.trim().parse::<usize>().map_err(|_| "bad --formation-seeds".to_string())?;
-                options.formation_seeds = Some(n);
+            "--no-gekisou-aptitude" => options.aptitude = None,
+            "--aptitude-max-seeds" | "--aptitude-cross-seeds" => {
+                let n = val()?.trim().parse::<usize>().map_err(|_| format!("bad {a}"))?;
+                let x = options.aptitude.get_or_insert_with(Default::default);
+                if a == "--aptitude-max-seeds" {
+                    x.max_seeds = n;
+                } else {
+                    x.cross_seeds = n;
+                }
             }
-            "--no-gekisou-skills" => options.formation_seeds = None,
             "--charts" => only = Some(ids(&val()?)?),
             "--jobs" => jobs = val()?.trim().parse::<usize>().map_err(|_| "bad --jobs".to_string())?.max(1),
             "-o" | "--out" => out = Some(val()?),
