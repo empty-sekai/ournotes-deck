@@ -338,14 +338,14 @@ fn run(args: &[String]) -> Result<serde_json::Value, String> {
             context_input.resolve(&data.master, scenario, score, fevers).map_err(|e| e.to_string())
         })
         .transpose()?;
-    if let Some(clock) = &context_input.result_clock {
-        if matches!(
+    if let Some(clock) = &context_input.result_clock
+        && matches!(
             (cmd, clock),
             ("skip", ournotes_deck::scenario::ResultClockInput::Played { .. })
                 | ("live", ournotes_deck::scenario::ResultClockInput::Skip { .. })
-        ) {
-            return Err("resultClock execution does not match the command".into());
-        }
+        )
+    {
+        return Err("resultClock execution does not match the command".into());
     }
     let objective = match cmd {
         "power" => Objective::Power { music_id: music, event },

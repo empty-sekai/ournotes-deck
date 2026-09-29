@@ -1705,12 +1705,11 @@ impl<'a> SnapLive<'a> {
         let a0 = coef.pc[ne];
         let mut jp_of = [f64::INFINITY; 7];
         for (x, slot) in jp_of.iter_mut().enumerate().skip(1) {
-            if let Ok(st) = convert_score_type(x as i64) {
-                if let Some(&p) = settings.judgement_score_factor_percent.get(&st) {
-                    if p >= 0 {
-                        *slot = p as f64 / 100.0;
-                    }
-                }
+            if let Ok(st) = convert_score_type(x as i64)
+                && let Some(&p) = settings.judgement_score_factor_percent.get(&st)
+                && p >= 0
+            {
+                *slot = p as f64 / 100.0;
             }
         }
         let mut fine = Fine {
@@ -2870,12 +2869,11 @@ impl Leaf<'_, '_, '_> {
         cs: &mut [usize; 5],
     ) -> Result<(), Error> {
         self.nodes += 1;
-        if self.nodes % 1024 == 0 {
-            if let Some(d) = self.deadline {
-                if Instant::now() >= d {
-                    self.timed_out = true;
-                }
-            }
+        if self.nodes.is_multiple_of(1024)
+            && let Some(d) = self.deadline
+            && Instant::now() >= d
+        {
+            self.timed_out = true;
         }
         if self.timed_out {
             return Ok(());
@@ -3120,12 +3118,12 @@ impl Leaf<'_, '_, '_> {
                 rest.push(c);
                 continue;
             }
-            if let Some(d) = self.deadline {
-                if Instant::now() >= d {
-                    self.timed_out = true;
-                    rest.push(c);
-                    continue;
-                }
+            if let Some(d) = self.deadline
+                && Instant::now() >= d
+            {
+                self.timed_out = true;
+                rest.push(c);
+                continue;
             }
             let Some(score) = self.evaluate(&c)? else {
                 done += 1;
@@ -3174,11 +3172,11 @@ impl Leaf<'_, '_, '_> {
                 self.count.seeds_saved += (n - j) as u64;
                 break;
             }
-            if let Some(d) = self.deadline {
-                if Instant::now() >= d {
-                    self.timed_out = true;
-                    break;
-                }
+            if let Some(d) = self.deadline
+                && Instant::now() >= d
+            {
+                self.timed_out = true;
+                break;
             }
             if runner.is_none() {
                 if done.is_empty() {
@@ -3625,10 +3623,10 @@ struct GkRowWin {
 /// can start, a conversion converts the notes judged in the next frames up to the frame that processes its end.
 fn gk_row(env: &Env, r: &Row) -> Rc<GkRowWin> {
     let key = (r.trigger, r.trigger_type, r.gate, r.act.to_bits(), r.release);
-    if !g6_off(4) {
-        if let Some(w) = env.gk_cache.borrow().get(&key) {
-            return w.clone();
-        }
+    if !g6_off(4)
+        && let Some(w) = env.gk_cache.borrow().get(&key)
+    {
+        return w.clone();
     }
     let w = Rc::new(gk_row_timing(env, r));
     env.gk_cache.borrow_mut().insert(key, w.clone());
@@ -4185,10 +4183,8 @@ impl GkFactors {
             if by_playing {
                 lo = lo.min(if f >= 2 { frames[f - 2] } else { i32::MIN });
             }
-            if by_combo {
-                if let Some(t) = current[f].and_then(|r| lc[r]) {
-                    lo = lo.min(t);
-                }
+            if by_combo && let Some(t) = current[f].and_then(|r| lc[r]) {
+                lo = lo.min(t);
             }
             exec_lo[f] = lo;
             for &i in &by_frame[f] {

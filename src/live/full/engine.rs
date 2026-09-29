@@ -345,10 +345,10 @@ impl ConditionSkillUpdater {
                 return self.finish_update(updated, done);
             }
             for ef in self.effects.iter_mut() {
-                if let Some(r) = ef.reset.as_mut() {
-                    if r.check(ctx)?.0 {
-                        self.execute_count.remove(&ef.effect_id);
-                    }
+                if let Some(r) = ef.reset.as_mut()
+                    && r.check(ctx)?.0
+                {
+                    self.execute_count.remove(&ef.effect_id);
                 }
             }
             for &e in &self.sorted {
@@ -385,17 +385,16 @@ impl ConditionSkillUpdater {
                 continue;
             }
             let ef = &mut self.effects[e];
-            if ef.execute_limit > 0 {
-                if let Some(&n) = self.execute_count.get(&ef.effect_id) {
-                    if ef.execute_limit <= n {
-                        continue;
-                    }
-                }
+            if ef.execute_limit > 0
+                && let Some(&n) = self.execute_count.get(&ef.effect_id)
+                && ef.execute_limit <= n
+            {
+                continue;
             }
-            if let Some(c) = ef.condition.as_mut() {
-                if !c.check(ctx)?.0 {
-                    continue;
-                }
+            if let Some(c) = ef.condition.as_mut()
+                && !c.check(ctx)?.0
+            {
+                continue;
             }
             let (limited, eid) = (ef.execute_limit > 0, ef.effect_id);
             let u = self.stacks[e].pop().expect("non-empty stack");
@@ -506,18 +505,18 @@ impl ConditionSkillUpdater {
         ctx: &mut CheckCtx,
     ) -> Result<Option<usize>, Error> {
         let mut cur = s.current;
-        if let Some(c) = cur {
-            if self.updaters[c].state.state == END_FRAME {
-                self.update_one(c, inp, NO_TRIGGER, false, ctx)?;
-                s.queue.push_back(c);
-                s.current = None;
-                cur = None;
-            }
+        if let Some(c) = cur
+            && self.updaters[c].state.state == END_FRAME
+        {
+            self.update_one(c, inp, NO_TRIGGER, false, ctx)?;
+            s.queue.push_back(c);
+            s.current = None;
+            cur = None;
         }
-        if let Some(c) = cur {
-            if self.updaters[c].state.state == EXECUTE_FRAME {
-                self.updaters[c].state.state = EXECUTING;
-            }
+        if let Some(c) = cur
+            && self.updaters[c].state.state == EXECUTE_FRAME
+        {
+            self.updaters[c].state.state = EXECUTING;
         }
         if tr.is_trigger {
             if !s.enabled {
@@ -526,10 +525,10 @@ impl ConditionSkillUpdater {
                 }
                 s.enabled = true;
             }
-            if let Some(c) = self.effects[e].condition.as_mut() {
-                if !c.check(ctx)?.0 {
-                    return Ok(None);
-                }
+            if let Some(c) = self.effects[e].condition.as_mut()
+                && !c.check(ctx)?.0
+            {
+                return Ok(None);
             }
             if cur.is_none() {
                 let c = s.queue.pop_front().ok_or_else(|| Error::Game("sustained effect queue is empty".into()))?;
