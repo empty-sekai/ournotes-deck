@@ -113,12 +113,25 @@ ournotes-deck live  --data deck-data.json --roster box.json --score SCORE_ID --e
 ournotes-deck chart-stats --data deck-data.json [--seeds 8] -o chart-stats.json
 ```
 
-在整场模拟上（激走开启，单人名次 1）实测每张谱面与卡组无关的量（`ournotes-deck.chart-stats/2`）。打法为激走理论最佳：
-每个音符按准点判定，Just 任务区间内为 Just，其余为 Perfect。每个种子给出：无技能的精确得分与各激走区间结果；
-master 中每种加分效果（2000 / 2002 / 2004 / 2005，按类型、时长、目标、条件分组，见 `kinds`）在每个演出位上
-因子为 1 时的得分增量除以综合力（`weights[kind][k]`）。卡组得分约为 `P × (score / power + Σ factor_k × weights[kind_k][k])`，
-每个种子都用 master 真实数值的随机卡组在另一综合力下实跑校验，偏差超出取整上限即报错。有幸运区间的谱面按前 N 个
-发布种子给出（`--seeds`，默认 8），这不是原生期望；超过三段 fever 的谱面游戏会在第四段开始时出错，记为 `unplayable`。
+在整场模拟上实测每张谱面与卡组无关的量（`ournotes-deck.chart-stats/2`），分两种场景：激走开启（`seeds`，撃奏ライブ
+的打法）与激走关闭（`offSeeds`，自由 Live、挑战 Live 等单人 Live 的打法）。
+
+激走开启时打法为激走理论最佳：每个音符按准点判定，Just 任务区间内为 Just，其余为 Perfect，每个区间取名次 1。每个
+种子给出：无技能的精确得分与各激走区间结果；master 中每种加分效果（2000 / 2002 / 2004 / 2005，按类型、时长、目标、
+条件分组，见 `kinds`）在每个演出位上因子为 1 时的得分增量除以综合力（`weights[kind][k]`）。卡组得分约为
+`P × (score / power + Σ factor_k × weights[kind_k][k])`，每个种子都用 master 真实数值的随机卡组在另一综合力下实跑校验，
+偏差超出取整上限即报错。有幸运区间的谱面按前 N 个发布种子给出（`--seeds`，默认 8），这不是原生期望；超过三段 fever
+的谱面游戏会在第四段开始时出错，记为 `unplayable`（激走关闭时照常可玩）。
+
+其他名次不重跑：名次加成为 `trunc(区间得分 × 百分比 / 100)`，记在区间结束帧的固定分上，不改因子也不改音符得分，所以
+区间 i 取名次 r_i 时无技能得分精确为 `score − Σ rankBonus_i + Σ trunc(rangeScore_i × rankBonusPercents_i[r_i − 1] / 100)`，
+权重为 `weights[kind][k] + Σ (rankBonusPercents_i[r_i − 1] − rankBonusPercents_i[0]) / 100 × rangeWeights[kind][k][i]`
+（`rangeWeights` 是该效果带来的区间得分增量除以综合力）。每个种子另用同一校验卡组在随机名次下走显式名次确认实跑校验
+（`rankCheck`）。条件读取确认名次（7012）的效果种类没有 `rangeWeights`，名次加成可能落进另一区间得分帧的谱面整张没有。
+每个种子还给出把 Just 全部改判 Perfect 的同一打法的无技能得分与各区间得分（`scorePerfect`、`rangeScorePerfect`）。
+
+激走关闭时打法为理论最佳（每个音符准点 Perfect），种子 0，没有 Just、幸运、激走连击和名次加成；给出同形的 `score`、
+`weights` 与校验。条件读取激走状态的效果种类在激走关闭时无法演出，其权重为 null。
 
 ## 测试
 

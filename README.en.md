@@ -134,15 +134,33 @@ Chart statistics:
 ournotes-deck chart-stats --data deck-data.json [--seeds 8] -o chart-stats.json
 ```
 
-measures every chart's deck-independent numbers on the whole-live simulation with Gekisou on and a solo rank 1
-(`ournotes-deck.chart-stats/2`). The play is the theoretical best play with Gekisou: every note judged at its time,
-Just inside the Just-count ranges and Perfect elsewhere. Per seed: the exact no-skill score and the Gekisou ranges'
-results, and for every score-up kind of the master (2000 / 2002 / 2004 / 2005 rows grouped by type, duration,
-targets and conditions, see `kinds`) at every performance position the score gained at factor 1 per unit of deck
-power (`weights[kind][k]`). A deck scores about `P × (score / power + Σ factor_k × weights[kind_k][k])`; every seed
-checks this on a random deck of the master's own values at another power and fails beyond the flooring bound.
-Charts with a luck range are given on the first N published seeds (`--seeds`, default 8), which is not a native
-expectation; a chart with more than three fevers, where the game fails when the fourth starts, is `unplayable`.
+measures every chart's deck-independent numbers on the whole-live simulation (`ournotes-deck.chart-stats/2`) in
+two scenarios: Gekisou on (`seeds`, as a Battle Live plays) and Gekisou off (`offSeeds`, as a solo live such as Free
+Live or Challenge Live plays).
+
+With Gekisou on, the play is the theoretical best play with Gekisou: every note judged at its time, Just inside the
+Just-count ranges and Perfect elsewhere, rank 1 in every range. Per seed: the exact no-skill score and the Gekisou
+ranges' results, and for every score-up kind of the master (2000 / 2002 / 2004 / 2005 rows grouped by type,
+duration, targets and conditions, see `kinds`) at every performance position the score gained at factor 1 per unit
+of deck power (`weights[kind][k]`). A deck scores about `P × (score / power + Σ factor_k × weights[kind_k][k])`;
+every seed checks this on a random deck of the master's own values at another power and fails beyond the flooring
+bound. Charts with a luck range are given on the first N published seeds (`--seeds`, default 8), which is not a
+native expectation; a chart with more than three fevers, where the game fails when the fourth starts, is
+`unplayable` (it plays with Gekisou off).
+
+Other ranks need no further play: a rank bonus is `trunc(rangeScore × percent / 100)`, a fixed score in the frame of
+the range's end that changes no factor and no note score, so at rank r_i in range i the no-skill score is exactly
+`score − Σ rankBonus_i + Σ trunc(rangeScore_i × rankBonusPercents_i[r_i − 1] / 100)` and a weight is
+`weights[kind][k] + Σ (rankBonusPercents_i[r_i − 1] − rankBonusPercents_i[0]) / 100 × rangeWeights[kind][k][i]`
+(`rangeWeights`: the range score the effect gains per unit of deck power). Every seed also plays its check deck at
+random ranks through explicit rank confirmations (`rankCheck`). A kind whose conditions read the confirmed rank
+(7012) has no `rangeWeights`, nor has a chart where a rank bonus can fall inside another range's score frames. Every
+seed also gives the no-skill score and range scores of the same play with every Just judged Perfect
+(`scorePerfect`, `rangeScorePerfect`).
+
+With Gekisou off, the play is the theoretical best play (every note Perfect at its time), seed 0, without Just, luck,
+Gekisou combo or rank bonus; `score`, `weights` and a check as above. A kind whose conditions read the Gekisou state
+cannot play without Gekisou and has null weights.
 
 ## Tests
 
