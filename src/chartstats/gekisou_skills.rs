@@ -160,9 +160,16 @@ impl Catalog {
     }
 }
 
-/// Whether a support skill's member target conditions (5000) hold for its member: `None` without such a condition.
+/// Whether its member is a target of a support skill's member target conditions (5000, the band condition): `None`
+/// without such a condition.
 fn band_match(master: &Master, support: SkillLevel, p: &Performer) -> Option<bool> {
-    let mut found: Option<bool> = None;
+    let hits = band_hits(master, support, p);
+    (!hits.is_empty()).then(|| hits.iter().any(|&h| h))
+}
+
+/// Per member target condition (5000) of a support skill's effects, in row order: whether its member is a target.
+fn band_hits(master: &Master, support: SkillLevel, p: &Performer) -> Vec<bool> {
+    let mut found = Vec::new();
     let rows =
         master.gekisou_support_skill_effects.iter().filter(|r| r.skill_id == support.id && r.level == support.level);
     for r in rows {
@@ -181,8 +188,7 @@ fn band_match(master: &Master, support: SkillLevel, p: &Performer) -> Option<boo
                         .iter()
                         .filter_map(|&t| master.skill_target(t))
                         .any(|t| p.matches_skill_target(t));
-                    let ok = hit == c.is_positive;
-                    found = Some(found.unwrap_or(false) || ok);
+                    found.push(hit);
                 }
             }
         }
@@ -426,9 +432,9 @@ impl<'a, 'm> Search<'a, 'm> {
         }
         for (si, sc) in snaps.iter().enumerate() {
             for (ci, (_, cards)) in classes.iter().enumerate() {
-                let mut groups: Vec<(Option<bool>, Vec<usize>)> = Vec::new();
+                let mut groups: Vec<(Vec<bool>, Vec<usize>)> = Vec::new();
                 for &c in cards {
-                    let b = band_match(live.master, sc.support, &catalog.members[c].performer);
+                    let b = band_hits(live.master, sc.support, &catalog.members[c].performer);
                     match groups.iter_mut().find(|g| g.0 == b) {
                         Some(g) => g.1.push(c),
                         None => groups.push((b, vec![c])),
@@ -704,7 +710,9 @@ impl<'a, 'm> Search<'a, 'm> {
                         s
                     })
                     .collect();
-                if let Some((s, v)) = self.best_of(cands)?.filter(|b| b.1 > value + 1e-12) {
+                if let Some((s, v)) = self.best_of(cands)?
+                    && v > value + 1e-12
+                {
                     state = s;
                     value = v;
                 }
@@ -731,7 +739,9 @@ impl<'a, 'm> Search<'a, 'm> {
                             cands.push(s);
                         }
                     }
-                    if let Some((s, v)) = self.best_of(cands)?.filter(|b| b.1 > value + 1e-12) {
+                    if let Some((s, v)) = self.best_of(cands)?
+                        && v > value + 1e-12
+                    {
                         state = s;
                         value = v;
                     }
