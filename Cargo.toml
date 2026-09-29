@@ -2,7 +2,7 @@
 name = "ournotes-deck"
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "Deck power, skip score and live score for BanG Dream! Our Notes, with an exact Top-K deck search"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/empty-sekai/ournotes-deck"
