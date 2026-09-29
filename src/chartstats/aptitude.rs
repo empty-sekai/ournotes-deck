@@ -721,6 +721,9 @@ pub(super) fn chart_aptitude(
     shapes: &[Shape],
     inp: &Inputs<'_>,
 ) -> Result<ChartAptitude, Error> {
+    if inp.options.max_seeds < 2 || inp.options.cross_seeds == 0 {
+        return Err(Error::Input("aptitude needs at least two maximum seeds and one cross seed".into()));
+    }
     let plain = plain_kind(kinds);
     let mut m = Measure {
         live,
@@ -743,12 +746,23 @@ pub(super) fn chart_aptitude(
         let bands: Vec<Option<bool>> = if shape.band_condition { vec![Some(true), Some(false)] } else { vec![None] };
         for band in bands {
             let p = performer(&m.master, shape, band)?;
-            // deterministic when the increments agree on the test seeds
+            // Equal observations are only a regression check, never proof of determinism. A luck
+            // range can change score factors even for another mission's skill (including its tail).
+            let random_dependency = missions.contains(&2)
+                || shape.effects.iter().any(|e| {
+                    (11000..=11005).contains(&e.effect_type)
+                        || [&e.trigger, &e.condition, &e.release, &e.reset]
+                            .iter()
+                            .flat_map(|g| g.iter().flatten())
+                            .any(|c| c.condition_type == 4011)
+                });
             let mut test = Vec::with_capacity(test_seeds.len());
-            for &s in &test_seeds {
-                test.push(m.sample(&p, s, false)?.values);
+            if !random_dependency {
+                for &s in &test_seeds {
+                    test.push(m.sample(&p, s, false)?.values);
+                }
             }
-            let deterministic = test.windows(2).all(|w| w[0] == w[1]);
+            let deterministic = !random_dependency && test.windows(2).all(|w| w[0] == w[1]);
             let mut samples: Vec<Sample> = Vec::new();
             let mut met = true;
             if deterministic {

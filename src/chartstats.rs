@@ -454,6 +454,18 @@ pub struct Options {
     pub aptitude: Option<AptitudeOptions>,
 }
 
+impl Options {
+    fn validate(&self) -> Result<(), Error> {
+        if self.seeds == 0 {
+            return Err(Error::Input("an empty seed set".into()));
+        }
+        if self.aptitude.is_some_and(|a| a.max_seeds < 2 || a.cross_seeds == 0) {
+            return Err(Error::Input("aptitude needs at least two maximum seeds and one cross seed".into()));
+        }
+        Ok(())
+    }
+}
+
 impl Default for Options {
     fn default() -> Options {
         Options { seeds: GEKISOU_SEEDS, aptitude: Some(AptitudeOptions::default()) }
@@ -540,7 +552,11 @@ struct Checked {
 
 impl Checked {
     fn within(self, what: impl FnOnce() -> String) -> Result<Checked, Error> {
-        if (self.exact as f64 - self.predicted).abs() > self.bound {
+        if !self.predicted.is_finite()
+            || !self.bound.is_finite()
+            || self.bound < 0.0
+            || (self.exact as f64 - self.predicted).abs() > self.bound
+        {
             return Err(Error::Domain(format!(
                 "{}: the check deck scores {}, the chart statistics predict {:.1} (bound {:.1})",
                 what(),
@@ -839,6 +855,7 @@ pub fn chart_stats_with(
     kinds: &[Kind],
     options: &Options,
 ) -> Result<ChartStats, Error> {
+    options.validate()?;
     let seeds = options.seeds;
     let settings = LiveScoreSettings::from_master(master)?;
     let c: Chart = chart.chart(&settings)?;
@@ -997,9 +1014,7 @@ pub fn document(data: &DeckData, seeds: Option<usize>) -> Result<serde_json::Val
 
 /// [`document`] with these options.
 pub fn document_with(data: &DeckData, options: &Options) -> Result<serde_json::Value, Error> {
-    if options.seeds == 0 || options.aptitude.as_ref().is_some_and(|a| a.max_seeds == 0) {
-        return Err(Error::Input("an empty seed set".into()));
-    }
+    options.validate()?;
     let kinds = kinds(&data.master);
     let mut charts = Vec::with_capacity(data.charts.len());
     for c in &data.charts {
