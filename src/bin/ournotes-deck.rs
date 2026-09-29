@@ -30,9 +30,9 @@ conditional items also require --resource-type ID --resource-id ID and context.e
 scenario options: --scenario free|mission|battle|arena|challenge --scenario-music ID --context FILE
 --scenario-music is the special row ID for arena/challenge; --score always denotes the base chart.
 --context uses explicit powerSnapshot.eventIds and separate resultClock normalized DateTime ticks.
-chart-stats measures every chart on the whole-live simulation with Gekisou on (ournotes-deck.chart-stats/2): the
-no-skill score and the weight of every score-up kind at every position, per seed (--seeds N for charts with a luck
-range, default 8).
+chart-stats measures every chart on the whole-live simulation (ournotes-deck.chart-stats/2): the no-skill score and
+the weight of every score-up kind at every position, with Gekisou on per seed (--seeds N for charts with a luck range,
+default 8; rank 1, range weights for the other ranks, the Perfect play's scores) and with Gekisou off (offSeeds).
 common options: -k N (default 10), --leader ID, --include ID[,ID...], --exclude ID[,ID...],
                 --exclude-snaps ID[,ID...], --no-snaps, --time-limit-ms N";
 

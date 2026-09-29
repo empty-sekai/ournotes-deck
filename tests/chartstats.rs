@@ -1,4 +1,4 @@
-//! Chart statistics measured on the whole-live simulation with Gekisou on, on a synthetic deck data file.
+//! Chart statistics measured on the whole-live simulation with Gekisou on and off, on a synthetic deck data file.
 
 mod common;
 
@@ -8,6 +8,7 @@ use ournotes_deck::live::full::{self, GekisouSetup, LiveNote, LiveParams, Perfor
 use ournotes_deck::live::model::{JudgementStream, JustRule, LiveModel, Play};
 use ournotes_deck::live::score::{ComboTable, LiveScoreSettings};
 use ournotes_deck::live::skip::skip_score;
+use ournotes_deck::master::Master;
 use serde_json::{Value, json};
 
 fn columns(rows: &Value) -> Value {
@@ -65,9 +66,34 @@ fn chart_json_fevers(score_id: i64, n: i32, rng: &mut common::Rng, fevers: &[(i3
     )
 }
 
-fn document(charts: Vec<Value>, full_combo: i64) -> Value {
+/// The synthetic master; with `extra`, also live skill 4 (2000 on the confirmed rank, condition 7012) and 5 (2000
+/// on a Gekisou combo, condition 7005), one level each.
+fn document_with(charts: Vec<Value>, full_combo: i64, extra: bool) -> Value {
     let mut rng = common::Rng::new(7);
-    let s = common::synth(&mut rng, 12, 4);
+    let mut s = common::synth(&mut rng, 12, 4);
+    if extra {
+        let mut push = |table: &str, rows: Value| {
+            let t = s.tables.iter_mut().find(|(n, _)| n == table).unwrap();
+            t.1.as_array_mut().unwrap().extend(rows.as_array().unwrap().iter().cloned());
+        };
+        push(
+            "MasterSkillCondition",
+            json!([{"_id": 20, "_conditionType": 7012, "_conditionValues": [1], "_isPositive": true, "_conditionTargetIDs": []},
+                   {"_id": 21, "_conditionType": 7005, "_conditionValues": [1], "_isPositive": true, "_conditionTargetIDs": []}]),
+        );
+        push(
+            "MasterSkillConditionSet",
+            json!([{"_id": 20, "_group": 20, "_conditionIds": [20]}, {"_id": 21, "_group": 21, "_conditionIds": [21]}]),
+        );
+        push("MasterLiveSkill", json!([{"_id": 4, "_skillCategories": [1]}, {"_id": 5, "_skillCategories": [1]}]));
+        push(
+            "MasterLiveSkillEffect",
+            json!([{"_id": 1000, "_liveSkillID": 4, "_level": 1, "_skillConditionGroup": 20, "_skillTargetIDs": [],
+                    "_skillEffectType": 2000, "_activationTimeSecond": 5.0, "_effectValue": 3000},
+                   {"_id": 1001, "_liveSkillID": 5, "_level": 1, "_skillConditionGroup": 21, "_skillTargetIDs": [],
+                    "_skillEffectType": 2000, "_activationTimeSecond": 5.0, "_effectValue": 3000}]),
+        );
+    }
     let mut master = serde_json::Map::new();
     for (name, rows) in &s.tables {
         master.insert(name.clone(), columns(rows));
@@ -144,11 +170,15 @@ fn data(n: i32) -> (DeckData, i32) {
 }
 
 fn data_fevers(n: i32, fevers: &[(i32, i32)]) -> (DeckData, i32) {
+    data_with(n, fevers, false)
+}
+
+fn data_with(n: i32, fevers: &[(i32, i32)], extra: bool) -> (DeckData, i32) {
     let mut rng = common::Rng::new(11);
     let (chart, last) = chart_json_fevers(1004, n, &mut rng, fevers);
     let ops = chart["notes"]["op"].as_array().unwrap();
     let judged = ops.iter().filter(|o| ![0, 80, 82, 100, 103, 121, 122, 123].contains(&o.as_i64().unwrap())).count();
-    (DeckData::from_json(&document(vec![chart], judged as i64).to_string()).unwrap(), last)
+    (DeckData::from_json(&document_with(vec![chart], judged as i64, extra).to_string()).unwrap(), last)
 }
 
 const FEVERS: [(i32, i32); 3] = [(8000, 16000), (24000, 32000), (42000, 50000)];
@@ -197,6 +227,8 @@ fn measured_weights_predict_whole_live_simulations() {
     for (i, r) in s.ranges.iter().enumerate() {
         assert_eq!((r.index, r.mission, r.start_ms, r.end_ms), (i, i as i64 + 1, FEVERS[i].0, FEVERS[i].1));
         assert_eq!(r.rank_bonus_percent, 10 * (i as i64 + 1));
+        // the synthetic table has rank 1 rows only
+        assert_eq!(r.rank_bonus_percents, [10 * (i as i64 + 1), 0, 0, 0, 0]);
     }
     for seed in &s.seeds {
         assert_eq!(seed.ranges.len(), 3);
@@ -210,6 +242,12 @@ fn measured_weights_predict_whole_live_simulations() {
         assert_eq!((seed.ranges[0].just_count, seed.ranges[1].just_count), (0, 0));
         assert_eq!(seed.ranges[2].just_count, s.just_notes);
         assert!(s.just_notes > 0);
+        // the Perfect play: the ranges before the Just-count range play the same, the Just-count range scores less
+        for r in &seed.ranges[..2] {
+            assert_eq!(r.range_score_perfect, r.range_score);
+        }
+        assert!(seed.ranges[2].range_score_perfect < seed.ranges[2].range_score);
+        assert!(seed.score_perfect < seed.score);
         assert!((seed.check.exact as f64 - seed.check.predicted).abs() <= seed.check.bound);
         assert_eq!(seed.weights.len(), kinds.len());
         // an unconditioned score-up raises the score wherever its position fires
@@ -285,16 +323,39 @@ fn a_chart_without_luck_ranges_has_one_seed() {
     assert_eq!(s.seeds.len(), 1);
     assert_eq!(s.seeds[0].seed, 0);
     assert_eq!(s.just_notes, 0);
+    // no Just: the Perfect play is the play; no ranges: nothing to rank
+    assert_eq!(s.seeds[0].score_perfect, s.seeds[0].score);
+    let rw = s.seeds[0].range_weights.as_ref().unwrap();
+    assert!(rw.iter().all(|k| k.as_ref().unwrap().iter().all(|p| p.is_empty())));
+    assert!(s.seeds[0].rank_check.is_none());
+    assert_eq!(s.seeds[0].score_at_ranks(&s.ranges, &[]).unwrap(), s.seeds[0].score);
+    // Gekisou off without fevers: the same live without a Gekisou controller
+    assert_eq!(s.off_seeds.len(), 1);
+    assert_eq!(s.off_seeds[0].score, s.seeds[0].score);
+    for (on, off) in s.seeds[0].weights.iter().zip(&s.off_seeds[0].weights) {
+        assert_eq!(Some(on), off.as_ref());
+    }
 }
 
 #[test]
 fn more_than_three_fevers_cannot_be_played() {
     let fevers = [(8000, 10000), (20000, 22000), (30000, 32000), (40000, 42000)];
     let (d, _) = data_fevers(300, &fevers);
-    let s = chartstats::chart_stats(&d.master, &d.charts[0], &chartstats::kinds(&d.master), 2).unwrap();
+    let kinds = chartstats::kinds(&d.master);
+    let s = chartstats::chart_stats(&d.master, &d.charts[0], &kinds, 2).unwrap();
     assert!(s.seeds.is_empty());
     assert_eq!(s.ranges.len(), 3);
     assert!(s.unplayable.as_deref().unwrap().contains("fourth fever"));
+    // without Gekisou the game plays it
+    let off = &s.off_seeds[..];
+    assert_eq!(off.len(), 1);
+    assert!(off[0].score > 0 && off[0].weights.len() == kinds.len());
+    assert!(off[0].weights.iter().all(|w| w.as_ref().is_some_and(|w| w.len() == s.positions)));
+    assert!((off[0].check.exact as f64 - off[0].check.predicted).abs() <= off[0].check.bound);
+    let chart = d.chart(1004).unwrap();
+    let play = Play::theoretical_best(&d.master, &chart).unwrap();
+    let model = LiveModel::new(&d.master, 24, &chart, &play).unwrap();
+    assert_eq!(model.score(POWER, &[]), off[0].score);
 }
 
 #[test]
@@ -320,11 +381,24 @@ fn document_lists_kinds_and_charts() {
     assert_eq!(v["source"]["region"], "test");
     assert_eq!(v["model"]["power"], POWER);
     assert_eq!(v["kinds"].as_array().unwrap().len(), 4);
+    for key in ["ranks", "perfect", "off"] {
+        assert!(v["model"][key].as_str().is_some_and(|s| !s.contains("  ")), "{key}");
+    }
     let c = &v["charts"][0];
     assert_eq!(c["scoreId"], 1004);
     assert_eq!(c["events"].as_array().unwrap().len(), 5);
+    assert_eq!(c["ranges"][0]["rankBonusPercents"].as_array().unwrap().len(), 5);
     assert_eq!(c["seeds"].as_array().unwrap().len(), 2);
-    assert_eq!(c["seeds"][0]["weights"].as_array().unwrap().len(), 4);
+    let seed = &c["seeds"][0];
+    assert_eq!(seed["weights"].as_array().unwrap().len(), 4);
+    assert!(seed["scorePerfect"].is_i64() && seed["ranges"][2]["rangeScorePerfect"].is_i64());
+    // rangeWeights[kind][position][range]
+    let rw = seed["rangeWeights"].as_array().unwrap();
+    assert_eq!((rw.len(), rw[0].as_array().unwrap().len(), rw[0][0].as_array().unwrap().len()), (4, 5, 3));
+    assert_eq!(seed["rankCheck"]["ranks"].as_array().unwrap().len(), 3);
+    let off = c["offSeeds"].as_array().unwrap();
+    assert_eq!(off.len(), 1);
+    assert_eq!(off[0].as_object().unwrap().keys().collect::<Vec<_>>(), ["check", "score", "seed", "weights"]);
     assert!(c.get("unplayable").is_none());
     assert!(chartstats::document(&d, Some(0)).is_err());
 }
@@ -375,4 +449,235 @@ fn per_order_model_matches_the_whole_live_simulation_with_live_skills() {
         compared += 1;
     }
     assert_eq!(compared, 40);
+}
+
+/// A Gekisou live with explicit ranks: the chart's notes, events, setup and default play.
+struct Ranked {
+    notes: Vec<LiveNote>,
+    events: Vec<(i32, i32)>,
+    setup: GekisouSetup,
+    play: ournotes_deck::live::full::LivePlay,
+    dt: Vec<f32>,
+    converted: i32,
+    length: i32,
+}
+
+impl Ranked {
+    fn new(d: &DeckData) -> Ranked {
+        let chart = d.chart(1004).unwrap();
+        let setup = GekisouSetup { fevers: FEVERS.to_vec(), missions: vec![1, 2, 3] };
+        let rule = JustRule::new(&d.master, &setup).unwrap();
+        let stream = JudgementStream::theoretical_best_gekisou(&chart, &d.charts[0].judgement_types, &rule).unwrap();
+        Ranked {
+            notes: notes_of(d),
+            events: chart.skill_events.iter().map(|e| (e.index, e.time_ms)).collect(),
+            setup,
+            play: stream.to_live_play().unwrap(),
+            dt: stream.delta_times().unwrap(),
+            converted: chart.converted_note_count,
+            length: chart.last_timing_note_ms + 1000,
+        }
+    }
+
+    /// The score of a deck at a power and seed, range `i` confirmed at rank `ranks[i]` with its percentage.
+    fn run(&self, master: &Master, perf: &[Option<(i64, i64)>], power: i32, seed: i32, ranks: &[(i32, i64)]) -> i32 {
+        let deck: Vec<Performer> = perf.iter().map(|&p| Performer { live_skill: p, ..Default::default() }).collect();
+        let params = LiveParams {
+            skill_target_music_type: 1,
+            total_power: power,
+            music_level: 24,
+            converted_note_count: self.converted,
+            music_length_ms: self.length,
+            score_music_length_ms: None,
+            assist_factor: 1.0,
+        };
+        let mut lm =
+            full::LiveModel::new_gekisou_external(master, &deck, &self.notes, &self.events, params, &self.setup)
+                .unwrap();
+        for (i, &(rank, pct)) in ranks.iter().enumerate() {
+            lm.queue_gekisou_rank_confirmation(i, rank, pct).unwrap();
+        }
+        let mut play = self.play.clone();
+        play.base_seed = seed;
+        lm.run_timed(&play, &self.dt).unwrap()
+    }
+}
+
+/// The kind of a live skill effect row.
+fn kind_of(kinds: &[chartstats::Kind], row: &ournotes_deck::master::LiveSkillEffectRow) -> usize {
+    kinds
+        .iter()
+        .position(|k| {
+            k.effect_type == row.skill_effect_type
+                && k.activation_time_second == row.activation_time_second
+                && k.skill_target_ids == row.skill_target_ids
+                && k.skill_condition_group == row.skill_condition_group
+        })
+        .unwrap()
+}
+
+/// Rank bonus percentages for every rank of every range, so that each rank moves the score.
+fn rank_table(d: &mut DeckData) {
+    d.master.gekisou_ranking_score_bonuses.clear();
+    let mut id = 1;
+    for count in 1..=3 {
+        for rank in 1..=5 {
+            d.master.gekisou_ranking_score_bonuses.push(ournotes_deck::master::GekisouRankingBonusRow {
+                id,
+                mission_pattern: 2,
+                rank,
+                count,
+                score_bonus_percent: [30, 22, 15, 9, 4][rank as usize - 1] + 5 * count,
+            });
+            id += 1;
+        }
+    }
+}
+
+/// At random ranks the no-skill score from the statistics is exact, a unit effect's weight is within two points per
+/// range and real decks at another power are within the bound, against plays through the explicit rank
+/// confirmations.
+#[test]
+fn ranks_follow_linearly_on_the_rank_confirmation_path() {
+    let (mut d, _) = data_fevers(700, &FEVERS);
+    rank_table(&mut d);
+    let kinds = chartstats::kinds(&d.master);
+    let s = chartstats::chart_stats(&d.master, &d.charts[0], &kinds, 3).unwrap();
+    for (i, r) in s.ranges.iter().enumerate() {
+        assert_eq!(r.rank_bonus_percents[0], r.rank_bonus_percent);
+        assert_eq!(r.rank_bonus_percents[4], 4 + 5 * (i as i64 + 1));
+    }
+    let live = Ranked::new(&d);
+    // kind 0 (2000 for 5 s, no condition) at factor 1 as live skill 99
+    let mut unit = d.master.clone();
+    let mut row = d.master.live_skill_effects.iter().find(|r| r.live_skill_id == 1 && r.level == 1).unwrap().clone();
+    assert_eq!(kind_of(&kinds, &row), 0);
+    (row.id, row.live_skill_id, row.effect_value) = (100_000, 99, 10000);
+    unit.live_skill_effects.push(row);
+    let none = vec![None; 5];
+    let mut rng = common::Rng::new(21);
+    let mut checked = 0;
+    for seed in &s.seeds {
+        let rc = seed.rank_check.as_ref().expect("a rank check");
+        assert!((rc.exact as f64 - rc.predicted).abs() <= rc.bound, "{rc:?}");
+        assert!(rc.ranks.iter().all(|r| (1..=5).contains(r)));
+        // rank 1 everywhere: the statistics themselves
+        assert_eq!(seed.score_at_ranks(&s.ranges, &[1, 1, 1]).unwrap(), seed.score);
+        let w1 = seed.weights_at_ranks(&s.ranges, &[1, 1, 1]).unwrap().unwrap();
+        assert_eq!(w1, seed.weights.iter().cloned().map(Some).collect::<Vec<_>>());
+        assert!(
+            seed.score_at_ranks(&s.ranges, &[1, 1]).is_err() && seed.score_at_ranks(&s.ranges, &[1, 6, 1]).is_err()
+        );
+        for _ in 0..4 {
+            let ranks: Vec<i32> = (0..3).map(|_| rng.range(1, 5) as i32).collect();
+            let confirmed: Vec<(i32, i64)> =
+                ranks.iter().zip(&s.ranges).map(|(&r, info)| (r, info.percent(r).unwrap())).collect();
+            let exact0 = live.run(&d.master, &none, POWER, seed.seed, &confirmed);
+            assert_eq!(exact0, seed.score_at_ranks(&s.ranges, &ranks).unwrap(), "ranks {ranks:?}");
+            let w = seed.weights_at_ranks(&s.ranges, &ranks).unwrap().unwrap();
+            for k in 0..5 {
+                let mut perf = none.clone();
+                perf[k] = Some((99, 1));
+                let exact = live.run(&unit, &perf, POWER, seed.seed, &confirmed) as f64;
+                let predicted = exact0 as f64 + POWER as f64 * w[0].as_ref().unwrap()[k];
+                assert!((exact - predicted).abs() < 6.0 + 1e-6, "ranks {ranks:?} k {k}: {exact} {predicted}");
+            }
+            // real decks of the master's skills 1 (2000) and 2 (2004) at another power
+            let power = rng.range(100_000, 900_000) as i32;
+            let perf: Vec<Option<(i64, i64)>> = (0..5)
+                .map(|_| if rng.below(5) == 0 { None } else { Some((rng.range(1, 2), rng.range(1, 5))) })
+                .collect();
+            let mut predicted = exact0 as f64 / POWER as f64;
+            let mut gain = 0.0;
+            for (k, p) in perf.iter().enumerate() {
+                if let Some((id, lv)) = *p {
+                    let row =
+                        d.master.live_skill_effects.iter().find(|r| r.live_skill_id == id && r.level == lv).unwrap();
+                    let x = chartstats::kind_factor(row.skill_effect_type, row.effect_value);
+                    predicted += x * w[kind_of(&kinds, row)].as_ref().unwrap()[k];
+                    gain += x;
+                }
+            }
+            let exact = live.run(&d.master, &perf, power, seed.seed, &confirmed) as f64;
+            let p = power as f64 * predicted;
+            let scale = power as f64 / POWER as f64;
+            let bound =
+                (s.judged_notes as f64 + 3.0) * (1.0 + scale * (1.0 + 2.0 * gain)) + 6.0 * scale * gain + 4e-6 * p;
+            assert!(
+                (exact - p).abs() <= bound,
+                "ranks {ranks:?} power {power} deck {perf:?}: exact {exact} predicted {p}"
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 12);
+    // the lower ranks score less
+    let seed = &s.seeds[0];
+    assert!(seed.score_at_ranks(&s.ranges, &[5, 5, 5]).unwrap() < seed.score);
+}
+
+/// Gekisou off: the no-skill score is the per-order model's, and decks of the master's skills (live-conditioned
+/// ones included) predicted from the off weights are within the flooring bound of the per-order model.
+#[test]
+fn off_seeds_match_the_per_order_model() {
+    let (d, _) = data_fevers(700, &FEVERS);
+    let kinds = chartstats::kinds(&d.master);
+    let s = chartstats::chart_stats(&d.master, &d.charts[0], &kinds, 2).unwrap();
+    let off = &s.off_seeds[0];
+    assert_eq!((s.off_seeds.len(), off.seed), (1, chartstats::OFF_SEED));
+    assert!(off.weights.iter().all(|w| w.as_ref().is_some_and(|w| w.len() == 5)));
+    assert!((off.check.exact as f64 - off.check.predicted).abs() <= off.check.bound);
+    // no Just, no rank bonus: less than Gekisou on
+    assert!(s.seeds.iter().all(|x| off.score < x.score));
+    let chart = d.chart(1004).unwrap();
+    let play = Play::theoretical_best(&d.master, &chart).unwrap();
+    let model = LiveModel::new(&d.master, 24, &chart, &play).unwrap();
+    assert_eq!(model.score(POWER, &[]), off.score);
+    let mut rng = common::Rng::new(13);
+    for _ in 0..40 {
+        let power = rng.range(50_000, 900_000) as i32;
+        let perf: Vec<(i64, i64)> =
+            (0..5).map(|_| if rng.below(5) == 0 { (0, 0) } else { (rng.range(1, 3), rng.range(1, 5)) }).collect();
+        let exact = model.score(power, &model.commands(&d.master, &perf).unwrap()) as f64;
+        let mut predicted = off.score as f64 / POWER as f64;
+        let mut gain = 0.0;
+        for (k, &(id, lv)) in perf.iter().enumerate() {
+            for row in d.master.live_skill_effects.iter().filter(|r| r.live_skill_id == id && r.level == lv) {
+                let x = chartstats::kind_factor(row.skill_effect_type, row.effect_value);
+                predicted += x * off.weights[kind_of(&kinds, row)].as_ref().unwrap()[k];
+                gain += x;
+            }
+        }
+        let p = power as f64 * predicted;
+        let scale = power as f64 / POWER as f64;
+        let bound = s.judged_notes as f64 * (1.0 + scale * (1.0 + 2.0 * gain)) + 4e-6 * p;
+        assert!((exact - p).abs() <= bound, "power {power} deck {perf:?}: exact {exact} predicted {p}");
+    }
+}
+
+/// A kind on the confirmed rank has no range weights (the other kinds keep theirs); a kind on the Gekisou state has
+/// no weights with Gekisou off and stays out of that check deck.
+#[test]
+fn kinds_on_the_rank_or_the_gekisou_state() {
+    let (d, _) = data_with(500, &FEVERS, true);
+    let kinds = chartstats::kinds(&d.master);
+    assert_eq!(kinds.len(), 6);
+    assert_eq!((kinds[4].skill_condition_group, kinds[5].skill_condition_group), (20, 21));
+    let reads: Vec<bool> = kinds.iter().map(|k| k.reads_rank(&d.master)).collect();
+    assert_eq!(reads, [false, false, false, false, true, false]);
+    let s = chartstats::chart_stats(&d.master, &d.charts[0], &kinds, 2).unwrap();
+    for seed in &s.seeds {
+        let rw = seed.range_weights.as_ref().unwrap();
+        assert!(rw[4].is_none() && rw.iter().enumerate().all(|(i, w)| i == 4 || w.is_some()));
+        assert!((seed.check.exact as f64 - seed.check.predicted).abs() <= seed.check.bound);
+        let w = seed.weights_at_ranks(&s.ranges, &[2, 3, 4]).unwrap().unwrap();
+        assert!(w[4].is_none() && w[5].is_some());
+        if seed.check.deck.iter().flatten().any(|&(ki, _)| ki == 4) {
+            assert!(seed.rank_check.is_none());
+        }
+    }
+    let off = &s.off_seeds[0];
+    assert!(off.weights[5].is_none() && off.weights.iter().enumerate().all(|(i, w)| i == 5 || w.is_some()));
+    assert!(off.check.deck.iter().flatten().all(|&(ki, _)| ki != 5));
+    assert!((off.check.exact as f64 - off.check.predicted).abs() <= off.check.bound);
 }
