@@ -64,11 +64,9 @@ impl RawJudgementRuntime {
         }
     }
     pub(super) fn convert_assist(&mut self, note: &mut RawJudgedNote, unchanged_by_skill: bool) -> Result<(), Error> {
-        if unchanged_by_skill {
-            if let Some(a) = self.assist.as_mut() {
-                note.result.judgement =
-                    a.convert(note.note_id, &note.result, note.is_easy_flick, &self.windows.replicas).map_err(game)?;
-            }
+        if unchanged_by_skill && let Some(a) = self.assist.as_mut() {
+            note.result.judgement =
+                a.convert(note.note_id, &note.result, note.is_easy_flick, &self.windows.replicas).map_err(game)?;
         }
         Ok(())
     }
@@ -117,10 +115,10 @@ impl RawJudgementRuntime {
                     let minimum = row.targets()?.first().copied().unwrap_or(3) as i32;
                     let targets: Vec<_> = RELAX_TARGET_JUDGEMENTS.into_iter().filter(|&v| v >= minimum).collect();
                     self.percent.insert(owner, self.windows.percent(&targets, value as f32 / 10000.0));
-                } else if phase == END_FRAME {
-                    if let Some(delta) = self.percent.remove(&owner) {
-                        self.windows.disable_percent(&delta);
-                    }
+                } else if phase == END_FRAME
+                    && let Some(delta) = self.percent.remove(&owner)
+                {
+                    self.windows.disable_percent(&delta);
                 }
                 Ok(None)
             }

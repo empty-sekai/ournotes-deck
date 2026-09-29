@@ -256,12 +256,11 @@ impl<'a, 'm> PowerSearch<'a, 'm> {
 
     fn tick(&mut self) -> bool {
         self.stats.nodes += 1;
-        if self.stats.nodes % 256 == 0 {
-            if let Some(d) = self.deadline {
-                if Instant::now() >= d {
-                    self.timed_out = true;
-                }
-            }
+        if self.stats.nodes.is_multiple_of(256)
+            && let Some(d) = self.deadline
+            && Instant::now() >= d
+        {
+            self.timed_out = true;
         }
         !self.timed_out && self.error.is_none()
     }
@@ -292,10 +291,10 @@ impl<'a, 'm> PowerSearch<'a, 'm> {
                 break;
             }
             // both the power bound and the gain bound fall as `q` grows
-            if let Some(g) = &l.gains {
-                if !self.open_gain(p, g, q, r, sel_pos, sel_sum) {
-                    break;
-                }
+            if let Some(g) = &l.gains
+                && !self.open_gain(p, g, q, r, sel_pos, sel_sum)
+            {
+                break;
             }
             let rest = l.prefix[q + r] - l.prefix[q + 1];
             for &(u, m) in &l.chars[q].1 {
@@ -308,10 +307,10 @@ impl<'a, 'm> PowerSearch<'a, 'm> {
                     np[k] = np[k].max(gm[k]);
                 }
                 let ns = sel_sum + gm.iter().copied().fold(0f64, f64::max);
-                if let Some(g) = &l.gains {
-                    if !self.open_gain(cur + u + rest, g, q + 1, r - 1, np, ns) {
-                        continue;
-                    }
+                if let Some(g) = &l.gains
+                    && !self.open_gain(cur + u + rest, g, q + 1, r - 1, np, ns)
+                {
+                    continue;
                 }
                 picked.push(m);
                 self.dfs(l, q + 1, r - 1, cur + u, picked, np, ns);
