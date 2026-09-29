@@ -704,9 +704,7 @@ impl<'a, 'm> Search<'a, 'm> {
                         s
                     })
                     .collect();
-                if let Some((s, v)) = self.best_of(cands)?
-                    && v > value + 1e-12
-                {
+                if let Some((s, v)) = self.best_of(cands)?.filter(|b| b.1 > value + 1e-12) {
                     state = s;
                     value = v;
                 }
@@ -733,9 +731,7 @@ impl<'a, 'm> Search<'a, 'm> {
                             cands.push(s);
                         }
                     }
-                    if let Some((s, v)) = self.best_of(cands)?
-                        && v > value + 1e-12
-                    {
+                    if let Some((s, v)) = self.best_of(cands)?.filter(|b| b.1 > value + 1e-12) {
                         state = s;
                         value = v;
                     }
