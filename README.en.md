@@ -181,8 +181,8 @@ ournotes-deck chart-stats --data deck-data.json --aptitude-max-seeds 128 --aptit
 ournotes-deck chart-stats --data deck-data.json --no-gekisou-aptitude -o baseline.json
 ```
 
-- `--aptitude-max-seeds N`: at most N seeds for a random increment, default 1024; stop earlier at the SE target.
-- `--aptitude-cross-seeds N`: at most the first N seeds for ordinary skill cross terms, default 64.
+- `--aptitude-max-seeds N`: at most N seeds for a random increment, default 1024, N at least 2; stop earlier at the SE target.
+- `--aptitude-cross-seeds N`: at most the first N seeds for ordinary skill cross terms, default 64, N at least 1.
 - `--no-gekisou-aptitude`: skip aptitude measurement; both file-level and per-chart `gekisouAptitude` are null.
   Existing statistics are still produced.
 
@@ -205,7 +205,9 @@ Random increments use batches of 32, 64, 128, 256, 512 and 1024 seeds, capped by
 most `max(1% × |mean increment|, 0.1% × mean no-skill score)`. At the cap, `seTargetMet` reports whether this target
 was met. Deterministic increments report one seed and zero SE; four identical samples alone cannot establish that
 a random skill is deterministic. The seed mean is not the game's expectation: its seed law is unknown, and SE
-does not measure model error. Cross terms can use fewer seeds, reported as `crossSeeds` per variant.
+does not measure model error. Cross terms can use fewer seeds, reported as `crossSeeds` per variant (0 without a
+plain kind). Meeting the SE target may only satisfy the absolute baseline threshold, not 1% relative precision
+on the increment; a small sample mean's sign alone does not establish that a skill helps or hurts.
 
 **Model limits:**
 

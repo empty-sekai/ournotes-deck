@@ -1061,7 +1061,29 @@ pub fn document_with(data: &DeckData, options: &Options) -> Result<serde_json::V
 
 #[cfg(test)]
 mod tests {
-    use super::bonus_inside_a_range;
+    use super::{Checked, bonus_inside_a_range};
+
+    #[test]
+    fn checks_reject_nonfinite_predictions_and_invalid_bounds() {
+        for (predicted, bound) in [
+            (f64::NAN, 1.0),
+            (f64::INFINITY, 1.0),
+            (f64::NEG_INFINITY, 1.0),
+            (10.0, f64::NAN),
+            (10.0, f64::INFINITY),
+            (10.0, f64::NEG_INFINITY),
+            (10.0, -1.0),
+            (12.0, 1.0),
+        ] {
+            assert!(
+                Checked { exact: 10, predicted, bound }.within(|| "test".into()).is_err(),
+                "predicted {predicted}, bound {bound}"
+            );
+        }
+        for (predicted, bound) in [(10.0, 0.0), (9.0, 1.0), (11.0, 1.0)] {
+            assert!(Checked { exact: 10, predicted, bound }.within(|| "test".into()).is_ok());
+        }
+    }
 
     #[test]
     fn a_bonus_inside_another_range_is_found() {

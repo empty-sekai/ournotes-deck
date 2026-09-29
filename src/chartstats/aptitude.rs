@@ -12,8 +12,9 @@
 //! skill on one performer whose Gekisou skill is a synthetic one without effects (a support skill acts only with a
 //! member Gekisou skill), of the support skill's mission. A Gekisou (support) skill acts only while a range of its
 //! mission is concerned, so a shape of another mission adds nothing and is not measured. The increments (`with -
-//! without` on the same seed) are exact per seed; a shape whose increments are the same on
-//! [`DETERMINISTIC_TEST`] seeds is deterministic and is given on one seed, any other on seed batches
+//! without` on the same seed) are exact per seed. A shape is marked deterministic only after excluding random
+//! dependencies (luck ranges, luck effects 11000..=11005 and probability conditions 4011) and checking agreement on
+//! [`DETERMINISTIC_TEST`] seeds. It is then given on one seed; other shapes use seed batches
 //! ([`BATCHES`]) until the standard error of its score increment is at most the larger of [`RELATIVE`] of the
 //! increment and [`BASELINE`] of the no-skill score. The cross term, the change of the plain kind's weights, uses
 //! the first `cross_seeds` of them.
