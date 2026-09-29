@@ -67,7 +67,16 @@ pub const MODEL: &str = "charts[].gekisouAptitude: every Gekisou skill shape of 
     increment, 0.1% of the no-skill score); tail = score - sum_j (rangeScore_j + rankBonus_j); at ranks r_j the \
     increment is tail + sum_j rangeScore_j * (1 + p_j(r_j) / 100) up to one point per range; weights and \
     rangeWeights: the change of the plain kind's weights (cross term) on the first crossSeeds seeds; one check per \
-    variant at random ranks and a random plain deck; increments of several shapes do not add up";
+    variant at random ranks and a random plain deck at checkPower, failing beyond the flooring bound; increments \
+    of several shapes do not add up (combo saturation, luck rush/gauge interactions and Just-count conditions). \
+    Baseline seeds and offSeeds are unchanged: no best formation is selected. Only battleLiveScore is affected, \
+    never soloScore or Free Live. The seed mean is not the game's expectation; standard error describes sampling \
+    variation, not model accuracy. Interpolating the no-live-skill increment between Just and Perfect plays is \
+    approximate (13005 conversion, per-Just 2001 and 13002 are nonlinear); Perfect-play cross weights are not \
+    measured, so full aptitude with nonzero live skills is unavailable below 100% Just. The Great-rate factor \
+    1 - 0.2q is approximate too. Combo protection \
+    12004, Great-to-Perfect 12006 and judgement-window 4004 have no effect on this best play; 13000, 13002 and \
+    11002 can change range indicators without changing score";
 
 /// Options of the aptitude.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

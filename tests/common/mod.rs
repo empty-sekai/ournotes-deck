@@ -393,7 +393,7 @@ pub fn play(rng: &mut Rng, chart: &Chart) -> ournotes_deck::live::model::Play {
 }
 
 /// Sets columns of every row of table `name`.
-fn set_column(s: &mut Synth, name: &str, f: &mut dyn FnMut(&mut Value)) {
+pub fn set_column(s: &mut Synth, name: &str, f: &mut dyn FnMut(&mut Value)) {
     for (n, v) in s.tables.iter_mut() {
         if n == name {
             for r in v.as_array_mut().unwrap() {
@@ -403,12 +403,12 @@ fn set_column(s: &mut Synth, name: &str, f: &mut dyn FnMut(&mut Value)) {
     }
 }
 
-fn replace_table(s: &mut Synth, name: &str, v: Value) {
+pub fn replace_table(s: &mut Synth, name: &str, v: Value) {
     s.tables.retain(|(n, _)| n != name);
     s.tables.push((name.to_string(), v));
 }
 
-fn extend_table(s: &mut Synth, name: &str, rows: Vec<Value>) {
+pub fn extend_table(s: &mut Synth, name: &str, rows: Vec<Value>) {
     for (n, v) in s.tables.iter_mut() {
         if n == name {
             v.as_array_mut().unwrap().extend(rows);
