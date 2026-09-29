@@ -19,7 +19,7 @@
 //! the first `cross_seeds` of them.
 //!
 //! The increments of several shapes do not add up: the Gekisou combo factor saturates, the luck rush support skills
-//! and the luck gauge skills multiply, and Just count additions reach the support skills triggered per Just count.
+//! and the luck gauge skills interact. Judgement conversion can also change the input to other skills.
 
 use serde::Serialize;
 
