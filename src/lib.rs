@@ -9,11 +9,13 @@
 //! - [`event`]: event bonuses, score ranks and the client's event-point computation;
 //! - [`master`]: the master tables the crate reads (supplied by the user, not bundled);
 //! - [`data`]: the deck data file (`nnnotes.deck-data/1`) with the master tables and every chart;
-//! - [`search`]: the exact Top-K deck search and its brute-force oracle.
+//! - [`search`]: the exact Top-K deck search and its brute-force oracle;
+//! - [`chartstats`]: per-chart score coefficients that hold for every deck, for chart rankings.
 
 pub mod bonus;
 pub mod calc;
 pub mod cards;
+pub mod chartstats;
 pub mod data;
 pub mod deck;
 pub mod error;
@@ -23,6 +25,7 @@ pub mod master;
 pub mod memory;
 pub mod num;
 pub mod power;
+pub mod scenario;
 pub mod search;
 
 pub use error::Error;

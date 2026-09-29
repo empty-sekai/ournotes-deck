@@ -317,6 +317,31 @@ impl SongView {
         }
     }
 
+    /// Challenge music uses its own nonzero type, or the base song's type, and the base song's tags.
+    pub fn from_challenge_row(master: &Master, row: &crate::master::ChallengeMusicRow) -> Result<SongView, Error> {
+        let base = master
+            .live_music(row.live_music_id)
+            .ok_or_else(|| Error::Master(format!("unknown live music {}", row.live_music_id)))?;
+        let mut music = Self::from_row(base);
+        if row.music_type != 0 {
+            music.music_type = row.music_type;
+        }
+        Ok(music)
+    }
+
+    /// Arena music's parameter view. Its type is used literally (including zero), unlike challenge music.
+    /// This is not the base-song parameter view used by the multiplayer live setup.
+    pub fn from_arena_row(master: &Master, row: &crate::master::ArenaMusicRow) -> Result<SongView, Error> {
+        let base = master
+            .live_music(row.live_music_id)
+            .ok_or_else(|| Error::Master(format!("unknown live music {}", row.live_music_id)))?;
+        let mut music = Self::from_row(base);
+        music.music_type = row.live_music_type;
+        music.type_bonus_rate = row.type_bonus_rate;
+        music.tag_bonus_rate = row.best_music_tag_bonus_rate;
+        Ok(music)
+    }
+
     pub fn slot(&self) -> crate::calc::SlotMusic<'_> {
         crate::calc::SlotMusic {
             music_type: self.music_type,

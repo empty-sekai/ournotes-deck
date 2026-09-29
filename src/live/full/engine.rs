@@ -44,6 +44,7 @@ pub(crate) struct EffectState {
 pub(crate) struct FrameInput {
     pub time_ms: i32,
     pub music_length_ms: i32,
+    pub is_live_finished: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -194,12 +195,14 @@ impl EffectUpdater {
     }
 }
 
-/// The sustained updater of one effect (activation time 0): one effect updater runs while the trigger hits.
+/// A sustained effect: a single current updater without a duration, or overlapping timed updaters.
 #[derive(Clone, Debug)]
 struct Sustained {
     queue: VecDeque<usize>,
     current: Option<usize>,
     enabled: bool,
+    timed: bool,
+    executing: Vec<usize>,
 }
 
 /// The updater of one condition skill.
@@ -237,9 +240,6 @@ impl ConditionSkillUpdater {
         let mut stacks = vec![Vec::new(); effects.len()];
         let mut sustained = vec![None; effects.len()];
         for (e, ef) in effects.iter().enumerate() {
-            if ef.trigger_type == SUSTAINED && has_activation_time(ef.act) {
-                return Err(Error::Unsupported("sustained effect with an activation time".into()));
-            }
             if ef.trigger_type != ONE_SHOT && ef.trigger_type != SUSTAINED {
                 continue;
             }
@@ -248,6 +248,7 @@ impl ConditionSkillUpdater {
                 pool.push(updaters.len());
                 let mut state = EffectState::default();
                 if let Some(c) = &ef.cumulative {
+                    state.cumulative_count = c.init_count();
                     state.cumulative_unit = c.unit();
                     state.cumulative_max = c.max();
                 }
@@ -263,7 +264,13 @@ impl ConditionSkillUpdater {
             if ef.trigger_type == ONE_SHOT {
                 stacks[e] = pool;
             } else {
-                sustained[e] = Some(Sustained { queue: pool.into(), current: None, enabled: false });
+                sustained[e] = Some(Sustained {
+                    queue: pool.into(),
+                    current: None,
+                    enabled: false,
+                    timed: has_activation_time(ef.act),
+                    executing: Vec::new(),
+                });
             }
         }
         let n = effects.len();
@@ -299,6 +306,11 @@ impl ConditionSkillUpdater {
         self.trigger_checked = false;
     }
 
+    #[cfg(test)]
+    pub(crate) fn gate_mission(&self) -> Option<i64> {
+        self.gate
+    }
+
     fn update_one(
         &mut self,
         u: usize,
@@ -317,7 +329,7 @@ impl ConditionSkillUpdater {
         let mut done = Vec::new();
         for i in 0..self.executing.len() {
             let u = self.executing[i];
-            if self.updaters[u].phase == phase {
+            if phase < 1 || self.updaters[u].phase == phase {
                 self.update_one(u, inp, NO_TRIGGER, false, ctx)?;
                 if self.updaters[u].state.state == STAY {
                     done.push(u);
@@ -329,7 +341,7 @@ impl ConditionSkillUpdater {
         if !self.trigger_checked {
             self.trigger_checked = true;
             self.cache.iter_mut().for_each(|c| *c = None);
-            if !self.gate_open(ctx)? {
+            if inp.is_live_finished || !self.gate_open(ctx)? {
                 return self.finish_update(updated, done);
             }
             for ef in self.effects.iter_mut() {
@@ -355,21 +367,21 @@ impl ConditionSkillUpdater {
             let Some(tr) = self.cache[e] else { continue };
             let trigger_type = self.effects[e].trigger_type;
             if trigger_type == SUSTAINED {
-                if self.effects[e].phase == phase {
-                    if let Some(u) = self.update_sustained(e, inp, tr, ctx)? {
-                        updated.push(u);
-                    }
+                if phase < 1 || self.effects[e].phase == phase {
+                    updated.extend(self.update_sustained(e, inp, tr, ctx)?);
                 }
                 continue;
             }
             if trigger_type != ONE_SHOT {
-                return Err(Error::Unsupported(format!("skill trigger type {trigger_type}")));
+                // ConditionSkillUpdater.Update throws ArgumentOutOfRangeException here; a live never gets here
+                // because the constructor already rejects such rows.
+                return Err(Error::Game(format!("ArgumentOutOfRangeException: skill trigger type {trigger_type}")));
             }
             if !tr.is_trigger {
                 continue;
             }
             let Some(&top) = self.stacks[e].last() else { continue };
-            if self.updaters[top].phase != phase {
+            if phase >= 1 && self.updaters[top].phase != phase {
                 continue;
             }
             let ef = &mut self.effects[e];
@@ -415,12 +427,73 @@ impl ConditionSkillUpdater {
         inp: FrameInput,
         tr: TriggerResult,
         ctx: &mut CheckCtx,
-    ) -> Result<Option<usize>, Error> {
+    ) -> Result<Vec<usize>, Error> {
         let execute_ms = if tr.is_trigger { tr.time_ms } else { inp.time_ms };
         let mut s = self.sustained[e].take().expect("sustained updater");
-        let r = self.sustained_step(&mut s, e, execute_ms, inp, tr, ctx);
+        let r = if s.timed {
+            self.timed_sustained_step(&mut s, e, inp, tr, ctx)
+        } else {
+            self.sustained_step(&mut s, e, execute_ms, inp, tr, ctx).map(|u| u.into_iter().collect())
+        };
         self.sustained[e] = Some(s);
         r
+    }
+
+    fn timed_sustained_step(
+        &mut self,
+        s: &mut Sustained,
+        e: usize,
+        inp: FrameInput,
+        tr: TriggerResult,
+        ctx: &mut CheckCtx,
+    ) -> Result<Vec<usize>, Error> {
+        let mut updated = Vec::new();
+        if tr.is_trigger {
+            let condition = self.effects[e]
+                .condition
+                .as_mut()
+                .ok_or_else(|| Error::Game("timed sustained effect has no condition checker".into()))?;
+            if !s.enabled {
+                condition.reset(ctx)?;
+                s.enabled = true;
+            }
+            let fresh = if condition.check(ctx)?.0 {
+                condition.reset(ctx)?;
+                let u = s.queue.pop_front().ok_or_else(|| Error::Game("sustained effect queue is empty".into()))?;
+                s.executing.push(u);
+                Some(u)
+            } else {
+                None
+            };
+            let mut done = Vec::new();
+            for &u in &s.executing {
+                let trigger = TriggerResult {
+                    is_trigger: fresh == Some(u),
+                    time_ms: if fresh == Some(u) { tr.time_ms } else { inp.time_ms },
+                };
+                if self.update_one(u, inp, trigger, false, ctx)? {
+                    updated.push(u);
+                    if self.updaters[u].state.state == STAY {
+                        done.push(u);
+                    }
+                }
+            }
+            for u in done {
+                s.queue.push_back(u);
+                s.executing.retain(|&x| x != u);
+            }
+        } else {
+            // Unlike the untimed path, forced end returns the updater to the queue immediately.
+            // Its EndFrame state survives there until a later Update, not an implicit Stay/reset.
+            for &u in &s.executing {
+                self.update_one(u, inp, NO_TRIGGER, true, ctx)?;
+                updated.push(u);
+                s.queue.push_back(u);
+            }
+            s.executing.clear();
+            s.enabled = false;
+        }
+        Ok(updated)
     }
 
     fn sustained_step(
@@ -449,7 +522,7 @@ impl ConditionSkillUpdater {
         if tr.is_trigger {
             if !s.enabled {
                 if let Some(c) = self.effects[e].condition.as_mut() {
-                    c.reset();
+                    c.reset(ctx)?;
                 }
                 s.enabled = true;
             }
@@ -474,5 +547,113 @@ impl ConditionSkillUpdater {
             s.enabled = false;
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use crate::live::full::life::LifeController;
+    use crate::live::random::LiveRandom;
+
+    fn timed(condition: Option<Checker>) -> ConditionSkillUpdater {
+        let e = CondEffect {
+            effect_id: 1,
+            trigger_type: SUSTAINED,
+            act: 1.0,
+            phase: 2,
+            trigger: Some(Checker::Fixed(true)),
+            condition,
+            execute_limit: 1,
+            reset: None,
+            row: 0,
+            cumulative: None,
+        };
+        ConditionSkillUpdater::new(vec![e], |_| Ok(None), None).unwrap()
+    }
+
+    fn step(
+        u: &mut ConditionSkillUpdater,
+        time: i32,
+        finished: bool,
+        judged: &[(i32, i32, i32)],
+    ) -> Result<Vec<usize>, Error> {
+        let mut life = LifeController::new(1000, HashMap::new(), 10_000).unwrap();
+        let mut random = LiveRandom::new(7);
+        let mut ctx = CheckCtx {
+            life: &mut life,
+            random: &mut random,
+            frame_time: time,
+            judged,
+            events: &[],
+            gk: None,
+            prev_confirmed_rank: None,
+            current_combo: 0,
+        };
+        u.begin_frame();
+        u.update(2, FrameInput { time_ms: time, music_length_ms: 10_000, is_live_finished: finished }, &mut ctx)
+    }
+
+    #[test]
+    fn timed_sustained_allocates_before_updating_older_instances() {
+        let mut u = timed(Some(Checker::Fixed(true)));
+        for i in 0..5 {
+            step(&mut u, i * 100, false, &[]).unwrap();
+        }
+        assert_eq!(u.sustained[0].as_ref().unwrap().executing.len(), 5);
+        assert!(u.execute_count.is_empty()); // OneShot execute limits do not govern sustained allocation.
+        assert!(matches!(step(&mut u, 5000, false, &[]), Err(Error::Game(_))));
+    }
+
+    #[test]
+    fn timed_sustained_recycles_forced_end_without_implicit_stay() {
+        let mut u = timed(Some(Checker::Fixed(true)));
+        assert_eq!(step(&mut u, 0, false, &[]).unwrap(), vec![0]);
+        assert_eq!(step(&mut u, 100, false, &[]).unwrap(), vec![0, 1]);
+        u.effects[0].trigger = Some(Checker::Fixed(false));
+        assert_eq!(step(&mut u, 200, false, &[]).unwrap(), vec![0, 1]);
+        assert_eq!(u.updaters[0].state.state, END_FRAME);
+        assert_eq!(u.sustained[0].as_ref().unwrap().queue.iter().copied().collect::<Vec<_>>(), vec![2, 3, 4, 0, 1]);
+        u.effects[0].trigger = Some(Checker::Fixed(true));
+        for t in [300, 400, 500] {
+            step(&mut u, t, false, &[]).unwrap();
+        }
+        let changed = step(&mut u, 600, false, &[]).unwrap();
+        assert!(changed.contains(&0));
+        assert_eq!(u.updaters[0].state.state, STAY); // Dequeued EndFrame updates to Stay, not ExecuteFrame.
+        assert_eq!(u.sustained[0].as_ref().unwrap().executing, vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn timed_sustained_resets_its_condition_after_each_hit() {
+        let checker =
+            Checker::NoteJudgementCount { n: 2, consecutive: false, targets: vec![5], count: 19, override_ms: None };
+        let mut u = timed(Some(checker));
+        assert!(step(&mut u, 0, false, &[(1, 5, 0)]).unwrap().is_empty());
+        assert_eq!(step(&mut u, 100, false, &[(2, 5, 100)]).unwrap(), vec![0]);
+        assert_eq!(step(&mut u, 200, false, &[(3, 5, 200)]).unwrap(), vec![0]);
+        let changed = step(&mut u, 300, false, &[(4, 5, 300)]).unwrap();
+        assert_eq!(changed, vec![1]);
+        assert!(matches!(u.effects[0].condition, Some(Checker::NoteJudgementCount { count: 0, .. })));
+    }
+
+    #[test]
+    fn timed_sustained_null_condition_fails_only_when_enabled() {
+        let mut u = timed(None);
+        u.effects[0].trigger = Some(Checker::Fixed(false));
+        assert!(step(&mut u, 0, false, &[]).unwrap().is_empty());
+        u.effects[0].trigger = Some(Checker::Fixed(true));
+        assert!(matches!(step(&mut u, 100, false, &[]), Err(Error::Game(_))));
+    }
+
+    #[test]
+    fn live_finished_freezes_sustained_without_running_its_disabled_path() {
+        let mut u = timed(Some(Checker::Fixed(true)));
+        step(&mut u, 0, false, &[]).unwrap();
+        u.effects[0].trigger = Some(Checker::Fixed(false));
+        assert!(step(&mut u, 100, true, &[]).unwrap().is_empty());
+        assert_eq!(u.updaters[0].state.state, EXECUTE_FRAME);
+        assert_eq!(step(&mut u, 200, false, &[]).unwrap(), vec![0]);
+        assert_eq!(u.updaters[0].state.state, END_FRAME);
     }
 }

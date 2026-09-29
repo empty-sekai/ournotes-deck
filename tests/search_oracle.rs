@@ -3,8 +3,11 @@
 mod common;
 
 use common::{Rng, chart, play, roster, synth};
-use ournotes_deck::search::oracle::brute_force;
-use ournotes_deck::search::{Completion, Constraints, Objective, PlayInput, Pool, SearchRequest, evaluate, search};
+use ournotes_deck::search::oracle::brute_force_best_order_diagnostic as brute_force;
+use ournotes_deck::search::{
+    Completion, Constraints, Objective, PlayInput, Pool, SearchRequest, evaluate,
+    search_best_order_diagnostic as search,
+};
 
 fn cases() -> u64 {
     std::env::var("OURNOTES_DECK_ORACLE_CASES").ok().and_then(|s| s.parse().ok()).unwrap_or(12)
@@ -140,6 +143,7 @@ fn live_matches_oracle() {
                 play: PlayInput::Notes(pl.clone()),
                 event: false,
                 exclude_snap_skills: true,
+                gekisou: None,
             };
             let r = run(objective, c, seed);
             total.0 += r.0;

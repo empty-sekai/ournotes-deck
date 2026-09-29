@@ -247,7 +247,8 @@ impl PowerCalculator {
             .ok_or_else(|| Error::Game(format!("no member rank bonus for group {} rank {}", m.rank_group, m.rank)))?;
         let cr = self.character_rank_bonus(m.character_rank);
         let ctr = self.character_total_rank_bonus(m.character_total_rank);
-        let mem = CardPower::points_single(pb.character_memory_bonus.wrapping_add(pb.music_memory_bonus));
+        let memory_points = (pb.character_memory_bonus as i32).wrapping_add(pb.music_memory_bonus as i32);
+        let mem = CardPower::points_single(memory_points as i64);
         let b = base.add(cr).add(ctr).add(mem);
         let pct_sup = support.map_or(CardPower::EMPTY, |s| s.power_bonus_percent).add(pb.snap_event_bonus);
         let sup = b.mul(pct_sup).to_floor();
@@ -311,5 +312,45 @@ impl PowerCalculator {
             out.slots[i] = r;
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_scalar_points_wrap_before_becoming_power() {
+        let calc = PowerCalculator {
+            music_type_base: 0,
+            music_tag_base: 0,
+            type_link_base: 0,
+            character_rank_bonus: vec![],
+            character_total_rank_bonus: vec![],
+            member_rank: HashMap::from([((0, 0), (0, 0))]),
+            support_rank: HashMap::new(),
+        };
+        let member = SlotMember {
+            power: CardPower::EMPTY,
+            character_rank: 0,
+            character_total_rank: 0,
+            card_type: 0,
+            music_type: 0,
+            best_music_tag_ids: None,
+            rank_group: 0,
+            rank: 0,
+        };
+        for (a, b, expected) in [
+            (i32::MAX as i64, 1, i32::MIN as i64),
+            (i32::MIN as i64, -1, i32::MAX as i64),
+            (17, 23, 40),
+            (0, 0, 0),
+            (i32::MAX as i64, i32::MAX as i64, -2),
+            (i32::MIN as i64, i32::MIN as i64, 0),
+        ] {
+            let bonus = BonusData { character_memory_bonus: a, music_memory_bonus: b, ..Default::default() };
+            let result = calc.slot_power(Some(&member), None, None, Some(&bonus)).unwrap();
+            assert_eq!(result.memory, CardPower::points_single(expected));
+        }
     }
 }

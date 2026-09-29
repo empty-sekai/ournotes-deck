@@ -211,6 +211,14 @@ impl SkipEvaluator {
         })
     }
 
+    /// The real-valued skip score per unit of deck power: the sum over the scored notes of the per-note chain
+    /// without its roundings and floors (the skip score is at most `power * this`, less at most one point per note
+    /// and the binary32 rounding).
+    pub fn coefficient_sum(&self) -> f64 {
+        let t = self.adj as f64 * self.difficulty as f64 * self.judge as f64 / self.cnc as f64;
+        self.notes.iter().map(|&(npf, combo)| npf as f64 * combo as f64 * t).sum()
+    }
+
     /// Skip score and its note sum without the 32-bit wrap.
     pub fn score(&self, total_power: i32) -> (i32, i64) {
         let t = (self.adj * total_power as f32) * self.difficulty;

@@ -6,8 +6,11 @@ mod common;
 use common::{Rng, random_stream, roster, short_chart, synth_snaps};
 use ournotes_deck::Error;
 use ournotes_deck::live::model::{JudgementStream, Play};
-use ournotes_deck::search::oracle::brute_force;
-use ournotes_deck::search::{Completion, Constraints, Objective, PlayInput, Pool, SearchRequest, evaluate, search};
+use ournotes_deck::search::oracle::brute_force_best_order_diagnostic as brute_force;
+use ournotes_deck::search::{
+    Completion, Constraints, Objective, PlayInput, Pool, SearchRequest, evaluate,
+    search_best_order_diagnostic as search,
+};
 
 fn env(name: &str, default: u64) -> u64 {
     std::env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
@@ -119,6 +122,7 @@ fn run(stream_kind: u64, kinds: &[i64], tag: u64) {
             play: PlayInput::Stream { stream, judgement_types },
             event: false,
             exclude_snap_skills: false,
+            gekisou: None,
         };
         let t0 = std::time::Instant::now();
         let mut case = (0usize, 0u64);
@@ -200,6 +204,7 @@ fn snap_skills_change_the_ranking() {
             play: PlayInput::Stream { stream, judgement_types },
             event: false,
             exclude_snap_skills: false,
+            gekisou: None,
         };
         let mut bare = s.master();
         for c in bare.support_cards.iter_mut() {
@@ -238,6 +243,7 @@ fn play_kind_must_match_the_objective() {
             play,
             event: false,
             exclude_snap_skills: exclude,
+            gekisou: None,
         };
         let req = SearchRequest { objective, k: 3, constraints: Constraints::default(), time_limit: None };
         assert!(matches!(search(&pool, &req), Err(Error::Input(_))));
@@ -259,6 +265,7 @@ fn time_limit_returns_legal_decks() {
         play: PlayInput::Stream { stream, judgement_types },
         event: false,
         exclude_snap_skills: false,
+        gekisou: None,
     };
     let req = SearchRequest {
         objective: objective.clone(),

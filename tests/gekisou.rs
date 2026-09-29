@@ -147,6 +147,7 @@ fn params(notes: &[LiveNote]) -> LiveParams {
         music_length_ms: LENGTH,
         score_music_length_ms: None,
         assist_factor: 1.0,
+        skill_target_music_type: 0,
     }
 }
 
@@ -312,11 +313,11 @@ fn invalid_gekisou_inputs_are_rejected() {
     let m = master();
     let (notes, events) = chart();
     let (p, _) = play(&notes, |_| 5);
+    // three ranges; the fourth fever's start fails in the controller (native IndexOutOfRangeException)
     let four = GekisouSetup { fevers: vec![(0, 1), (2, 3), (4, 5), (6, 7)], missions: vec![1, 1, 1, 1] };
-    assert!(matches!(
-        LiveModel::new_gekisou(&m, &[], &notes, &events, params(&notes), &four),
-        Err(Error::Unsupported(_))
-    ));
+    let mut lm = LiveModel::new_gekisou(&m, &[], &notes, &events, params(&notes), &four).unwrap();
+    assert_eq!(lm.gekisou_ranges().len(), 3);
+    assert!(matches!(lm.run(&p), Err(Error::Game(_))));
     let short = GekisouSetup { fevers: vec![(START, END)], missions: vec![1] };
     assert!(LiveModel::new_gekisou(&m, &[], &notes, &events, params(&notes), &short).is_err());
     let unknown = [gekisou_performer(99, &[])];
@@ -326,4 +327,116 @@ fn invalid_gekisou_inputs_are_rejected() {
     ));
     let mut lm = LiveModel::new_gekisou(&m, &[], &notes, &events, params(&notes), &setup([1, 1, 1])).unwrap();
     assert!(matches!(lm.run_timed(&p, &[0.016]), Err(Error::Input(_))));
+}
+
+#[test]
+fn fixed_and_cumulative_additions_run_through_real_appliers() {
+    for et in [12002, 13003, 11004, 12003, 13004] {
+        let mut t = tables();
+        t["MasterSkillEffectSetting"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"_id": 99, "_skillEffectType": et, "_phase": 2}));
+        let cumulative = matches!(et, 11004 | 12003 | 13004);
+        t["MasterSkillCumulativeCondition"].as_array_mut().unwrap().push(json!({
+            "_id": 99, "_skillCumulativeConditionType": 2001,
+            "_conditionValues": [100], "_conditionTargetIDs": [], "_maxCumulativeCount": 1000
+        }));
+        t["MasterGekisouSkillEffect"][0] = effect(
+            1,
+            "_gekisouSkillID",
+            1,
+            et,
+            if cumulative { 100 } else { 7 },
+            json!({
+                "_skillCumulativeConditionID": if cumulative { 99 } else { 0 }, "_maxEffectValue": 250
+            }),
+        );
+        let lm = run(&master_from(&t), &[gekisou_performer(1, &[])], [1, 1, 1], |_| 6);
+        let r = &lm.gekisou_ranges()[0];
+        match et {
+            11004 => assert_eq!(r.luck_points, 250),
+            12002 => assert_eq!(r.combo, 28),
+            12003 => assert_eq!(r.combo, 271),
+            13003 => assert_eq!(r.just_count, 28),
+            13004 => assert_eq!(r.just_count, 271),
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn dynamic_ranges_wait_for_explicit_confirmation_and_retry_idempotently() {
+    let m = master();
+    let (notes, events) = chart();
+    let (p, dts) = play(&notes, |_| 6);
+    let setup = GekisouSetup {
+        fevers: vec![(1200, 1600), (2100, 2500), (3100, 3500), (4100, 4500)],
+        missions: vec![1, 2, 3, 4],
+    };
+    let mut lm = LiveModel::new_gekisou_external(&m, &[], &notes, &events, params(&notes), &setup).unwrap();
+    lm.run_timed(&p, &dts).unwrap();
+    assert_eq!(lm.gekisou_ranges().len(), 4);
+    assert!(lm.gekisou_rank_bonuses().is_empty());
+    // Fourth range is All, not an implicit Luck range, and requires no fabricated fourth master factor.
+    assert_eq!(lm.gekisou_ranges()[3].luck_points, 0);
+    let base = lm.score();
+    lm.queue_gekisou_rank_confirmation(3, 2, 175).unwrap();
+    lm.queue_gekisou_rank_confirmation(3, 2, 175).unwrap();
+    assert!(lm.queue_gekisou_rank_confirmation(3, 1, 175).is_err());
+    lm.frame_timed(8100, &[], 0.016).unwrap();
+    lm.frame_timed(8200, &[], 0.016).unwrap();
+    let bonuses = lm.gekisou_rank_bonuses();
+    assert_eq!(bonuses.len(), 1);
+    assert_eq!((bonuses[0].0, bonuses[0].1, bonuses[0].3), (3, 2, 175));
+    assert_eq!(lm.score(), base.wrapping_add(bonuses[0].2));
+    lm.queue_gekisou_rank_confirmation(3, 2, 175).unwrap();
+    lm.frame_timed(8300, &[], 0.016).unwrap();
+    assert_eq!(lm.gekisou_rank_bonuses().len(), 1);
+    if let Ok(path) = std::env::var("GEKISOU_EXTERNAL_FIXTURE") {
+        let fixture = json!({"tables": tables(), "score": lm.score(), "trace": lm.trace(),
+            "bonuses": lm.gekisou_rank_bonuses(), "fevers": setup.fevers, "missions": setup.missions});
+        std::fs::write(path, serde_json::to_vec(&fixture).unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn external_confirmations_wait_for_completion_and_capture_all_completed_ranges() {
+    let m = master();
+    let (notes, events) = chart();
+    let (p, dts) = play(&notes, |_| 6);
+    let setup = GekisouSetup { fevers: vec![(START, END); 4], missions: vec![1, 3, 4, 1] };
+    let mut lm = LiveModel::new_gekisou_external(&m, &[], &notes, &events, params(&notes), &setup).unwrap();
+    for idx in 0..4 {
+        lm.queue_gekisou_rank_confirmation(idx, idx as i32 + 1, 100).unwrap();
+    }
+    lm.frame_timed(0, &[], 0.0).unwrap();
+    assert!(lm.gekisou_rank_bonuses().is_empty());
+    lm.run_timed(&p, &dts).unwrap();
+    assert_eq!(lm.gekisou_rank_bonuses().len(), 4);
+    for (idx, &(range, rank, _, percent)) in lm.gekisou_rank_bonuses().iter().enumerate() {
+        assert_eq!((range, rank, percent), (idx, idx as i32 + 1, 100));
+    }
+    assert!(lm.queue_gekisou_rank_confirmation(4, 1, 100).is_err());
+    assert!(lm.queue_gekisou_rank_confirmation(0, 0, 100).is_err());
+}
+
+#[test]
+fn snap_gekisou_active_is_a_range_start_event_not_member_skill_state() {
+    let mut t = tables();
+    t["MasterSkillCondition"].as_array_mut().unwrap().push(json!({"_id":999,"_conditionType":5021,
+        "_conditionValues":[],"_conditionTargetIDs":[],"_isPositive":true}));
+    t["MasterSkillConditionSet"].as_array_mut().unwrap().push(json!({"_id":999,"_group":999,"_conditionIds":[999]}));
+    t["MasterSupportSkillEffect"] = json!([effect(
+        999,
+        "_supportSkillID",
+        999,
+        3001,
+        10,
+        json!({"_skillTriggerConditionGroup":999,"_activationTimeSecond":0.0})
+    )]);
+    let master = master_from(&t);
+    let deck = [Performer { support_skills: vec![(999, 1)], ..Default::default() }];
+    let model = run(&master, &deck, [1, 1, 1], |_| 5);
+    assert_eq!(model.current_life(), 1010);
 }

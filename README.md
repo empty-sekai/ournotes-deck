@@ -107,6 +107,19 @@ ournotes-deck live  --data deck-data.json --roster box.json --score SCORE_ID --e
 约束：`--leader ID`、`--include ID,...`、`--exclude ID,...`、`--exclude-snaps ID,...`、`--no-snaps`、
 `--time-limit-ms N`。输出为 JSON。
 
+谱面统计：
+
+```sh
+ournotes-deck chart-stats --data deck-data.json [--seeds 8] -o chart-stats.json
+```
+
+在整场模拟上（激走开启，单人名次 1）实测每张谱面与卡组无关的量（`ournotes-deck.chart-stats/2`）。打法为激走理论最佳：
+每个音符按准点判定，Just 任务区间内为 Just，其余为 Perfect。每个种子给出：无技能的精确得分与各激走区间结果；
+master 中每种加分效果（2000 / 2002 / 2004 / 2005，按类型、时长、目标、条件分组，见 `kinds`）在每个演出位上
+因子为 1 时的得分增量除以综合力（`weights[kind][k]`）。卡组得分约为 `P × (score / power + Σ factor_k × weights[kind_k][k])`，
+每个种子都用 master 真实数值的随机卡组在另一综合力下实跑校验，偏差超出取整上限即报错。有幸运区间的谱面按前 N 个
+发布种子给出（`--seeds`，默认 8），这不是原生期望；超过三段 fever 的谱面游戏会在第四段开始时出错，记为 `unplayable`。
+
 ## 测试
 
 `cargo test` 运行单元测试，读取合成的 deck data 文件，并在小规模合成卡池上将搜索结果与穷举结果逐项比较。

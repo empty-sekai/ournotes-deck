@@ -7,9 +7,12 @@ use crate::live::score::get_frame;
 use crate::master::Master;
 
 const NOTE_DAMAGE: u8 = 0;
+const SKILL_DAMAGE: u8 = 1;
 const RECOVERY: u8 = 2;
 const GUARD_START: u8 = 3;
 const GUARD_END: u8 = 4;
+const REDUCTION_START: u8 = 5;
+const REDUCTION_END: u8 = 6;
 
 /// Judgements that neither damage nor count (Wait, Pass).
 const WAIT: i32 = 0;
@@ -24,6 +27,7 @@ struct LifeCommand {
     kind: u8,
     value: i32,
     allow_over_heal: bool,
+    safety: bool,
 }
 
 /// `max(x, 0)`.
@@ -62,6 +66,10 @@ pub(crate) struct LifeController {
     damage: HashMap<i64, i64>,
     guard_ids: Vec<i32>,
     guard_id_counter: i32,
+    reduction_ids: HashMap<i32, i32>,
+    reduction_id_counter: i32,
+    max_life_limits: HashMap<i32, i32>,
+    max_life_id_counter: i32,
     max_frame: i32,
     commands: Vec<Vec<LifeCommand>>,
     cached_complete_frame: i32,
@@ -83,6 +91,10 @@ impl LifeController {
             damage,
             guard_ids: Vec::new(),
             guard_id_counter: 0,
+            reduction_ids: HashMap::new(),
+            reduction_id_counter: 0,
+            max_life_limits: HashMap::new(),
+            max_life_id_counter: 0,
             max_frame,
             commands: vec![Vec::new(); max_frame as usize],
             cached_complete_frame: -1,
@@ -90,6 +102,10 @@ impl LifeController {
             cached_guard: 0,
             cached_reduction: 0,
         })
+    }
+
+    pub(crate) fn max_life(&self) -> i32 {
+        self.internal_max_life
     }
 
     fn frame_of(&self, ms: i32) -> i32 {
@@ -124,7 +140,13 @@ impl LifeController {
             .get(&(judgement as i64))
             .ok_or_else(|| Error::Game(format!("judgement {judgement} has no damage entry")))? as i32;
         if d > 0 {
-            self.add_command(LifeCommand { time_ms, kind: NOTE_DAMAGE, value: d, allow_over_heal: false })?;
+            self.add_command(LifeCommand {
+                time_ms,
+                kind: NOTE_DAMAGE,
+                value: d,
+                allow_over_heal: false,
+                safety: false,
+            })?;
         }
         Ok(())
     }
@@ -132,31 +154,96 @@ impl LifeController {
     pub(crate) fn recovery(&mut self, time_ms: i32, amount: i64, allow_over_heal: bool) -> Result<(), Error> {
         let amount = amount as i32;
         if amount > 0 {
-            self.add_command(LifeCommand { time_ms, kind: RECOVERY, value: amount, allow_over_heal })?;
+            self.add_command(LifeCommand { time_ms, kind: RECOVERY, value: amount, allow_over_heal, safety: false })?;
         }
         Ok(())
+    }
+
+    pub(crate) fn damage(&mut self, time_ms: i32, amount: i64, safety: bool) -> Result<(), Error> {
+        let amount = amount as i32;
+        if amount > 0 {
+            self.add_command(LifeCommand {
+                time_ms,
+                kind: SKILL_DAMAGE,
+                value: amount,
+                allow_over_heal: false,
+                safety,
+            })?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn enable_damage_reduction(&mut self, time_ms: i32, bp: i64) -> Result<i32, Error> {
+        self.reduction_id_counter = self.reduction_id_counter.wrapping_add(1);
+        let id = self.reduction_id_counter;
+        if self.reduction_ids.contains_key(&id) {
+            return Err(Error::Game("duplicate damage reduction id".into()));
+        }
+        self.reduction_ids.insert(id, bp as i32);
+        self.add_command(LifeCommand {
+            time_ms,
+            kind: REDUCTION_START,
+            value: bp as i32,
+            allow_over_heal: false,
+            safety: false,
+        })?;
+        Ok(id)
+    }
+
+    pub(crate) fn disable_damage_reduction(&mut self, time_ms: i32, id: i32) -> Result<(), Error> {
+        let Some(bp) = self.reduction_ids.remove(&id) else { return Ok(()) };
+        self.add_command(LifeCommand { time_ms, kind: REDUCTION_END, value: bp, allow_over_heal: false, safety: false })
+    }
+
+    pub(crate) fn add_life_limit(&mut self, amount: i64) -> Result<i32, Error> {
+        self.max_life_id_counter = self.max_life_id_counter.wrapping_add(1);
+        let id = self.max_life_id_counter;
+        if self.max_life_limits.contains_key(&id) {
+            return Err(Error::Game("duplicate life limit id".into()));
+        }
+        self.max_life_limits.insert(id, amount as i32);
+        self.update_life_max();
+        Ok(id)
+    }
+
+    pub(crate) fn subtract_life_limit(&mut self, id: i32) {
+        if self.max_life_limits.remove(&id).is_some() {
+            self.update_life_max();
+        }
+    }
+
+    fn update_life_max(&mut self) {
+        // This updates the current maximum, not the initial maximum, and is not a time-stamped command.
+        let sum = self.max_life_limits.values().fold(0i32, |a, &v| a.wrapping_add(v));
+        self.internal_max_life = self.internal_max_life.wrapping_add(sum);
     }
 
     pub(crate) fn enable_guard(&mut self, time_ms: i32) -> Result<i32, Error> {
         self.guard_id_counter = self.guard_id_counter.wrapping_add(1);
         let id = self.guard_id_counter;
         self.guard_ids.push(id);
-        self.add_command(LifeCommand { time_ms, kind: GUARD_START, value: 0, allow_over_heal: false })?;
+        self.add_command(LifeCommand { time_ms, kind: GUARD_START, value: 0, allow_over_heal: false, safety: false })?;
         Ok(id)
     }
 
     pub(crate) fn disable_guard(&mut self, time_ms: i32, id: i32) -> Result<(), Error> {
         let Some(pos) = self.guard_ids.iter().position(|&g| g == id) else { return Ok(()) };
         self.guard_ids.remove(pos);
-        self.add_command(LifeCommand { time_ms, kind: GUARD_END, value: 0, allow_over_heal: false })
+        self.add_command(LifeCommand { time_ms, kind: GUARD_END, value: 0, allow_over_heal: false, safety: false })
     }
 
     fn apply_command(&self, life: i32, cmd: &LifeCommand, guard: i32, reduction: i32) -> (i32, i32, i32) {
-        let (mut life, mut guard) = (life, guard);
+        let (mut life, mut guard, mut reduction) = (life, guard, reduction);
         match cmd.kind {
             NOTE_DAMAGE => {
                 if guard < 1 {
                     life = non_negative(life.wrapping_sub(apply_damage_reduction(cmd.value, reduction)));
+                }
+            }
+            SKILL_DAMAGE => {
+                if guard < 1 && (life > 0 || !cmd.safety) {
+                    life = life.wrapping_sub(apply_damage_reduction(cmd.value, reduction));
+                    life = life.max(i32::from(cmd.safety));
                 }
             }
             RECOVERY => {
@@ -172,6 +259,8 @@ impl LifeController {
             }
             GUARD_START => guard = guard.wrapping_add(1),
             GUARD_END => guard = non_negative(guard.wrapping_sub(1)),
+            REDUCTION_START => reduction = reduction.wrapping_add(cmd.value),
+            REDUCTION_END => reduction = non_negative(reduction.wrapping_sub(cmd.value)),
             _ => {}
         }
         (life, guard, reduction)
@@ -233,4 +322,78 @@ fn apply_damage_reduction(damage: i32, reduction_bp: i32) -> i32 {
         return 0;
     }
     non_negative(10000i32.wrapping_sub(reduction_bp).wrapping_mul(damage) / 10000)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn controller() -> LifeController {
+        LifeController::new(1000, HashMap::from([(1, 100)]), 1000).unwrap()
+    }
+
+    #[test]
+    fn safe_skill_damage_does_not_kill_or_revive() {
+        let mut c = controller();
+        c.damage(0, 5000, true).unwrap();
+        assert_eq!(c.get_life_at_ms(0).unwrap(), 1);
+        c.add_note_damage(1, 1).unwrap();
+        c.damage(2, 5000, true).unwrap();
+        c.recovery(3, 5000, true).unwrap();
+        assert_eq!(c.get_life_at_ms(3).unwrap(), 0);
+        let mut c = controller();
+        c.damage(0, 5000, false).unwrap();
+        assert_eq!(c.get_life_at_ms(0).unwrap(), 0);
+    }
+
+    #[test]
+    fn reductions_stack_and_expire_by_id() {
+        let mut c = controller();
+        let a = c.enable_damage_reduction(0, 2000).unwrap();
+        let b = c.enable_damage_reduction(0, 3000).unwrap();
+        c.add_note_damage(1, 1).unwrap();
+        c.disable_damage_reduction(2, a).unwrap();
+        c.disable_damage_reduction(2, a).unwrap();
+        c.damage(3, 100, true).unwrap();
+        c.disable_damage_reduction(4, b).unwrap();
+        c.add_note_damage(5, 1).unwrap();
+        assert_eq!(c.get_life_at_ms(5).unwrap(), 1000 - 50 - 70 - 100);
+    }
+
+    #[test]
+    fn guards_block_skill_damage_and_negative_amounts_add_no_commands() {
+        let mut c = controller();
+        let guard = c.enable_guard(0).unwrap();
+        c.damage(1, 5000, true).unwrap();
+        c.disable_guard(2, guard).unwrap();
+        c.damage(3, -1, false).unwrap();
+        c.damage(4, 1i64 << 32, false).unwrap();
+        assert_eq!(c.get_life_at_ms(4).unwrap(), 1000);
+    }
+
+    #[test]
+    fn life_limit_updates_accumulate_on_the_current_maximum() {
+        let mut c = controller();
+        let a = c.add_life_limit(100).unwrap();
+        assert_eq!(c.internal_max_life, 1100);
+        let b = c.add_life_limit(200).unwrap();
+        assert_eq!(c.internal_max_life, 1400);
+        c.subtract_life_limit(a);
+        assert_eq!(c.internal_max_life, 1600);
+        c.subtract_life_limit(b);
+        c.subtract_life_limit(b);
+        assert_eq!(c.internal_max_life, 1600);
+        c.recovery(0, 5000, false).unwrap();
+        assert_eq!(c.get_life_at_ms(0).unwrap(), 1600);
+        c.recovery(1, 5000, true).unwrap();
+        assert_eq!(c.get_life_at_ms(1).unwrap(), 3200);
+    }
+
+    #[test]
+    fn reduction_saturates_at_full_and_wraps_its_integer_product() {
+        assert_eq!(apply_damage_reduction(100, 10000), 0);
+        assert_eq!(apply_damage_reduction(100, 20000), 0);
+        assert_eq!(apply_damage_reduction(100, -100), 100);
+        assert_eq!(apply_damage_reduction(i32::MAX, 5000), 0);
+    }
 }

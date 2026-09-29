@@ -18,6 +18,7 @@ pub struct Pool<'m> {
     pub player: Player,
     pub members: Vec<MemberView>,
     pub snaps: Vec<SnapView>,
+    pub(crate) power_event_snapshot: Vec<i64>,
     pub power: PowerContext<'m>,
 }
 
@@ -59,7 +60,7 @@ impl<'m> Pool<'m> {
             roster.members.iter().map(|m| MemberView::resolve(master, &player, m)).collect::<Result<Vec<_>, _>>()?;
         let snaps = roster.snaps.iter().map(|s| SnapView::resolve(master, s)).collect::<Result<Vec<_>, _>>()?;
         let power = PowerContext::new(master, &player)?;
-        Ok(Pool { master, player, members, snaps, power })
+        Ok(Pool { master, power_event_snapshot: player.events.clone(), player, members, snaps, power })
     }
 
     pub fn member_index(&self, id: i64) -> Option<usize> {

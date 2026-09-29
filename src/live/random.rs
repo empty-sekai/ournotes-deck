@@ -130,6 +130,8 @@ impl NetRandom {
 pub struct LiveRandom {
     pub base_seed: i32,
     streams: [NetRandom; 4],
+    /// Values drawn since the streams were seeded.
+    draws: u64,
 }
 
 impl LiveRandom {
@@ -137,6 +139,7 @@ impl LiveRandom {
         LiveRandom {
             base_seed,
             streams: std::array::from_fn(|i| NetRandom::new(Self::derive_sub_seed(base_seed, i as i32))),
+            draws: 0,
         }
     }
 
@@ -148,23 +151,32 @@ impl LiveRandom {
         *self = LiveRandom::new(base_seed);
     }
 
+    /// The number of values drawn from any stream since the streams were seeded.
+    pub fn draws(&self) -> u64 {
+        self.draws
+    }
+
     /// `Range(type, max)`.
     pub fn range(&mut self, stream: usize, max_value: i32) -> Result<i32, Error> {
+        self.draws += 1;
         self.streams[stream].next_max(max_value)
     }
 
     /// `Range(type, min, max)`.
     pub fn range2(&mut self, stream: usize, min_value: i32, max_value: i32) -> Result<i32, Error> {
+        self.draws += 1;
         self.streams[stream].next_range(min_value, max_value)
     }
 
     /// `Value(type)`: `(float)NextDouble()`.
     pub fn value(&mut self, stream: usize) -> f32 {
+        self.draws += 1;
         self.streams[stream].next_double() as f32
     }
 
     /// `NextInt(type)`: `Next(int.MinValue, int.MaxValue)`.
     pub fn next_int(&mut self, stream: usize) -> i32 {
+        self.draws += 1;
         self.streams[stream].next_range(i32::MIN, i32::MAX).expect("valid range")
     }
 }

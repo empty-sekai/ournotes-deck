@@ -59,6 +59,8 @@ const STANDBY_MS: i32 = 4001;
 const SCORE_FRAME_MS: i32 = 40;
 /// Gekisou ranges of a live.
 pub(crate) const MAX_RANGES: usize = 3;
+/// A fever beyond the ranges changed state: the range-state array bounds check of BeforeUpdate (0x55d4e30) fails.
+const FEVER_WITHOUT_RANGE: &str = "IndexOutOfRangeException: fever without a Gekisou range";
 
 /// Note types that never add luck.
 const NON_LUCK_NOTE_TYPES: [i32; 11] = [0, 80, 82, 100, 101, 102, 103, 104, 105, 121, 122];
@@ -465,6 +467,7 @@ pub(crate) struct RangeState {
     pub start_score: i32,
     pub end_score: i32,
     pub last_combo_ms: i32,
+    pub last_just_ms: i32,
     pub luck: LuckScore,
     sw_elapsed: f32,
     sw_stopped: bool,
@@ -489,6 +492,8 @@ struct Resume {
     just_bonus: f32,
     i_cb: usize,
     i_jb: usize,
+    i_add_just: usize,
+    i_add_combo: usize,
 }
 
 /// A cumulative Just rule: every `unit` Just counts add `effect`, at most `max_cum` steps and `max_eff` in total.
@@ -588,6 +593,9 @@ pub(crate) struct Controller {
     /// `(time, delta, judgement sequence)`.
     cb_stack: Vec<(i32, f32, i32)>,
     jb_stack: Vec<(i32, f32, i32)>,
+    /// Fixed additions: (music time, float-converted int delta, captured range; -1 is wildcard).
+    add_just_stack: Vec<(i32, f32, i32)>,
+    add_combo_stack: Vec<(i32, f32, i32)>,
     /// `(time, delta, id, mask)`.
     pr_stack: Vec<(i32, i32, i32, i32)>,
     unlimited: Vec<(i32, i32)>,
@@ -640,6 +648,7 @@ impl Controller {
                     start_score: 0,
                     end_score: 0,
                     last_combo_ms: -1,
+                    last_just_ms: -1,
                     luck,
                     sw_elapsed: 0f32,
                     sw_stopped: true,
@@ -669,6 +678,8 @@ impl Controller {
             resume: vec![Resume::default(); n],
             cb_stack: Vec::new(),
             jb_stack: Vec::new(),
+            add_just_stack: Vec::new(),
+            add_combo_stack: Vec::new(),
             pr_stack: Vec::new(),
             unlimited: Vec::new(),
             limited: Vec::new(),
@@ -696,6 +707,31 @@ impl Controller {
     /// The last range that started and has not finished, or -1.
     fn current_playing_range_index(&self) -> i32 {
         self.playing.last().map_or(-1, |&i| i as i32)
+    }
+
+    pub(crate) fn add_just_count(&mut self, time_ms: i32, count: i32) {
+        self.add_just_stack.push((time_ms, count as f32, self.current_playing_range_index()));
+        self.flag();
+    }
+
+    pub(crate) fn add_gekisou_combo(&mut self, time_ms: i32, count: i32) {
+        self.add_combo_stack.push((time_ms, count as f32, self.current_playing_range_index()));
+        self.flag();
+    }
+
+    fn apply_fixed_count(&mut self, idx: usize, delta: f32, range: i32, just: bool) {
+        if range != -1 && range != idx as i32 {
+            return;
+        }
+        let n = delta as i32;
+        let rs = &mut self.states[idx];
+        if just {
+            rs.just = rs.just.wrapping_add(n);
+            rs.cum_base = rs.cum_base.wrapping_add(n);
+        } else {
+            rs.combo = rs.combo.wrapping_add(n);
+            rs.max_combo = rs.max_combo.max(rs.combo);
+        }
     }
 
     pub(crate) fn add_luck_point(&mut self, p: i64) {
@@ -808,12 +844,14 @@ impl Controller {
             }
             let rr = self.resume[idx];
             let (mut cb, mut jb, mut i_cb, mut i_jb, mut i_pr, mut k);
+            let (mut i_add_just, mut i_add_combo);
             let hlen = self.history[idx].len();
             if !self.full_recalc && self.pr_stack.is_empty() && 1 <= rr.processed && rr.processed <= hlen {
                 let rs = &mut self.states[idx];
                 (rs.combo, rs.max_combo, rs.just, rs.raw_just, rs.cum_base) =
                     (rr.combo, rr.max_combo, rr.just, rr.raw_just, rr.cum_base);
                 (cb, jb, i_cb, i_jb, i_pr, k) = (rr.combo_bonus, rr.just_bonus, rr.i_cb, rr.i_jb, 0usize, rr.processed);
+                (i_add_just, i_add_combo) = (rr.i_add_just, rr.i_add_combo);
             } else {
                 let rs = &mut self.states[idx];
                 (rs.combo, rs.max_combo, rs.just, rs.raw_just, rs.cum_base) = (0, 0, 0, 0, 0);
@@ -821,6 +859,7 @@ impl Controller {
                 self.unlimited.clear();
                 self.limited.clear();
                 (cb, jb, i_cb, i_jb, i_pr, k) = (1f32, 1f32, 0, 0, 0, 0);
+                (i_add_just, i_add_combo) = (0, 0);
             }
             while k < hlen {
                 let (et, j, es) = self.history[idx][k];
@@ -857,6 +896,16 @@ impl Controller {
                     }
                     i_pr += 1;
                 }
+                while i_add_just < self.add_just_stack.len() && self.add_just_stack[i_add_just].0 <= et {
+                    let (_, d, range) = self.add_just_stack[i_add_just];
+                    self.apply_fixed_count(idx, d, range, true);
+                    i_add_just += 1;
+                }
+                while i_add_combo < self.add_combo_stack.len() && self.add_combo_stack[i_add_combo].0 <= et {
+                    let (_, d, range) = self.add_combo_stack[i_add_combo];
+                    self.apply_fixed_count(idx, d, range, false);
+                    i_add_combo += 1;
+                }
                 self.entry(idx, j, floor_to_i32(cb), floor_to_i32(jb));
                 let c = self.states[idx].combo;
                 self.snapshot[idx].push(c);
@@ -874,7 +923,18 @@ impl Controller {
                 just_bonus: jb,
                 i_cb,
                 i_jb,
+                i_add_just,
+                i_add_combo,
             };
+            // Native saves resume BEFORE trailing additions. On the next recount these are replayed once.
+            for i in i_add_just..self.add_just_stack.len() {
+                let (_, d, range) = self.add_just_stack[i];
+                self.apply_fixed_count(idx, d, range, true);
+            }
+            for i in i_add_combo..self.add_combo_stack.len() {
+                let (_, d, range) = self.add_combo_stack[i];
+                self.apply_fixed_count(idx, d, range, false);
+            }
         }
         self.full_recalc = false;
     }
@@ -1008,6 +1068,9 @@ impl Controller {
         if (j.wrapping_sub(3) as u32) < 4 {
             self.states[idx].last_combo_ms = tn;
         }
+        if j == J_JUST {
+            self.states[idx].last_just_ms = tn;
+        }
         if self.ranges[idx].mission == M_LUCK {
             if self.states[idx].state < S_START {
                 self.pending[idx].push((nt, tn, nid, j));
@@ -1048,8 +1111,9 @@ impl Controller {
             self.needs_recalc = false;
         }
         for &(idx, fs) in fever_updates {
+            let rs = self.states.get_mut(idx).ok_or_else(|| game(FEVER_WITHOUT_RANGE))?;
             if fs == FEVER_END {
-                self.states[idx].end_score = current_score;
+                rs.end_score = current_score;
             }
         }
         self.pending_lots(t, env)
@@ -1129,7 +1193,7 @@ impl Controller {
             }
         }
         for &(idx, fs) in fever_updates {
-            let rs = self.states.get_mut(idx).ok_or_else(|| game("fever without a Gekisou range"))?;
+            let rs = self.states.get_mut(idx).ok_or_else(|| game(FEVER_WITHOUT_RANGE))?;
             if fs == FEVER_END {
                 rs.state = S_END;
                 rs.sw_elapsed = 0f32;
@@ -1238,5 +1302,235 @@ impl Controller {
     /// The score of a range (end score minus start score).
     pub(crate) fn range_score(&self, idx: usize) -> i32 {
         self.states[idx].score()
+    }
+}
+
+#[cfg(test)]
+mod fixed_addition_tests {
+    use super::*;
+    fn controller() -> Controller {
+        Controller::new(vec![(0, 1000, 1), (1100, 2000, 3)], std::iter::empty(), &Master::default(), 100, 100, 0, 0)
+            .unwrap()
+    }
+
+    #[test]
+    fn fixed_additions_capture_range_and_feed_inflated_not_raw_just() {
+        let mut c = controller();
+        c.playing.push(0);
+        c.history[0] = vec![(100, J_JUST, 0), (200, J_JUST, 1)];
+        c.history[1] = vec![(1200, J_JUST, 2)];
+        c.add_just_count(150, 5);
+        c.add_gekisou_combo(150, 7);
+        c.recalculate();
+        assert_eq!((c.states[0].just, c.states[0].raw_just, c.states[0].cum_base, c.states[0].combo), (7, 2, 7, 9));
+        assert_eq!((c.states[1].just, c.states[1].combo), (1, 1));
+        assert_eq!(c.snapshot[0], [1, 9]);
+    }
+
+    #[test]
+    fn trailing_commands_are_visible_but_not_repeated_in_resume_or_score_snapshot() {
+        let mut c = controller();
+        c.playing.push(0);
+        c.history[0] = vec![(100, J_JUST, 0)];
+        c.add_just_count(150, 4);
+        c.add_gekisou_combo(150, 6);
+        c.recalculate();
+        assert_eq!((c.states[0].just, c.states[0].combo), (5, 7));
+        assert_eq!(c.snapshot[0], [1]);
+        c.recalculate();
+        assert_eq!((c.states[0].just, c.states[0].combo), (5, 7));
+        c.history[0].push((200, J_JUST, 1));
+        c.recalculate();
+        assert_eq!((c.states[0].just, c.states[0].combo), (6, 8));
+        assert_eq!(c.snapshot[0], [1, 8]);
+    }
+
+    #[test]
+    fn outside_range_is_wildcard_and_empty_history_ignores_command_until_note_exists() {
+        let mut c = controller();
+        c.add_just_count(0, 3);
+        c.add_gekisou_combo(0, 4);
+        c.recalculate();
+        assert_eq!(c.states[0].just, 0);
+        c.history[0].push((100, J_JUST, 0));
+        c.history[1].push((1200, J_JUST, 1));
+        c.recalculate();
+        for s in &c.states {
+            assert_eq!((s.just, s.combo), (4, 5));
+        }
+    }
+
+    #[test]
+    fn fixed_command_uses_binary32_delta_and_cumulative_base_without_changing_last_just() {
+        let mut c = controller();
+        c.playing.push(0);
+        c.history[0].push((100, J_JUST, 0));
+        c.add_just_count(100, 16_777_217);
+        c.recalculate();
+        assert_eq!(c.states[0].just, 16_777_217); // f32 command is 16_777_216, then the note adds one
+        assert_eq!(c.states[0].raw_just, 1);
+        assert_eq!(c.states[0].last_just_ms, -1);
+    }
+}
+
+/// Player-indexed network input. The calculator reads the mission from the song, not this row.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NetworkGekisouResult {
+    pub range_index: i32,
+    pub combo: i32,
+    pub luck_total_point: i32,
+    pub just_count: i32,
+    pub perfect_count: i32,
+    pub score: i32,
+    pub has_no_input: bool,
+}
+
+/// The native network calculator's failures, distinct from a dynamic controller's range capacity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BrokenGekisouRanking {
+    NoValidData,
+    RangeOutOfBounds(i32),
+    InvalidMission(i64),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkGekisouRanking {
+    pub groups: Vec<Vec<usize>>,
+    pub broken: Option<BrokenGekisouRanking>,
+    /// Confirmed ranks use competition ranking, unlike GetPlayerRank's group ordinals.
+    pub confirmed_ranks: Vec<i32>,
+}
+
+impl NetworkGekisouRanking {
+    pub fn player_rank(&self, player: usize) -> i32 {
+        if self.broken.is_some() {
+            return 1;
+        }
+        self.groups.iter().position(|g| g.contains(&player)).map_or(0, |i| i as i32 + 1)
+    }
+    pub fn confirmed_rank(&self, player: usize) -> i32 {
+        self.confirmed_ranks.get(player).copied().unwrap_or(5)
+    }
+}
+
+/// 0x60a9718: a no-input flag alone is not sufficient; skill-added counts can make a player eligible.
+pub fn gekisou_no_input(result: Option<&NetworkGekisouResult>) -> bool {
+    result.is_none_or(|r| r.has_no_input && r.just_count == 0 && r.combo == 0 && r.luck_total_point == 0)
+}
+
+fn compare_network_result(
+    mission: i64,
+    a: Option<&NetworkGekisouResult>,
+    b: Option<&NetworkGekisouResult>,
+) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let point = |r: Option<&NetworkGekisouResult>| {
+        r.map_or(0, |r| match mission {
+            1 => r.combo,
+            2 => r.luck_total_point,
+            _ => r.just_count,
+        })
+    };
+    // The primary comparison precedes null handling; a negative primary value sorts AFTER a missing player.
+    let primary = point(b).cmp(&point(a));
+    if primary != Ordering::Equal {
+        return primary;
+    }
+    match (a, b) {
+        (Some(a), Some(b)) => b.score.cmp(&a.score).then_with(|| b.perfect_count.cmp(&a.perfect_count)),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+/// Native 0x60aa878 + 0x60a845c, using explicit configured player count and player-indexed results.
+/// The first non-null row supplies the range index. Other rows are not silently re-keyed by token/index.
+/// A missing song mission is an input error (native list-index exception), not a Broken ranking.
+/// Tied players' order within a group is not part of this API's contract.
+pub fn calculate_network_gekisou_ranking(
+    missions: &[i64],
+    player_count: usize,
+    results: &[Option<NetworkGekisouResult>],
+) -> Result<NetworkGekisouRanking, Error> {
+    let broken =
+        |reason| NetworkGekisouRanking { groups: Vec::new(), broken: Some(reason), confirmed_ranks: vec![1; 5] };
+    let Some(first) = results.iter().flatten().next() else {
+        return Ok(broken(BrokenGekisouRanking::NoValidData));
+    };
+    if !(0..3).contains(&first.range_index) {
+        return Ok(broken(BrokenGekisouRanking::RangeOutOfBounds(first.range_index)));
+    }
+    let mission = *missions
+        .get(first.range_index as usize)
+        .ok_or_else(|| Error::Input("network ranking mission index out of range".into()))?;
+    if !(1..=3).contains(&mission) {
+        return Ok(broken(BrokenGekisouRanking::InvalidMission(mission)));
+    }
+    if player_count == 0 {
+        return Err(Error::Input("native network ranking requires a non-empty player array".into()));
+    }
+    let row = |i: usize| results.get(i).and_then(Option::as_ref);
+    let mut sorted: Vec<usize> = (0..player_count).collect();
+    sorted.sort_by(|&a, &b| compare_network_result(mission, row(a), row(b)));
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for i in sorted {
+        if groups.last().is_some_and(|g| compare_network_result(mission, row(g[0]), row(i)).is_eq()) {
+            groups.last_mut().unwrap().push(i);
+        } else {
+            groups.push(vec![i]);
+        }
+    }
+    let mut confirmed_ranks = vec![5; results.len().max(player_count)];
+    // The constructor selects its filtering branch by scanning the result list, not the configured player slots.
+    let filter = results.iter().any(|r| gekisou_no_input(r.as_ref()));
+    let mut next = 1i32;
+    for group in &groups {
+        let eligible: Vec<_> = group.iter().copied().filter(|&i| !filter || !gekisou_no_input(row(i))).collect();
+        for &i in &eligible {
+            confirmed_ranks[i] = next;
+        }
+        next = next.wrapping_add(eligible.len() as i32);
+    }
+    Ok(NetworkGekisouRanking { groups, broken: None, confirmed_ranks })
+}
+
+#[cfg(test)]
+mod network_ranking_tests {
+    use super::*;
+    fn r(combo: i32, score: i32, perfect: i32) -> Option<NetworkGekisouResult> {
+        Some(NetworkGekisouResult { combo, score, perfect_count: perfect, ..Default::default() })
+    }
+    #[test]
+    fn group_rank_and_confirmed_rank_are_different() {
+        let n = calculate_network_gekisou_ranking(&[1, 2, 3], 3, &[r(10, 5, 3), r(10, 5, 3), r(8, 99, 99)]).unwrap();
+        assert_eq!(n.groups, [vec![0, 1], vec![2]]);
+        assert_eq!(n.player_rank(2), 2);
+        assert_eq!(n.confirmed_rank(2), 3);
+        assert_eq!(n.confirmed_rank(20), 5);
+    }
+    #[test]
+    fn null_comparison_follows_primary_and_noinput_needs_zero_counts() {
+        let mut added = r(1, 0, 0).unwrap();
+        added.has_no_input = true;
+        assert!(!gekisou_no_input(Some(&added)));
+        let n = calculate_network_gekisou_ranking(&[1], 4, &[r(-1, 90, 90), None, Some(added), r(0, 0, 0)]).unwrap();
+        assert_eq!(n.groups, [vec![2], vec![3], vec![1], vec![0]]);
+        assert_eq!(n.confirmed_ranks, [3, 5, 1, 2]);
+    }
+    #[test]
+    fn score_precedes_perfect_and_broken_is_not_controller_limit() {
+        let n = calculate_network_gekisou_ranking(&[1], 3, &[r(1, 3, 9), r(1, 4, 0), r(1, 3, 10)]).unwrap();
+        assert_eq!(n.groups, [vec![1], vec![2], vec![0]]);
+        let mut fourth = r(1, 0, 0).unwrap();
+        fourth.range_index = 3;
+        let n = calculate_network_gekisou_ranking(&[1; 4], 1, &[Some(fourth)]).unwrap();
+        assert_eq!(n.broken, Some(BrokenGekisouRanking::RangeOutOfBounds(3)));
+        assert_eq!(n.confirmed_rank(4), 1);
+        assert_eq!(n.confirmed_rank(5), 5);
+        assert_eq!(
+            calculate_network_gekisou_ranking(&[4], 1, &[r(1, 0, 0)]).unwrap().broken,
+            Some(BrokenGekisouRanking::InvalidMission(4))
+        );
     }
 }

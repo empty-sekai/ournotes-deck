@@ -1,0 +1,220 @@
+{
+  "MasterLiveNoteParameter": [
+    {
+      "_id": 1,
+      "_noteOperateType": 1,
+      "_scorePercent": 100
+    }
+  ],
+  "MasterLiveJudgementParameter": [
+    {
+      "_id": 1,
+      "_noteSimulateJudgement": 1,
+      "_scorePercent": 0,
+      "_damage": 100
+    },
+    {
+      "_id": 2,
+      "_noteSimulateJudgement": 2,
+      "_scorePercent": 0,
+      "_damage": 100
+    },
+    {
+      "_id": 3,
+      "_noteSimulateJudgement": 3,
+      "_scorePercent": 100,
+      "_damage": 0
+    },
+    {
+      "_id": 4,
+      "_noteSimulateJudgement": 4,
+      "_scorePercent": 100,
+      "_damage": 0
+    },
+    {
+      "_id": 5,
+      "_noteSimulateJudgement": 5,
+      "_scorePercent": 100,
+      "_damage": 0
+    },
+    {
+      "_id": 6,
+      "_noteSimulateJudgement": 6,
+      "_scorePercent": 100,
+      "_damage": 0
+    }
+  ],
+  "MasterLiveSettings": [
+    {
+      "_id": 1,
+      "_key": "note_score_adjustment_factor",
+      "_value": "3"
+    },
+    {
+      "_id": 2,
+      "_key": "note_score_life_onus_factor",
+      "_value": "0.5"
+    },
+    {
+      "_id": 3,
+      "_key": "life_base",
+      "_value": "1000"
+    },
+    {
+      "_id": 4,
+      "_key": "life_denger",
+      "_value": "300"
+    },
+    {
+      "_id": 5,
+      "_key": "gekisou_luck_gauge_max",
+      "_value": "140"
+    },
+    {
+      "_id": 6,
+      "_key": "gekisou_luck_gauge_max_rush",
+      "_value": "70"
+    },
+    {
+      "_id": 7,
+      "_key": "gekisou_luck_rush_score_bonus_percent",
+      "_value": "10"
+    }
+  ],
+  "MasterLiveComboScoreBonus": [],
+  "MasterSkillEffectSetting": [
+    {
+      "_id": 1,
+      "_skillEffectType": 4000,
+      "_phase": 2
+    },
+    {
+      "_id": 2,
+      "_skillEffectType": 4004,
+      "_phase": 2
+    },
+    {
+      "_id": 3,
+      "_skillEffectType": 13001,
+      "_phase": 2
+    },
+    {
+      "_id": 4,
+      "_skillEffectType": 13005,
+      "_phase": 2
+    }
+  ],
+  "MasterLiveJudgementTiming": [
+    {
+      "_id": 6,
+      "_assistLevel": 0,
+      "_judgementPriority": 1,
+      "_noteJudgementType": 1,
+      "_noteSimulateJudgement": 6,
+      "_beforeMs": 10,
+      "_afterMs": 10
+    },
+    {
+      "_id": 5,
+      "_assistLevel": 0,
+      "_judgementPriority": 2,
+      "_noteJudgementType": 1,
+      "_noteSimulateJudgement": 5,
+      "_beforeMs": 30,
+      "_afterMs": 30
+    },
+    {
+      "_id": 4,
+      "_assistLevel": 0,
+      "_judgementPriority": 3,
+      "_noteJudgementType": 1,
+      "_noteSimulateJudgement": 4,
+      "_beforeMs": 60,
+      "_afterMs": 60
+    },
+    {
+      "_id": 1,
+      "_assistLevel": 0,
+      "_judgementPriority": 6,
+      "_noteJudgementType": 1,
+      "_noteSimulateJudgement": 1,
+      "_beforeMs": 100,
+      "_afterMs": 100
+    }
+  ],
+  "MasterSkillTarget": [
+    {
+      "_id": 5,
+      "_skillTargetType": 4,
+      "_judgement": 5
+    }
+  ],
+  "MasterLiveSkillEffect": [
+    {
+      "_id": 1,
+      "_liveSkillID": 1,
+      "_level": 1,
+      "_skillConditionGroup": 0,
+      "_skillReleaseConditionGroup": 0,
+      "_skillTargetIDs": [],
+      "_skillEffectType": 4000,
+      "_activationTimeSecond": 10.0,
+      "_effectValue": 5,
+      "_maxEffectValue": 0,
+      "_effectLimitCount": 1,
+      "_skillCumulativeConditionID": 0,
+      "_effectExecuteLimitCount": 0,
+      "_effectExecuteLimitResetConditionGroup": 0
+    },
+    {
+      "_id": 2,
+      "_liveSkillID": 2,
+      "_level": 1,
+      "_skillConditionGroup": 0,
+      "_skillReleaseConditionGroup": 0,
+      "_skillTargetIDs": [],
+      "_skillEffectType": 13001,
+      "_activationTimeSecond": 10.0,
+      "_effectValue": 5000,
+      "_maxEffectValue": 0,
+      "_effectLimitCount": 1,
+      "_skillCumulativeConditionID": 0,
+      "_effectExecuteLimitCount": 0,
+      "_effectExecuteLimitResetConditionGroup": 0
+    },
+    {
+      "_id": 3,
+      "_liveSkillID": 3,
+      "_level": 1,
+      "_skillConditionGroup": 0,
+      "_skillReleaseConditionGroup": 0,
+      "_skillTargetIDs": [],
+      "_skillEffectType": 4004,
+      "_activationTimeSecond": 10.0,
+      "_effectValue": 5000,
+      "_maxEffectValue": 0,
+      "_effectLimitCount": 0,
+      "_skillCumulativeConditionID": 0,
+      "_effectExecuteLimitCount": 0,
+      "_effectExecuteLimitResetConditionGroup": 0
+    },
+    {
+      "_id": 4,
+      "_liveSkillID": 4,
+      "_level": 1,
+      "_skillConditionGroup": 0,
+      "_skillReleaseConditionGroup": 0,
+      "_skillTargetIDs": [
+        5
+      ],
+      "_skillEffectType": 13005,
+      "_activationTimeSecond": 10.0,
+      "_effectValue": 0,
+      "_maxEffectValue": 0,
+      "_effectLimitCount": 0,
+      "_skillCumulativeConditionID": 0,
+      "_effectExecuteLimitCount": 0,
+      "_effectExecuteLimitResetConditionGroup": 0
+    }
+  ]
+}

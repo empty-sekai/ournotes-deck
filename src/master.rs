@@ -419,6 +419,35 @@ row!(
 );
 
 row!(
+    /// `MasterChallengeMusic` (the columns used to resolve a live).
+    ChallengeMusicRow {
+        id: i64 = "_id",
+        event_id: i64 = "_eventId",
+        live_music_id: i64 = "_liveMusicId",
+        music_type: i64 = "_musicType",
+        gekisou_mission_1: i64 = "_gekisouMission1",
+        gekisou_mission_2: i64 = "_gekisouMission2",
+        gekisou_mission_3: i64 = "_gekisouMission3",
+    }
+);
+
+row!(
+    /// `MasterArenaMusic` (the columns used to resolve a live).
+    ArenaMusicRow {
+        id: i64 = "_id",
+        group: i64 = "_group",
+        term: i64 = "_term",
+        live_music_id: i64 = "_liveMusicId",
+        live_music_type: i64 = "_liveMusicType",
+        gekisou_mission_1: i64 = "_gekisouMission1",
+        gekisou_mission_2: i64 = "_gekisouMission2",
+        gekisou_mission_3: i64 = "_gekisouMission3",
+        type_bonus_rate: i64 = "_typeBonusRate",
+        best_music_tag_bonus_rate: i64 = "_bestMusicTagBonusRate",
+    }
+);
+
+row!(
     /// `MasterLiveMusicScore`.
     LiveMusicScoreRow {
         id: i64 = "_id",
@@ -540,8 +569,47 @@ row!(
     EventRow {
         id: i64 = "_id",
         event_type: i64 = "_eventType",
+        start_at: Option<String> = "_startAt",
+        end_at: Option<String> = "_endAt",
         live_event_point_group: i64 = "_liveEventPointGroup",
         challenge_live_event_point_group: i64 = "_challengeLiveEventPointGroup",
+    }
+);
+
+row!(
+    /// Server-selected event item reward metadata; probability is preserved, not used to invent a lottery.
+    EventItemRewardRow {
+        id: i64 = "_id",
+        group: i64 = "_group",
+        event_group: i64 = "_eventGroup",
+        score_rank: i64 = "_scoreRank",
+        resource_count: i64 = "_resourceCount",
+        resource_type: i64 = "_resourceType",
+        resource_id: i64 = "_resourceId",
+        probability: i64 = "_probability",
+    }
+);
+
+row!(
+    /// One-time event achievement display reward.
+    EventAchievementRewardRow {
+        id: i64 = "_id",
+        event_id: i64 = "_eventId",
+        event_point: i64 = "_eventPoint",
+        #[serde(deserialize_with = "null_vec")]
+        reward_ids: Vec<i64> = "_rewardIds",
+    }
+);
+
+row!(
+    /// Event loop achievement display reward.
+    EventAchievementLoopRewardRow {
+        id: i64 = "_id",
+        event_id: i64 = "_eventId",
+        loop_start_event_point: i64 = "_loopStartEventPoint",
+        loop_event_point: i64 = "_loopEventPoint",
+        #[serde(deserialize_with = "null_vec")]
+        reward_ids: Vec<i64> = "_rewardIds",
     }
 );
 
@@ -624,6 +692,8 @@ pub struct Master {
     pub gekisou_skills: Vec<SkillRow>,
     pub live_skill_effects: Vec<LiveSkillEffectRow>,
     pub live_musics: Vec<LiveMusicRow>,
+    pub challenge_musics: Vec<ChallengeMusicRow>,
+    pub arena_musics: Vec<ArenaMusicRow>,
     pub live_music_scores: Vec<LiveMusicScoreRow>,
     pub note_parameters: Vec<NoteParameterRow>,
     pub judgement_parameters: Vec<JudgementParameterRow>,
@@ -637,6 +707,10 @@ pub struct Master {
     pub event_effects: Vec<EventEffectRow>,
     pub bands: Vec<BandRow>,
     pub events: Vec<EventRow>,
+    pub event_achievement_rewards: Vec<EventAchievementRewardRow>,
+    pub event_achievement_loop_rewards: Vec<EventAchievementLoopRewardRow>,
+    pub live_event_rewards: Vec<EventItemRewardRow>,
+    pub challenge_live_event_rewards: Vec<EventItemRewardRow>,
     pub live_event_points: Vec<EventPointRow>,
     pub challenge_live_event_points: Vec<EventPointRow>,
     pub live_challenge_points: Vec<EventPointRow>,
@@ -668,6 +742,8 @@ struct Index {
     gekisou_skill: HashMap<i64, usize>,
     gekisou_support_skill: HashMap<i64, usize>,
     live_music: HashMap<i64, usize>,
+    challenge_music: HashMap<i64, usize>,
+    arena_music: HashMap<i64, usize>,
     live_music_score: HashMap<i64, usize>,
     band: HashMap<i64, usize>,
     event: HashMap<i64, usize>,
@@ -697,6 +773,8 @@ pub const TABLES: &[&str] = &[
     "MasterGekisouSkill",
     "MasterLiveSkillEffect",
     "MasterLiveMusic",
+    "MasterChallengeMusic",
+    "MasterArenaMusic",
     "MasterLiveMusicScore",
     "MasterLiveNoteParameter",
     "MasterLiveJudgementParameter",
@@ -710,6 +788,10 @@ pub const TABLES: &[&str] = &[
     "MasterEventEffect",
     "MasterBand",
     "MasterEvent",
+    "MasterEventAchievementReward",
+    "MasterEventAchievementLoopReward",
+    "MasterLiveEventReward",
+    "MasterChallengeLiveEventReward",
     "MasterLiveEventPoint",
     "MasterChallengeLiveEventPoint",
     "MasterLiveChallengePoint",
@@ -773,6 +855,8 @@ impl Master {
             gekisou_skills: parse_table("MasterGekisouSkill", get("MasterGekisouSkill"))?,
             live_skill_effects: parse_table("MasterLiveSkillEffect", get("MasterLiveSkillEffect"))?,
             live_musics: parse_table("MasterLiveMusic", get("MasterLiveMusic"))?,
+            challenge_musics: parse_table("MasterChallengeMusic", get("MasterChallengeMusic"))?,
+            arena_musics: parse_table("MasterArenaMusic", get("MasterArenaMusic"))?,
             live_music_scores: parse_table("MasterLiveMusicScore", get("MasterLiveMusicScore"))?,
             note_parameters: parse_table("MasterLiveNoteParameter", get("MasterLiveNoteParameter"))?,
             judgement_parameters: parse_table("MasterLiveJudgementParameter", get("MasterLiveJudgementParameter"))?,
@@ -786,6 +870,19 @@ impl Master {
             event_effects: parse_table("MasterEventEffect", get("MasterEventEffect"))?,
             bands: parse_table("MasterBand", get("MasterBand"))?,
             events: parse_table("MasterEvent", get("MasterEvent"))?,
+            event_achievement_rewards: parse_table(
+                "MasterEventAchievementReward",
+                get("MasterEventAchievementReward"),
+            )?,
+            event_achievement_loop_rewards: parse_table(
+                "MasterEventAchievementLoopReward",
+                get("MasterEventAchievementLoopReward"),
+            )?,
+            live_event_rewards: parse_table("MasterLiveEventReward", get("MasterLiveEventReward"))?,
+            challenge_live_event_rewards: parse_table(
+                "MasterChallengeLiveEventReward",
+                get("MasterChallengeLiveEventReward"),
+            )?,
             live_event_points: parse_table("MasterLiveEventPoint", get("MasterLiveEventPoint"))?,
             challenge_live_event_points: parse_table(
                 "MasterChallengeLiveEventPoint",
@@ -827,6 +924,10 @@ impl Master {
 
     /// Rebuilds the id indexes after the tables were edited in place.
     pub fn reindex(&mut self) -> Result<(), Error> {
+        index_by("MasterEventAchievementReward", &self.event_achievement_rewards, |r| r.id)?;
+        index_by("MasterEventAchievementLoopReward", &self.event_achievement_loop_rewards, |r| r.id)?;
+        index_by("MasterLiveEventReward", &self.live_event_rewards, |r| r.id)?;
+        index_by("MasterChallengeLiveEventReward", &self.challenge_live_event_rewards, |r| r.id)?;
         self.index = Index {
             member_card: index_by("MasterMemberCard", &self.member_cards, |r| r.id)?,
             support_card: index_by("MasterSupportCard", &self.support_cards, |r| r.id)?,
@@ -838,6 +939,8 @@ impl Master {
             gekisou_skill: index_by("MasterGekisouSkill", &self.gekisou_skills, |r| r.id)?,
             gekisou_support_skill: index_by("MasterGekisouSupportSkill", &self.gekisou_support_skills, |r| r.id)?,
             live_music: index_by("MasterLiveMusic", &self.live_musics, |r| r.id)?,
+            challenge_music: index_by("MasterChallengeMusic", &self.challenge_musics, |r| r.id)?,
+            arena_music: index_by("MasterArenaMusic", &self.arena_musics, |r| r.id)?,
             live_music_score: index_by("MasterLiveMusicScore", &self.live_music_scores, |r| r.id)?,
             band: index_by("MasterBand", &self.bands, |r| r.id)?,
             event: index_by("MasterEvent", &self.events, |r| r.id)?,
@@ -888,6 +991,14 @@ impl Master {
 
     pub fn live_music(&self, id: i64) -> Option<&LiveMusicRow> {
         self.index.live_music.get(&id).map(|&i| &self.live_musics[i])
+    }
+
+    pub fn challenge_music(&self, id: i64) -> Option<&ChallengeMusicRow> {
+        self.index.challenge_music.get(&id).map(|&i| &self.challenge_musics[i])
+    }
+
+    pub fn arena_music(&self, id: i64) -> Option<&ArenaMusicRow> {
+        self.index.arena_music.get(&id).map(|&i| &self.arena_musics[i])
     }
 
     pub fn live_music_score(&self, id: i64) -> Option<&LiveMusicScoreRow> {

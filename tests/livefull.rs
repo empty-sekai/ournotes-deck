@@ -114,6 +114,7 @@ fn params(notes: &[LiveNote]) -> LiveParams {
         music_length_ms: LENGTH,
         score_music_length_ms: None,
         assist_factor: 1.0,
+        skill_target_music_type: 0,
     }
 }
 
@@ -230,9 +231,17 @@ fn unmodelled_parts_are_unsupported() {
     let (notes, events) = chart();
     let p = play(&notes, |_| 5, |_| 0);
     let limited = vec![performer(Some((2, 1)), &[], 0)];
-    assert!(matches!(LiveModel::new(&m, &limited, &notes, &events, params(&notes)), Err(Error::Unsupported(_))));
+    assert!(LiveModel::new(&m, &limited, &notes, &events, params(&notes)).is_ok());
     let mut deck = vec![Performer::default(); 5];
     deck[0] = performer(None, &[(4, 1)], 0);
+    // 11000 has no applier without Gekisou (AppendGekisouSkillApplier is not called): the snap does nothing.
+    let mut lm = LiveModel::new(&m, &deck, &notes, &events, params(&notes)).unwrap();
+    let mut plain = LiveModel::new(&m, &vec![Performer::default(); 5], &notes, &events, params(&notes)).unwrap();
+    assert_eq!(lm.run(&p).unwrap(), plain.run(&p).unwrap());
+    // judgement window effects stay with the raw judgement bridge
+    let mut t = tables();
+    t["MasterSupportSkillEffect"][3]["_skillEffectType"] = json!(4001);
+    let m = master_from(&t);
     let mut lm = LiveModel::new(&m, &deck, &notes, &events, params(&notes)).unwrap();
     assert!(matches!(lm.run(&p), Err(Error::Unsupported(_))));
 }
@@ -245,4 +254,348 @@ fn unknown_notes_in_the_stream_are_rejected() {
     p.frames[10].judged.push(JudgedNote { note_id: 999, judgement: 5, judgement_time_ms: 160 });
     let mut lm = LiveModel::new(&m, &[], &notes, &events, params(&notes)).unwrap();
     assert!(matches!(lm.run(&p), Err(Error::Input(_))));
+}
+
+fn effect_model(effects: &[(i64, i64)], snap: bool, note_time_ms: i32) -> LiveModel {
+    let mut t = tables();
+    let mut rows = Vec::new();
+    for (i, &(kind, value)) in effects.iter().enumerate() {
+        let mut row = if snap {
+            support_row(i as i64 + 100, 9, kind, value, json!({"_activationTimeSecond": 1.0}))
+        } else {
+            let mut row = t["MasterLiveSkillEffect"][0].clone();
+            row["_id"] = json!(i + 100);
+            row["_liveSkillID"] = json!(9);
+            row["_skillEffectType"] = json!(kind);
+            row["_effectValue"] = json!(value);
+            row["_activationTimeSecond"] = json!(1.0);
+            row
+        };
+        row["_skillConditionGroup"] = json!(0);
+        rows.push(row);
+    }
+    t["MasterLiveSkillEffect"] = if snap { json!([]) } else { json!(rows) };
+    t["MasterSupportSkillEffect"] = if snap { json!(rows) } else { json!([]) };
+    let m = master_from(&t);
+    let p = if snap { performer(None, &[(9, 1)], 1) } else { performer(Some((9, 1)), &[], 1) };
+    let notes = [LiveNote { note_id: 1, time_ms: note_time_ms, note_operate_type: 1, judgement_type: 1 }];
+    LiveModel::new(&m, &[p], &notes, &[(0, 0)], params(&notes)).unwrap()
+}
+
+#[test]
+fn skill_damage_uses_the_safe_life_floor_for_members_and_snaps() {
+    for snap in [false, true] {
+        let mut lm = effect_model(&[(3002, 5000)], snap, 1100);
+        lm.frame(0, &[]).unwrap();
+        assert_eq!(lm.current_life(), 1);
+        lm.frame(16, &[]).unwrap();
+        assert_eq!(lm.current_life(), 1);
+    }
+}
+
+#[test]
+fn skill_reduction_ends_before_later_note_damage() {
+    for snap in [false, true] {
+        let mut lm = effect_model(&[(3004, 5000), (3002, 300)], snap, 1100);
+        lm.frame(0, &[]).unwrap();
+        assert_eq!(lm.current_life(), 850);
+        lm.frame(1008, &[]).unwrap();
+        lm.frame(1100, &[JudgedNote { note_id: 1, judgement: 1, judgement_time_ms: 1100 }]).unwrap();
+        assert_eq!(lm.current_life(), 750);
+    }
+}
+
+#[test]
+fn skill_life_limit_changes_the_overheal_cap() {
+    for snap in [false, true] {
+        let mut lm = effect_model(&[(3000, 200), (3001, 5000)], snap, 1100);
+        lm.frame(0, &[]).unwrap();
+        assert_eq!(lm.current_life(), 2400);
+        lm.frame(1008, &[]).unwrap();
+        assert_eq!(lm.current_life(), 2400);
+    }
+}
+
+#[test]
+fn combo_score_up_and_note_score_down_apply_to_their_own_factors() {
+    let m = master();
+    for snap in [false, true] {
+        for (kind, value) in [(2002, 5000), (2005, 2500)] {
+            for note_time in [200, 1100] {
+                let mut lm = effect_model(&[(kind, value)], snap, note_time);
+                lm.frame(0, &[]).unwrap();
+                if note_time > 1000 {
+                    lm.frame(1008, &[]).unwrap();
+                }
+                lm.frame(note_time, &[JudgedNote { note_id: 1, judgement: 5, judgement_time_ms: note_time }]).unwrap();
+                let notes = [LiveNote { note_id: 1, time_ms: note_time, note_operate_type: 1, judgement_type: 1 }];
+                let mut c = calculator(&m, &notes);
+                if note_time < 1000 {
+                    if kind == 2002 {
+                        c.state.combo_score_up = 0.5;
+                    } else {
+                        c.state.note_score_up = 0.75;
+                    }
+                }
+                let expected = c.note_score(0, 1000, note_time, 1, PERFECT, None).unwrap();
+                assert_eq!(lm.score(), expected, "kind {kind}, snap {snap}, time {note_time}");
+            }
+        }
+    }
+}
+
+#[test]
+fn snap_cumulative_score_factors_update_cap_and_release() {
+    // Uses the already-established judgement-equals cumulative checker (1000), not new WIP kinds.
+    for kind in [2001, 2003] {
+        for (value, cap, factors) in [(5000, 7500, [0.5f32, 0.75]), (-5000, 0, [-0.5f32, -1.0])] {
+            let mut t = tables();
+            t["MasterSkillTarget"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"_id": 99, "_skillTargetType": 4, "_judgement": 5}));
+            t["MasterSkillCumulativeCondition"] = json!([{
+                "_id": 90, "_skillCumulativeConditionType": 1000, "_conditionValues": [1],
+                "_conditionTargetIDs": [99], "_maxCumulativeCount": 0
+            }]);
+            t["MasterSkillEffectSetting"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"_id": 99, "_skillEffectType": kind, "_phase": 2}));
+            t["MasterLiveSkillEffect"] = json!([]);
+            t["MasterSupportSkillEffect"] = json!([support_row(
+                100,
+                9,
+                kind,
+                value,
+                json!({
+                    "_activationTimeSecond": 0.5, "_skillCumulativeConditionID": 90,
+                    "_maxEffectValue": cap
+                })
+            )]);
+            let m = master_from(&t);
+            let notes = [0, 100].map(|time_ms| LiveNote {
+                note_id: time_ms / 100 + 1,
+                time_ms,
+                note_operate_type: 1,
+                judgement_type: 1,
+            });
+            let p = performer(None, &[(9, 1)], 1);
+            let mut lm = LiveModel::new(&m, &[p], &notes, &[(0, 0)], params(&notes)).unwrap();
+            for (i, time_ms) in [0, 100].into_iter().enumerate() {
+                lm.frame(time_ms, &[JudgedNote { note_id: i as i32 + 1, judgement: 5, judgement_time_ms: time_ms }])
+                    .unwrap();
+                let f = lm.factor_state();
+                assert_eq!(f.note_score_up, if kind == 2001 { 1.0 + factors[i] } else { 1.0 });
+                assert_eq!(f.combo_score_up, if kind == 2003 { factors[i] } else { 0.0 });
+            }
+            lm.frame(200, &[]).unwrap();
+            let active = *lm.factor_state();
+            lm.frame(500, &[]).unwrap(); // Executing ends only after, not at, the duration boundary.
+            assert_eq!(lm.factor_state().note_score_up, active.note_score_up);
+            assert_eq!(lm.factor_state().combo_score_up, active.combo_score_up);
+            lm.frame(501, &[]).unwrap();
+            assert_eq!(lm.factor_state().note_score_up, 1.0);
+            assert_eq!(lm.factor_state().combo_score_up, 0.0);
+        }
+    }
+}
+
+#[test]
+fn live_cumulative_unknown_rows_are_rejected() {
+    let mut t = tables();
+    t["MasterLiveSkillEffect"][0]["_skillEffectType"] = json!(2001);
+    t["MasterLiveSkillEffect"][0]["_skillCumulativeConditionID"] = json!(90);
+    let m = master_from(&t);
+    let (notes, events) = chart();
+    let p = performer(Some((1, 1)), &[], 1);
+    assert!(matches!(LiveModel::new(&m, &[p], &notes, &events, params(&notes)), Err(Error::Master(_))));
+}
+
+#[test]
+fn overlapping_live_executions_keep_separate_expirations() {
+    let mut t = tables();
+    t["MasterLiveSkillEffect"][0]["_activationTimeSecond"] = json!(0.5);
+    let m = master_from(&t);
+    let notes = vec![LiveNote { note_id: 1, time_ms: 1000, note_operate_type: 1, judgement_type: 1 }];
+    let p = performer(Some((1, 1)), &[], 1);
+    let mut lm = LiveModel::new(&m, &[p], &notes, &[(0, 0), (0, 100)], params(&notes)).unwrap();
+    for (time, want) in [(0, 1.1f32), (100, 1.2), (500, 1.2), (501, 1.1), (601, 1.0)] {
+        lm.frame(time, &[]).unwrap();
+        assert!((lm.factor_state().note_score_up - want).abs() < 1e-6, "at {time}");
+    }
+}
+
+#[test]
+fn sixth_concurrent_live_execution_reports_pool_exhaustion() {
+    let m = master();
+    let notes = vec![LiveNote { note_id: 1, time_ms: 1000, note_operate_type: 1, judgement_type: 1 }];
+    let p = performer(Some((1, 1)), &[], 1);
+    let events: Vec<_> = (0..6).map(|i| (0, i * 100)).collect();
+    let mut lm = LiveModel::new(&m, &[p], &notes, &events, params(&notes)).unwrap();
+    for i in 0..5 {
+        lm.frame(i * 100, &[]).unwrap();
+    }
+    assert!(matches!(lm.frame(500, &[]), Err(Error::Game(_))));
+}
+
+#[test]
+fn live_release_is_first_checked_in_executing_not_execute_frame() {
+    let mut t = tables();
+    t["MasterLiveSkillEffect"][0]["_activationTimeSecond"] = json!(0.0);
+    t["MasterLiveSkillEffect"][0]["_skillReleaseConditionGroup"] = json!(70);
+    let m = master_from(&t);
+    let notes = vec![LiveNote { note_id: 1, time_ms: 1000, note_operate_type: 1, judgement_type: 1 }];
+    let p = performer(Some((1, 1)), &[], 1);
+    let mut lm = LiveModel::new(&m, &[p], &notes, &[(0, 0)], params(&notes)).unwrap();
+    for (time, want) in [(0, 1.1f32), (1, 1.1), (2, 1.0)] {
+        lm.frame(time, &[]).unwrap();
+        assert!((lm.factor_state().note_score_up - want).abs() < 1e-6, "at {time}");
+    }
+}
+
+#[test]
+fn overlapping_live_cumulative_score_uses_independent_counters_and_handles() {
+    let mut t = tables();
+    t["MasterLiveSkillEffect"][0]["_skillEffectType"] = json!(2001);
+    t["MasterLiveSkillEffect"][0]["_activationTimeSecond"] = json!(0.5);
+    t["MasterLiveSkillEffect"][0]["_skillCumulativeConditionID"] = json!(90);
+    t["MasterSkillCumulativeCondition"] = json!([
+        {"_id":90,"_skillCumulativeConditionType":1000,"_conditionValues":[1],"_conditionTargetIDs":[42],"_maxCumulativeCount":100}
+    ]);
+    let m = master_from(&t);
+    let notes = vec![
+        LiveNote { note_id: 1, time_ms: 0, note_operate_type: 1, judgement_type: 1 },
+        LiveNote { note_id: 2, time_ms: 100, note_operate_type: 1, judgement_type: 1 },
+    ];
+    let p = performer(Some((1, 1)), &[], 1);
+    let mut lm = LiveModel::new(&m, &[p], &notes, &[(0, 0), (0, 100)], params(&notes)).unwrap();
+    lm.frame(0, &[JudgedNote { note_id: 1, judgement: 4, judgement_time_ms: 0 }]).unwrap();
+    assert!((lm.factor_state().note_score_up - 1.1).abs() < 1e-6);
+    lm.frame(100, &[JudgedNote { note_id: 2, judgement: 4, judgement_time_ms: 100 }]).unwrap();
+    assert!((lm.factor_state().note_score_up - 1.3).abs() < 1e-6);
+    lm.frame(501, &[]).unwrap();
+    assert!((lm.factor_state().note_score_up - 1.1).abs() < 1e-6);
+    lm.frame(601, &[]).unwrap();
+    assert!((lm.factor_state().note_score_up - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn parameter_effects_have_no_dynamic_power_applier() {
+    for kind in [1000, 1001, 1002, 1003, 1500, 1501, 1502, 1503] {
+        for snap in [false, true] {
+            let mut lm = effect_model(&[(kind, 10000)], snap, 200);
+            lm.frame(0, &[]).unwrap();
+            lm.frame(200, &[JudgedNote { note_id: 1, judgement: 5, judgement_time_ms: 200 }]).unwrap();
+            assert_eq!(lm.factor_state().band_total_power, POWER);
+            assert_eq!(lm.factor_state().note_score_up, 1.0);
+            assert_eq!(lm.factor_state().combo_score_up, 0.0);
+            lm.frame(1001, &[]).unwrap();
+            assert_eq!(lm.factor_state().band_total_power, POWER);
+        }
+    }
+}
+
+#[test]
+fn live_trigger_uses_last_matching_event_in_list_order() {
+    for events in [vec![(0, 0), (0, 10)], vec![(0, 10), (0, 0)]] {
+        let mut t = tables();
+        t["MasterLiveSkillEffect"][0]["_activationTimeSecond"] = json!(0.5);
+        let m = master_from(&t);
+        let notes = vec![LiveNote { note_id: 1, time_ms: 1000, note_operate_type: 1, judgement_type: 1 }];
+        let p = performer(Some((1, 1)), &[], 1);
+        let mut lm = LiveModel::new(&m, &[p], &notes, &events, params(&notes)).unwrap();
+        lm.frame(10, &[]).unwrap();
+        assert!((lm.factor_state().note_score_up - 1.1).abs() < 1e-6);
+        lm.frame(505, &[]).unwrap();
+        let want = if events[1].1 == 10 { 1.1f32 } else { 1.0 };
+        assert!((lm.factor_state().note_score_up - want).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn ordinary_live_conversion_consumes_its_own_effect_limit() {
+    let mut t = tables();
+    t["MasterLiveSkillEffect"][0]["_skillEffectType"] = json!(12006);
+    t["MasterLiveSkillEffect"][0]["_effectValue"] = json!(5);
+    t["MasterLiveSkillEffect"][0]["_skillTargetIDs"] = json!([42]);
+    t["MasterLiveSkillEffect"][0]["_effectLimitCount"] = json!(2);
+    let m = master_from(&t);
+    let notes: Vec<_> =
+        (1..=3).map(|i| LiveNote { note_id: i, time_ms: i * 100, note_operate_type: 1, judgement_type: 1 }).collect();
+    let p = performer(Some((1, 1)), &[], 1);
+    let mut lm = LiveModel::new(&m, &[p], &notes, &[(0, 0)], params(&notes)).unwrap();
+    lm.frame(0, &[]).unwrap();
+    for i in 1..=3 {
+        lm.frame(i * 100, &[JudgedNote { note_id: i, judgement: 4, judgement_time_ms: i * 100 }]).unwrap();
+    }
+    assert_eq!(lm.converted_judgements(), 2);
+}
+
+#[test]
+fn score_effect_does_not_treat_effect_limit_as_an_execution_limit() {
+    let mut t = tables();
+    t["MasterLiveSkillEffect"][0]["_effectLimitCount"] = json!(1);
+    let m = master_from(&t);
+    let notes = vec![LiveNote { note_id: 1, time_ms: 1000, note_operate_type: 1, judgement_type: 1 }];
+    let p = performer(Some((1, 1)), &[], 1);
+    let mut lm = LiveModel::new(&m, &[p], &notes, &[(0, 0), (0, 100)], params(&notes)).unwrap();
+    for time in [0, 100, 200] {
+        lm.frame(time, &[]).unwrap();
+    }
+    assert!((lm.factor_state().note_score_up - 1.2).abs() < 1e-6);
+}
+
+#[test]
+fn timed_sustained_support_stacks_and_finished_gate_freezes_it() {
+    let mut t = tables();
+    t["MasterLiveSkillEffect"] = json!([]);
+    t["MasterSupportSkillEffect"] = json!([support_row(
+        80,
+        80,
+        2000,
+        1000,
+        json!({
+            "_skillTriggerType": 2, "_skillConditionGroup": 70, "_activationTimeSecond": 0.5
+        })
+    )]);
+    let m = master_from(&t);
+    let notes = vec![LiveNote { note_id: 1, time_ms: 1000, note_operate_type: 1, judgement_type: 1 }];
+    let p = performer(None, &[(80, 1)], 1);
+    let mut lm = LiveModel::new(&m, &[p], &notes, &[(0, 0), (0, 100)], params(&notes)).unwrap();
+    lm.frame(0, &[]).unwrap();
+    lm.frame(100, &[]).unwrap();
+    assert!((lm.factor_state().note_score_up - 1.2).abs() < 1e-6);
+    lm.set_live_finished(true);
+    lm.frame(200, &[]).unwrap();
+    assert!((lm.factor_state().note_score_up - 1.2).abs() < 1e-6);
+    lm.set_live_finished(false);
+    lm.frame(300, &[]).unwrap();
+    assert!((lm.factor_state().note_score_up - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn reset_checker_is_only_constructed_for_a_positive_execute_limit() {
+    let mut t = tables();
+    t["MasterSkillCondition"].as_array_mut().unwrap().push(json!({
+        "_id":90,"_conditionType":999999,"_conditionValues":[],"_isPositive":true,"_conditionTargetIDs":[]
+    }));
+    t["MasterSkillConditionSet"].as_array_mut().unwrap().push(json!({"_id":90,"_group":90,"_conditionIds":[90]}));
+    t["MasterSupportSkillEffect"] = json!([support_row(
+        80,
+        80,
+        2000,
+        1000,
+        json!({
+            "_effectExecuteLimitResetConditionGroup":90
+        })
+    )]);
+    let notes = vec![LiveNote { note_id: 1, time_ms: 1000, note_operate_type: 1, judgement_type: 1 }];
+    let p = performer(None, &[(80, 1)], 1);
+    let m = master_from(&t);
+    let mut lm = LiveModel::new(&m, std::slice::from_ref(&p), &notes, &[(0, 0)], params(&notes)).unwrap();
+    lm.frame(0, &[]).unwrap();
+    t["MasterSupportSkillEffect"][0]["_effectExecuteLimitCount"] = json!(1);
+    let m = master_from(&t);
+    assert!(matches!(LiveModel::new(&m, &[p], &notes, &[(0, 0)], params(&notes)), Err(Error::Unsupported(_))));
 }

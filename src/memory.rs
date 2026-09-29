@@ -87,6 +87,9 @@ pub fn memory_power_bonus(master: &Master, player: &Player, card: &MemberView) -
             let t = master
                 .skill_target(tid)
                 .ok_or_else(|| Error::Master(format!("memory group {}: unknown skill target {tid}", g.id)))?;
+            // Native memory calls IReadOnlySkillTargetEx (0x55eca30), not the leader
+            // calculator (0x6082b18). On MemberView both consume the same seven OR
+            // alternatives; dual-entry ARM64 fixtures guard this shared implementation.
             hit = hit || is_target_member(card, t);
         }
         if hit {

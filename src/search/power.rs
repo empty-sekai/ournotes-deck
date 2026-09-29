@@ -35,8 +35,21 @@ pub struct PowerStats {
     /// Snap assignments solved.
     pub matchings: u64,
     /// Deck-orders evaluated exactly (live score): orders of the per-order model, or whole-live simulations with
-    /// snap skills.
+    /// snap skills (with Gekisou on: deck-orders with at least one seed simulated).
     pub orders: u64,
+    /// With snap skills: class choices (an order and a class for each slot) reached in the class search, and
+    /// candidates queued for simulation.
+    pub class_choices: u64,
+    pub candidates: u64,
+    /// With Gekisou on: whole-live simulations of one seed.
+    pub seed_sims: u64,
+    /// With Gekisou on: candidates dropped after some of their seeds, and the seed simulations this saved.
+    pub early_stops: u64,
+    pub seeds_saved: u64,
+    /// With Gekisou on: play frames not simulated again, thanks to the shared start of the seed runs.
+    pub prefix_frames_saved: u64,
+    /// With Gekisou on: seed scores above their candidate's per-seed bound (always 0 unless the bound is wrong).
+    pub bound_violations: u64,
 }
 
 /// The live objective of a search, if any.
