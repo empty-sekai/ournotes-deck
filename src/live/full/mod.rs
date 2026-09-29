@@ -50,6 +50,8 @@ mod life;
 mod raw_runtime;
 pub use raw_runtime::{RELAX_TARGET_JUDGEMENTS, RawJudgedNote, RawJudgementRuntime};
 mod scorecalc;
+mod window;
+pub use window::{NoteEval, RangeFrames, WindowNote, window_note_scores};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 

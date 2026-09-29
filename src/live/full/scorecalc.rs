@@ -142,6 +142,17 @@ impl IncrementalCalculator {
         self.factors[f].push(cmd);
     }
 
+    /// Every factor command filed so far, frame by frame and in filing order within a frame (the order the frames
+    /// apply them after sorting by time and owner, a stable sort).
+    pub(crate) fn factor_commands(&self) -> impl Iterator<Item = &FactorCommand> {
+        self.factors.iter().flatten()
+    }
+
+    /// The last frame (exclusive) of the frame table: commands and notes beyond it are filed in its last frame.
+    pub(crate) fn max_frame(&self) -> i32 {
+        self.max_frame
+    }
+
     /// Sets the fixed score filed by the next calculation (only the last one set counts).
     pub(crate) fn add_fixed(&mut self, time_ms: i32, score: i32) {
         self.pending_fixed = Some((time_ms, score));
@@ -229,5 +240,12 @@ impl IncrementalCalculator {
             self.rank_bonus = self.rank_bonus.wrapping_add(v);
         }
         Ok(())
+    }
+}
+
+impl IncrementalCalculator {
+    /// `(note id, chart time, last score)` of every note filed so far.
+    pub(crate) fn note_results(&self) -> Vec<(i32, i32, i32)> {
+        self.notes.iter().flatten().map(|n| (n.note_id, n.time_ms, n.added)).collect()
     }
 }
