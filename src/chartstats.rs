@@ -51,7 +51,7 @@ mod gekisou_skills;
 
 pub use gekisou_skills::{
     Catalog, CatalogMember, CatalogSnap, FormationSlot, GekisouHeader, GekisouRangeResult, GekisouSeed, GekisouStats,
-    SCREEN_SEEDS, SkillLevel, plain_kind,
+    SCREEN_SEEDS, Search, SearchOption, SkillLevel, plain_kind,
 };
 
 use crate::data::{DataChart, DeckData};
@@ -825,6 +825,43 @@ pub fn chart_stats_with(
     kinds: &[Kind],
     options: &Options,
 ) -> Result<ChartStats, Error> {
+    chart_stats_inner(master, chart, kinds, options, None)
+}
+
+/// A search probe: `f` gets the chart's formation search (screened on the first [`SCREEN_SEEDS`] of `seeds` seeds)
+/// instead of the chart's Gekisou skill statistics; `None` when the chart has none. Diagnostics, not a stable
+/// interface.
+#[doc(hidden)]
+pub fn search_probe<R>(
+    master: &Master,
+    chart: &DataChart,
+    kinds: &[Kind],
+    seeds: usize,
+    f: impl FnOnce(&mut Search<'_, '_>) -> Result<R, Error>,
+) -> Result<Option<R>, Error> {
+    let mut f = Some(f);
+    let mut out = None;
+    let mut hook = |s: &mut Search<'_, '_>| -> Result<(), Error> {
+        if let Some(f) = f.take() {
+            out = Some(f(s)?);
+        }
+        Ok(())
+    };
+    let options = Options { seeds, formation_seeds: Some(seeds) };
+    chart_stats_inner(master, chart, kinds, &options, Some(&mut hook))?;
+    Ok(out)
+}
+
+/// A hook that gets a chart's formation search.
+type SearchHook<'h> = &'h mut dyn FnMut(&mut Search<'_, '_>) -> Result<(), Error>;
+
+fn chart_stats_inner(
+    master: &Master,
+    chart: &DataChart,
+    kinds: &[Kind],
+    options: &Options,
+    probe: Option<SearchHook<'_>>,
+) -> Result<ChartStats, Error> {
     let seeds = options.seeds;
     let settings = LiveScoreSettings::from_master(master)?;
     let c: Chart = chart.chart(&settings)?;
@@ -976,7 +1013,12 @@ pub fn chart_stats_with(
                 score_id: chart.score_id,
                 judged,
             };
-            out.gekisou = Some(gekisou_skills::gekisou_stats(&live, kinds, &out.ranges, &catalog, &inputs)?);
+            match probe {
+                Some(hook) => hook(&mut gekisou_skills::search(&live, kinds, &out.ranges, &catalog, &out.seeds)?)?,
+                None => {
+                    out.gekisou = Some(gekisou_skills::gekisou_stats(&live, kinds, &out.ranges, &catalog, &inputs)?)
+                }
+            }
         }
     }
     Ok(out)

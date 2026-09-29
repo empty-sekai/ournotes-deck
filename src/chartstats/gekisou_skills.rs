@@ -329,8 +329,9 @@ struct Base {
     rank_bonuses: Vec<i64>,
 }
 
-/// The search of a chart.
-struct Search<'a, 'm> {
+/// The formation search of a chart. Its public methods are diagnostics ([`super::search_probe`]), not a stable
+/// interface.
+pub struct Search<'a, 'm> {
     live: &'a Live<'m>,
     catalog: &'a Catalog,
     infos: &'a [RangeInfo],
@@ -341,6 +342,8 @@ struct Search<'a, 'm> {
     /// Per position: the window notes the plain skill covers there.
     cover: Vec<Vec<bool>>,
     snaps: Vec<SnapClass>,
+    /// The member classes' Gekisou skills (`None`: the fillers).
+    classes: Vec<Option<SkillLevel>>,
     opts: Vec<Opt>,
     base: Vec<Base>,
     cache: HashMap<Vec<usize>, f64>,
@@ -445,6 +448,7 @@ impl<'a, 'm> Search<'a, 'm> {
             in_range,
             cover: Vec::new(),
             snaps,
+            classes: classes.iter().map(|c| c.0).collect(),
             opts,
             base: Vec::new(),
             cache: HashMap::new(),
@@ -547,7 +551,7 @@ impl<'a, 'm> Search<'a, 'm> {
 
     /// A member card (catalog index) per performer of a state, five different characters (augmenting paths, cards
     /// in catalog order); `None` when there is none or a snap class is used more often than it has snaps.
-    fn assign(&self, state: &[usize]) -> Option<Vec<usize>> {
+    pub(crate) fn assign(&self, state: &[usize]) -> Option<Vec<usize>> {
         let mut used = vec![0usize; self.snaps.len()];
         for &o in state {
             if let Some(s) = self.opts[o].snap {
@@ -596,7 +600,7 @@ impl<'a, 'm> Search<'a, 'm> {
 
     /// The default figure's gain of a state on the screened seeds, from the windows: `(score gain) / power + sum_k
     /// (weight gain of the plain skill at k)`, averaged.
-    fn value(&mut self, state: &[usize]) -> Result<f64, Error> {
+    pub fn value(&mut self, state: &[usize]) -> Result<f64, Error> {
         if let Some(&v) = self.cache.get(state) {
             return Ok(v);
         }
@@ -673,7 +677,7 @@ impl<'a, 'm> Search<'a, 'm> {
     }
 
     /// Greedy fill, then coordinate descent: the chosen state and its screened value.
-    fn run(&mut self) -> Result<(Vec<usize>, f64), Error> {
+    pub fn run(&mut self) -> Result<(Vec<usize>, f64), Error> {
         let mut state: Vec<usize> = Vec::new();
         let mut value = 0f64;
         for _ in 0..5 {
@@ -743,6 +747,61 @@ impl<'a, 'm> Search<'a, 'm> {
         }
         Ok((state, value))
     }
+}
+
+/// A candidate performer of a search, for diagnostics.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchOption {
+    /// The member class's Gekisou skill; `None`: fillers (a skill of a mission the chart does not play).
+    pub skill: Option<SkillLevel>,
+    pub support: Option<SkillLevel>,
+    pub band_match: Option<bool>,
+    pub member_card_ids: Vec<i64>,
+    pub snap_ids: Vec<i64>,
+}
+
+impl Search<'_, '_> {
+    /// The candidates; a state is a list of candidate indices, one per performer (at most five).
+    pub fn options(&self) -> Vec<SearchOption> {
+        self.opts
+            .iter()
+            .map(|o| {
+                let first = &self.catalog.members[o.cards[0]];
+                let support = o.snap.map(|s| self.snaps[s].support);
+                SearchOption {
+                    skill: self.classes[o.class],
+                    support,
+                    band_match: support.and_then(|s| band_match(self.live.master, s, &first.performer)),
+                    member_card_ids: o.cards.iter().map(|&c| self.catalog.members[c].id).collect(),
+                    snap_ids: o.snap.map_or(Vec::new(), |s| {
+                        self.snaps[s].snaps.iter().map(|&i| self.catalog.snaps[i].id).collect()
+                    }),
+                }
+            })
+            .collect()
+    }
+
+    /// Whether a state has five different characters and every snap at most once.
+    pub fn feasible(&self, state: &[usize]) -> bool {
+        state.len() <= 5 && state.iter().all(|&o| o < self.opts.len()) && self.assign(state).is_some()
+    }
+
+    /// Formations evaluated so far (cached states not counted again).
+    pub fn evaluations(&self) -> usize {
+        self.evaluations
+    }
+}
+
+/// A chart's search, for [`super::search_probe`].
+pub(super) fn search<'a, 'm>(
+    live: &'a Live<'m>,
+    kinds: &'a [Kind],
+    infos: &'a [RangeInfo],
+    catalog: &'a Catalog,
+    seeds: &[SeedStats],
+) -> Result<Search<'a, 'm>, Error> {
+    Search::new(live, catalog, infos, plain_kind(kinds).map(|p| &kinds[p]), seeds, SCREEN_SEEDS)
 }
 
 /// The score at these ranks: `score - sum_i rankBonus_i + sum_i trunc(rangeScore_i * percent_i(ranks[i]) / 100)`.
