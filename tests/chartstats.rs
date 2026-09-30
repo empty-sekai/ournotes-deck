@@ -530,8 +530,7 @@ impl Ranked {
             assist_factor: 1.0,
         };
         let mut lm =
-            full::LiveModel::new_gekisou_external(master, &deck, &self.notes, &self.events, params, &self.setup)
-                .unwrap();
+            full::LiveModel::new_gekisou_ranked(master, &deck, &self.notes, &self.events, params, &self.setup).unwrap();
         for (i, &(rank, pct)) in ranks.iter().enumerate() {
             lm.queue_gekisou_rank_confirmation(i, rank, pct).unwrap();
         }
@@ -887,7 +886,7 @@ fn aptitude_shapes_deduplicate_effects_and_abstract_bands() {
     let h = chartstats::aptitude_header(&d.master, &chartstats::kinds(&d.master), &Default::default());
     assert_eq!(h.plain_kind, Some(0));
     assert_eq!(h.seed_rule.deterministic_test, 4);
-    assert_eq!(h.seed_rule.batches, [32, 64, 128, 256, 512, 1024]);
+    assert_eq!(h.seed_rule.batches, [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]);
     assert_eq!(h.seed_rule.cross_seeds, 64);
     assert_eq!((h.seed_rule.relative, h.seed_rule.baseline), (0.01, 0.001));
     assert_eq!(h.shapes.len(), 8);
@@ -1064,6 +1063,8 @@ fn aptitude_seed_statistics_match_paired_full_runs() {
     assert!(v.check.deck.iter().all(Option::is_none));
     let mut scores = Vec::new();
     let mut bases = Vec::new();
+    let mut perfect_scores = Vec::new();
+    let mut perfect_bases = Vec::new();
     let mut tails = Vec::new();
     for seed in ournotes_deck::live::seeds::published_seeds(v.seeds) {
         let (base, br) = aptitude_run(&d, None, seed, false);
@@ -1071,6 +1072,11 @@ fn aptitude_seed_statistics_match_paired_full_runs() {
             aptitude_run(&d, Some(Performer { gekisou_skill: Some((3, 2)), ..Default::default() }), seed, false);
         scores.push(f64::from(with - base));
         bases.push(f64::from(base));
+        let (base_perfect, _) = aptitude_run(&d, None, seed, true);
+        let (with_perfect, _) =
+            aptitude_run(&d, Some(Performer { gekisou_skill: Some((3, 2)), ..Default::default() }), seed, true);
+        perfect_scores.push(f64::from(with_perfect - base_perfect));
+        perfect_bases.push(f64::from(base_perfect));
         let range_delta: i32 = wr
             .iter()
             .zip(br)
@@ -1081,7 +1087,11 @@ fn aptitude_seed_statistics_match_paired_full_runs() {
             .sum();
         tails.push(f64::from(with - base - range_delta));
     }
-    for (reported, actual) in [(v.score, test_mean_se(&scores)), (v.tail, test_mean_se(&tails))] {
+    for (reported, actual) in [
+        (v.score, test_mean_se(&scores)),
+        (v.score_perfect, test_mean_se(&perfect_scores)),
+        (v.tail, test_mean_se(&tails)),
+    ] {
         for i in 0..2 {
             assert!((reported[i] - actual[i]).abs() <= 0.000501, "{reported:?} {actual:?}");
         }
@@ -1090,9 +1100,9 @@ fn aptitude_seed_statistics_match_paired_full_runs() {
         let [m, se] = test_mean_se(scores);
         se <= (m.abs() * 0.01).max(test_mean_se(bases)[0] * 0.001)
     };
-    assert_eq!(v.se_target_met, met(&scores, &bases));
+    assert_eq!(v.se_target_met, met(&scores, &bases) && met(&perfect_scores, &perfect_bases));
     if v.seeds == 64 {
-        assert!(!met(&scores[..32], &bases[..32]));
+        assert!(!(met(&scores[..32], &bases[..32]) && met(&perfect_scores[..32], &perfect_bases[..32])));
     }
     assert!(
         (v.score[0] - v.tail[0] - v.ranges.iter().map(|r| r.range_score[0] + r.rank_bonus[0]).sum::<f64>()).abs()

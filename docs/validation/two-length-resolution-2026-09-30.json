@@ -1,0 +1,104 @@
+{
+  "format": "ournotes.native-probe-resolution/1",
+  "date": "2026-09-30",
+  "status": "resolvedProbeInputMismatch",
+  "nativeBinarySha256": "5a79dd5d9c479ed5a636193394f040f21a1f7b070d0869095e1af63b3f84ef88",
+  "sameNativeCaptureSha256": "d479871f12209d6c12d47772e7b4bba6a65c2033e0f2b2c773aff1e7bdfc2251",
+  "historicalComparisonSha256": "984efea1e7e051aad24130e986f8f38585ad6739226a586de33f7de8eff566cf",
+  "historicalDifferenceCount": 5861,
+  "historicalFirstDifference": {
+    "frameIndex": 6046,
+    "field": "settledScore",
+    "native": 328726,
+    "rust": 329321
+  },
+  "historicalInputs": {
+    "skillAudioLengthMs": 91667,
+    "scoreTableLengthMs": 91667,
+    "scoreTableSource": "diagnostic driver used None, falling back to audio length"
+  },
+  "matchedNativeInputs": {
+    "skillAudioLengthMs": 91667,
+    "scoreTableLengthMs": 118187,
+    "scoreTableSource": "LastTimingNotePosition.TimeMs 117187 + 1000"
+  },
+  "resolution": "Correct only the diagnostic score_music_length_ms input; keep the same native capture, audio/skill clock, frames, fields and arithmetic.",
+  "sourceEvidence": [
+    {
+      "file_va_hex": "0x55c808c",
+      "metadata_name": "App.LiveLogic.LiveExecutor$$Initialize",
+      "hash_verified": true,
+      "c_sha256": "6a49a432c82ff52048cb466e9d164f8b2a37e115a14e40088847e04c41121b69"
+    },
+    {
+      "file_va_hex": "0x55e560c",
+      "metadata_name": "App.LiveLogic.Score.LiveScoreController$$.ctor",
+      "hash_verified": true,
+      "c_sha256": "5bda2f11ac597c37e7560bb4c4b1dbb2ddc92d6a4bddb9922ea7d329df19fa31"
+    },
+    {
+      "file_va_hex": "0x6a3a230",
+      "metadata_name": "FTLiveSimulator.MusicScore$$SetNoteList",
+      "hash_verified": true,
+      "c_sha256": "849846635495e067e43ebeaa4ba143426c2ae2f27653c45a6e23b0a957c9233c"
+    }
+  ],
+  "lastTimingNoteSelection": "Native MusicScore.SetNoteList takes the maximum position key, then the first note position at that key; it does not filter out Pass or other unscored operations.",
+  "rustTraceSha256": "b66f206247aa4d5f2250ec53e0dd25ad0096139f773698abae85584ef0b3b1a5",
+  "correctedDriverSha256": "dabdc768e363724c12b5f76b478f300afa1e7af9a99c6666d67c5b1b9e3b25b1",
+  "comparisonSha256": "4ff7433a3144bfa918ad6dddf44160453a281b42e7942b0843a6b21737e7d3da",
+  "inputDataSha256": "ef87c0ba383ad3b72c2ddcf40455d7462c586fb1cd8d2abcc84ebdbbc0bda538",
+  "frames": 8000,
+  "skillPoolCount": 70,
+  "fieldComparisons": 5656000,
+  "remainingDifferences": 0,
+  "declaredFieldsCompared": [
+    "frame",
+    "timeMs",
+    "score",
+    "life",
+    "combo",
+    "settledScore",
+    "randomDraws"
+  ],
+  "rangeFieldsCompared": [
+    "state",
+    "combo",
+    "maxCombo",
+    "justCount",
+    "startScore",
+    "endScore",
+    "luckPoints",
+    "luckGauge",
+    "rushCombo",
+    "rawJustCount"
+  ],
+  "skillFieldsCompared": [
+    "skillType",
+    "index",
+    "poolIndex",
+    "effectId",
+    "state",
+    "executeMs",
+    "finishMs",
+    "extendedBits",
+    "cumulativeCount"
+  ],
+  "sameFrameStageQualification": "native score after ordinary/card applier and conditional RecalculateScore before Gekisou ranking versus existing Rust calculator state at same stage; settledScore is after ranking; no phase shift/tolerance",
+  "fullRequestedFieldCoverage": false,
+  "unobservedFields": [
+    "maxCombo",
+    "judgedCount",
+    "judgedCount",
+    "float32Bits.accuracyAverage",
+    "conditional-skill parent skillState",
+    "elapsedBits",
+    "countDecrease"
+  ],
+  "qualifications": [
+    "The historical failure and capture remain retained; this resolution does not remove or rewrite them.",
+    "This is a deliberately truncated audio/skill-clock diagnostic, not a claim of a complete playable audio lifecycle.",
+    "The complete song case uses independently measured real BGM length 120557 ms and score-table length 118187 ms.",
+    "Zero differences applies only to this declared contract. There is no shifted frame, tolerance, omitted failing field or claim of all game configurations."
+  ]
+}

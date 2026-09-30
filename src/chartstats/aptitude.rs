@@ -16,7 +16,7 @@
 //! dependencies (luck ranges, luck effects 11000..=11005 and probability conditions 4011) and checking agreement on
 //! [`DETERMINISTIC_TEST`] seeds. It is then given on one seed; other shapes use seed batches
 //! ([`BATCHES`]) until the standard error of its score increment is at most the larger of [`RELATIVE`] of the
-//! increment and [`BASELINE`] of the no-skill score. The cross term, the change of the plain kind's weights, uses
+//! increment and [`BASELINE`] of the corresponding no-skill score for BOTH the best and Perfect plays. The cross term, the change of the plain kind's weights, uses
 //! the first `cross_seeds` of them.
 //!
 //! The increments of several shapes do not add up: the Gekisou combo factor saturates, the luck rush support skills
@@ -37,13 +37,13 @@ use crate::master::{GekisouSkillEffectRow, Master, SkillRow};
 /// Seeds a shape's increments must agree on to be deterministic (the first published seeds).
 pub const DETERMINISTIC_TEST: usize = 4;
 /// Seed batches of a shape that is not deterministic: the first seeds of the published set.
-pub const BATCHES: [usize; 6] = [32, 64, 128, 256, 512, 1024];
+pub const BATCHES: [usize; 12] = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
 /// The standard error target relative to the score increment.
 pub const RELATIVE: f64 = 0.01;
 /// The standard error target relative to the no-skill score.
 pub const BASELINE: f64 = 0.001;
 /// Default most seeds of a shape.
-pub const MAX_SEEDS: usize = 1024;
+pub const MAX_SEEDS: usize = 65536;
 /// Default most seeds of the cross term.
 pub const CROSS_SEEDS: usize = 64;
 /// Skill condition type of a member target: a skill's condition on its own member (the band condition).
@@ -65,7 +65,7 @@ pub const MODEL: &str = "charts[].gekisouAptitude: every Gekisou skill shape of 
     its Perfect play (scorePerfect); increments with minus without on the same seed as [mean, standard error]; a \
     shape of another mission adds nothing (its skills trigger only while a range of their mission is concerned); \
     deterministic shapes on one seed, the others on seed batches until the standard error is at most max(1% of the \
-    increment, 0.1% of the no-skill score); tail = score - sum_j (rangeScore_j + rankBonus_j); at ranks r_j the \
+    increment, 0.1% of the corresponding no-skill score) for both score and scorePerfect; tail = score - sum_j (rangeScore_j + rankBonus_j); at ranks r_j the \
     increment is tail + sum_j rangeScore_j * (1 + p_j(r_j) / 100) up to one point per range; weights and \
     rangeWeights: the change of the plain kind's weights (cross term) on the first crossSeeds seeds; one check per \
     variant at random ranks and a random plain deck at checkPower, failing beyond the flooring bound; increments \
@@ -520,7 +520,7 @@ struct BaseRun {
 #[derive(Clone, Debug, PartialEq)]
 struct Sample {
     seed: i32,
-    base_score: f64,
+    base_scores: [f64; 2],
     values: Vec<f64>,
     /// `(weights per position, range weights per position and range)` changes.
     cross: Option<(Vec<f64>, Vec<Vec<f64>>)>,
@@ -654,7 +654,7 @@ impl Measure<'_, '_> {
             }
             _ => None,
         };
-        Ok(Sample { seed, base_score: b.just.score as f64, values, cross })
+        Ok(Sample { seed, base_scores: [b.just.score as f64, b.perfect.score as f64], values, cross })
     }
 }
 
@@ -670,6 +670,16 @@ fn mean_se(x: impl Iterator<Item = f64> + Clone) -> [f64; 2] {
     }
     let var = x.map(|v| (v - mean) * (v - mean)).sum::<f64>() / (n - 1) as f64;
     [mean, (var / n as f64).sqrt()]
+}
+
+/// Both exported score plays must converge against their own paired no-skill baseline.
+fn score_targets_met(samples: &[Sample]) -> bool {
+    samples.len() >= 2
+        && (0..2).all(|i| {
+            let [mean, se] = mean_se(samples.iter().map(|s| s.values[i]));
+            let base = samples.iter().map(|s| s.base_scores[i]).sum::<f64>() / samples.len() as f64;
+            se <= (RELATIVE * mean.abs()).max(BASELINE * base)
+        })
 }
 
 /// Rounded for the output: points to 1e-3.
@@ -784,9 +794,7 @@ pub(super) fn chart_aptitude(
                     for (i, &s) in seeds.iter().enumerate().skip(samples.len()) {
                         samples.push(m.sample(&p, s, i < inp.options.cross_seeds)?);
                     }
-                    let [mean, se] = mean_se(samples.iter().map(|s| s.values[0]));
-                    let base = samples.iter().map(|s| s.base_score).sum::<f64>() / samples.len() as f64;
-                    if se <= (RELATIVE * mean.abs()).max(BASELINE * base) {
+                    if score_targets_met(&samples) {
                         met = true;
                         break;
                     }
@@ -900,4 +908,33 @@ fn check(
         .check_with(kinds, &master, std::slice::from_ref(p), &deck, s.seed, external, per_power, weight, floors, slack)?
         .within(|| format!("Gekisou aptitude, seed {} at ranks {ranks:?}", s.seed))?;
     Ok(VariantCheck { seed: s.seed, ranks, deck, exact: c.exact, predicted: c.predicted, bound: c.bound })
+}
+
+#[cfg(test)]
+mod sampling_tests {
+    use super::*;
+
+    #[test]
+    fn perfect_score_uses_its_own_baseline_and_must_also_converge() {
+        let mut samples: Vec<_> = (0..32)
+            .map(|i| Sample {
+                seed: i,
+                base_scores: [1_000_000.0, 1_000.0],
+                values: vec![100.0, if i % 2 == 0 { -200.0 } else { 200.0 }],
+                cross: None,
+            })
+            .collect();
+        assert_eq!(mean_se(samples.iter().map(|s| s.values[0])), [100.0, 0.0]);
+        // Checking only the first play, or using its much larger baseline for Perfect, would accept this.
+        assert!(!score_targets_met(&samples));
+        for sample in &mut samples {
+            sample.values[1] = 50.0;
+        }
+        assert!(score_targets_met(&samples));
+    }
+
+    #[test]
+    fn random_sampling_never_calls_a_single_observation_converged() {
+        assert!(!score_targets_met(&[Sample { seed: 0, base_scores: [1000.0; 2], values: vec![0.0; 2], cross: None }]));
+    }
 }

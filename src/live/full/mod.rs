@@ -193,7 +193,8 @@ pub struct GekisouRange {
     pub combo: i32,
     pub max_combo: i32,
     pub just_count: i32,
-    /// The score when the range started and ended; recomputed at its start and end times when it completes.
+    /// Controller score snapshots at range start and end. Solo ranking replaces these with timestamp queries
+    /// for the completion it ranks; the native-network adapter retains the original frame snapshots.
     pub start_score: i32,
     pub end_score: i32,
     pub luck_points: i32,
@@ -403,6 +404,7 @@ struct GekisouLive {
     fever: FeverUpdater,
     factors: [[i64; 5]; 3],
     external_ranking: bool,
+    solo_score_queries: bool,
     completed_scores: Vec<bool>,
     pending_ranks: Vec<Option<(i32, i64)>>,
     fever_updates: Vec<(usize, u8)>,
@@ -538,6 +540,7 @@ pub struct LiveModel {
     judged: Vec<(i32, i32, i32)>,
     trace: Vec<(i32, i32)>,
     frame_time: i32,
+    frame_score: i32,
     prev_confirmed_rank: Option<i32>,
     /// Simulator timing-combo snapshot and the separately reset live combo controller.
     simulator_previous_combo: i32,
@@ -681,7 +684,28 @@ impl LiveModel {
         LiveModel::build(master, deck, notes, skill_events, params, Some(setup), true)
     }
 
-    /// Queue a confirmed rank and its explicit bonus percentage. Applied after the range has completed.
+    /// Counterfactual solo scoring with explicitly queued ranks and percentages. Range scores use
+    /// the solo updater's exact start/end timestamp queries. This is an adapter for chart statistics
+    /// and rank sensitivity; like solo, only the first completion in a frame is ranked. Native solo
+    /// always confirms rank 1, and this does not emulate network play.
+    pub fn new_gekisou_ranked(
+        master: &Master,
+        deck: &[Performer],
+        notes: &[LiveNote],
+        skill_events: &[(i32, i32)],
+        params: LiveParams,
+        setup: &GekisouSetup,
+    ) -> Result<LiveModel, Error> {
+        let mut model = LiveModel::build(master, deck, notes, skill_events, params, Some(setup), false)?;
+        let gk = model.gk.as_mut().expect("Gekisou setup supplied");
+        gk.external_ranking = true;
+        gk.solo_score_queries = true;
+        Ok(model)
+    }
+
+    /// Queue a confirmed rank and its explicit bonus percentage for an externally ranked adapter.
+    /// `new_gekisou_external` uses native network frame snapshots; `new_gekisou_ranked` uses solo timestamp
+    /// queries for counterfactual fixed ranks. Applied after the range has completed.
     /// Identical retries are idempotent; conflicting confirmations are errors. These are adapter policies.
     /// Multiple confirmations applied together publish the last range's rank through the native scalar event.
     pub fn queue_gekisou_rank_confirmation(&mut self, range: usize, rank: i32, percent: i64) -> Result<(), Error> {
@@ -933,6 +957,7 @@ impl LiveModel {
             judged: Vec::new(),
             trace: Vec::new(),
             frame_time: 0,
+            frame_score: 0,
             prev_confirmed_rank: None,
             simulator_previous_combo: 0,
             current_combo: 0,
@@ -987,6 +1012,7 @@ impl LiveModel {
             fever: FeverUpdater::new(&setup.fevers),
             factors,
             external_ranking,
+            solo_score_queries: false,
             completed_scores: vec![false; n],
             pending_ranks: vec![None; n],
             fever_updates: Vec::new(),
@@ -1066,6 +1092,22 @@ impl LiveModel {
     /// The life stored at the end of the last frame.
     pub fn current_life(&self) -> i32 {
         self.life.current_life
+    }
+
+    /// Live combo controller's current value, after this frame's converted results.
+    pub fn current_combo(&self) -> i32 {
+        self.current_combo
+    }
+
+    /// This frame's converted `(note id, judgement, chart time_ms)` results, including unscored Pass events.
+    pub fn frame_judgements(&self) -> &[(i32, i32, i32)] {
+        &self.judged
+    }
+
+    /// Native frame-result score, captured after skill updates and before Gekisou ranking's timestamp queries.
+    /// [`LiveModel::score`] remains the calculator's settled value after ranking.
+    pub fn frame_score(&self) -> i32 {
+        self.frame_score
     }
 
     /// Number of judgements converted by skills so far.
@@ -1225,6 +1267,20 @@ impl LiveModel {
             let mut h = Handle { sc: &mut self.scorectl, score: &mut self.score };
             let mut env = Env { random: &mut self.random, handle: &mut h };
             gk.ctrl.before_update(dt, t, &gk.fever_updates, current, &mut env)?;
+            // PlayingState.OnBeforeUpdateGekisou dispatches each changed range before FT updates notes.
+            // Just missions enable grade 6 at Start, then restore the client's force setting at End.
+            if let Some(runtime) = self.raw_runtime.as_mut() {
+                for &idx in &gk.ctrl.state_updates {
+                    if gk.ctrl.ranges[idx].mission == 3 {
+                        let enabled = match gk.ctrl.states[idx].state {
+                            gekisou::S_START => true,
+                            gekisou::S_END => runtime.force_enable_just_judgement,
+                            _ => continue,
+                        };
+                        runtime.set_just_judgement_enabled(enabled);
+                    }
+                }
+            }
         }
         self.frame_events.clear();
         for (i, &(index, ev_t)) in self.events.iter().enumerate() {
@@ -1260,8 +1316,12 @@ impl LiveModel {
         for (result_index, &(n, conv)) in results.iter().enumerate() {
             self.life.add_note_damage(n.time_ms, conv)?;
             let life = self.life.get_life_at_ms(n.time_ms)?;
-            let score_type = convert_score_type(conv as i64)?;
-            self.score.add_note(NoteCommand::new(n.time_ms, life, n.note_id, n.note_operate_type, score_type));
+            // LiveScoreController.AddNoteScore checks the operation table before converting the score type.
+            // Unscored simulator results (including type 122 / Pass) still reach life, combo and callbacks.
+            if self.score.calc.note_factor_percent.contains_key(&n.note_operate_type) {
+                let score_type = convert_score_type(conv as i64)?;
+                self.score.add_note(NoteCommand::new(n.time_ms, life, n.note_id, n.note_operate_type, score_type));
+            }
             // Window limit callbacks per consumed result (UpdateCurrentFrameParameters).
             if let (Some(note), Some(runtime)) = (raw.get(result_index), self.raw_runtime.as_mut()) {
                 runtime.on_executor_judgement(*note)?;
@@ -1363,6 +1423,7 @@ impl LiveModel {
         self.life.sync_current_life(t)?;
         let info = self.gk.as_ref().map(|g| &g.ctrl as &dyn GekisouComboInfo);
         self.score.calculate(t, &self.combo, info)?;
+        self.frame_score = self.score.score;
         if self.gk.is_some() {
             self.gekisou_after(t, &results)?;
         }
@@ -1386,18 +1447,28 @@ impl LiveModel {
         gk.prev_lots.extend_from_slice(&gk.ctrl.lot_results);
         gk.prev_lot_ms = if gk.prev_lots.is_empty() { 0 } else { t };
         if gk.external_ranking {
-            // Freeze every completed range's base score before adding any of this frame's ranking bonuses.
+            // Network ranking reads the range's score snapshots taken by the controller. Unlike solo
+            // ranking, it does not rewind the score calculator to the range's start and end timestamps.
             for idx in gk.ctrl.state_updates.iter().copied() {
                 if gk.ctrl.states[idx].state != S_COMPLETE || gk.completed_scores[idx] {
                     continue;
                 }
-                let r = &gk.ctrl.ranges[idx];
-                let info = Some(&gk.ctrl as &dyn GekisouComboInfo);
-                let s0 = self.score.calculate(r.start_ms, &self.combo, info)?;
-                let s1 = self.score.calculate(r.end_ms, &self.combo, info)?;
-                gk.ctrl.states[idx].start_score = s0;
-                gk.ctrl.states[idx].end_score = s1;
+                // The fixed-rank solo adapter retains solo's timestamp queries explicitly; network
+                // ranking keeps the controller snapshots and never enters this branch.
+                if gk.solo_score_queries {
+                    let r = &gk.ctrl.ranges[idx];
+                    let info = Some(&gk.ctrl as &dyn GekisouComboInfo);
+                    let s0 = self.score.calculate(r.start_ms, &self.combo, info)?;
+                    let s1 = self.score.calculate(r.end_ms, &self.combo, info)?;
+                    gk.ctrl.states[idx].start_score = s0;
+                    gk.ctrl.states[idx].end_score = s1;
+                }
                 gk.completed_scores[idx] = true;
+                // SoloGekisouRankingUpdater returns after the first completed range, including when
+                // overlapping ranges complete together. Keep that schedule in the solo adapter.
+                if gk.solo_score_queries {
+                    break;
+                }
             }
             for idx in 0..gk.pending_ranks.len() {
                 if !gk.completed_scores[idx] {

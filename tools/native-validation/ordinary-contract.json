@@ -1,0 +1,6 @@
+{
+  "arrayLengths": {"skills": 35},
+  "integerFields": ["frame", "timeMs", "score", "life", "combo", "skills.*.index", "skills.*.poolIndex", "skills.*.effectId", "skills.*.skillState", "skills.*.state", "skills.*.executeMs", "skills.*.finishMs", "skills.*.cumulativeCount"],
+  "float32BitFields": ["float32Bits.comboScoreUp", "float32Bits.noteScoreUp", "float32Bits.just", "float32Bits.perfect", "float32Bits.great", "float32Bits.good", "skills.*.extendedBits"],
+  "notCovered": ["native elapsedBits", "native countDecrease", "live maxCombo", "judgedCount", "settledScore", "touch classification", "full UI/audio/network lifecycle"]
+}

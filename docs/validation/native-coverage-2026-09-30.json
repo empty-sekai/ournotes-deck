@@ -1,0 +1,567 @@
+{
+  "format": "ournotes-deck.native-coverage/1",
+  "status": "limited-sample-exact-comparison",
+  "updatedLocalDate": "2026-09-30",
+  "client": "1.0.1-25 ARM64",
+  "master": "tw/0b21c9f4a3911370d5f981fb894c7544",
+  "rows": [
+    {
+      "id": "compare-10000103",
+      "chartId": 10000103,
+      "nativeFrames": 5500,
+      "coreComparisons": 187000,
+      "differences": 0,
+      "maxFloatUlp": null,
+      "fps": null,
+      "actualOrigin": null,
+      "actualConverted": null,
+      "inputSequenceSha256": null,
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "c0a40a2c995679665d49d837a95d260e43682fdc6221a3a0690b2b42e5ba4361",
+      "rustCaptureSha256": "5b98c5aa1ec88dc9563a94e0521b93b20e1ad2a4f33b9d1ddfabb05ec2b7eab2",
+      "comparisonSha256": "f3c44920f7e147918122e7899c9072ccfbe99f098e392835a657d96fbfdfbe91",
+      "contract": "solo-gekisou"
+    },
+    {
+      "id": "compare-10000201",
+      "chartId": 10000201,
+      "nativeFrames": 5500,
+      "coreComparisons": 187000,
+      "differences": 0,
+      "maxFloatUlp": null,
+      "fps": null,
+      "actualOrigin": null,
+      "actualConverted": null,
+      "inputSequenceSha256": null,
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "288b2456017e7b33094c57b05b93cf31be603338296c6d429e3986703157f9cf",
+      "rustCaptureSha256": "8a09312a74ed452f4b7f6c484c2e6f87de8829eaabc6c4d662154a9d30933782",
+      "comparisonSha256": "a447567691a6da43a176d02158f324e5680895fb65fda5362fe755e821548b52",
+      "contract": "solo-gekisou"
+    },
+    {
+      "id": "compare-10000303",
+      "chartId": 10000303,
+      "nativeFrames": 8000,
+      "coreComparisons": 272000,
+      "differences": 0,
+      "maxFloatUlp": null,
+      "fps": null,
+      "actualOrigin": null,
+      "actualConverted": null,
+      "inputSequenceSha256": null,
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "16b20b376fbe413bf885f70198edf79c2b1155a09e6ed039e925051dfe431913",
+      "rustCaptureSha256": "f49a283e46d463c1a9163d6e96eb55e9dffccaab7640faf9f342e44728a82f58",
+      "comparisonSha256": "914a10efa204844eff9d5eb4839e850deb71636d4c092f92443234ec4a30e160",
+      "contract": "solo-gekisou"
+    },
+    {
+      "id": "compare-full-5-5500-mixed-v2",
+      "chartId": 10000201,
+      "nativeFrames": 5500,
+      "coreComparisons": 253000,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": null,
+      "actualOrigin": null,
+      "actualConverted": null,
+      "inputSequenceSha256": null,
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "ec956c2402bc26b8dd798d8506d1940838db08d23d885d1522bc3fa56738509b",
+      "rustCaptureSha256": "241e216dc13a6be5200305f4e4e203fff147e670f5ddc0500e93ff49311d0997",
+      "comparisonSha256": "8e5ed4222ff037cbc8377b009687ab867c6f2670968ce3e0f388b29ad915acfa",
+      "contract": "ordinary-first-pool"
+    },
+    {
+      "id": "compare-full-5-5500-perfect",
+      "chartId": 10000201,
+      "nativeFrames": 5500,
+      "coreComparisons": 253000,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": null,
+      "actualOrigin": null,
+      "actualConverted": null,
+      "inputSequenceSha256": null,
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "989bd77fea1ccae985a6a12741ee85e3adf9e1ed4bd8b4ac7bfb699ec1a76110",
+      "rustCaptureSha256": "d7646c399bf109643d39fda7561352c568d09ceeda8a8c86b04c5567a0b7700c",
+      "comparisonSha256": "42b339646ae29482d71f1f37f707735be037ac6101be41a69d50467b8c7edc01",
+      "contract": "ordinary-first-pool"
+    },
+    {
+      "id": "compare-matrix-factor-extremes-60",
+      "chartId": 10000201,
+      "nativeFrames": 5500,
+      "coreComparisons": 1545500,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": 60,
+      "actualOrigin": {
+        "5": 328,
+        "4": 36
+      },
+      "actualConverted": {
+        "5": 328,
+        "4": 36
+      },
+      "inputSequenceSha256": "e5953064f11f9bf60c9ce26b96d603df9b16bb668eb8ee581edca5655a2659c5",
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "798a3a639f71bdf5ffa8cdb66175f791509c52d22f03f94fe1e63c2aa5b7d622",
+      "rustCaptureSha256": "b3017b07c29886d9281bb1ac02210d68e5c14bf9f265fea10928560ce05ac652",
+      "comparisonSha256": "14636223028f95f0e24b3aacda9ec896a02ab0149cab0e0d210a8f67ec6067f1",
+      "contract": "ordinary-full-pool"
+    },
+    {
+      "id": "compare-matrix-high-120",
+      "chartId": 10000201,
+      "nativeFrames": 11000,
+      "coreComparisons": 3586000,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": 120,
+      "actualOrigin": {
+        "5": 328,
+        "4": 36
+      },
+      "actualConverted": {
+        "5": 328,
+        "4": 36
+      },
+      "inputSequenceSha256": "b2c4177b3663611825e6a333800fec3b26d02308a8185710b75f90c2fc9693e3",
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "36faad127c7947bba7b7d15f46468ab4a0bcccf53d43561034143e44b2e381c8",
+      "rustCaptureSha256": "76f67962040aa6d1a00847f3a4c1b87b8bf150aaec0bddb49b87f8b31dac0d25",
+      "comparisonSha256": "45d8f79e22507d558fdc99adfaf8ada078303829ad29e252d9bc0038bacb4f8f",
+      "contract": "ordinary-full-pool"
+    },
+    {
+      "id": "compare-matrix-high-30",
+      "chartId": 10000201,
+      "nativeFrames": 2750,
+      "coreComparisons": 896500,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": 30,
+      "actualOrigin": {
+        "5": 328,
+        "4": 36
+      },
+      "actualConverted": {
+        "5": 328,
+        "4": 36
+      },
+      "inputSequenceSha256": "f6c7f073500942b3734d0337b2bdb7267302d2b82c1ff64490d8463b5481d75a",
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "bb6e40f054cfa535fd72bd31478963a4eed90a48b383bc5c7e9e5cffa01f9d94",
+      "rustCaptureSha256": "7f5f1d8c8fc68d69f8ae8645a34b7654bd388a7ece97a5d75fbaa9eba8fd3215",
+      "comparisonSha256": "0faea406d14f9a6d259518e1273acfaec01d9a93213a3eb807e999484cc07889",
+      "contract": "ordinary-full-pool"
+    },
+    {
+      "id": "compare-matrix-high-60",
+      "chartId": 10000201,
+      "nativeFrames": 5500,
+      "coreComparisons": 1793000,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": 60,
+      "actualOrigin": {
+        "5": 328,
+        "4": 36
+      },
+      "actualConverted": {
+        "5": 328,
+        "4": 36
+      },
+      "inputSequenceSha256": "e5953064f11f9bf60c9ce26b96d603df9b16bb668eb8ee581edca5655a2659c5",
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "de3b6a9c9d0ca6d9a15539d33a9bbcc3e9aec32b6b759468187949ffff447b73",
+      "rustCaptureSha256": "8b57244bdd4611e177538966785f05e817423f26177508e252d701a0769af704",
+      "comparisonSha256": "b6da902d40ade48ac3b1d2ae906774046e11bc85b27f88f21f058daf5d37b1eb",
+      "contract": "ordinary-full-pool"
+    },
+    {
+      "id": "compare-matrix-life700-60",
+      "chartId": 10000201,
+      "nativeFrames": 5500,
+      "coreComparisons": 2288000,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": 60,
+      "actualOrigin": {
+        "1": 4,
+        "5": 360
+      },
+      "actualConverted": {
+        "1": 4,
+        "5": 360
+      },
+      "inputSequenceSha256": "8b2c22636fc64c39989dc5a91e68178d35f28b93fcad06e5efb2a82c26199220",
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "e93009787e6c4042d79c81dd0b626736a991b2b564d862e8e19fc4085c4f0a8a",
+      "rustCaptureSha256": "9275014b005777d82930aa9d7d271d4c64e22657d1364f4d7e22c445e7400687",
+      "comparisonSha256": "d50129d0d821ec4aa64d10d69fb7b836756235bcc9db6f99dc4fb93e39a1659e",
+      "contract": "ordinary-full-pool"
+    },
+    {
+      "id": "compare-matrix-low-120",
+      "chartId": 10000201,
+      "nativeFrames": 11000,
+      "coreComparisons": 3586000,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": 120,
+      "actualOrigin": {
+        "5": 73,
+        "4": 73,
+        "3": 73,
+        "2": 73,
+        "1": 72
+      },
+      "actualConverted": {
+        "5": 73,
+        "4": 73,
+        "3": 73,
+        "2": 73,
+        "1": 72
+      },
+      "inputSequenceSha256": "5cf288e46efd3db706e6573815242abb61da53cb469cc4bb76dc9e65d1551ce2",
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "bb0284bab7091a8592e225976f6ad96806f006ef1ebddcb8e2a179417a008e2e",
+      "rustCaptureSha256": "ef5159388af4e6f691f592c04ebc4f9d6e19bb5534a1f5e5bd4126848844a1f6",
+      "comparisonSha256": "a9d26a11acb300fbf2b8615a632f05a25bdae96fe047318aa8c39814112c3e09",
+      "contract": "ordinary-full-pool"
+    },
+    {
+      "id": "compare-matrix-low-30",
+      "chartId": 10000201,
+      "nativeFrames": 2750,
+      "coreComparisons": 896500,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": 30,
+      "actualOrigin": {
+        "5": 73,
+        "4": 73,
+        "3": 73,
+        "2": 73,
+        "1": 72
+      },
+      "actualConverted": {
+        "5": 73,
+        "4": 73,
+        "3": 73,
+        "2": 73,
+        "1": 72
+      },
+      "inputSequenceSha256": "754deec2ced3a73c9b7ddea8814a7e648dbde2ca4b099e48074a79c29bda218b",
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "ba72a7b367956e7b8279a8a4c3f8d81723abab998cf85dda91fcdd1bb0388a2b",
+      "rustCaptureSha256": "6558141c8fe28210a5f2e4d2c7f3eb8eb6aae545f1b7943ac17c3316d80d9bfa",
+      "comparisonSha256": "dd7a0f183578017376dbb53cf59a902723cc8ab418b58b2cc03a5c6ad00dadf4",
+      "contract": "ordinary-full-pool"
+    },
+    {
+      "id": "compare-matrix-low-60",
+      "chartId": 10000201,
+      "nativeFrames": 5500,
+      "coreComparisons": 1793000,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": 60,
+      "actualOrigin": {
+        "5": 73,
+        "4": 73,
+        "3": 73,
+        "2": 73,
+        "1": 72
+      },
+      "actualConverted": {
+        "5": 73,
+        "4": 73,
+        "3": 73,
+        "2": 73,
+        "1": 72
+      },
+      "inputSequenceSha256": "3157f197085e9ee5dc7ec9469247defd745cefe855690c70e12cc058d90c7325",
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "cf03ad55698f52d3e9316bcb2c098bf5f4b3a5e3df1c36027e40e411ad7d5bf4",
+      "rustCaptureSha256": "02146b3f6387088703ef59b128af917ceebb29adfe4747260b3a9047c3e3b756",
+      "comparisonSha256": "cef7f4ab432342d3bd8ecd2f61f69617b4529bd63830ee878759abf9be99275c",
+      "contract": "ordinary-full-pool"
+    },
+    {
+      "id": "compare-matrix-medium-120",
+      "chartId": 10000201,
+      "nativeFrames": 11000,
+      "coreComparisons": 3586000,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": 120,
+      "actualOrigin": {
+        "5": 146,
+        "4": 109,
+        "3": 73,
+        "2": 36
+      },
+      "actualConverted": {
+        "5": 146,
+        "4": 109,
+        "3": 73,
+        "2": 36
+      },
+      "inputSequenceSha256": "acb6adf2fe68af534397fdde965817b6f58416cf1f16cd78e335601cbd53640d",
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "aa2baf94444c4f1d9276b38d2ef674fffeef283f372f882011aebb283531d687",
+      "rustCaptureSha256": "20c7cd95eef10743f822f12f49b4ce68fe849d83a003cc661d0b7a45b389a53a",
+      "comparisonSha256": "8e8f4fe140918c6cfd92270c42fa7c4cdffe382c44389d2cdd21520c0c98c10a",
+      "contract": "ordinary-full-pool"
+    },
+    {
+      "id": "compare-matrix-medium-30",
+      "chartId": 10000201,
+      "nativeFrames": 2750,
+      "coreComparisons": 896500,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": 30,
+      "actualOrigin": {
+        "5": 146,
+        "4": 109,
+        "3": 73,
+        "2": 36
+      },
+      "actualConverted": {
+        "5": 146,
+        "4": 109,
+        "3": 73,
+        "2": 36
+      },
+      "inputSequenceSha256": "0a61d69ea1c98a7619c53abd45c9f56439364fdcaf1dc354a988b4bc65a6bea0",
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "fb2caecc4c7ccfa9c64eb8e9e17a3906f1b49c20de07d3ff42ee0bafecc911b5",
+      "rustCaptureSha256": "fe3cbc20e57ec400e5e9d7ef956fbf500625c55ccc8f1e8437fb9c6dd72da2b3",
+      "comparisonSha256": "bbde4ddd563d480344ffab38baac8e20a2a090da7504e3a6fc92658672aa871b",
+      "contract": "ordinary-full-pool"
+    },
+    {
+      "id": "compare-matrix-medium-60",
+      "chartId": 10000201,
+      "nativeFrames": 5500,
+      "coreComparisons": 1793000,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": 60,
+      "actualOrigin": {
+        "5": 146,
+        "4": 109,
+        "3": 73,
+        "2": 36
+      },
+      "actualConverted": {
+        "5": 146,
+        "4": 109,
+        "3": 73,
+        "2": 36
+      },
+      "inputSequenceSha256": "23188e8b1df4024278b8dd9ce524e9e275f794b2dd9a2f6ffb2f1a94f0380186",
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "4b75f243a5c6a7c397fc7f077ae57c5150d3d826a1481d0722bf4a90f38bd25f",
+      "rustCaptureSha256": "7cf3fa9e0ee9b9e834758708b0814fef2faa6ac58877763d09b00e5e1c00de92",
+      "comparisonSha256": "749a236eef42a8119820e30f638de2040f91008e20b43ea614ca3bf2a9439b9d",
+      "contract": "ordinary-full-pool"
+    },
+    {
+      "id": "compare-matrix-offsets-60",
+      "chartId": 10000201,
+      "nativeFrames": 5500,
+      "coreComparisons": 1793000,
+      "differences": 0,
+      "maxFloatUlp": 0,
+      "fps": 60,
+      "actualOrigin": {
+        "5": 274,
+        "3": 32,
+        "4": 58
+      },
+      "actualConverted": {
+        "5": 274,
+        "3": 32,
+        "4": 58
+      },
+      "inputSequenceSha256": "02a6e0aa9d3aebe1c2eadd36f1b416eb3bfa7cf3e05dbf698737a860f242adf0",
+      "requestedFieldCoverageComplete": false,
+      "nativeCaptureSha256": "50006439449898873709e2d54a16dbc02ebfbb918e75ded54544bd6ff3b93356",
+      "rustCaptureSha256": "9b332ca2ea50bec6626bbfe20e66c7cc43e9c71d7105a2d3b6bd29209b57bba8",
+      "comparisonSha256": "fc33096f901038ea9e56288a9a90f807e5b7bfa8b7ffc9bd86f7347217695d10",
+      "contract": "ordinary-full-pool"
+    }
+  ],
+  "scope": "ordinary full skills and prior solo Gekisou scoring lane; event/grade stream consumed, not independent touch replay",
+  "core": "Declared existing state and stage observations only, by contract; no derived elapsed-time mirror.",
+  "limitations": [
+    "all modes and scenarios not completed",
+    "no independent touch replay",
+    "native-only elapsed/countDecrease not compared",
+    "live maxCombo / same-definition judgedCount / same-definition settledScore not completed in this ordinary lane",
+    "life zero offline stepping is not a game failure/continue lifecycle proof",
+    "IFix online patches and server rewards not covered",
+    "pool identities/stay state covered; overlapping repeated member triggers not exhausted",
+    "support and card Gekisou full chains not completed"
+  ],
+  "sources": [
+    "private evidence manifest and semantic audit retained locally; raw inputs not shipped"
+  ],
+  "productionRepairs": [
+    {
+      "name": "unscored operation table gate",
+      "scope": "preserve life/combo/callbacks; skip score command only",
+      "regressions": 2
+    },
+    {
+      "name": "network rank snapshots",
+      "scope": "native NetworkRankingUpdater no exact-timestamp rewind; separate ranked solo adapter preserves statistics definition",
+      "regressions": 2
+    }
+  ],
+  "counts": {
+    "frames": 104250,
+    "coreFieldComparisons": 25605000,
+    "rows": 17
+  },
+  "countQualification": "Field comparisons include identities and inactive pool states; these are checks, not independent samples or a correctness probability.",
+  "lifeThresholdSample": {
+    "frames": 5500,
+    "effectStates": 45,
+    "frame706": {
+      "life": 700,
+      "effect35": "ExecuteFrame",
+      "effect30": "Stay"
+    },
+    "frame742": {
+      "life": 600,
+      "effect35": "Executing",
+      "effect30": "Stay"
+    },
+    "coreComparisons": 2288000,
+    "differences": 0,
+    "maxUlp": 0
+  },
+  "rankEstimateContract": "counterfactual solo exact-start/end score queries with fixed rank bonuses; opponents not simulated; native network instead uses controller frame snapshots",
+  "factorExtremeSample": {
+    "frames": 5500,
+    "effectStates": 30,
+    "coreComparisons": 1545500,
+    "differences": 0,
+    "maxUlp": 0,
+    "deck": [
+      [
+        3,
+        5
+      ],
+      [
+        5,
+        5
+      ],
+      [
+        1,
+        5
+      ],
+      [
+        2,
+        5
+      ],
+      [
+        7,
+        5
+      ]
+    ],
+    "frame706NoteScoreUpBits": "4013330a",
+    "frame706NoteScoreUp": 2.299990177154541
+  },
+  "contracts": {
+    "ordinary-full-pool": {
+      "integerFields": [
+        "frame",
+        "timeMs",
+        "score",
+        "life",
+        "combo"
+      ],
+      "skillFields": [
+        "index",
+        "poolIndex",
+        "effectId",
+        "skillState",
+        "state",
+        "executeMs",
+        "finishMs",
+        "cumulativeCount"
+      ],
+      "float32BitFields": [
+        "comboScoreUp",
+        "noteScoreUp",
+        "just",
+        "perfect",
+        "great",
+        "good",
+        "skills.extendedBits"
+      ],
+      "qualification": "All existing pool effect states read directly; identity checks and inactive states included. Native elapsed/countDecrease remain unmodeled."
+    },
+    "ordinary-first-pool": {
+      "integerFields": [
+        "frame",
+        "timeMs",
+        "score",
+        "life",
+        "combo"
+      ],
+      "skillFields": [
+        "index",
+        "skillState",
+        "state",
+        "executeMs",
+        "finishMs",
+        "cumulativeCount"
+      ],
+      "float32BitFields": [
+        "comboScoreUp",
+        "noteScoreUp",
+        "just",
+        "perfect",
+        "great",
+        "good",
+        "skills.extendedBits"
+      ],
+      "qualification": "One first pool state per member; remaining pools not compared in these earlier two runs."
+    },
+    "solo-gekisou": {
+      "integerFields": [
+        "frame",
+        "timeMs",
+        "score",
+        "life",
+        "combo",
+        "settledScore",
+        "randomDraws"
+      ],
+      "rangeFields": [
+        "state",
+        "combo",
+        "maxCombo",
+        "justCount",
+        "startScore",
+        "endScore",
+        "luckPoints",
+        "luckGauge",
+        "rushCombo"
+      ],
+      "float32BitFields": [],
+      "qualification": "score compares native FrameResult cache with an added Rust stage observer copying the existing calculator value before ranking queries; settledScore compares native calculator after ranking with unchanged Rust score(). No reconstructed elapsed counter. Global live maxCombo, judgedCount, range rawJust/judgedCount and complete float fields remain missing."
+    }
+  },
+  "floatQualification": "maxFloatUlp applies only to the bit fields actually compared per contract; integer-only Gekisou rows do not certify full floats."
+}

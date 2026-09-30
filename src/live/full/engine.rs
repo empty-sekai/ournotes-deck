@@ -24,7 +24,7 @@ pub(crate) const SUSTAINED: i64 = 2;
 const POOL: usize = 5;
 
 /// One effect state.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct EffectState {
     /// 0 Stay, 2 ExecuteFrame, 3 Executing, 4 EndFrame.
     pub state: u8,
@@ -37,6 +37,22 @@ pub(crate) struct EffectState {
     /// The cumulative condition's unit and maximum count (0 without one).
     pub cumulative_unit: i64,
     pub cumulative_max: i64,
+}
+
+impl Default for EffectState {
+    fn default() -> Self {
+        // Native SkillEffectState..ctor (0x5618afc) stores -1 in both timestamp fields.
+        // An unused pool instance has no execution or finish time yet.
+        Self {
+            state: STAY,
+            execute_ms: -1,
+            finish_ms: -1,
+            extended_ms: 0.0,
+            cumulative_count: 0,
+            cumulative_unit: 0,
+            cumulative_max: 0,
+        }
+    }
 }
 
 /// The frame values the updaters read.
@@ -591,6 +607,19 @@ mod lifecycle_tests {
         };
         u.begin_frame();
         u.update(2, FrameInput { time_ms: time, music_length_ms: 10_000, is_live_finished: finished }, &mut ctx)
+    }
+
+    #[test]
+    fn unused_condition_pool_timestamps_remain_unset_until_execution() {
+        let mut u = timed(Some(Checker::Fixed(false)));
+        for time in [0, 900] {
+            assert!(step(&mut u, time, false, &[]).unwrap().is_empty());
+            assert!(u.updaters.iter().all(|p| (p.state.execute_ms, p.state.finish_ms) == (-1, -1)));
+        }
+        u.effects[0].condition = Some(Checker::Fixed(true));
+        assert_eq!(step(&mut u, 1000, false, &[]).unwrap(), vec![0]);
+        assert_eq!((u.updaters[0].state.execute_ms, u.updaters[0].state.finish_ms), (1000, -1));
+        assert!(u.updaters[1..].iter().all(|p| (p.state.execute_ms, p.state.finish_ms) == (-1, -1)));
     }
 
     #[test]

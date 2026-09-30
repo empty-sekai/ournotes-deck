@@ -1,0 +1,187 @@
+{
+  "format": "ournotes-deck.native-probability-validation/1",
+  "date": "2026-09-30",
+  "status": "exact-in-declared-two-case-scope",
+  "client": "1.0.1-25 ARM64",
+  "masterRegion": "tw",
+  "masterVersion": "0b21c9f4a3911370d5f981fb894c7544",
+  "nativeBinarySha256": "5a79dd5d9c479ed5a636193394f040f21a1f7b070d0869095e1af63b3f84ef88",
+  "rustBaseCommit": "155bd2ad89d077d3bdcfbca9c45c0100475ab538",
+  "rustSourceUsesPrivateReadOnlyObservationHooks": true,
+  "sourceSha256": {
+    "nativeCaptureProgram": "41a6cb66975a35d2883c928d1edb1b201d856501cd0479ef35a1d3e00267a908",
+    "nativeCardSkillHarness": "6c908a66285a005099c7121c869779ef91280250e13764cbd90d07cc2a8ebc05",
+    "strictComparator": "68d6dc29b2090c118641c577d2929989622e9eb2dcbc11e61bd2e522c12a8097",
+    "rustTraceDriver": "7e0fafcafe98cbc8bed2797a95b24a8990d2df9f2bb63201b24b748260b856c1",
+    "rustProbabilityActualBranchObserver": "920fc54ff1804b38fb5b9f1373f61de4fa39d9336e9d51c73bcec66d11007096",
+    "rustRandomActualValueObserver": "26ae35146955f3fc4bcb96d69f469630831d98f6b683234570158988d05db390"
+  },
+  "nativeFunctionEvidence": [
+    {
+      "metadata_name": "App.LiveLogic.Skill.SkillConditionProbabilityExecuteChecker$$.ctor",
+      "file_va_hex": "0x55f5a44",
+      "c_sha256": "91c11cf4abc5062cc0fc759895105372253ea858e62c9ab949850f360d700192",
+      "hash_verified": true,
+      "status": "OK",
+      "abi_status": "APPLIED"
+    },
+    {
+      "metadata_name": "App.LiveLogic.Skill.SkillConditionProbabilityExecuteChecker$$Check",
+      "file_va_hex": "0x55f6890",
+      "c_sha256": "cf2c5636cc2f969639ac2b1561e080c961c50183fa95cb8a3940e60db1e5b258",
+      "hash_verified": true,
+      "status": "OK",
+      "abi_status": "APPLIED"
+    },
+    {
+      "metadata_name": "App.Live.LivePlayingSkillUtility.<>c$$<CreateSkillExecutor>b__0_1",
+      "file_va_hex": "0x61298e0",
+      "c_sha256": "fa0227a4d790f49c382644eac49e68602a422d60980bbebc9e5e1f9f16ffb5e3",
+      "hash_verified": true,
+      "status": "OK",
+      "abi_status": "APPLIED"
+    },
+    {
+      "metadata_name": "App.LiveLogic.Skill.SkillEffectState$$.ctor",
+      "file_va_hex": "0x5618afc",
+      "c_sha256": "d1e0379bad5067358fdaf317046e89dabac0333a34cd13b887feef532d15dfb3",
+      "hash_verified": true,
+      "status": "OK",
+      "abi_status": "APPLIED"
+    }
+  ],
+  "masterDecodedSourceSha256": {
+    "MasterSkillCondition": "3b367b3870a46c732a103598aaf20e5f02ec0973bb1d9133fe13e50eec8c1556",
+    "MasterSkillConditionSet": "503591de2eece727b506aedef25e1faf5990a44b12c810a16be1d84a724dc07c",
+    "MasterGekisouSkillEffect": "7204762d794aecd0825b77df67d1e4b7b9a3dd81a2f738d254c8ec75fd7d5171",
+    "MasterGekisouSupportSkillEffect": "ffd03806a7e140a7a2284d727c061a545735a8cc558c19088effe7a10a65dff7"
+  },
+  "bgm": {
+    "acbSha256": "374798095fcf5086bbfe83a9b2643019e103b0cdd58850c6c5b2f523f5b84a77",
+    "acbBytes": 3860416,
+    "length": {
+      "lengthMs": 120557,
+      "samples": 5786757,
+      "sampleRate": 48000,
+      "durationMs": 120557
+    }
+  },
+  "cases": [
+    {
+      "id": "high-seed0",
+      "chartId": 10000303,
+      "fps": 60,
+      "frames": 7500,
+      "totalPower": 300000,
+      "musicLengthMs": 120557,
+      "cards": {
+        "testedCardId": 43,
+        "gkSkillId": 20,
+        "gkLevel": 5,
+        "gkSupportSkillId": 66,
+        "gkSupportLevel": 5,
+        "otherMembers": "four real card1 performers"
+      },
+      "seed": 0,
+      "input": {
+        "policy": "All scored notes Perfect",
+        "actualOriginJudgements": {
+          "5": 1012,
+          "7": 55
+        },
+        "lifeMinimum": 1000
+      },
+      "skillPoolCount": 70,
+      "coreComparisons": 5340000,
+      "coreDifferences": 0,
+      "probabilityChecks": 9,
+      "probabilityOperandResultComparisons": 36,
+      "probabilityOperandResultDifferences": 0,
+      "checkerTrueCount": 4,
+      "finalNativeScore": 2835163,
+      "finalRustScore": 2835163,
+      "targetedRareBranch": null,
+      "sha256": {
+        "nativeCapture": "e43dbb30fd3412b870e6aaa215bbf2a378a52149000e100e81fdbb696f627c69",
+        "rustCapture": "85c3515c31cefa3dfa62273552cc8ef3510fb24304612455d56591a3a2a043c8",
+        "comparison": "acd23f6ef98e31e7ed08b001218af07147fa7b1cdd508e5546204ff5d5f9aef9",
+        "configuration": "e3651071db3fea3f6ee17c83024c68e7e3581d346fec7e3dfc9a2f60d628f394"
+      }
+    },
+    {
+      "id": "life600-seed14",
+      "chartId": 10000303,
+      "fps": 60,
+      "frames": 7500,
+      "totalPower": 300000,
+      "musicLengthMs": 120557,
+      "cards": {
+        "testedCardId": 43,
+        "gkSkillId": 20,
+        "gkLevel": 1,
+        "gkSupportSkillId": 66,
+        "gkSupportLevel": 5,
+        "otherMembers": "four real card1 performers"
+      },
+      "seed": 14,
+      "input": {
+        "policy": "Four earliest scored notes Miss, all remaining scored notes Perfect",
+        "actualOriginJudgements": {
+          "1": 4,
+          "5": 1008,
+          "7": 55
+        },
+        "lifeMinimum": 600
+      },
+      "skillPoolCount": 70,
+      "coreComparisons": 5340000,
+      "coreDifferences": 0,
+      "probabilityChecks": 9,
+      "probabilityOperandResultComparisons": 36,
+      "probabilityOperandResultDifferences": 0,
+      "checkerTrueCount": 4,
+      "finalNativeScore": 2760861,
+      "finalRustScore": 2760861,
+      "targetedRareBranch": {
+        "purpose": "cover a real 5 percent successful branch, not estimate a population probability",
+        "firstNativeValue": 0.040197670459747314,
+        "nativeRate": 0.05000000074505806,
+        "comparison": "strict less-than"
+      },
+      "sha256": {
+        "nativeCapture": "cc5aa782dc3ef15b2c3bb240df0021edffa655b647cf028e395de78898ca75a9",
+        "rustCapture": "0b896789c7ce2630e078da63aedec5a87340c4aa0db71e374d5ba084d805b6a8",
+        "comparison": "06995e3173140ed6ff3a13dc8e9cea3ce69d00528fd3ffd37b2ef7fe0c891336",
+        "configuration": "cbefbc73e046a94a998a26ef61fe80d2ceb8d2f8a3f0b451426bbaf71602d503"
+      }
+    }
+  ],
+  "totalFrames": 15000,
+  "coreComparisons": 10680000,
+  "probabilityOperandResultComparisons": 72,
+  "coreDifferences": 0,
+  "probabilityOperandResultDifferences": 0,
+  "coreFieldGroups": [
+    "same-frame pre-ranking frame score and post-ranking calculator score/life/live combo/random call count",
+    "70 effect pool identities/state/execute time/finish time/extended bits/cumulative count plus ordinary parent state",
+    "three ranges state/combo/max combo/Just/raw Just/start score/end score/luck points/gauge/rush combo",
+    "ordinary skill events and converted judgement ordering",
+    "six float32 factors before ranking and six after ranking"
+  ],
+  "checkerObservedFields": [
+    "frame",
+    "rateBits",
+    "valueBits",
+    "passed"
+  ],
+  "scope": "Offline Unicorn executes native SkillStatus, SkillExecutor, real card/member routing and ordinary/Gekisou appliers, solo controller and ranking. Probability results are observed after native fcmp/cset, never replaced. Rust records actual branch operands/results without additional RNG draws.",
+  "qualifications": [
+    "Only two deliberate branch-coverage inputs; not a game seed probability or expectation estimate.",
+    "Checker true does not imply final skill activation: remaining life/band AND conditions still apply.",
+    "This master has no ordinary LiveSkill/SupportSkill rows referencing4011; tested4011 is Gekisou.",
+    "Rust consumes native origin judgements, not independent raw touch replay.",
+    "Unity JSON reflection/presentation/platform substitutes remain; libunity/server/full failure-reward lifecycle not run.",
+    "Inactive pools included; conditional parent state, elapsed and countDecrease excluded.",
+    "These samples certify declared simulation fields; future production replay/raw-window revisions need their own integrated checks."
+  ]
+}

@@ -20,6 +20,8 @@ pub struct RawJudgedNote {
 #[derive(Clone, Debug)]
 pub struct RawJudgementRuntime {
     pub windows: WindowController,
+    /// Client ForceEnableJustJudgement setting; Just missions restore this at their end.
+    pub force_enable_just_judgement: bool,
     pub just: JustWindowApplier,
     pub assist: Option<AssistExecutor>,
     pub diff_converter: fn(i32, i32) -> i32,
@@ -35,6 +37,7 @@ impl RawJudgementRuntime {
     pub fn new(timings: Vec<TimingSet>, just_base_expansion_ms: i32, original_just_before_ms: i32) -> Self {
         Self {
             windows: WindowController::new(timings),
+            force_enable_just_judgement: false,
             just: JustWindowApplier::new(just_base_expansion_ms, original_just_before_ms),
             diff_converter: |_, d| d,
             assist: None,
@@ -61,6 +64,15 @@ impl RawJudgementRuntime {
         match &self.assist {
             Some(a) => &self.windows.replicas[a.current_level as usize],
             None => &self.windows.timings,
+        }
+    }
+    pub(super) fn set_just_judgement_enabled(&mut self, enabled: bool) {
+        for set in self.windows.timings.iter_mut().chain(self.windows.replicas.iter_mut().flatten()) {
+            for unit in &mut set.units {
+                if unit.judgement == 6 {
+                    unit.enabled = enabled;
+                }
+            }
         }
     }
     pub(super) fn convert_assist(&mut self, note: &mut RawJudgedNote, unchanged_by_skill: bool) -> Result<(), Error> {

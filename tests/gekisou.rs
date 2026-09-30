@@ -440,3 +440,106 @@ fn snap_gekisou_active_is_a_range_start_event_not_member_skill_state() {
     let model = run(&master, &deck, [1, 1, 1], |_| 5);
     assert_eq!(model.current_life(), 1010);
 }
+
+/// Network ranking must retain the controller's frame snapshots even while solo ranking
+/// later queries the exact chart timestamps. This also prevents a completion-frame rewind.
+#[test]
+fn external_completion_keeps_controller_score_snapshots_and_current_score() {
+    let m = master();
+    let (notes, events) = chart();
+    let (p, dts) = play(&notes, |_| 6);
+    let setup = GekisouSetup { fevers: vec![(START, END)], missions: vec![3] };
+    let mut lm = LiveModel::new_gekisou_external(&m, &[], &notes, &events, params(&notes), &setup).unwrap();
+    let mut start_score = None;
+    let mut end_score = None;
+    let mut completed = false;
+    for (f, &dt) in p.frames.iter().zip(&dts) {
+        let before_score = lm.score();
+        lm.frame_timed(f.time_ms, &f.judged, dt).unwrap();
+        let r = lm.gekisou_ranges()[0];
+        if r.start_score != 0 && start_score.is_none() {
+            start_score = Some(r.start_score);
+        }
+        if r.end_score != 0 && end_score.is_none() {
+            end_score = Some(r.end_score);
+        }
+        if r.state == 7 && !completed {
+            completed = true;
+            assert!(f.judged.is_empty(), "the completion frame has no notes");
+            assert_eq!(lm.score(), before_score, "completion must not rewind the current calculator");
+            assert_eq!(Some(r.start_score), start_score, "retain the original start snapshot");
+            assert_eq!(Some(r.end_score), end_score, "retain the fever-end snapshot");
+        }
+    }
+    assert!(completed);
+    let frozen = lm.gekisou_ranges()[0];
+    let bonus = ((i64::from(frozen.end_score - frozen.start_score) * 190) / 100) as i32;
+    let before = lm.score();
+    lm.queue_gekisou_rank_confirmation(0, 2, 190).unwrap();
+    lm.frame_timed(LENGTH + 100, &[], 0.016).unwrap();
+    assert_eq!(lm.gekisou_rank_bonuses(), &[(0, 2, bonus, 190)]);
+    // AddFixedScore is evaluated by the next score update.
+    lm.frame_timed(LENGTH + 200, &[], 0.016).unwrap();
+    assert_eq!(lm.score(), before + bonus);
+    assert_eq!(lm.gekisou_ranges()[0].start_score, frozen.start_score);
+    assert_eq!(lm.gekisou_ranges()[0].end_score, frozen.end_score);
+}
+
+#[test]
+fn fixed_rank_solo_adapter_matches_solo_at_rank_one() {
+    let m = master();
+    let (notes, events) = chart();
+    let (p, dts) = play(&notes, |_| 6);
+    let setup = GekisouSetup { fevers: vec![(START, END)], missions: vec![3, 3, 3] };
+    let mut solo = LiveModel::new_gekisou(&m, &[], &notes, &events, params(&notes), &setup).unwrap();
+    let mut ranked = LiveModel::new_gekisou_ranked(&m, &[], &notes, &events, params(&notes), &setup).unwrap();
+    ranked.queue_gekisou_rank_confirmation(0, 1, RANK_PCT).unwrap();
+    solo.run_timed(&p, &dts).unwrap();
+    ranked.run_timed(&p, &dts).unwrap();
+    assert_eq!(ranked.trace(), solo.trace());
+    assert_eq!(ranked.gekisou_rank_bonuses(), solo.gekisou_rank_bonuses());
+    let expected = solo.gekisou_ranges()[0];
+    let actual = ranked.gekisou_ranges()[0];
+    assert_eq!((actual.start_score, actual.end_score), (expected.start_score, expected.end_score));
+}
+
+#[test]
+fn fixed_rank_solo_adapter_keeps_solo_first_completion_per_frame() {
+    let m = master();
+    let (notes, events) = chart();
+    let (p, dts) = play(&notes, |_| 6);
+    let setup = GekisouSetup { fevers: vec![(START, END); 3], missions: vec![3; 3] };
+    let mut solo = LiveModel::new_gekisou(&m, &[], &notes, &events, params(&notes), &setup).unwrap();
+    let mut ranked = LiveModel::new_gekisou_ranked(&m, &[], &notes, &events, params(&notes), &setup).unwrap();
+    for range in 0..3 {
+        ranked.queue_gekisou_rank_confirmation(range, 1, RANK_PCT).unwrap();
+    }
+    solo.run_timed(&p, &dts).unwrap();
+    ranked.run_timed(&p, &dts).unwrap();
+    // Native SoloGekisouRankingUpdater selects only the first completion in a frame.
+    assert_eq!(solo.gekisou_rank_bonuses().len(), 1);
+    assert_eq!(ranked.gekisou_rank_bonuses(), solo.gekisou_rank_bonuses());
+    assert_eq!(ranked.trace(), solo.trace());
+}
+
+#[test]
+fn frame_result_score_retains_pre_ranking_value_while_calculator_rewinds() {
+    let m = master();
+    let (notes, events) = chart();
+    let (p, dts) = play(&notes, |_| 6);
+    let setup = GekisouSetup { fevers: vec![(START, END)], missions: vec![3; 3] };
+    let mut solo = LiveModel::new_gekisou(&m, &[], &notes, &events, params(&notes), &setup).unwrap();
+    let mut unranked = LiveModel::new_gekisou_external(&m, &[], &notes, &events, params(&notes), &setup).unwrap();
+    let mut completed = false;
+    for (frame, &dt) in p.frames.iter().zip(&dts) {
+        solo.frame_timed(frame.time_ms, &frame.judged, dt).unwrap();
+        unranked.frame_timed(frame.time_ms, &frame.judged, dt).unwrap();
+        if solo.gekisou_ranges()[0].state == 7 {
+            completed = true;
+            assert_eq!(solo.frame_score(), unranked.score());
+            assert_ne!(solo.frame_score(), solo.score());
+            break;
+        }
+    }
+    assert!(completed);
+}

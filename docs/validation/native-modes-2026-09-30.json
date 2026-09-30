@@ -1,0 +1,333 @@
+{
+ "format": "bdon-native-validation-public-summary/1",
+ "binary": {
+  "module": "original ARM64 libil2cpp.so, loader-restored",
+  "sha256": "5a79dd5d9c479ed5a636193394f040f21a1f7b070d0869095e1af63b3f84ef88",
+  "metadataDecodedSha256": "91aa665bd138276af998b9090f9395ada45ed78bbbc1e51cbb13ed2e61e9ef59"
+ },
+ "basis": {
+  "version": "1.0.1-25",
+  "masterDataset": "TW 0b21c9f4",
+  "masterFileCount": 240,
+  "masterHashListSha256": "bfd2efc919942395f053b9c1c0a12234eb0898457e6526710415f192d021c9e5",
+  "hashVerifiedFunctionRecordCount": 110,
+  "functionCountMeaning": "Reviewed hash-verified function records; not a count of observed executions."
+ },
+ "comparisonRules": {
+  "integerTolerance": 0,
+  "float32BitsTolerance": 0,
+  "frameShift": 0,
+  "noInputResultDeduplication": true,
+  "allDifferencesPreserved": true
+ },
+ "playingStateCases": [
+  {
+   "name": "Challenge / None",
+   "status": "pass for the declared PlayingState comparison",
+   "frames": 5502,
+   "coreComparisons": 1298487,
+   "derivedRankingComparisons": 0,
+   "comparedFields": [
+    "frame",
+    "timeMs",
+    "score",
+    "life",
+    "combo",
+    "skills",
+    "skillEvents",
+    "float32Bits"
+   ],
+   "actualJudgements": {
+    "3": 57,
+    "2": 76,
+    "1": 60,
+    "5": 122,
+    "4": 49
+   },
+   "lifeZeroFirstFrame": 618,
+   "comboBreaks": 15,
+   "finalScore": 164527,
+   "nativeCaptureSha256": "b6187a1b89935c8194c86faf43027c256d37d75fa196a2202a6e62e6ad271d3c",
+   "rustCaptureSha256": "e9229ce73b762a0133724c68941a1508cdbd742b398ba84ec460e09febdeafee",
+   "comparisonSha256": "59aa5f390604557cb868b84af31f5b043433fdc08a9ee0c9cf81b39a10c6887c",
+   "nativeStages": [
+    "PlayingState.Enter (original virtual OnEnter dispatch)",
+    "PlayingState.Update",
+    "original FSM transition request",
+    "PlayingState.Exit and context disposal"
+   ],
+   "nextNativeState": "App.Live.SoloLiveFinishDirectionStateNode",
+   "nextNativeStateFrame": 5501,
+   "fieldLimits": [
+    "full application FinishDirection/Result screens and server",
+    "real hardware audio/device/touch and renderer latency",
+    "card/GK/member condition skills",
+    "global maximum combo and judged/perfectContinue model fields (native saved, model has no corresponding public observer)",
+    "elapsed-time/counter diagnostic mirrors beyond existing updater state"
+   ]
+  },
+  {
+   "name": "Challenge / FullCombo assist",
+   "status": "pass for the declared PlayingState comparison",
+   "frames": 213,
+   "coreComparisons": 50268,
+   "derivedRankingComparisons": 0,
+   "comparedFields": [
+    "frame",
+    "timeMs",
+    "score",
+    "life",
+    "combo",
+    "skills",
+    "skillEvents",
+    "float32Bits"
+   ],
+   "actualJudgements": {
+    "3": 1,
+    "2": 1
+   },
+   "lifeZeroFirstFrame": null,
+   "comboBreaks": 1,
+   "finalScore": 2018,
+   "nativeCaptureSha256": "cf03874836956eb946b6c1793c7bceaa874e83c0303f3f9159f140b46da65f56",
+   "rustCaptureSha256": "aa0dfbff7cfd9222fa0b5fd30cdb43110f6c6abbd0cc4e8badbb1295fdc4746e",
+   "comparisonSha256": "d26dcef1735ee8ccb90be08f3b4e5bceec71d88b26b75617b63bd1024223902c",
+   "nativeStages": [
+    "PlayingState.Enter (original virtual OnEnter dispatch)",
+    "PlayingState.Update",
+    "original FSM transition request",
+    "PlayingState.Exit and context disposal"
+   ],
+   "nextNativeState": "App.Live.SoloLiveRetryStateNode",
+   "nextNativeStateFrame": 212,
+   "fieldLimits": [
+    "full application FinishDirection/Result screens and server",
+    "real hardware audio/device/touch and renderer latency",
+    "card/GK/member condition skills",
+    "global maximum combo and judged/perfectContinue model fields (native saved, model has no corresponding public observer)",
+    "elapsed-time/counter diagnostic mirrors beyond existing updater state"
+   ]
+  },
+  {
+   "name": "Challenge / AllPerfect assist",
+   "status": "pass for the declared PlayingState comparison",
+   "frames": 143,
+   "coreComparisons": 33748,
+   "derivedRankingComparisons": 0,
+   "comparedFields": [
+    "frame",
+    "timeMs",
+    "score",
+    "life",
+    "combo",
+    "skills",
+    "skillEvents",
+    "float32Bits"
+   ],
+   "actualJudgements": {
+    "3": 1
+   },
+   "lifeZeroFirstFrame": null,
+   "comboBreaks": 0,
+   "finalScore": 2018,
+   "nativeCaptureSha256": "4124587324b35a1984e41f0c76c39ec61fe3b5434058cf8380e2a02572004ccb",
+   "rustCaptureSha256": "4460b71acd64924ab88cc59c824b0f2a908a5c691ad77140aa23ee5c4cda8315",
+   "comparisonSha256": "a06445c5c923f7951bc0f2cdc31e6343bcc07cdc63a6e5e75987fd85e25810f0",
+   "nativeStages": [
+    "PlayingState.Enter (original virtual OnEnter dispatch)",
+    "PlayingState.Update",
+    "original FSM transition request",
+    "PlayingState.Exit and context disposal"
+   ],
+   "nextNativeState": "App.Live.SoloLiveRetryStateNode",
+   "nextNativeStateFrame": 142,
+   "fieldLimits": [
+    "full application FinishDirection/Result screens and server",
+    "real hardware audio/device/touch and renderer latency",
+    "card/GK/member condition skills",
+    "global maximum combo and judged/perfectContinue model fields (native saved, model has no corresponding public observer)",
+    "elapsed-time/counter diagnostic mirrors beyond existing updater state"
+   ]
+  },
+  {
+   "name": "Mission / SoloGekisou",
+   "status": "pass for the declared PlayingState comparison",
+   "frames": 5502,
+   "coreComparisons": 1469049,
+   "derivedRankingComparisons": 22008,
+   "comparedFields": [
+    "frame",
+    "timeMs",
+    "score",
+    "life",
+    "combo",
+    "skills",
+    "skillEvents",
+    "float32Bits",
+    "settledScore",
+    "ranges",
+    "rawJusts"
+   ],
+   "actualJudgements": {
+    "3": 57,
+    "2": 76,
+    "1": 60,
+    "5": 110,
+    "4": 49,
+    "6": 12
+   },
+   "lifeZeroFirstFrame": 618,
+   "comboBreaks": 15,
+   "finalScore": 439015,
+   "nativeCaptureSha256": "37a1720ce35960aac9c7b44f507257cf291b5b8ae99cebe56a498bb0f0125ab3",
+   "rustCaptureSha256": "f118f0937408eba8d335dc1b846b8f863eb09bff2506e6dac50a2bc3db84437f",
+   "comparisonSha256": "9719206988bcf62c03ff48ab1cc17be77e7ef02cf90da710f46ae65e4dd03ac1",
+   "nativeStages": [
+    "PlayingState.Enter (original virtual OnEnter dispatch)",
+    "PlayingState.Update",
+    "original FSM transition request",
+    "PlayingState.Exit and context disposal"
+   ],
+   "nextNativeState": "App.Live.SoloLiveFinishDirectionStateNode",
+   "nextNativeStateFrame": 5501,
+   "fieldLimits": [
+    "full application FinishDirection/Result screens and server",
+    "real hardware audio/device/touch and renderer latency",
+    "card/GK/member condition skills",
+    "global maximum combo and judged/perfectContinue model fields (native saved, model has no corresponding public observer)",
+    "elapsed-time/counter diagnostic mirrors beyond existing updater state",
+    "native range judgedCount and accuracyAverageBits (saved, not modeled)"
+   ]
+  }
+ ],
+ "playingStateTotals": {
+  "cases": 4,
+  "frames": 11360,
+  "coreComparisons": 2851552,
+  "derivedRankingComparisons": 22008
+ },
+ "otherEvidence": {
+  "networkRanking": {
+   "cases": 572,
+   "comparisons": 15259,
+   "status": "pass",
+   "level": "native invocation and reused-calculator input stream, not whole-live frames",
+   "rawIntraTieOrder": "native raw order retained; Rust API has no intra-tie member-order contract, so it is not compared"
+  },
+  "multiplayerIntegrationPerfect": {
+   "frames": 5500,
+   "coreComparisons": 187000,
+   "derivedRankingComparisons": 22000,
+   "status": "pass",
+   "ordinarySkills": "none",
+   "cardSkills": "none"
+  },
+  "multiplayerIntegrationMixed": {
+   "frames": 19000,
+   "coreComparisons": 646000,
+   "derivedRankingComparisons": 76000,
+   "status": "pass",
+   "missions": [
+    "Combo",
+    "Just",
+    "Luck"
+   ],
+   "ordinarySkills": "none",
+   "cardSkills": "none",
+   "actualGradeCoverage": [
+    "Just",
+    "Perfect",
+    "Great",
+    "Good",
+    "Bad",
+    "Miss",
+    "Pass"
+   ],
+   "lifeZero": true,
+   "comboBreaks": true,
+   "packetDelayFrames": [
+    0,
+    5,
+    30
+   ],
+   "rankingInput": "five fixed connected players, self index 2, tied leading players; offline packet rows"
+  }
+ },
+ "bootstrap": {
+  "modes": [
+   "free",
+   "free-gekisou",
+   "challenge",
+   "mission",
+   "battle",
+   "arena",
+   "tutorial"
+  ],
+  "status": "seven original mode-selection and music-score-creation branches executed natively",
+  "fullModeLifecycles": "Only the four scoped PlayingState cases above have a matching whole-chart/prefix field comparison.",
+  "arenaOverride": "Original native Arena branch selected a supplied real MasterLiveMusic override row; current ArenaMusic and ChallengeMusic catalogs contain zero rows."
+ },
+ "scoreChannels": {
+  "frameCache": "Native LiveExecutorFrameResult.CurrentScore compared with existing Rust score state observed after skills and before Solo ranking rewind.",
+  "calculator": "Native current calculator result compared with existing production LiveModel.score().",
+  "observers": "Read-only observation getters in an isolated diagnostic worktree. No additional Rust scoring formula or native scoring HLE.",
+  "retainedPhaseMismatch": {
+   "firstFrame": 1176,
+   "timeMs": 19600,
+   "nativeFrameCache": 41910,
+   "nativeCalculatorAndRustScore": 40932,
+   "secondFrame": 2305,
+   "nativeFrameCacheSecond": 125224,
+   "nativeCalculatorAndRustScoreSecond": 123651,
+   "classification": "two same-frame observation channels; not a scoring-algorithm change",
+   "failedComparisonSha256": "10c4f73a0a7fdc5a6127b0b3d7f21e567a2c0dea5a9cd907940fcd427304bdbe"
+  }
+ },
+ "nativeCallPoints": {
+  "playSettings": "0x6099d18",
+  "scoreCreation": "0x6124eb8",
+  "playingEnter": "0x6129bb0",
+  "playingUpdate": "0x612aee4",
+  "playingExit": "0x612ae80",
+  "challengeRetryDecision": "0x614ba68",
+  "gekisouControllerInitialization": "0x6125700",
+  "soloRankingRewind": "0x60a6c78",
+  "networkRankingUpdate": "0x60ac050"
+ },
+ "substitutions": {
+  "shared": [
+   "POSIX allocation/file/time environment",
+   "Unity JSON reflection used to supply master objects",
+   "audio length and clock",
+   "audio output and CRI callback registration",
+   "device delivers a native LiveSimulateInput",
+   "renderer consumes read-only live frames",
+   "localized display strings",
+   "Unity presentation color parser uses the original fallback branch"
+  ],
+  "finishAnimations": "zero-latency offline completion inputs; original native Action delegates and completion callbacks execute",
+  "missionOnly": [
+   "UTC libc calendar functions for logging",
+   "fixed device identity and no-renderer graphics device",
+   "Unity visual-performer RNG only at two verified presentation callsites (0x6192370 and 0x61923d8); game luck/skill RNG stays native"
+  ]
+ },
+ "missing": [
+  "InitializeState coroutine and complete native deck/data-creator pipeline",
+  "FSM registration/dispatch and following retry/finish/result nodes",
+  "actual hardware device/touch windows and renderer/audio timing",
+  "server transport, authority, matchmaking, rewards and persistence",
+  "complete Battle/Arena/Tutorial PlayingState traces; those remain pending",
+  "card/GK/member conditional skills in these mode fixtures",
+  "global maximum combo, model judged/perfectContinue counters, range judgedCount and accuracy-average f32",
+  "native raw intra-tie ordering contract",
+  "real Challenge/Arena event catalog rows"
+ ],
+ "qualifications": [
+  "These are scoped native-client algorithm and PlayingState lifecycle evidence, not proof of every scene, all devices or servers.",
+  "Challenge retry decisions are executed natively; Rust LiveModel has no lifecycle retry API, so no independent Rust retry-decision equivalence is claimed.",
+  "Challenge uses explicit native property setters for the value produced by the original option/settings path; the original Init coroutine is omitted.",
+  "Mission supplies actual MasterMemberCard and native Local.MemberCard constructor defaults; the skill container contains only five ordinary liveSkill1 entries, with card/GK/condition effects empty. Power-reading effects are not validated by this fixture.",
+  "Master material, binaries, captures, keys and decompilation remain private. This public summary contains only counters, declared fields, call points, hashes and limitations."
+ ]
+}

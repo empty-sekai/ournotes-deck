@@ -1,0 +1,61 @@
+{
+  "format": "ournotes-deck.native-source-manifest/1",
+  "status": "inputs_recorded",
+  "clientVersion": "1.0.1-25",
+  "masterVersion": "0b21c9f4a3911370d5f981fb894c7544",
+  "region": "tw",
+  "modelCommit": "155bd2ad89d077d3bdcfbca9c45c0100475ab538",
+  "modelDirty": true,
+  "resources": [
+    {
+      "role": "chart",
+      "bytes": 1277,
+      "sha256": "d52034d539e10651eeb896d10c0d9ef2e5f5e054d115a920e8d6b0d7bdd52c1d"
+    },
+    {
+      "role": "contract",
+      "bytes": 601,
+      "sha256": "d6a31ca96361fce32142056522770ffbddc32fbc5e208168f70d493650760f26"
+    },
+    {
+      "role": "modelSource",
+      "bytes": 81908,
+      "sha256": "e98694c7d7944eb66845a84f8862f2a565786a23ea7deadef746f61c6ce8c2f8"
+    },
+    {
+      "role": "rustDriver",
+      "bytes": 5892,
+      "sha256": "02a5b4e18793070968cb00ce99a2203a844eeebf4aff48dd10a063eb9e36d260"
+    },
+    {
+      "role": "originalLibraryElf",
+      "bytes": 214602464,
+      "sha256": "5a79dd5d9c479ed5a636193394f040f21a1f7b070d0869095e1af63b3f84ef88"
+    },
+    {
+      "role": "relocatedMemoryImage",
+      "bytes": 217042944,
+      "sha256": "a62090474bc182d8f442b5463475ed8ab3e3840f9d01ae19303656d3441da1ce"
+    },
+    {
+      "role": "imageMetadata",
+      "bytes": 152115,
+      "sha256": "b40626ee79928a8234bb575511fefc51684dddbc3851941b5a9cdf533ca57c58",
+      "recordedOriginalElfSha256": "5a79dd5d9c479ed5a636193394f040f21a1f7b070d0869095e1af63b3f84ef88"
+    },
+    {
+      "role": "runtimeReadOnlySnapshotMetadata",
+      "bytes": 1671,
+      "sha256": "640066557d32cdadb9a90426c263f437c057682533a05198efda5446ce3c72b1",
+      "recordedRuntimeReadOnlyMemorySha256": "19473f4a680b8f835fb8d53242e1a52276ede3d4ecf9087c7885b4e8aefd10a8"
+    }
+  ],
+  "missingRoles": [],
+  "qualification": "Input identity only; no emulator execution or comparison performed.",
+  "derivation": {
+    "originalLibraryElf": "Loader-restored input ELF; SHA2565a79dd5... is the file identity before ELF relocation.",
+    "relocatedMemoryImage": "elfimg.py maps PT_LOAD virtual segments, performs RELATIVE/ABS64/GLOB_DAT/JUMP_SLOT relocations, zero fills memory and binds import stub addresses. Its a6209047... hash is not the ELF file hash.",
+    "imageMetadata": "Hash is JSON-file identity; embedded so_sha256 links it to the original ELF.",
+    "runtimeReadOnlySnapshotMetadata": "Hash is JSON-file identity; recordedRuntimeReadOnlyMemorySha25619473f4a... refers to the initialized in-memory readonly range[0x1000,0xbdf4000), verified by snapshot.load. It is neither the ELF nor whole memory-image hash."
+  }
+}

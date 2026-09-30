@@ -1,0 +1,248 @@
+{
+  "format": "ournotes-deck.production-checks/1",
+  "date": "2026-09-30",
+  "status": "pass",
+  "passedTests": 272,
+  "commandsAllExitZero": true,
+  "sourceStableDuringAllFinalChecks": true,
+  "commands": {
+    "suite-final2": [
+      "cargo",
+      "test",
+      "--release",
+      "-j2"
+    ],
+    "clippy-final": [
+      "cargo",
+      "clippy",
+      "--all-targets",
+      "-j2",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "fmt-final": [
+      "cargo",
+      "fmt",
+      "--check"
+    ],
+    "msrv": [
+      "cargo",
+      "check",
+      "--all-targets",
+      "-j2"
+    ]
+  },
+  "logSha256": {
+    "suite-final2": "d109517fafda145697a405a51e56f7f804197deaee5fee26145bbcffc9e85b8a",
+    "clippy-final": "56e102eea9abdde25ce13a07a94e20635deb6cc826ffaf6a30166308a48d49ed",
+    "fmt-final": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "msrv": "40a455eea68938a923fb61936efed21848528001d281d04038a05929a0393d3a"
+  },
+  "rustCompiler": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "minimumSupportedRustCheck": "rustc 1.88.0 (6b00bc388 2025-06-23), all targets",
+  "sourceTreeSha256": "9d647e0527f1bbd2c0bf832f7536161ebd0399413ff208d800a8cd62cf1f5830",
+  "sourceTreeSha256Algorithm": "SHA256 of Python json.dumps(filesSha256, sort_keys=True), using relative POSIX paths for src/**/*.rs, tests/**/*.rs, Cargo.toml and Cargo.lock, with default JSON separators.",
+  "sourceFileCount": 78,
+  "gitHeadDuringChecks": "155bd2ad89d077d3bdcfbca9c45c0100475ab538",
+  "workingTreeDirtyDuringChecks": true,
+  "sourceIdentityQualification": "The tested model identity is the frozen working-source fingerprint, not the old HEAD. A later final commit must bind to these checked sources; public docs and tooling were outside this source hash.",
+  "productionFilesSha256": {
+    "Cargo.lock": "886ac98b4401d2eaa26c82ad22369cb014f2c597e511c4d1c6b988b1b410452d",
+    "Cargo.toml": "a5df9e8d9f3860e3091ac0a9c9f036131afba0ad21512ba230c971df397606bb",
+    "src/bin/ournotes-deck.rs": "25294b9871eb70b4b8c2b65389e249f3603bbe88017862addf397c45f2a23a03",
+    "src/bonus.rs": "e2a7a0547c66891831b76649024e781f3747eba0261c07942bfb5863b8c4ea57",
+    "src/calc.rs": "832682e57e19adc25a468463e0f10b13d73510a82e1bbf300ad8e4233e3aa885",
+    "src/cards.rs": "b99fd7d3aa817347e37b2899368d6d34fc06645f0a84223041e222ef2e4e4ddf",
+    "src/chartstats/aptitude.rs": "c664b758d8e774ad86017c462741d654c6bb7d1ba0ee056a4fec529c52b0d588",
+    "src/chartstats.rs": "343186848f5d47c28cb0524329eda2d260d71ca4f8e1e3123eea57cf48da7d90",
+    "src/data.rs": "cbbbabff3ff0e011bdb47def4f4b33279fefcd39e1537dfc2570ba1cc2f9e389",
+    "src/deck.rs": "8ab6efa49b0da4ac3872b90ea4a41b74fb9fe6ca21de588d63664c10896d48d3",
+    "src/error.rs": "a91f945757661463cab64c09c1ae1a3e79fe9481fa225fd80bc8cad6f6cd29f4",
+    "src/event.rs": "909ad6ca4b4da70d7e2eac96e94c64de05d932fccb0b01e8722ce3b986285972",
+    "src/lib.rs": "b4da9cfa3870e6ddcd723dde10180958e6b1100f8fd88d9e03e6d9d08e1bcac4",
+    "src/live/full/combo.rs": "5f8c646978f2131e8fe420d5fb44dbab2f05b4fb0f45248eb9274accf400ecac",
+    "src/live/full/conditions.rs": "b587c539f3836a1ff52f2573a65be12675b62858eeb141cc89235093d1de005f",
+    "src/live/full/convert.rs": "0e343a9920d674406537c3a513028fecb3ca82c786414e1edb4319ad42ae2a8b",
+    "src/live/full/engine.rs": "6f68c89ec2ea0486f013f0a16d585192020c09c74106910128e2aca2775ab6f9",
+    "src/live/full/gaps_tests.rs": "7317ee1d282f462f956739ebb90acdcb481e56b24e11ec11767a974d00efee76",
+    "src/live/full/gekisou.rs": "7d469dadd44ee8b7cc28df26cdffd1a14930bf65ec02a7aaee85f32eac7c2799",
+    "src/live/full/life.rs": "de23dda1733fe0ca2c2c6b2f4cb04e4e3373ca1c74f18c7719345a66117330b4",
+    "src/live/full/mod.rs": "ce9369b7a8afa7257ad4aa2e990c82700bbb1cb8210f597937dd23247c54a544",
+    "src/live/full/pool_regression.rs": "9fabd6635fc2f5f38c8d790837339bb5313d2afda4bb7ab4ad56bea9f0cf3388",
+    "src/live/full/range_frames.rs": "530379ce632b738088310d53a679bb96707bd17b4139c6ec2635c9e0bc00f9fe",
+    "src/live/full/raw_runtime.rs": "008e7cad76cb2e871b8a53ac2eddcedfccebf4ce175efc2b59383d59cdeabe5c",
+    "src/live/full/scorecalc.rs": "aa587eb8ed139c8070e3c918a5d2e3c5e92014fbbf25005f875c7ed304d853b2",
+    "src/live/mod.rs": "05db7d177f46e086798a2a73231772eec5a2b66d47b0f62d9c54e2150962e136",
+    "src/live/model.rs": "08ff2a8018fd47badd22aacd65d5dc28a1cb66b3a4182547681597324060e551",
+    "src/live/random.rs": "ff2246732504b7de7aee0303e46db1c0df476e285bf06bbec11a34fec85f5734",
+    "src/live/raw.rs": "17ce3de5e4273a8b3580c5c37e92f3144fbc6d94995249bc4541b4059df9c3a6",
+    "src/live/raw_assist.rs": "0d9c090a2fef70f6ddb29be6fb20e650c8d2019b2cb7d82c4c22a37a661ddde4",
+    "src/live/raw_candidates.rs": "8649756e2b3f742268282a21dda700fa0974691a754da7158abb648a1641d5f4",
+    "src/live/raw_input.rs": "cabb0ef40bc0e583de2d62666b086f04ce2fb99569f8e455e46af8de345ce475",
+    "src/live/raw_just.rs": "3e69f65afbb9b29030d2b099bce311f5f3bdac35b70b293c639a88562fa63871",
+    "src/live/raw_scheduler.rs": "f0284275bc2f4af0e511b52c1e1335fdd9b88a9d2cdfa63f49d991c4642ddfd7",
+    "src/live/raw_updaters.rs": "6f3da592c16c2ebc06973b8cd2560b39e537118efe748d1f47c777adc16c7df2",
+    "src/live/raw_windows.rs": "1661fcc3651d6d0d69563e1294f3502c2f00bca369a73da62ffd4d2e3aefef35",
+    "src/live/score.rs": "aa5fe78354ee9acf800e3ea2ced2116687995f7f259a00b681d30b7f55b5b12b",
+    "src/live/seeds.rs": "6598a4336224bdb9493e4f020e97962530e0e46170d9619cb074ae2df88f245e",
+    "src/live/skill.rs": "6378793a86b87c27deee250d1bf0ace049f52c271e1b6aa5d358bd4948e86edf",
+    "src/live/skip.rs": "d28bd225aa86de911a41694c7e87d6644ca23c9031a57577711b081c2f577a66",
+    "src/master.rs": "ca5553b2c4f8c3a4ebcaeae5b4b91e2e7fbcc06c15b755a64e14a22adc882ff4",
+    "src/memory.rs": "ec6fbbd9ade10f3c119a66d3ecd4762d97207f4373eed0774edbc1215b101167",
+    "src/num.rs": "ef27242c5cebd987e223e03f2e10a257297a5634bed6929b6f3b001d31ca91a4",
+    "src/power.rs": "704ce1eca2cd86d9d06dbfeafe3fa5d00efaa5b27be76d1c423b73d748aa6bfc",
+    "src/replay.rs": "13d31815777ddce166d674f9525d0074428777c7ea24d8224cc84997ec3f5593",
+    "src/scenario.rs": "2383d78b302f85c91afe840d728454b717d402e384f51b5a17e7a2422ffa63cd",
+    "src/search/expectation.rs": "59323b7a58db9a4a755eba03fe66d5e90554fd2d54d87cb7f1da64f512182ee1",
+    "src/search/live.rs": "15f8fb7ec4a24df2df8771b8c4942fdc5f7d0df7cbf19b6566c2f25e2e2b2fc4",
+    "src/search/matching.rs": "d8f4664437191d3f577d1d3f17998d526a22e5d7295dc3dde49b95cead44f9bc",
+    "src/search/mod.rs": "904caef033cd47b5738f16bc8310c2843c278c99676b5a0b1fcb7ebec8a8b5ab",
+    "src/search/oracle.rs": "3b17372660aa0a2b0164b47e5bd7debf33fd733b883d0b22c5aea0c34ff38097",
+    "src/search/pool.rs": "dd8ff27bac2e4f61fd830a09311725b0e2dabf9af9d53c6caa46aebd3d797572",
+    "src/search/power.rs": "0387e12d64b3a8cceffee1ceb2f31b967e04ce1441b1319930b743b619d1e9ac",
+    "src/search/snaps.rs": "625884974b24b15cfef989f27c48e3d4681097713a422df3866f02c5cf505e3a",
+    "src/search/tables.rs": "133cf8adc7b8bad802c4a79c3d33bb46b2688d7ed8a9dc308d5eb538021cb273",
+    "src/search/topk.rs": "298e9a48c1c7b10ac26b81d3892387cb9383d4e6cedbeacb4aa85abf7cf7ba0a",
+    "tests/chartstats.rs": "cef1971ad1b037e3de891af60319e57d44bf9b365cee76b2a9d8ffe9527639fe",
+    "tests/common/mod.rs": "fa31350b5a52e812a779dae86a6a14f13ddb8542f7bb4bbfd3c70ae37c033d51",
+    "tests/data.rs": "c399c30f02391de73351e3426711818b639587f44b1f948689edb9989dd4e560",
+    "tests/event.rs": "489604c397582bfde3d7b0157e0d2b2cee8d27c0b5eb59974448fc4519f1c855",
+    "tests/expectation.rs": "fd988b80efeea06346d8ea4782823f9b84c08d0f66c6657600380d6c5a08568f",
+    "tests/gekisou.rs": "a232bc0df8c16248c57d30e5739b32069f00cd66c6d208a18c3646af5171480b",
+    "tests/gekisou_play.rs": "ee82f1ef3ad1070ff065db3f6a6b1247a9f1a2b98f76c8fbcee80e3607dd38aa",
+    "tests/livefull.rs": "c29bb5434ae82d3cdf8325a97b0c1aacadcfe4d8c65f319bf74369f15252ba6a",
+    "tests/model_gaps.rs": "91ea9c2b8bdb0e4c4ebb20d9c22660002189c31949c20323c6906a1b19597a3a",
+    "tests/power_consumers.rs": "7f758ecb0296df8da7c9df6ae239c5bf94a87101a6d7c22127677aa0fbe6cb87",
+    "tests/raw_assist_native.rs": "7234a0dc79df580df579e6ebe7167c295e27751fe29acccab12628ae4967340a",
+    "tests/raw_bridge.rs": "80a1bfa27d5a1f24e288f6f069726663ffc760f0f798b87f142e711e3ce41ca6",
+    "tests/raw_judgement.rs": "bf73953df3365390bdc167d7b6c996d99a769079b6bea936d50737c5d0075c32",
+    "tests/raw_just_fever.rs": "0f2e06f65afcc7ff492e585ae8d41babb3c5076d73cfd7d80a6035292c6312d0",
+    "tests/raw_scheduler.rs": "4aeacf5199a12fd949e15ec2be04d9a707b39119a2bc7ee644bef0ae7f1eb839",
+    "tests/raw_scheduler_native.rs": "e44e732661dc46c52f3e516fb5d20589d41bca0fc40ef8783f3983cdcf8e5eda",
+    "tests/raw_updaters.rs": "4a5e67b3e650cafabcc18200dda8fde2fae011557ca9989d202600e0c94debf5",
+    "tests/replay.rs": "68a033dd282f8f707563dd3b1d68a94edd211db4b53b8d56ceb3916a4471cca9",
+    "tests/scenario.rs": "36aa017aceeefad0120e02fbda937a99185f42b269b2b98ba88f5a2f42abe8ad",
+    "tests/scenario_search.rs": "4bae9160e69520884d6ef5f454bea98b8b2e2f8ce826c4bfd22dab04bb62979b",
+    "tests/search_oracle.rs": "6bb3419470da93e0cc2fe86650b2cbbb33ccb274d6d54309a7ecdcc9a2bc1b45",
+    "tests/search_snaps.rs": "d7de04dedee10d5af75b8d1ad3cc46bf189e9caf0eab494754bb4a12074fb88b"
+  },
+  "cliExecutableSha256": "04ec71f255dd2c8cca34282758f5186970a5c9684742bafd9222cebbbae5200f",
+  "cliExecutablePlatform": "x86_64 Linux release binary built and exercised by the final production suite",
+  "behavioralRepairs": [
+    {
+      "id": "unscored-operation-gate",
+      "category": "runtime-behavior",
+      "summaryZh": "未登记计分的操作先跳过计分类型转换；type122 / Pass 继续执行生命、连击和窗口回调。",
+      "regression": "unscored_pass_still_consumes_executor_window_callback"
+    },
+    {
+      "id": "network-frozen-range-snapshots",
+      "category": "ranking-behavior",
+      "summaryZh": "真实 Network 模式保留区间控制器的起止分数快照，不走 Solo 时间回查。",
+      "regression": "external_completion_keeps_controller_score_snapshots_and_current_score"
+    },
+    {
+      "id": "fixed-solo-first-completion",
+      "category": "adapter-behavior",
+      "summaryZh": "固定名次 Solo 适配器同帧仅结算第一个完成区间，匹配原生 Solo 顺序。",
+      "regression": "fixed_rank_solo_adapter_keeps_solo_first_completion_per_frame"
+    },
+    {
+      "id": "conditional-pool-initial-timestamps",
+      "category": "lifecycle-state-initialization",
+      "summaryZh": "未执行条件效果池的 execute / finish 时间初始化为 -1；这是状态一致性修复，未据此声称分数漏洞。",
+      "regression": "unused_condition_pool_timestamps_remain_unset_until_execution"
+    },
+    {
+      "id": "raw-just-mission-enabled",
+      "category": "judgement-window-integration",
+      "summaryZh": "Just 任务开始时在原始判定前启用 Just，结束时恢复 ForceEnableJust 设置，包含 Assist 窗口副本。",
+      "regressions": [
+        "just_fever_enables_before_raw_notes_and_percent_miss_cap_then_disables_at_end",
+        "just_end_restores_force_setting_and_combo_ranges_do_not_change_it"
+      ],
+      "qualification": "The special early-side 2-to-3 ms mismatch was a consequence of the missing enabled-state wiring, not a separately established arithmetic bug."
+    }
+  ],
+  "featuresAndStatistics": [
+    {
+      "id": "fixed-rank-solo-estimate",
+      "category": "model-adapter-feature",
+      "summaryZh": "固定名次 Solo 估计供 chart-stats 的基线、权重与校验统一使用；不冒充真实网络排名服务器。"
+    },
+    {
+      "id": "shared-per-note-replay",
+      "category": "shared-model-api-feature",
+      "summaryZh": "逐音符给定判定与完整 RawResult 重放使用同一个 Rust LiveModel，明确 seed、帧序和名次。",
+      "integrationTests": 5
+    },
+    {
+      "id": "readonly-stage-getters",
+      "category": "observation-api-feature",
+      "summaryZh": "公开转换后判定、当前连击，以及排名前 frame_score 和排名后 score 两阶段的真实缓存值，不新增公式。"
+    },
+    {
+      "id": "adaptive-stopping-both-score-endpoints",
+      "category": "statistics-correction",
+      "summaryZh": "适性采样同时检查最高判定端和 Perfect 端的标准误及各自基线，按同一 seed 前缀扩展批次；未放宽原 bound 或停止阈值。",
+      "qualification": "This statistical correction is separate from native runtime arithmetic repairs."
+    }
+  ],
+  "rawJustProductionReplay": {
+    "frames": 1600,
+    "timingTypeCount": 9,
+    "unitCount": 39,
+    "windowFieldComparisons": 388800,
+    "otherFieldComparisons": 62400,
+    "differenceCount": 0,
+    "driverSha256": "ce9631182a5690e8e0c9f7ac17a413350296d718d2a82e4f75a1656d67593664",
+    "nativeCaptureSha256": "f866b89277cc0d868e569c9c92bb017ff7fbd44422e0597ff0c4c078cf2c6cef",
+    "inputDataSha256": "ef87c0ba383ad3b72c2ddcf40455d7462c586fb1cd8d2abcc84ebdbbc0bda538",
+    "traceSha256": "2e5323c7a26f36b43a035eeb02b5d68de65a2fcb43483ff7c1f7e68de229b7ce",
+    "logSha256": "91146df9fb42919f015b0bec8b2dd0ce075495fa734c67133832de07dedca0ef",
+    "status": "equal_declared_fields_using_unchanged_production_library_public_apis",
+    "totalFieldComparisons": 451200,
+    "distinctNativeCapturesAdded": 0,
+    "productionSourceTreeSha256": "9d647e0527f1bbd2c0bf832f7536161ebd0399413ff208d800a8cd62cf1f5830",
+    "windowFields": [
+      "judgement",
+      "enabled",
+      "baseBeforeMs",
+      "baseAfterMs",
+      "beforeMs",
+      "afterMs"
+    ],
+    "otherFieldGroups": [
+      "frame-result score before ranking",
+      "calculator score after ranking",
+      "life",
+      "current combo",
+      "random draws",
+      "converted note-result order",
+      "six post-ranking float32 bit patterns",
+      "nine fields in each Gekisou range"
+    ],
+    "qualification": "Reuse the same 1600-frame native capture; replay native-origin NoteResult and originDiffMs through frame_raw_timed. No private observation hook or source patch is present in the production library. This does not claim independent physical-touch classification or repeat the existing full-pool experiment count."
+  },
+  "existingProbability4011Capability": {
+    "status": "verified_real_card_skill_and_support_chain_in_two_cases",
+    "safeSummarySha256": "a941a55f35556baf84ace45167c7cbed0b071bb4607d62f56a9d04dfe8c1f3c0",
+    "frames": 15000,
+    "coreComparisons": 10680000,
+    "probabilityOperandResultComparisons": 72,
+    "coreDifferences": 0,
+    "probabilityOperandResultDifferences": 0,
+    "qualification": "4011 support already existed. Real GK20/support66 probability chains and two life branches were measured; a targeted 5% success seed is branch coverage, not a distribution estimate. No ordinary 4011 skill is invented."
+  },
+  "twoLengthProbeResolution": {
+    "status": "resolvedProbeInputMismatch",
+    "safeSummarySha256": "cafc198f8f70d573208fe6cecff9569ff69db6f93307f36b222ec497bb116633",
+    "historicalDifferenceCount": 5861,
+    "frames": 8000,
+    "correctedFieldComparisons": 5656000,
+    "remainingDifferences": 0,
+    "qualification": "Same native capture and all declared fields retained. The old diagnostic incorrectly equated audio/skill length 91667 and score-table length; Native uses last note position time 117187 + 1000 = 118187 for its score table."
+  },
+  "coverageQualification": "These passing checks and finite native contracts do not certify every game mode, input type, card interaction or online IFix/server configuration. Given-result replay is distinct from independent touch replay; full official network ranking is distinct from fixed-rank Solo projections. Final published NN data, WASM/browser integration and songs-page acceptance have their own source and data identities."
+}

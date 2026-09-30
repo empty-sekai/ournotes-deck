@@ -1,0 +1,31 @@
+{
+  "format": "ournotes.replay-validation/1",
+  "stage": "preview-source-verified-final-pin-pending",
+  "compiledSourceTreeSha256": "771475183524230d381a3eb7868a2fe3015fe2c239a432e5d220b15b57011993",
+  "compiledSourceFileCount": 59,
+  "rustc": "1.98.1",
+  "wasmBindgen": "0.2.127",
+  "target": "wasm32-unknown-unknown",
+  "jsSha256": "0a83b183882212804a72c4b4833bc40ce8354cb35cae3cf67b2c14e058b560dd",
+  "wasmSha256": "010227b995a4a482045b7312b666ee37bf7aec07a75d47f842d491dd84628a2a",
+  "runtimeDeckDataSha256": "fb42c86153fc89a31847a8e033a1df88d9f21a268715137e388890e47772fecc",
+  "integrationTests": {"passed": 5, "failed": 0},
+  "wasmChecks": {
+    "chartCount": 340,
+    "modes": ["normal", "soloGekisou"],
+    "callsPerMode": 1360,
+    "processedFramesPerMode": 7211016,
+    "plans": ["Perfect plus chart-native unscored Pass", "scored-note cyclic Perfect/Great/Good/Bad/Miss/Just plus Pass"],
+    "deterministicRepeat": true,
+    "unknownNoteRejected": true,
+    "normalReportSha256": "3aca0e9804755141fe3788b11a12b88c44410337eda4d4b3a95a5355ae59882b",
+    "soloReportSha256": "2e07523df18c4b93bbfb39466c327c5249c82e7cf2ec219af48956da7adab318"
+  },
+  "rustWasmComparison": {
+    "matchedRuns": 1360,
+    "differences": 0,
+    "fields": ["score", "frameScore", "life", "maxFrameCombo", "judgements", "Solo ranges: mission/state/combo/maxCombo/justCount/startScore/endScore/luckPoints/luckGauge/rushCombo/lotResults/rankBonus"]
+  },
+  "scope": "The same shared production Rust API and actual WebAssembly agree for the declared result streams. This is a runtime/transport check, not additional ARM64 native execution or physical touch validation.",
+  "pending": ["Final deck commit must match the compiled source tree before final engine metadata and data packaging."]
+}

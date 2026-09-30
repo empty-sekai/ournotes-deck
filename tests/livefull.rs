@@ -158,6 +158,44 @@ fn late_judgements_are_rewound() {
 }
 
 #[test]
+fn unscored_pass_does_not_block_scored_notes_or_member_events() {
+    let m = master();
+    let (notes, events) = chart();
+    let deck = vec![performer(Some((1, 1)), &[], 0); 5];
+    let input = play(&notes, |_| 5, |_| 0);
+    let baseline = run(&m, &deck, &notes, &events, &input);
+    let mut with_pass = notes.clone();
+    with_pass.push(LiveNote { note_id: 122, time_ms: 1500, note_operate_type: 122, judgement_type: 1 });
+    let mut input_with_pass = input.clone();
+    let frame = input_with_pass.frames.iter_mut().find(|f| f.time_ms >= 1500).unwrap();
+    frame.judged.insert(0, JudgedNote { note_id: 122, judgement: 7, judgement_time_ms: 1500 });
+    // The simulator-only note must not change the scoring note count.
+    let mut model = LiveModel::new(&m, &deck, &with_pass, &events, params(&notes)).unwrap();
+    model.run(&input_with_pass).unwrap();
+    assert_eq!(model.trace(), baseline.trace());
+    assert_eq!(model.current_life(), baseline.current_life());
+}
+
+#[test]
+fn unscored_miss_still_causes_damage_and_breaks_combo() {
+    let m = master();
+    let (mut notes, events) = chart();
+    notes[20].note_operate_type = 122;
+    let deck = vec![Performer::default(); 5];
+    let input = play(&notes, |n| if n.note_id == 21 { 1 } else { 5 }, |_| 0);
+    let model = run(&m, &deck, &notes, &events, &input);
+    assert_eq!(model.current_life(), 900);
+    // A zero-percent registered note is a score-command reference, with the same life/combo effects.
+    let mut reference_tables = tables();
+    reference_tables["MasterLiveNoteParameter"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"_id": 2, "_noteOperateType": 122, "_scorePercent": 0}));
+    let reference = run(&master_from(&reference_tables), &deck, &notes, &events, &input);
+    assert_eq!(model.trace(), reference.trace());
+}
+
+#[test]
 fn live_skills_without_rewinds_match_the_batch_score() {
     let m = master();
     let (notes, events) = chart();

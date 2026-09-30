@@ -1,6 +1,7 @@
 //! Chart statistics: what a chart contributes to the live score whatever the deck, measured on the whole-live
-//! simulation ([`crate::live::full`]) in two scenarios: with Gekisou on (`seeds`), as a Gekisou live (Battle Live)
-//! plays, and with Gekisou off (`off_seeds`), as a solo live (Free Live, Challenge Live) plays.
+//! simulation ([`crate::live::full`]) in two scenarios: with Gekisou on (`seeds`), using the solo Gekisou
+//! updater's score-query schedule, and with Gekisou off (`off_seeds`). These are scoring models, not complete
+//! Free Live, Challenge Live or network Battle Live lifecycle emulations.
 //!
 //! With Gekisou on, the play is the theoretical best play of a live with Gekisou
 //! ([`JudgementStream::theoretical_best_gekisou`]): every judged note at its exact time, Just inside the Just-count
@@ -11,8 +12,11 @@
 //! seed when no range is a luck range (the play then draws nothing), else the first [`published_seeds`]. The seed set
 //! is not the game's seed law (unknown), so a mean over it is not a native expectation.
 //!
-//! Other ranks follow without playing again. A range's rank bonus is `trunc(rangeScore * percent / 100)`, added as a
-//! fixed score in the frame of the range's end; it changes no factor and no note score, and a range's score (its end
+//! Other ranks are counterfactual fixed-rank estimates on the same solo score-query path
+//! ([`full::LiveModel::new_gekisou_ranked`]). Opponents are not simulated. Native network ranking instead reads
+//! the controller's frame snapshots, so these estimates are not a native multiplayer frame replay.
+//! A range's rank bonus is `trunc(rangeScore * percent / 100)`, queued at completion with the range's end
+//! timestamp and consumed by a later score update; it changes no factor and no note score, and a range's score (its end
 //! score minus its start score) holds an earlier range's bonus at both ends, so it does not depend on the ranks. At
 //! ranks `r_i` the no-skill score is then exact ([`SeedStats::score_at_ranks`]) and every weight moves by the range
 //! weights ([`SeedStats::weights_at_ranks`]). The ranks reach the skills only through the confirmed-rank condition
@@ -33,7 +37,7 @@
 //!   targets and conditions, value aside) and performance position `k`: `weights[kind][k]`, the exact score gained
 //!   by a deck whose position-`k` member has one such effect at a factor of 1 (value 10000), divided by
 //!   [`POWER`]. The skill runs through the simulation's own updaters, conditions, frames and appliers, so the
-//!   weight carries every rule of the game: its execute and finish frames, the 40 ms score frames, the combo and
+//!   weight carries the modeled rules: its execute and finish frames, the 40 ms score frames, the combo and
 //!   Gekisou combo factors, Just scores, luck rushes and the rank bonuses of the ranges it overlaps;
 //! - with Gekisou on, per range `i` also `range_weights[kind][k][i]`: the range score that effect gains, divided by
 //!   [`POWER`].
@@ -612,7 +616,8 @@ impl Live<'_> {
         Ok((score, ranges))
     }
 
-    /// [`Live::run_deck`], also the number of judgements converted by skills.
+    /// [`Live::run_deck`], also the number of judgements converted by skills. Fixed-rank checks retain the same
+    /// solo timestamp-query definition as the baseline and weights; they are not network opponent simulations.
     #[allow(clippy::too_many_arguments)]
     fn run_counted(
         &self,
@@ -645,7 +650,7 @@ impl Live<'_> {
             None => full::LiveModel::new_gekisou(master, &deck, self.notes, self.events, params, &g.setup)?,
             Some(ranks) => {
                 let mut lm =
-                    full::LiveModel::new_gekisou_external(master, &deck, self.notes, self.events, params, &g.setup)?;
+                    full::LiveModel::new_gekisou_ranked(master, &deck, self.notes, self.events, params, &g.setup)?;
                 for (i, &(rank, percent)) in ranks.iter().enumerate() {
                     lm.queue_gekisou_rank_confirmation(i, rank, percent)?;
                 }
