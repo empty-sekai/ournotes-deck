@@ -15,11 +15,14 @@ fn model_gekisou(skills: &[i64]) -> LiveModel {
     build(skills, true)
 }
 fn build(skills: &[i64], gekisou: bool) -> LiveModel {
+    build_with_note_type(skills, gekisou, 1)
+}
+fn build_with_note_type(skills: &[i64], gekisou: bool, note_operate_type: i32) -> LiveModel {
     let data: Value = serde_json::from_str(include_str!("fixtures/raw_bridge_master.json")).unwrap();
     let tables: Vec<_> =
         data.as_object().unwrap().iter().map(|(k, v)| (k.clone(), json!({"_allData":v}).to_string())).collect();
     let master = Master::from_json_tables(|n| tables.iter().find(|(k, _)| k == n).map(|(_, v)| v.as_str())).unwrap();
-    let notes = [LiveNote { note_id: 1, time_ms: 1000, note_operate_type: 1, judgement_type: 1 }];
+    let notes = [LiveNote { note_id: 1, time_ms: 1000, note_operate_type, judgement_type: 1 }];
     let deck: Vec<_> = skills.iter().map(|&id| Performer { live_skill: Some((id, 1)), ..Default::default() }).collect();
     let events: Vec<_> = skills.iter().enumerate().map(|(i, _)| (i as i32, 0)).collect();
     let params = LiveParams {
@@ -82,6 +85,21 @@ fn milliseconds_limit_runs_after_ft_not_in_submit() {
     assert!(m.score() > 0);
 }
 #[test]
+fn unscored_pass_still_consumes_executor_window_callback() {
+    let mut m = build_with_note_type(&[1], false, 122);
+    m.frame_raw_timed(0, &[], 0.).unwrap();
+    assert_eq!(before(&m, 6), 15);
+    m.begin_raw_frame(1020, 0.016).unwrap();
+    let note = m.submit_raw_judgement(result(7, 20)).unwrap();
+    assert_eq!((note.origin, note.judgement), (7, 7));
+    assert_eq!(before(&m, 6), 15);
+    m.finish_raw_frame().unwrap();
+    // Skipping AddNoteScore must not filter the event before executor window-limit consumption.
+    assert_eq!(before(&m, 6), 10);
+    assert_eq!(m.score(), 0);
+    assert_eq!(m.current_life(), 1000);
+}
+#[test]
 fn just_limit_uses_converted_judgement_and_diff() {
     let mut m = model_gekisou(&[2, 4]);
     m.frame_raw_timed(0, &[], 0.).unwrap();
@@ -93,6 +111,7 @@ fn just_limit_uses_converted_judgement_and_diff() {
     m.finish_raw_frame().unwrap();
     assert_eq!(m.raw_runtime().unwrap().just.remaining(), 0);
     assert_eq!(before(&m, 6), 10);
+    assert_eq!(m.frame_judgements(), &[(1, 6, 1000)]);
 }
 #[test]
 fn diff_converter_precedes_window_limit_callback() {

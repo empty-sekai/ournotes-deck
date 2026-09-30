@@ -26,7 +26,7 @@ Deck power, skip score and live score for BanG Dream! Our Notes, and an exact To
 
 ## Correctness
 
-Correctness has three layers, and each shows something different.
+The checks below establish distinct contracts, each with its own scope and source identity.
 
 **Agreement with the game.** Every calculation follows the game client's code function by function. Each unit is
 then checked against the client's own implementation: the client's arm64 native functions run in an emulator on the
@@ -58,9 +58,11 @@ A search that reaches its time limit returns `TimedOut`, with legal and exactly 
 ranking claim. Inputs outside the proven range, unknown cards, rules the game would reject and parts of the game that
 are not modelled are reported as errors.
 
-**Not yet verified.** How the units combine, frame by frame, into a whole live has not been compared with the game as
-a whole. That needs a recording of a play on a device: the random seed, frame times and each note's judgement.
-With Gekisou on the score depends on the random seed; the search does not offer a Gekisou objective yet.
+**Native update chains.** Offline Unicorn ARM64 executes real client scoring, skill and ranking chains, compared frame by frame at matching inputs and phases. Nine high/medium/low-accuracy × 30/60/120 fps cases have 57,750 frames and 18,826,500 core checks with zero differences. Seven long-chart cases separately have 70,747 frames and 19,971,785 checks with zero differences. Card Gekisou, probability triggers, life conditions and dynamic windows have their own contracts; see the [native validation table](docs/native-validation.en.md). Field counts and reused captures are not additional independent samples.
+
+**Shared runtime.** Per-note replay uses the same Rust model. Across 340 charts × 2 judgement plans × 2 modes, 1,360 Rust / WASM runs match; see the [runtime identity](docs/validation/replay-2026-09-30.json). The checked scoring-model snapshot passes 272 release tests, clippy with denied warnings, fmt and Rust 1.88 checks; see the [production record](docs/validation/production-checks-2026-09-30.json).
+
+**Applicability.** Results are limited to declared resources, inputs, fields and phases. A raw Touch sample using private resource adapters does not release complete physical-touch support; full device and server lifecycles require separate evidence. A per-play result uses explicit judgements, frame order, seed and ranking policy; statistical baselines and weights do not replace it.
 
 ## Data
 
@@ -181,7 +183,7 @@ ournotes-deck chart-stats --data deck-data.json --aptitude-max-seeds 128 --aptit
 ournotes-deck chart-stats --data deck-data.json --no-gekisou-aptitude -o baseline.json
 ```
 
-- `--aptitude-max-seeds N`: at most N seeds for a random increment, default 1024, N at least 2; stop earlier at the SE target.
+- `--aptitude-max-seeds N`: at most N seeds for a random increment, default 65536, N at least 2; stop earlier when both grade endpoints meet their SE targets.
 - `--aptitude-cross-seeds N`: at most the first N seeds for ordinary skill cross terms, default 64, N at least 1.
 - `--no-gekisou-aptitude`: skip aptitude measurement; both file-level and per-chart `gekisouAptitude` are null.
   Existing statistics are still produced.
@@ -201,9 +203,11 @@ position; `rangeWeights` gives the corresponding range changes, not full formati
 a plain kind. Each variant's `check` uses its first measured seed, random ranks and an ordinary-skill deck at
 another power to validate the linear prediction; exceeding its flooring bound fails the measurement.
 
-Random increments use batches of 32, 64, 128, 256, 512 and 1024 seeds, capped by the option, until Δscore's SE is at
-most `max(1% × |mean increment|, 0.1% × mean no-skill score)`. At the cap, `seTargetMet` reports whether this target
-was met. Deterministic increments report one seed and zero SE; four identical samples alone cannot establish that
+Random increments start at 32 seeds and double along the same seed prefix until the configured cap. Preset batches
+extend to 65536; a cap outside those boundaries is included as the final batch.
+`score` and `scorePerfect` each use their own increment mean and no-skill baseline. Both SEs must be at most
+`max(1% × |mean increment|, 0.1% × mean no-skill score)` before stopping. At the cap, `seTargetMet` reports whether
+both targets were met. Deterministic increments report one seed and zero SE; four identical samples alone cannot establish that
 a random skill is deterministic. The seed mean is not the game's expectation: its seed law is unknown, and SE
 does not measure model error. Cross terms can use fewer seeds, reported as `crossSeeds` per variant (0 without a
 plain kind). Meeting the SE target may only satisfy the absolute baseline threshold, not 1% relative precision
@@ -222,6 +226,9 @@ on the increment; a small sample mean's sign alone does not establish that a ski
   approximate: conversion 13005, per-Just support 2001 and Just-count effect 13002 are nonlinear. Perfect-play
   cross weights are not measured, so full aptitude with nonzero ordinary skills is unavailable below 100% Just.
   Scaling by `1 − 0.2q` for Great proportion q is also approximate.
+
+These interpolation and scaling limits concern statistical summaries. A declared per-note play uses the shared
+`replay` API with its actual frame order, skills and seed; see the [model contract](docs/native-validation.en.md#shared-model-contract).
 
 Library callers can use `chart_stats_with` / `document_with` with
 `Options { seeds, aptitude: Some(AptitudeOptions { max_seeds, cross_seeds }) }`; `aptitude: None` disables it.

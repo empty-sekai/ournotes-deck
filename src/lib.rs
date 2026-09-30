@@ -25,6 +25,7 @@ pub mod master;
 pub mod memory;
 pub mod num;
 pub mod power;
+pub mod replay;
 pub mod scenario;
 pub mod search;
 

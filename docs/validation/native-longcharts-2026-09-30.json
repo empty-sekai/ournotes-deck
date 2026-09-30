@@ -1,0 +1,559 @@
+{
+  "schema": "ournotes.longcharts-public-validation/1",
+  "date": "2026-09-30",
+  "qualification": "指定受测判定流、帧序及有限状态字段上的逐帧相等证据；技能池观测由 Rust producer 按明确池身份规范化，不额外证明 Rust 内部容器或效果应用顺序等价。字段次数不是独立实验数或全游戏等价证明。",
+  "nativeVsRust": {
+    "actualCaseCount": 7,
+    "distinctChartCount": 4,
+    "totalFrames": 70747,
+    "totalScalarChecks": 19971785,
+    "differenceCount": 0,
+    "maxDifferenceUlp": 0,
+    "poolCountEachFrame": 30,
+    "cases": [
+      {
+        "caseId": "native-long-10001503-mixed-30",
+        "chartId": 10001503,
+        "fps": 30,
+        "scenario": "mixed",
+        "frameCount": 5215,
+        "scalarChecks": 1474393,
+        "poolCount": 30,
+        "status": "passed",
+        "differenceCount": 0,
+        "maxDifferenceUlp": 0,
+        "originJudgementCounts": {
+          "Perfect": 893,
+          "Great": 353,
+          "Good": 178,
+          "Bad": 177,
+          "Miss": 176,
+          "Just": 0,
+          "Pass": 97,
+          "None": 0
+        },
+        "convertedJudgementCounts": {
+          "Perfect": 893,
+          "Great": 353,
+          "Good": 178,
+          "Bad": 177,
+          "Miss": 176,
+          "Just": 0,
+          "Pass": 97,
+          "None": 0
+        },
+        "judgementCount": 1874,
+        "skillEventCount": 5,
+        "firstLifeZero": {
+          "frameIndex": 342,
+          "frame": 342,
+          "timeMs": 11400,
+          "life": 0
+        },
+        "firstVisibleComboReset": {
+          "frameIndex": 95,
+          "frame": 95,
+          "timeMs": 3166,
+          "previousCombo": 5,
+          "combo": 0
+        },
+        "multipleJudgementFrameCount": 487,
+        "multipleSkillEventFrameCount": 0,
+        "observedTailFrameCount": 60,
+        "observedFinishEpisodeCount": 5,
+        "observedTimestampIntervalsAfterLastJudgement": 0,
+        "sha256": {
+          "nativeCapture": "af4e489ffd9e12c0c846471a3aa4334b831013a5677ae4ec59c06ea91aee2317",
+          "rustCapture": "2a07375bcd6e9ab2b6e7f73fe8645b56fcd8b02cdf58edf15e5e701ca5be5fe7",
+          "contract": "006de4887bbc560b365d8c4c467fa15b6b44b71d517bef491f01e89d405bf0e5",
+          "comparison": "41f4ce91b0ba0912a5951f5e1affebce9fcd3d215bef538f799302f9fc999e9b"
+        }
+      },
+      {
+        "caseId": "native-long-10001503-mixed-60",
+        "chartId": 10001503,
+        "fps": 60,
+        "scenario": "mixed",
+        "frameCount": 10429,
+        "scalarChecks": 2944741,
+        "poolCount": 30,
+        "status": "passed",
+        "differenceCount": 0,
+        "maxDifferenceUlp": 0,
+        "originJudgementCounts": {
+          "Perfect": 893,
+          "Great": 353,
+          "Good": 178,
+          "Bad": 177,
+          "Miss": 176,
+          "Just": 0,
+          "Pass": 97,
+          "None": 0
+        },
+        "convertedJudgementCounts": {
+          "Perfect": 893,
+          "Great": 353,
+          "Good": 178,
+          "Bad": 177,
+          "Miss": 176,
+          "Just": 0,
+          "Pass": 97,
+          "None": 0
+        },
+        "judgementCount": 1874,
+        "skillEventCount": 5,
+        "firstLifeZero": {
+          "frameIndex": 683,
+          "frame": 683,
+          "timeMs": 11383,
+          "life": 0
+        },
+        "firstVisibleComboReset": {
+          "frameIndex": 190,
+          "frame": 190,
+          "timeMs": 3166,
+          "previousCombo": 5,
+          "combo": 0
+        },
+        "multipleJudgementFrameCount": 471,
+        "multipleSkillEventFrameCount": 0,
+        "observedTailFrameCount": 120,
+        "observedFinishEpisodeCount": 5,
+        "observedTimestampIntervalsAfterLastJudgement": 0,
+        "sha256": {
+          "nativeCapture": "4993c68f375791f0ccbb44ed1e93df3a1feaf993d9f30a12bfbb72650e7d2258",
+          "rustCapture": "afc4cd458c4320f3f80e4ffed27d4197afd1e29b2a3d368787eec692894530cc",
+          "contract": "3b4faeb9dd9778967dceab06ed844d45e1a27fd07a1256d57651590e16908b13",
+          "comparison": "0235a3d48609472f2177ec56428e5ae2b832238d3c82b226c65574bb074c4072"
+        }
+      },
+      {
+        "caseId": "native-long-10001503-mixed-120",
+        "chartId": 10001503,
+        "fps": 120,
+        "scenario": "mixed",
+        "frameCount": 20856,
+        "scalarChecks": 5885155,
+        "poolCount": 30,
+        "status": "passed",
+        "differenceCount": 0,
+        "maxDifferenceUlp": 0,
+        "originJudgementCounts": {
+          "Perfect": 893,
+          "Great": 353,
+          "Good": 178,
+          "Bad": 177,
+          "Miss": 176,
+          "Just": 0,
+          "Pass": 97,
+          "None": 0
+        },
+        "convertedJudgementCounts": {
+          "Perfect": 893,
+          "Great": 353,
+          "Good": 178,
+          "Bad": 177,
+          "Miss": 176,
+          "Just": 0,
+          "Pass": 97,
+          "None": 0
+        },
+        "judgementCount": 1874,
+        "skillEventCount": 5,
+        "firstLifeZero": {
+          "frameIndex": 1365,
+          "frame": 1365,
+          "timeMs": 11375,
+          "life": 0
+        },
+        "firstVisibleComboReset": {
+          "frameIndex": 379,
+          "frame": 379,
+          "timeMs": 3158,
+          "previousCombo": 5,
+          "combo": 0
+        },
+        "multipleJudgementFrameCount": 463,
+        "multipleSkillEventFrameCount": 0,
+        "observedTailFrameCount": 240,
+        "observedFinishEpisodeCount": 5,
+        "observedTimestampIntervalsAfterLastJudgement": 0,
+        "sha256": {
+          "nativeCapture": "95b87c83849b9e0c9cb5b88ed8b54f4c27136b4a4e86ae69786509f6372ba659",
+          "rustCapture": "dbfb3e6535d67056b8e8fdc75bd7c32b1ab128936d533648655492efd10fc6d7",
+          "contract": "ce10249b0d0337429d1e6d7f25736033e86beff3688631e2e07f4077f59c84b1",
+          "comparison": "a1ae01408274a933e72b6397a6ac2526f3df07811089b6eca89c323494088a41"
+        }
+      },
+      {
+        "caseId": "native-long-10001503-low-60",
+        "chartId": 10001503,
+        "fps": 60,
+        "scenario": "low",
+        "frameCount": 10429,
+        "scalarChecks": 2944741,
+        "poolCount": 30,
+        "status": "passed",
+        "differenceCount": 0,
+        "maxDifferenceUlp": 0,
+        "originJudgementCounts": {
+          "Perfect": 175,
+          "Great": 357,
+          "Good": 359,
+          "Bad": 355,
+          "Miss": 531,
+          "Just": 0,
+          "Pass": 97,
+          "None": 0
+        },
+        "convertedJudgementCounts": {
+          "Perfect": 175,
+          "Great": 357,
+          "Good": 359,
+          "Bad": 355,
+          "Miss": 531,
+          "Just": 0,
+          "Pass": 97,
+          "None": 0
+        },
+        "judgementCount": 1874,
+        "skillEventCount": 5,
+        "firstLifeZero": {
+          "frameIndex": 351,
+          "frame": 351,
+          "timeMs": 5850,
+          "life": 0
+        },
+        "firstVisibleComboReset": {
+          "frameIndex": 171,
+          "frame": 171,
+          "timeMs": 2850,
+          "previousCombo": 3,
+          "combo": 0
+        },
+        "multipleJudgementFrameCount": 471,
+        "multipleSkillEventFrameCount": 0,
+        "observedTailFrameCount": 120,
+        "observedFinishEpisodeCount": 5,
+        "observedTimestampIntervalsAfterLastJudgement": 0,
+        "sha256": {
+          "nativeCapture": "58b3d55e67c1ba53d1e7421fb8581db9791494440c269d220caa0436304161f0",
+          "rustCapture": "1e6da17cad09ff888cfc801bb6a681fcc7dfc88ae59d93ab4e1c2c59b5e02a0f",
+          "contract": "3b4faeb9dd9778967dceab06ed844d45e1a27fd07a1256d57651590e16908b13",
+          "comparison": "8e4cc4d128e72381a039e4c537f1599e00364d531820a058006b152763a88ef1"
+        }
+      },
+      {
+        "caseId": "native-long-10003402-mixed-60",
+        "chartId": 10003402,
+        "fps": 60,
+        "scenario": "mixed",
+        "frameCount": 9405,
+        "scalarChecks": 2654109,
+        "poolCount": 30,
+        "status": "passed",
+        "differenceCount": 0,
+        "maxDifferenceUlp": 0,
+        "originJudgementCounts": {
+          "Perfect": 408,
+          "Great": 162,
+          "Good": 82,
+          "Bad": 83,
+          "Miss": 83,
+          "Just": 0,
+          "Pass": 124,
+          "None": 0
+        },
+        "convertedJudgementCounts": {
+          "Perfect": 408,
+          "Great": 162,
+          "Good": 82,
+          "Bad": 83,
+          "Miss": 83,
+          "Just": 0,
+          "Pass": 124,
+          "None": 0
+        },
+        "judgementCount": 942,
+        "skillEventCount": 5,
+        "firstLifeZero": {
+          "frameIndex": 1097,
+          "frame": 1097,
+          "timeMs": 18283,
+          "life": 0
+        },
+        "firstVisibleComboReset": {
+          "frameIndex": 201,
+          "frame": 201,
+          "timeMs": 3350,
+          "previousCombo": 6,
+          "combo": 0
+        },
+        "multipleJudgementFrameCount": 143,
+        "multipleSkillEventFrameCount": 0,
+        "observedTailFrameCount": 120,
+        "observedFinishEpisodeCount": 5,
+        "observedTimestampIntervalsAfterLastJudgement": 0,
+        "sha256": {
+          "nativeCapture": "3ec2403ac876dba1154c60e2d68b0fa1ba606c22c8269429621fd592f1d2f8a1",
+          "rustCapture": "ee01d80657048a58df1d6f2977a21996619d0f7672bd826e3de244a3778b9088",
+          "contract": "129946f7ca8deadc47972d1a70c9ada6cd6c4abf9fdbf5eb33ffecc78ccacb44",
+          "comparison": "636b7a7c01219d1d76ad1408be154cbfe118fc6142e18eb57d7a5578e9c4199b"
+        }
+      },
+      {
+        "caseId": "native-long-10005603-tail-boundary-60",
+        "chartId": 10005603,
+        "fps": 60,
+        "scenario": "tail-boundary",
+        "frameCount": 5606,
+        "scalarChecks": 1582849,
+        "poolCount": 30,
+        "status": "passed",
+        "differenceCount": 0,
+        "maxDifferenceUlp": 0,
+        "originJudgementCounts": {
+          "Perfect": 420,
+          "Great": 165,
+          "Good": 89,
+          "Bad": 85,
+          "Miss": 84,
+          "Just": 0,
+          "Pass": 128,
+          "None": 0
+        },
+        "convertedJudgementCounts": {
+          "Perfect": 420,
+          "Great": 165,
+          "Good": 89,
+          "Bad": 85,
+          "Miss": 84,
+          "Just": 0,
+          "Pass": 128,
+          "None": 0
+        },
+        "judgementCount": 971,
+        "skillEventCount": 5,
+        "firstLifeZero": {
+          "frameIndex": 641,
+          "frame": 641,
+          "timeMs": 10683,
+          "life": 0
+        },
+        "firstVisibleComboReset": {
+          "frameIndex": 180,
+          "frame": 180,
+          "timeMs": 3000,
+          "previousCombo": 4,
+          "combo": 0
+        },
+        "multipleJudgementFrameCount": 305,
+        "multipleSkillEventFrameCount": 0,
+        "observedTailFrameCount": 111,
+        "observedFinishEpisodeCount": 5,
+        "observedTimestampIntervalsAfterLastJudgement": 0,
+        "sha256": {
+          "nativeCapture": "b3bf7fa80e42d3b81d9a97e2f68280358b875ec380fb41ca717741065e295cd8",
+          "rustCapture": "3238033b89381deeee898ac3df24b3f4ef735284efd8f1551530af93831e0cdd",
+          "contract": "1caa1db3b8c0ef2359f30086cd346c4b60981404a3557809ad236eaad4815055",
+          "comparison": "74828f7e39a25cb553f41d8aff0260fc620738345df99c07d6445d0d6855db1b"
+        }
+      },
+      {
+        "caseId": "native-long-10010703-mixed-60",
+        "chartId": 10010703,
+        "fps": 60,
+        "scenario": "mixed",
+        "frameCount": 8807,
+        "scalarChecks": 2485797,
+        "poolCount": 30,
+        "status": "passed",
+        "differenceCount": 0,
+        "maxDifferenceUlp": 0,
+        "originJudgementCounts": {
+          "Perfect": 483,
+          "Great": 187,
+          "Good": 103,
+          "Bad": 90,
+          "Miss": 97,
+          "Just": 0,
+          "Pass": 144,
+          "None": 0
+        },
+        "convertedJudgementCounts": {
+          "Perfect": 483,
+          "Great": 187,
+          "Good": 103,
+          "Bad": 90,
+          "Miss": 97,
+          "Just": 0,
+          "Pass": 144,
+          "None": 0
+        },
+        "judgementCount": 1104,
+        "skillEventCount": 5,
+        "firstLifeZero": {
+          "frameIndex": 893,
+          "frame": 893,
+          "timeMs": 14883,
+          "life": 0
+        },
+        "firstVisibleComboReset": {
+          "frameIndex": 286,
+          "frame": 286,
+          "timeMs": 4766,
+          "previousCombo": 5,
+          "combo": 0
+        },
+        "multipleJudgementFrameCount": 299,
+        "multipleSkillEventFrameCount": 0,
+        "observedTailFrameCount": 120,
+        "observedFinishEpisodeCount": 5,
+        "observedTimestampIntervalsAfterLastJudgement": 0,
+        "sha256": {
+          "nativeCapture": "86fe7a39ad00f5fb0318c0b513d000fb5ba91f3c98348918088b35a00c4ad292",
+          "rustCapture": "b5a7559bbdcc7884997e0bc112f19900a13d5b76b29db56cbb24eaa81d5bb5b8",
+          "contract": "75689013027ca9288f2f4171955ef9af5f49ab4e64b929cd989fdd3af0ee6ae6",
+          "comparison": "caecd4e774195b35bb59db761e60d0ceb2e9228e01dca5c944e29183acc870cb"
+        }
+      }
+    ]
+  },
+  "fieldContract": {
+    "frameIntegerFields": [
+      "frame",
+      "timeMs",
+      "score",
+      "life",
+      "combo"
+    ],
+    "frameFloat32BitFields": [
+      "deltaTimeBits"
+    ],
+    "factorFloat32BitFields": [
+      "float32Bits.comboScoreUp",
+      "float32Bits.noteScoreUp",
+      "float32Bits.just",
+      "float32Bits.perfect",
+      "float32Bits.great",
+      "float32Bits.good"
+    ],
+    "orderedSkillIntegerFields": [
+      "skills.*.index",
+      "skills.*.poolIndex",
+      "skills.*.effectId",
+      "skills.*.skillState",
+      "skills.*.state",
+      "skills.*.executeMs",
+      "skills.*.finishMs",
+      "skills.*.cumulativeCount"
+    ],
+    "orderedSkillFloat32BitFields": [
+      "skills.*.extendedBits"
+    ],
+    "orderedSkillEventIntegerFields": [
+      "skillEvents.*.index",
+      "skillEvents.*.timeMs",
+      "skillEvents.*.frame"
+    ],
+    "orderedConvertedJudgementIntegerFields": [
+      "convertedFrameJudgements.*.noteId",
+      "convertedFrameJudgements.*.judgement"
+    ],
+    "nativeOriginCollectionRequired": true,
+    "nativeOriginCollectionChecks": [
+      "ordered length equals converted",
+      "ordered noteId equals converted"
+    ],
+    "timeRules": "timeMs >= 0 and strictly increasing; deltaTime finite and >= 0",
+    "skillTimestampRules": "executeMs and finishMs >= -1; -1 is an allowed sentinel",
+    "poolOrder": "Comparator compares the supplied serialized array ordinal without sorting or matching by identity; Rust serializes skills after canonicalizing by (index, poolIndex, effectId), so this is not an internal-container-order comparison."
+  },
+  "inputLevel": "controlled-native-auto-input; Rust replays native judgement records",
+  "scope": [
+    "原生 ARM64 执行受测普通技能的构造、SkillExecutor 真实触发和成员路由、阶段更新、技能效果应用及帧后计分状态。",
+    "按原观测顺序核对 converted 判定及技能事件；Rust 技能池观测在序列化前按 (index,poolIndex,effectId) 规范化，所有 30 个池身份对应的九字段（含 inactive）参与比较。",
+    "比较器对收到的序列化数组按 ordinal 检查，本身不排序或按 ID 重配对；帧与整数逐项相等，deltaTime、六个计分因子与 extended 按 float32 原始位相等，不移帧、不容差。",
+    "原生 origin 判定保存为采集诊断并检查数量和 noteId 顺序；它不是独立 Rust 输入分类器验证。"
+  ],
+  "oracleSubstitutions": [
+    "原生端由可控 auto-input 提供逐音符判定配置及命中时间；Rust 输入来自原生实际判定记录。",
+    "离线运行包含 icall/表现依赖替身、显示文本 ID 替身及观察钩子；没有真实 Unity 客户端会话或服务器。",
+    "此构造中 SkillInput 的 progress、currentFrameCombo 为 0，isLiveFinished 为 false；相关全条件与结束状态不能由本样本推广。"
+  ],
+  "excludedFromScalarComparisons": [
+    "native origin classification independence",
+    "native elapsedBits",
+    "native countDecrease",
+    "judgedCount",
+    "soloScore",
+    "intermediate scoreStages",
+    "diagnostic boundary summaries"
+  ],
+  "pendingOrNotClaimed": [
+    "同帧多个技能事件：七组实际观测次数均为 0。",
+    "最后判定后仍未结束的技能：七组已观测时间戳区间计数均为 0，尚无此边界覆盖证明。",
+    "真实触摸判定窗口、全部技能与非线性组合、完整暂停/重试/失败/结束生命周期及服务器逻辑。",
+    "life=0 后继续观测计分状态相等，不证明失败/退出生命周期。",
+    "技能池内部效果容器/应用顺序等价：Rust producer 已规范化池观测数组，且没有独立保存排序前观测，本比较不能额外证明内部顺序。"
+  ],
+  "comparatorValidation": {
+    "testMethods": 33,
+    "recordedSyntheticSubcases": 64,
+    "failures": 0,
+    "errors": 0,
+    "successful": true,
+    "qualification": "合成区分性测试，非额外原生样本；覆盖缺项/空池、共同截尾、事件/判定/池顺序、inactive 时间戳及 1 ULP 等拒绝条件。"
+  },
+  "sourceIdentity": {
+    "productionSourceSnapshotSha256": "6ea8a51dfb6e8b9702229a3fd2b3d64ed6689b885581f3512fb7a3158c6f0cd5",
+    "snapshotFileCount": 55,
+    "stableBeforeAfterAndCopyRecorded": true,
+    "sourceSnapshotIncludesUncommittedProductionChanges": true,
+    "comparatorSha256": "f487869ef968486261991aa1a7fd29c20616cb9c09b76825c0a4b011e26ad0a5",
+    "testModuleSha256": "ae3c57cf126e4cbbca99af74da3bc48533fb6483ef85e5f4ae159e7bdf087240",
+    "arm64ExecutableSha256": "5a79dd5d9c479ed5a636193394f040f21a1f7b070d0869095e1af63b3f84ef88",
+    "qualification": "冻结生产源快照仅标识这七例来源，不是最新发布版本的全源身份；来源含复制时未提交修改，不能用 Git HEAD 替代，亦不等同于全部探针/诊断驱动总哈希。"
+  },
+  "portability": {
+    "kind": "native-arm64-windows-to-linux-portability-rerun",
+    "chartId": 10001503,
+    "fps": 30,
+    "scenario": "mixed",
+    "frameCount": 5215,
+    "scalarChecks": 1474393,
+    "status": "passed",
+    "differenceCount": 0,
+    "maxDifferenceUlp": 0,
+    "countsAsAdditionalNativeVsRustExperiment": false,
+    "remoteInputFilesShaVerified": true,
+    "sha256": {
+      "linuxNativeCapture": "9aedf7092f1701a8a44b8f5ac80185bd812aa8cea68b9d4c4167febcb7da39d7",
+      "windowsNativeCapture": "af4e489ffd9e12c0c846471a3aa4334b831013a5677ae4ec59c06ea91aee2317",
+      "contract": "006de4887bbc560b365d8c4c467fa15b6b44b71d517bef491f01e89d405bf0e5",
+      "comparison": "66a7d3f184db12300c2837d1644097538cc2a42e7100965901979590655aec69",
+      "arm64Executable": "5a79dd5d9c479ed5a636193394f040f21a1f7b070d0869095e1af63b3f84ef88"
+    },
+    "qualification": "同一 ARM64 机器码在 Windows 与 Linux 离线原生仿真之间的移植重跑；复用了已有 Windows 原生样本，不是第八组原生与 Rust 样本。",
+    "localLinuxNativeCaptureShaVerified": true
+  },
+  "publicationBoundary": "仅发布聚合状态字段、案例标识与实际 SHA；不含原始谱面、逐音符输入、master 内容、二进制或私有绝对路径。",
+  "skillObservationOrdering": {
+    "canonicalizationProducer": "Rust diagnostic serializer, before JSON capture serialization",
+    "canonicalizationKeys": [
+      "index",
+      "poolIndex",
+      "effectId"
+    ],
+    "identityMapping": {
+      "index": "member",
+      "poolIndex": "live pool instance index",
+      "effectId": "effect row ID"
+    },
+    "getterEnumeration": "live.iter() then each live entry effects.iter()",
+    "comparatorOrdering": "supplied serialized array ordinal; comparator does not sort or match by identity",
+    "engineStateMutation": "sorting is applied to a separate JSON observation Vec after the read-only getter; it does not sort the model itself",
+    "skillEventsAndConvertedJudgements": "original observed order preserved; driver maps and collects these without sorting",
+    "limitation": "未保存并比较排序前技能数组，不能断言规范化在七例中天然不改变顺序。此字段证据验证明确池身份对应的状态，不额外证明 Rust 内部效果容器/应用顺序与原生等价。"
+  }
+}

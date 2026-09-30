@@ -1,0 +1,867 @@
+{
+  "status": "equal_declared_fields",
+  "passedRows": [
+    {
+      "id": "card-just-pilot-state-fixed",
+      "label": "Real Just cards and cumulative Just",
+      "chartId": 10000201,
+      "fps": 60,
+      "frames": 3000,
+      "checks": 1551000,
+      "differences": 0,
+      "effectPoolInstances": 50,
+      "nativeTraceSha256": "d15ae5a17e63a47594404331e32421dbbbdb5473cc51c69fd3ef70a351a39c0b",
+      "rustTraceSha256": "ff87b18c076d44e7df3bb569d2b2cbec494674a4dc127ba2d66dbe7d9731ba27",
+      "comparisonSha256": "5b4a75bf403164867f788ed8962bcfa66d6ef6893e8d0f23e68a4728e1f94478",
+      "inputSequenceSha256": "55808d959771fe2125b1065cc6062615562f74e9e2f4c7d53f45f198fa5e7e74",
+      "fieldsCompared": [
+        "frame",
+        "timeMs",
+        "score",
+        "life",
+        "combo",
+        "settledScore"
+      ],
+      "rangeFieldsCompared": [
+        "state",
+        "combo",
+        "maxCombo",
+        "justCount",
+        "startScore",
+        "endScore",
+        "luckPoints",
+        "luckGauge",
+        "rushCombo"
+      ],
+      "skillFieldsCompared": [
+        "skillType",
+        "index",
+        "poolIndex",
+        "effectId",
+        "state",
+        "executeMs",
+        "finishMs",
+        "extendedBits",
+        "cumulativeCount"
+      ],
+      "actualOriginJudgements": {
+        "5": 144,
+        "6": 35
+      },
+      "actualConvertedJudgements": {
+        "5": 144,
+        "6": 35
+      },
+      "actualConversionCounts": {},
+      "fieldsMissing": [
+        "maxCombo",
+        "judgedCount",
+        "randomDraws",
+        "rawJustCount",
+        "judgedCount",
+        "float32Bits.accuracyAverage",
+        "conditional-skill parent skillState",
+        "elapsedBits",
+        "countDecrease"
+      ],
+      "factorStages": "single native post-applier/pre-ranking snapshot; later dual-stage cases qualify ranking-stage differences",
+      "nativeFinal": {
+        "score": 1740885,
+        "settledScore": 1740885,
+        "combo": 179,
+        "life": 1000
+      },
+      "musicLengthMs": 91667,
+      "dynamicWindowUnitsCompared": 0,
+      "rngDrawCountCompared": false
+    },
+    {
+      "id": "card-combo-support-low",
+      "label": "Combo cards, grade conversion and combo protection / low accuracy",
+      "chartId": 10000103,
+      "fps": 60,
+      "frames": 5500,
+      "checks": 3833500,
+      "differences": 0,
+      "effectPoolInstances": 70,
+      "nativeTraceSha256": "200228d8c109396fff37949b71df684e68c82cbdeb2bffe9e0b400af81f35502",
+      "rustTraceSha256": "ff235aceccda5f1b394dcdf7a81fa3e4fe882e2aaf401c6f2ef5235fdedbf881",
+      "comparisonSha256": "bc58ce1f145be8491c5ffc93657afdd82541e918a1416edd68a0f6376f979786",
+      "inputSequenceSha256": "527f7c00382dc5f7bbf29370865d9b632233500029b2b0744ecba60adc2ba128",
+      "fieldsCompared": [
+        "frame",
+        "timeMs",
+        "score",
+        "life",
+        "combo",
+        "settledScore"
+      ],
+      "rangeFieldsCompared": [
+        "state",
+        "combo",
+        "maxCombo",
+        "justCount",
+        "startScore",
+        "endScore",
+        "luckPoints",
+        "luckGauge",
+        "rushCombo"
+      ],
+      "skillFieldsCompared": [
+        "skillType",
+        "index",
+        "poolIndex",
+        "effectId",
+        "state",
+        "executeMs",
+        "finishMs",
+        "extendedBits",
+        "cumulativeCount"
+      ],
+      "actualOriginJudgements": {
+        "1": 103,
+        "2": 108,
+        "3": 111,
+        "4": 106,
+        "5": 301,
+        "7": 54
+      },
+      "actualConvertedJudgements": {
+        "1": 103,
+        "2": 108,
+        "3": 99,
+        "4": 97,
+        "5": 322,
+        "7": 54
+      },
+      "actualConversionCounts": {
+        "4->5": 9,
+        "3->5": 12
+      },
+      "fieldsMissing": [
+        "maxCombo",
+        "judgedCount",
+        "randomDraws",
+        "rawJustCount",
+        "judgedCount",
+        "float32Bits.accuracyAverage",
+        "conditional-skill parent skillState",
+        "elapsedBits",
+        "countDecrease"
+      ],
+      "factorStages": "single native post-applier/pre-ranking snapshot; later dual-stage cases qualify ranking-stage differences",
+      "nativeFinal": {
+        "score": 419698,
+        "settledScore": 419698,
+        "combo": 88,
+        "life": 0
+      },
+      "musicLengthMs": 91667,
+      "dynamicWindowUnitsCompared": 0,
+      "rngDrawCountCompared": false
+    },
+    {
+      "id": "card-just-support-low-phase2",
+      "label": "Just cards and cumulative support / low accuracy",
+      "chartId": 10000201,
+      "fps": 60,
+      "frames": 5500,
+      "checks": 4361500,
+      "differences": 0,
+      "effectPoolInstances": 80,
+      "nativeTraceSha256": "599d74bf82ad771feb39f41199e0c1951e1a869b252143b2f5b00fc9559d9668",
+      "rustTraceSha256": "59dc8f4a217fc3994971a8554dc8a00b844b755308dc2f8096e9c34d615a1540",
+      "comparisonSha256": "866949dbc99044296f69c12ea3308366429c9863e42e36bb64283639bc2ab390",
+      "inputSequenceSha256": "90646aad9a934fe637d5c46dcf637cfde5fd318dc93b8a296cafbad92e557e04",
+      "fieldsCompared": [
+        "frame",
+        "timeMs",
+        "score",
+        "life",
+        "combo",
+        "settledScore"
+      ],
+      "rangeFieldsCompared": [
+        "state",
+        "combo",
+        "maxCombo",
+        "justCount",
+        "startScore",
+        "endScore",
+        "luckPoints",
+        "luckGauge",
+        "rushCombo"
+      ],
+      "skillFieldsCompared": [
+        "skillType",
+        "index",
+        "poolIndex",
+        "effectId",
+        "state",
+        "executeMs",
+        "finishMs",
+        "extendedBits",
+        "cumulativeCount"
+      ],
+      "actualOriginJudgements": {
+        "1": 72,
+        "2": 73,
+        "3": 73,
+        "4": 73,
+        "5": 58,
+        "6": 15
+      },
+      "actualConvertedJudgements": {
+        "1": 72,
+        "2": 73,
+        "3": 73,
+        "4": 73,
+        "5": 58,
+        "6": 15
+      },
+      "actualConversionCounts": {},
+      "fieldsMissing": [
+        "maxCombo",
+        "judgedCount",
+        "randomDraws",
+        "rawJustCount",
+        "judgedCount",
+        "float32Bits.accuracyAverage",
+        "conditional-skill parent skillState",
+        "elapsedBits",
+        "countDecrease"
+      ],
+      "factorStages": "before and after ranking",
+      "nativeFinal": {
+        "score": 502768,
+        "settledScore": 502768,
+        "combo": 0,
+        "life": 0
+      },
+      "musicLengthMs": 91667,
+      "dynamicWindowUnitsCompared": 0,
+      "rngDrawCountCompared": false
+    },
+    {
+      "id": "card-just-support-high-phase2",
+      "label": "Just cards, conversion and cumulative support / high accuracy",
+      "chartId": 10000201,
+      "fps": 60,
+      "frames": 5500,
+      "checks": 4361500,
+      "differences": 0,
+      "effectPoolInstances": 80,
+      "nativeTraceSha256": "7b0d1d24adf67b23087868a4cdbe51beda6ff6456285b83b233dfe7f5c603cb0",
+      "rustTraceSha256": "25996b1c6a8f7c369c629a873dabd2f6447fe8e3495d124dc4effad04e8627b7",
+      "comparisonSha256": "83b1586dc2960e7b70a046ed48b4f8caf7af565dc5856b03e6e24f87ba725714",
+      "inputSequenceSha256": "d92d3862e4cd6e5a6384d7dec09ca6c16c0edcc75d37f4405a55219a4ca00991",
+      "fieldsCompared": [
+        "frame",
+        "timeMs",
+        "score",
+        "life",
+        "combo",
+        "settledScore"
+      ],
+      "rangeFieldsCompared": [
+        "state",
+        "combo",
+        "maxCombo",
+        "justCount",
+        "startScore",
+        "endScore",
+        "luckPoints",
+        "luckGauge",
+        "rushCombo"
+      ],
+      "skillFieldsCompared": [
+        "skillType",
+        "index",
+        "poolIndex",
+        "effectId",
+        "state",
+        "executeMs",
+        "finishMs",
+        "extendedBits",
+        "cumulativeCount"
+      ],
+      "actualOriginJudgements": {
+        "5": 279,
+        "6": 85
+      },
+      "actualConvertedJudgements": {
+        "5": 277,
+        "6": 87
+      },
+      "actualConversionCounts": {
+        "5->6": 2
+      },
+      "fieldsMissing": [
+        "maxCombo",
+        "judgedCount",
+        "randomDraws",
+        "rawJustCount",
+        "judgedCount",
+        "float32Bits.accuracyAverage",
+        "conditional-skill parent skillState",
+        "elapsedBits",
+        "countDecrease"
+      ],
+      "factorStages": "before and after ranking",
+      "nativeFinal": {
+        "score": 5195801,
+        "settledScore": 5195801,
+        "combo": 364,
+        "life": 1000
+      },
+      "musicLengthMs": 91667,
+      "dynamicWindowUnitsCompared": 0,
+      "rngDrawCountCompared": false
+    },
+    {
+      "id": "card-luck-support-low-longmusic",
+      "label": "Luck cards, probability-up, gauge and score support / low accuracy / explicit long diagnostic length",
+      "chartId": 10000303,
+      "fps": 60,
+      "frames": 8000,
+      "checks": 5656000,
+      "differences": 0,
+      "effectPoolInstances": 70,
+      "nativeTraceSha256": "62731bb2981dae79bfa2382b28f26ca6b0491d1c222addb29e8b32241f64b527",
+      "rustTraceSha256": "33cc79249bfa1383e8ecf72b22739d1434434db357d01aec0f427352353ee048",
+      "comparisonSha256": "03265d4a0a042ea177d33f234b2b174e3284942da2fa74249ad94494342b854f",
+      "inputSequenceSha256": "1463b249622beb67cd1fc0857cc511721a52c0254bc1353c5d98578f082c291e",
+      "fieldsCompared": [
+        "frame",
+        "timeMs",
+        "score",
+        "life",
+        "combo",
+        "settledScore",
+        "randomDraws"
+      ],
+      "rangeFieldsCompared": [
+        "state",
+        "combo",
+        "maxCombo",
+        "justCount",
+        "startScore",
+        "endScore",
+        "luckPoints",
+        "luckGauge",
+        "rushCombo",
+        "rawJustCount"
+      ],
+      "skillFieldsCompared": [
+        "skillType",
+        "index",
+        "poolIndex",
+        "effectId",
+        "state",
+        "executeMs",
+        "finishMs",
+        "extendedBits",
+        "cumulativeCount"
+      ],
+      "actualOriginJudgements": {
+        "1": 152,
+        "2": 156,
+        "3": 160,
+        "4": 161,
+        "5": 383,
+        "7": 55
+      },
+      "actualConvertedJudgements": {
+        "1": 152,
+        "2": 156,
+        "3": 160,
+        "4": 161,
+        "5": 383,
+        "7": 55
+      },
+      "actualConversionCounts": {},
+      "fieldsMissing": [
+        "maxCombo",
+        "judgedCount",
+        "judgedCount",
+        "float32Bits.accuracyAverage",
+        "conditional-skill parent skillState",
+        "elapsedBits",
+        "countDecrease"
+      ],
+      "factorStages": "before and after ranking",
+      "nativeFinal": {
+        "score": 436522,
+        "settledScore": 436522,
+        "combo": 0,
+        "life": 0
+      },
+      "musicLengthMs": 133350,
+      "dynamicWindowUnitsCompared": 0,
+      "rngDrawCountCompared": true
+    },
+    {
+      "id": "card-combo-support-medium30",
+      "label": "Combo cards and supports / medium accuracy / 30 Hz",
+      "chartId": 10000103,
+      "fps": 30,
+      "frames": 2750,
+      "checks": 1944250,
+      "differences": 0,
+      "effectPoolInstances": 70,
+      "nativeTraceSha256": "274007c6d293120f3d7f45c0b31c463b4632ba4bb0f75bef801f19e22ceb374d",
+      "rustTraceSha256": "6f5e9f07bffb6febfb359ab8b51ef426f6f8b2c27e56138f63661d30f703d7fb",
+      "comparisonSha256": "15fe959d8b668de88368999aeda836ead5de58976d46e96e3ee3597b8400a9b5",
+      "inputSequenceSha256": "459a4d11625013b3d748a527b7159b3b3d286558c2759261b70cb5689cc155b6",
+      "fieldsCompared": [
+        "frame",
+        "timeMs",
+        "score",
+        "life",
+        "combo",
+        "settledScore",
+        "randomDraws"
+      ],
+      "rangeFieldsCompared": [
+        "state",
+        "combo",
+        "maxCombo",
+        "justCount",
+        "startScore",
+        "endScore",
+        "luckPoints",
+        "luckGauge",
+        "rushCombo",
+        "rawJustCount"
+      ],
+      "skillFieldsCompared": [
+        "skillType",
+        "index",
+        "poolIndex",
+        "effectId",
+        "state",
+        "executeMs",
+        "finishMs",
+        "extendedBits",
+        "cumulativeCount"
+      ],
+      "actualOriginJudgements": {
+        "2": 56,
+        "3": 57,
+        "4": 157,
+        "5": 459,
+        "7": 54
+      },
+      "actualConvertedJudgements": {
+        "2": 56,
+        "3": 50,
+        "4": 143,
+        "5": 480,
+        "7": 54
+      },
+      "actualConversionCounts": {
+        "4->5": 14,
+        "3->5": 7
+      },
+      "fieldsMissing": [
+        "maxCombo",
+        "judgedCount",
+        "judgedCount",
+        "float32Bits.accuracyAverage",
+        "conditional-skill parent skillState",
+        "elapsedBits",
+        "countDecrease"
+      ],
+      "factorStages": "before and after ranking",
+      "nativeFinal": {
+        "score": 1214536,
+        "settledScore": 1214536,
+        "combo": 95,
+        "life": 0
+      },
+      "musicLengthMs": 91667,
+      "dynamicWindowUnitsCompared": 0,
+      "rngDrawCountCompared": true
+    },
+    {
+      "id": "card-just-support-medium120",
+      "label": "Just cards and supports / medium accuracy / 120 Hz",
+      "chartId": 10000201,
+      "fps": 120,
+      "frames": 11000,
+      "checks": 8767000,
+      "differences": 0,
+      "effectPoolInstances": 80,
+      "nativeTraceSha256": "9d62927ff5c29e86552751a7bad2552ec6a3730519bd4ce15d93c8f0707d93ca",
+      "rustTraceSha256": "68518e4fff6a84116cb65d88f74841754e30e3a6bc5d27b577b6b1e9cda254db",
+      "comparisonSha256": "ac813b864c6b2ce1d8a587c8df73fc6beca4f0c3114565cec45dac21c6e2187d",
+      "inputSequenceSha256": "bcc4b93f2f7351f9f77a7b2eba1dadbc741858b09be98ecb44ee335884fffcdf",
+      "fieldsCompared": [
+        "frame",
+        "timeMs",
+        "score",
+        "life",
+        "combo",
+        "settledScore",
+        "randomDraws"
+      ],
+      "rangeFieldsCompared": [
+        "state",
+        "combo",
+        "maxCombo",
+        "justCount",
+        "startScore",
+        "endScore",
+        "luckPoints",
+        "luckGauge",
+        "rushCombo",
+        "rawJustCount"
+      ],
+      "skillFieldsCompared": [
+        "skillType",
+        "index",
+        "poolIndex",
+        "effectId",
+        "state",
+        "executeMs",
+        "finishMs",
+        "extendedBits",
+        "cumulativeCount"
+      ],
+      "actualOriginJudgements": {
+        "2": 36,
+        "3": 73,
+        "4": 109,
+        "5": 113,
+        "6": 33
+      },
+      "actualConvertedJudgements": {
+        "2": 36,
+        "3": 73,
+        "4": 109,
+        "5": 113,
+        "6": 33
+      },
+      "actualConversionCounts": {},
+      "fieldsMissing": [
+        "maxCombo",
+        "judgedCount",
+        "judgedCount",
+        "float32Bits.accuracyAverage",
+        "conditional-skill parent skillState",
+        "elapsedBits",
+        "countDecrease"
+      ],
+      "factorStages": "before and after ranking",
+      "nativeFinal": {
+        "score": 1410535,
+        "settledScore": 1410535,
+        "combo": 6,
+        "life": 0
+      },
+      "musicLengthMs": 91667,
+      "dynamicWindowUnitsCompared": 0,
+      "rngDrawCountCompared": true
+    },
+    {
+      "id": "card-luck-support-low-audio",
+      "label": "Luck cards and supports / low accuracy / actual ACB-derived audio length",
+      "chartId": 10000303,
+      "fps": 60,
+      "frames": 7500,
+      "checks": 5302500,
+      "differences": 0,
+      "effectPoolInstances": 70,
+      "nativeTraceSha256": "5b7840bb7c2a1ec750da716eab62c817bcd2741698d7380254b7e1725cceba01",
+      "rustTraceSha256": "ace9a04a26fa6621b31cda43bf69086228135870ad73f21e2e9d1d3be8478735",
+      "comparisonSha256": "f64140821f0b627655f678db3cf5ecd388a3d038bff98f873f8b4c1d22784f71",
+      "inputSequenceSha256": "1463b249622beb67cd1fc0857cc511721a52c0254bc1353c5d98578f082c291e",
+      "fieldsCompared": [
+        "frame",
+        "timeMs",
+        "score",
+        "life",
+        "combo",
+        "settledScore",
+        "randomDraws"
+      ],
+      "rangeFieldsCompared": [
+        "state",
+        "combo",
+        "maxCombo",
+        "justCount",
+        "startScore",
+        "endScore",
+        "luckPoints",
+        "luckGauge",
+        "rushCombo",
+        "rawJustCount"
+      ],
+      "skillFieldsCompared": [
+        "skillType",
+        "index",
+        "poolIndex",
+        "effectId",
+        "state",
+        "executeMs",
+        "finishMs",
+        "extendedBits",
+        "cumulativeCount"
+      ],
+      "actualOriginJudgements": {
+        "1": 152,
+        "2": 156,
+        "3": 160,
+        "4": 161,
+        "5": 383,
+        "7": 55
+      },
+      "actualConvertedJudgements": {
+        "1": 152,
+        "2": 156,
+        "3": 160,
+        "4": 161,
+        "5": 383,
+        "7": 55
+      },
+      "actualConversionCounts": {},
+      "fieldsMissing": [
+        "maxCombo",
+        "judgedCount",
+        "judgedCount",
+        "float32Bits.accuracyAverage",
+        "conditional-skill parent skillState",
+        "elapsedBits",
+        "countDecrease"
+      ],
+      "factorStages": "before and after ranking",
+      "nativeFinal": {
+        "score": 436522,
+        "settledScore": 436522,
+        "combo": 0,
+        "life": 0
+      },
+      "musicLengthMs": 120557,
+      "dynamicWindowUnitsCompared": 0,
+      "rngDrawCountCompared": true
+    },
+    {
+      "id": "card-just-window-pilot-enabled-fixed",
+      "label": "Raw runtime Just enable and dynamic percent windows / existing high-accuracy pilot",
+      "chartId": 10000201,
+      "fps": 60,
+      "frames": 1600,
+      "checks": 1678400,
+      "differences": 0,
+      "effectPoolInstances": 80,
+      "nativeTraceSha256": "f866b89277cc0d868e569c9c92bb017ff7fbd44422e0597ff0c4c078cf2c6cef",
+      "rustTraceSha256": "12dce2d88696be67effa4c4896f54b206495a0a5512b8661a556057cd5a2e2b0",
+      "comparisonSha256": "04c5047219da7875f43e3bf1ffc2f869d557acb47e7c4e5edff9e19adf4eea61",
+      "inputSequenceSha256": "30fba182079db0b0de1af5840970c708e7fb2fe798316f2deebc16aa98d30a4f",
+      "fieldsCompared": [
+        "frame",
+        "timeMs",
+        "score",
+        "life",
+        "combo",
+        "settledScore",
+        "randomDraws"
+      ],
+      "rangeFieldsCompared": [
+        "state",
+        "combo",
+        "maxCombo",
+        "justCount",
+        "startScore",
+        "endScore",
+        "luckPoints",
+        "luckGauge",
+        "rushCombo",
+        "rawJustCount"
+      ],
+      "skillFieldsCompared": [
+        "skillType",
+        "index",
+        "poolIndex",
+        "effectId",
+        "state",
+        "executeMs",
+        "finishMs",
+        "extendedBits",
+        "cumulativeCount"
+      ],
+      "actualOriginJudgements": {
+        "5": 56,
+        "6": 19
+      },
+      "actualConvertedJudgements": {
+        "5": 56,
+        "6": 19
+      },
+      "actualConversionCounts": {},
+      "fieldsMissing": [
+        "maxCombo",
+        "judgedCount",
+        "judgedCount",
+        "float32Bits.accuracyAverage",
+        "conditional-skill parent skillState",
+        "elapsedBits",
+        "countDecrease"
+      ],
+      "factorStages": "before and after ranking",
+      "nativeFinal": {
+        "score": 855028,
+        "settledScore": 855028,
+        "combo": 75,
+        "life": 1000
+      },
+      "musicLengthMs": 91667,
+      "dynamicWindowUnitsCompared": 39,
+      "rngDrawCountCompared": true,
+      "historicalDynamicWindowUnitsAnnotation": {
+        "dynamicWindowUnitsCompared": 36,
+        "timingTypeCount": 6
+      },
+      "dynamicWindowTimingTypeCount": 9,
+      "dynamicWindowUnitCountsByType": {
+        "1": 6,
+        "2": 3,
+        "5": 6,
+        "10": 6,
+        "11": 5,
+        "12": 6,
+        "15": 3,
+        "21": 2,
+        "22": 2
+      },
+      "productionPublicApiRecheck": {
+        "record": "production-checks-2026-09-30.json",
+        "recordSha256": "4b9f8145c78891bf227520c0e6b577d2640bf22d03cd35aeca56ea464002b7ff",
+        "frames": 1600,
+        "timingTypeCount": 9,
+        "unitCount": 39,
+        "windowFieldComparisons": 388800,
+        "otherFieldComparisons": 62400,
+        "differenceCount": 0,
+        "driverSha256": "ce9631182a5690e8e0c9f7ac17a413350296d718d2a82e4f75a1656d67593664",
+        "nativeCaptureSha256": "f866b89277cc0d868e569c9c92bb017ff7fbd44422e0597ff0c4c078cf2c6cef",
+        "inputDataSha256": "ef87c0ba383ad3b72c2ddcf40455d7462c586fb1cd8d2abcc84ebdbbc0bda538",
+        "traceSha256": "2e5323c7a26f36b43a035eeb02b5d68de65a2fcb43483ff7c1f7e68de229b7ce",
+        "logSha256": "91146df9fb42919f015b0bec8b2dd0ce075495fa734c67133832de07dedca0ef",
+        "status": "equal_declared_fields_using_unchanged_production_library_public_apis",
+        "totalFieldComparisons": 451200,
+        "distinctNativeCapturesAdded": 0,
+        "productionSourceTreeSha256": "9d647e0527f1bbd2c0bf832f7536161ebd0399413ff208d800a8cd62cf1f5830",
+        "windowFields": [
+          "judgement",
+          "enabled",
+          "baseBeforeMs",
+          "baseAfterMs",
+          "beforeMs",
+          "afterMs"
+        ],
+        "otherFieldGroups": [
+          "frame-result score before ranking",
+          "calculator score after ranking",
+          "life",
+          "current combo",
+          "random draws",
+          "converted note-result order",
+          "six post-ranking float32 bit patterns",
+          "nine fields in each Gekisou range"
+        ],
+        "qualification": "Reuse the same 1600-frame native capture; replay native-origin NoteResult and originDiffMs through frame_raw_timed. No private observation hook or source patch is present in the production library. This does not claim independent physical-touch classification or repeat the existing full-pool experiment count."
+      },
+      "recheckCounting": "The public-API recheck uses this same native capture and is not added to passingFrames, passingChecks or independent native experiment counts."
+    }
+  ],
+  "passingFrames": 50350,
+  "passingChecks": 37455650,
+  "differenceCount": 0,
+  "comparisonCounting": "Exact integer / uint32-f32 field equality, declared pool identities and array/order checks included; this is not a count of independent samples.",
+  "method": "Actual native MasterMemberCard, card and support skill rows; native SkillStatus, all pool instances, SkillExecutor phases and common/Gekisou appliers; native Solo ranking wrappers. Native grade origin/converted stream consumed by Rust; independent touch replay not performed.",
+  "fieldsNotCompared": [
+    "global maxCombo and judgedCount",
+    "range judgedCount and accuracyAverage",
+    "conditional parent skillState",
+    "native-only elapsedBits/countDecrease"
+  ],
+  "qualifications": [
+    "Timing-window geometry uses the actual nine timing types and all 39 units in one existing 1600-frame pilot. All six unit fields are required. The same capture also passes the unchanged production public API; native-origin results are consumed, not independently derived from touch input.",
+    "Offline stepping at life zero is not a complete failure/continue lifecycle.",
+    "Empty member-power dictionary; effects requiring ISkillMemberPower are not certified.",
+    "Card order and supports are explicit offline test inputs; ownership/profile legality is not tested.",
+    "No complete card-bearing Enter/Exit/UI/audio/network lifecycle."
+  ],
+  "failuresRetained": [
+    {
+      "id": "unused-pool-timestamps",
+      "kind": "production_initialization_defect",
+      "firstFrame": 0,
+      "native": -1,
+      "rustBefore": 0,
+      "status": "fixed_and_same_capture_rechecked",
+      "initialDifferences": 123410
+    },
+    {
+      "id": "just-support-factor-stage",
+      "kind": "different_observation_stages",
+      "initialDifferences": 3,
+      "status": "both_native_and_rust_stages_explicitly_captured_and_rechecked"
+    },
+    {
+      "id": "luck-short-music",
+      "kind": "probe_input_mismatch_between_audio_and_score_table_lengths",
+      "musicLengthMs": 91667,
+      "firstFrame": 6046,
+      "nativeSettledScore": 328726,
+      "rustSettledScore": 329321,
+      "checks": 5656000,
+      "differences": 5861,
+      "status": "resolvedProbeInputMismatch",
+      "historicalKind": "candidate_score_difference_with_past_clamped_effect_end",
+      "historicalStatus": "under_investigation",
+      "resolution": {
+        "record": "two-length-resolution-2026-09-30.json",
+        "recordSha256": "cafc198f8f70d573208fe6cecff9569ff69db6f93307f36b222ec497bb116633",
+        "sameNativeCaptureSha256": "d479871f12209d6c12d47772e7b4bba6a65c2033e0f2b2c773aff1e7bdfc2251",
+        "historicalComparisonSha256": "984efea1e7e051aad24130e986f8f38585ad6739226a586de33f7de8eff566cf",
+        "correctedComparisonSha256": "4ff7433a3144bfa918ad6dddf44160453a281b42e7942b0843a6b21737e7d3da",
+        "correctedRustTraceSha256": "b66f206247aa4d5f2250ec53e0dd25ad0096139f773698abae85584ef0b3b1a5",
+        "frames": 8000,
+        "fieldComparisons": 5656000,
+        "remainingDifferences": 0,
+        "addsIndependentNativeExperiment": false
+      }
+    },
+    {
+      "id": "raw-just-enabled",
+      "kind": "production_raw_runtime_wiring_defect",
+      "firstFrame": 706,
+      "initialMismatchingFrames": 470,
+      "initialDifferences": 3484,
+      "status": "production_public_api_recheck_equal_declared_fields",
+      "checksAfterFix": 1678400,
+      "differencesAfterFix": 0,
+      "productionReview": "Integrated production repair and regressions pass the frozen 272-test suite; the same capture passes the public API with no production observation patch.",
+      "historicalStatus": "same_native_capture_rechecked_after_candidate_fix",
+      "historicalProductionReview": "model_audit owns production patch / regressions",
+      "productionRecheck": {
+        "record": "production-checks-2026-09-30.json",
+        "sourceTreeSha256": "9d647e0527f1bbd2c0bf832f7536161ebd0399413ff208d800a8cd62cf1f5830",
+        "frames": 1600,
+        "windowFieldComparisons": 388800,
+        "otherFieldComparisons": 62400,
+        "differences": 0,
+        "addsIndependentNativeExperiment": false
+      }
+    }
+  ],
+  "remainingFailureCount": 0,
+  "remainingFailureQualification": "Retained findings in this declared card contract are resolved or have explicit input/observation-stage resolutions. Zero remaining findings is not a claim of all-game equivalence; unobserved fields and coverage boundaries remain listed.",
+  "historicalSummarySha256": "714b1be7795b9a5fd4660d60d0bb7b3eca534fbd39de25c5459dd50e2d656153",
+  "historicalSummaryQualification": "Original public ledger fingerprint retained. Its trace and comparison hashes remain unchanged; geometry annotations and resolution status are updated below.",
+  "historicalRemainingFailureCount": 1,
+  "historicalWindowQualification": "Timing-window geometry (enabled + base and dynamic ms) is verified on one existing 1600-frame six-type / 36-unit high-accuracy pilot after the explicit raw-runtime fix. Its native-origin results are consumed; independent touch-derived grading and all window-skill families remain unverified.",
+  "historicalRemainingFailureQualification": "Explicit truncated music-length boundary (91667 ms versus chart ending later) still differs; normal actual ACB-derived length and long diagnostic length agree."
+}
