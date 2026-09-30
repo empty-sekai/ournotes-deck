@@ -9,6 +9,7 @@
 pub mod expectation;
 pub mod oracle;
 pub mod pool;
+pub mod recommendation;
 
 mod live;
 mod matching;
@@ -125,7 +126,7 @@ pub enum PlayInput {
 
 /// Hard constraints on the decks considered.
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Constraints {
     /// Member card id that must be the leader.
     pub leader: Option<i64>,

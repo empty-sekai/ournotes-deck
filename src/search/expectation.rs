@@ -94,7 +94,103 @@ pub struct ConditionalOutcome {
     pub final_score: i32,
     pub model: LiveModel,
 }
+
+pub(crate) struct DeclaredOutcome {
+    pub terminal: ConditionalOutcome,
+    /// (range, actual application frame), after eligibility and one-per-update scheduling.
+    pub network_applications: Vec<(usize, usize)>,
+}
 impl FiniteSeedContext {
+    // Request-local immutable chart/play cache. Only physical performers and power change;
+    // every simulate() still constructs fresh gameplay and random state per root.
+    pub(crate) fn rebind(&mut self, pool: &Pool, physical: PhysicalDeck, power: i32) -> Result<(), Error> {
+        pool.check_deck(&physical.as_deck())?;
+        self.performers = super::snaps::deck_performers(pool, &physical.as_deck())?
+            .try_into()
+            .map_err(|_| Error::Input("exactly five performers required".into()))?;
+        self.physical = physical;
+        self.params.total_power = power;
+        Ok(())
+    }
+
+    /// Complete declared play with optional external network confirmations. Callback true
+    /// cancels between frames and returns no partial result. This never reseeds after shuffle.
+    pub(crate) fn simulate_declared<F: FnMut() -> bool>(
+        &self,
+        master: &Master,
+        root_seed: i32,
+        confirmations: Option<&[crate::replay::RankConfirmation]>,
+        finished_from_frame: Option<usize>,
+        mut cancelled: F,
+    ) -> Result<Option<DeclaredOutcome>, Error> {
+        let (order, random) = native_member_order(root_seed)?;
+        let performers = order.map(|slot| self.performers[slot].clone());
+        let mut model = match (&self.gekisou, confirmations) {
+            (None, None) => LiveModel::new(master, &performers, &self.notes, &self.events, self.params)?,
+            (Some(g), None) => LiveModel::new_gekisou(master, &performers, &self.notes, &self.events, self.params, g)?,
+            (Some(g), Some(_)) => {
+                LiveModel::new_gekisou_external(master, &performers, &self.notes, &self.events, self.params, g)?
+            }
+            _ => return Err(Error::Input("network confirmations require Gekisou".into())),
+        };
+        // An empty run transfers the COMPLETE post-shuffle state without any gameplay
+        // update; manual frames below retain it, including MemberShuffle draw accounting.
+        model.run_with_random(&LivePlay::default(), &[], random)?;
+        let mut pending = [None; 3];
+        let mut applications = Vec::new();
+        for (i, (frame, &dt)) in self.play.frames.iter().zip(&self.delta_times).enumerate() {
+            if cancelled() {
+                return Ok(None);
+            }
+            if let Some(cs) = confirmations {
+                for c in cs.iter().filter(|c| c.frame == i) {
+                    pending[c.range] = Some(c);
+                }
+            }
+            // Native UpdateRanking consumes at most ONE eligible range per update, in
+            // range order. An aggregate confirmation is available when all required peer
+            // packets have arrived. State7 here advances to Finish8 in this frame; state6
+            // can only advance to Complete7 and is not yet eligible. Packet arrival and
+            // actual application are separate, observable events.
+            let selected = if pending.iter().any(Option::is_some) {
+                let before = model.gekisou_ranges();
+                pending.iter().enumerate().find_map(|(range, c)| {
+                    c.filter(|_| {
+                        before.get(range).is_some_and(|r| (7..=8).contains(&r.state) && r.rank_bonus.is_none())
+                    })
+                })
+            } else {
+                None
+            };
+            if let Some(c) = selected {
+                model.queue_gekisou_rank_confirmation(c.range, c.rank, c.percent)?;
+            }
+            if let Some(f) = finished_from_frame {
+                model.set_live_finished(i >= f);
+            }
+            model.frame_timed(frame.time_ms, &frame.judged, dt)?;
+            if let Some(c) = selected {
+                let ranges = model.gekisou_ranges();
+                if ranges.get(c.range).is_none_or(|r| r.state != 8 || r.rank_bonus.is_none()) {
+                    return Err(Error::Input(
+                        "network application failed native Finish8/settlement eligibility".into(),
+                    ));
+                }
+                pending[c.range] = None;
+                applications.push((c.range, i));
+            }
+        }
+        if model.gekisou_ranges().iter().any(|r| r.state != 8 || r.rank_bonus.is_none()) {
+            return Err(Error::Input(
+                "complete declared Gekisou play ends before every range and confirmation settled".into(),
+            ));
+        }
+        Ok(Some(DeclaredOutcome {
+            terminal: ConditionalOutcome { root_seed, performance_order: order, final_score: model.score(), model },
+            network_applications: applications,
+        }))
+    }
+
     /// Identity captured by context(); payoff calls must use this physical deck.
     pub fn physical(&self) -> PhysicalDeck {
         self.physical
@@ -129,7 +225,7 @@ impl FiniteSeedContext {
 
 // Remove obsolete random inputs before legacy objective validation. The explicit law
 // exclusively owns roots, including for Gekisou; this is not a second distribution.
-fn normalized_objective(objective: &Objective) -> Objective {
+pub(crate) fn normalized_objective(objective: &Objective) -> Objective {
     let mut objective = objective.clone();
     if let Objective::InScenario { objective: inner, .. } = &mut objective {
         **inner = normalized_objective(inner);
