@@ -479,7 +479,7 @@ pub fn search_skip_event_payoff(
     }
     context.event_request(pool.master, input, event_id)?;
     context.validate_pool(pool)?;
-    let start = std::time::Instant::now();
+    let start = crate::clock::Instant::now();
     let mut out = SkipEventSearchOutcome { completion: Completion::Complete, evaluated: 0, results: Vec::new() };
     crate::search::expectation::visit_physical_decks(pool, &request.constraints, |physical| {
         if request.time_limit.is_some_and(|t| start.elapsed() >= t) {

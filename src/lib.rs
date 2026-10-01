@@ -16,6 +16,7 @@ pub mod bonus;
 pub mod calc;
 pub mod cards;
 pub mod chartstats;
+mod clock;
 pub mod data;
 pub mod deck;
 pub mod error;

@@ -5,7 +5,7 @@
 //! skills: its best snap placement and performance order, searched together). See `docs/search.md` for the
 //! admissibility argument.
 
-use std::time::Instant;
+use crate::clock::Instant;
 
 use crate::error::Error;
 use crate::search::live::LiveCtx;

@@ -1,0 +1,278 @@
+{
+  "format": "ournotes-deck.draft-cnb-build-summary/1",
+  "draft": true,
+  "observedUtc": "2026-10-01T15:35:35.324089+00:00",
+  "baseCommit": "4e1f1ce31be60d08dafda149b22fd258c4ca6761",
+  "baseSrcTree": "24a08f8e324b7b9954a249c55607c9ac4ecd9aa9",
+  "sourceStableBeforeAfter": true,
+  "compiledSourceManifestSha256": "f5dd37e162540825b82af740918236c25d60265cd10593d19bdd8957181d3a8c",
+  "sourceFiles": 124,
+  "changedExistingFiles": [
+    "Cargo.lock",
+    "Cargo.toml",
+    "src/lib.rs",
+    "src/scenario.rs",
+    "src/search/expectation.rs",
+    "src/search/mod.rs",
+    "src/search/power.rs",
+    "src/search/snaps.rs"
+  ],
+  "addedFiles": [
+    "src/bin/ournotes-recommend.rs",
+    "src/clock.rs",
+    "src/search/recommendation.rs",
+    "tests/adapter_fixture_export.rs",
+    "wasm/recommend/Cargo.lock",
+    "wasm/recommend/Cargo.toml",
+    "wasm/recommend/README.md",
+    "wasm/recommend/src/lib.rs"
+  ],
+  "coreAPI": {
+    "simulation": "existing FiniteSeedContext::simulate(master, root_seed); reconstruct complete context per candidate; no rebind/simulate_declared copy",
+    "objectiveNormalization": "reuse existing normalized_objective with pub(crate) visibility only",
+    "numericCore": "current main source preserved; only shared clock and export/visibility changes",
+    "deadline": "cooperative complete-atom checks before/after simulate; cancelled atom/candidate discarded; hard cancellation by Worker termination",
+    "resultProof": "bounded candidates remain heuristic/unproven; Complete only exhaustion or existing proven branch"
+  },
+  "checks": {
+    "allTestInvocationsPassed": 274,
+    "baselineCoreTestsPassed": 272,
+    "newTransportTestsPassed": 1,
+    "testSummaries": [
+      [
+        87,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        1
+      ],
+      [
+        22,
+        0,
+        0
+      ],
+      [
+        5,
+        0,
+        0
+      ],
+      [
+        20,
+        0,
+        0
+      ],
+      [
+        7,
+        0,
+        0
+      ],
+      [
+        17,
+        0,
+        0
+      ],
+      [
+        8,
+        0,
+        0
+      ],
+      [
+        26,
+        0,
+        0
+      ],
+      [
+        6,
+        0,
+        0
+      ],
+      [
+        5,
+        0,
+        0
+      ],
+      [
+        2,
+        0,
+        0
+      ],
+      [
+        9,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        2,
+        0,
+        0
+      ],
+      [
+        8,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        5,
+        0,
+        0
+      ],
+      [
+        5,
+        0,
+        0
+      ],
+      [
+        6,
+        0,
+        0
+      ],
+      [
+        14,
+        0,
+        0
+      ],
+      [
+        5,
+        0,
+        0
+      ],
+      [
+        11,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        0
+      ]
+    ],
+    "clippyWarningsDenied": true,
+    "baselineLintExceptions": [
+      "clippy::nonminimal_bool in unchanged src/replay.rs:456",
+      "clippy::uninlined_format_args in unchanged tests/raw_judgement.rs:60"
+    ],
+    "transportTestsPassed": 1,
+    "rawUtf8CLIWASMCases": 28,
+    "workerTerminationVerified": true,
+    "defaultSuiteIgnoredSyntheticExport": 1,
+    "baselineCoreTestsIgnored": 0,
+    "manuallyRunSyntheticExporterPassed": 1
+  },
+  "toolchain": {
+    "rustc": "rustc 1.88.0 (6b00bc388 2025-06-23)",
+    "cargo": "cargo 1.88.0 (873a06493 2025-05-10)",
+    "bindgen": "wasm-bindgen 0.2.127",
+    "node": "v22.23.3",
+    "playwright": "1.58.2",
+    "chromium": "145.0.7632.6"
+  },
+  "images": {
+    "draft-recommend-rust-j4": {
+      "imageId": "sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0",
+      "declaredImage": "rust:1.88-bookworm",
+      "repoDigests": [
+        "rust@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0"
+      ]
+    },
+    "draft-recommend-browser": {
+      "imageId": "sha256:363e1587494626837fa7f9a23bdb453d13b0ff3c67c705c2805cfc69c2d2fad7",
+      "declaredImage": "node:22-bookworm",
+      "repoDigests": [
+        "node@sha256:363e1587494626837fa7f9a23bdb453d13b0ff3c67c705c2805cfc69c2d2fad7"
+      ]
+    }
+  },
+  "syntheticCorpusCases": 28,
+  "browserReportSha256": "04b9116b88da2a8b51d60eba61b13058852c2cdf5dd093cb72947dd3109f5628",
+  "boundArtifacts": [
+    {
+      "path": "pkg/ournotes_recommend_wasm.d.ts",
+      "bytes": 2688,
+      "sha256": "64ef3217bd56ceb41d8ccd6a7f267b542fb95703ddbb57cacef6a7ff2bd87117"
+    },
+    {
+      "path": "pkg/ournotes_recommend_wasm.js",
+      "bytes": 11184,
+      "sha256": "c187f2face77dc0931467577797db11f8fb6ff40a2ec3a1dd35b591d8fddd04a"
+    },
+    {
+      "path": "pkg/ournotes_recommend_wasm_bg.wasm",
+      "bytes": 2176554,
+      "sha256": "8def3015b4a8e12da4bfc53b2e0cb45ced0c6516cfc4bcaef677c7839fc86a4f"
+    },
+    {
+      "path": "pkg/ournotes_recommend_wasm_bg.wasm.d.ts",
+      "bytes": 911,
+      "sha256": "252aafd9565cb6f3dc0ab4aee4424eec09612a888b3a79c49487c9009f53602f"
+    },
+    {
+      "path": "target-j4/release/ournotes-recommend",
+      "bytes": 27442368,
+      "sha256": "276536055b04840015b495a3c4233fa6642eb973be4af807af60e61039136f63"
+    },
+    {
+      "path": "target-j4/wasm32-unknown-unknown/release/ournotes_recommend_wasm.wasm",
+      "bytes": 2733647,
+      "sha256": "70d23d6f887896ad391ce20fe77018fb72ca8d4269e471a7379274ba286890a3"
+    }
+  ],
+  "artifactBundleSha256": "019fcb29eb0218d784f08172d831603b7fa5e5439760051adfcc94c2750c67b6",
+  "numericDifference": false,
+  "latestNativeCertified": false,
+  "validationScope": {
+    "corpus": "28 explicitly synthetic current-core transport cases; no arbitrary-input strictness or full native legal-domain certification",
+    "numericDifferenceFalse": "exact retained numeric/physical-deck outputs on this same raw UTF-8 corpus only; scheduling-dependent deadline result counts intentionally differ",
+    "deadline": "cooperative cancellation at complete atom boundaries during one synchronous call; no step/resume API",
+    "worker": "hard terminate whole synchronous invocation; fresh worker creates new session",
+    "duplicateCharacterRequired": "parses as search constraints but feasible domain is empty; Complete empty with 0 evaluated is distinct from FixedDeck illegal slots Input rejection",
+    "formalResolverPending": [
+      "legacy Roster/Player/OwnedMember/OwnedSnap unknown keys are ignored",
+      "missing progression can use core defaults of 1",
+      "Power SnapView may accept no reachable rank binding; formal legality resolver unaccepted"
+    ]
+  },
+  "unsupported": [
+    "SearchSession.step/resume",
+    "browser OCR end-to-end",
+    "networkConfirmations any explicit presence including null or []",
+    "simulation.liveFinishedFromFrame any explicit presence including null",
+    "new lifecycle/network settlement semantics",
+    "latest JP APK/IFix parity",
+    "OCR end-to-end production and formal search certification"
+  ],
+  "formalResolverPending": [
+    "legacy Roster/Player/OwnedMember/OwnedSnap unknown keys are ignored",
+    "missing progression can use core defaults of 1",
+    "Power SnapView may accept no reachable rank binding; formal legality resolver unaccepted"
+  ],
+  "qualification": "Current-core research compilation and synthetic transport parity only. A prior shared-source artifact proof was invalidated; this report belongs to a new exclusively owned directory and independently verified 124-source/126-artifact readback."
+}

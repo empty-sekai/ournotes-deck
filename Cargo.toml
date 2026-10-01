@@ -29,5 +29,8 @@ crate-type = ["rlib"]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value", "arbitrary_precision"] }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = "1"
+
 [profile.release]
 debug = 1

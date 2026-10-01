@@ -1,0 +1,283 @@
+{
+  "format": "ournotes-deck.draft-cli-wasm-acceptance/1",
+  "synthetic": true,
+  "latestNativeCertified": false,
+  "node": "v22.23.3",
+  "chromium": "145.0.7632.6",
+  "cases": [
+    {
+      "name": "ordinary-exhaustive",
+      "passed": true,
+      "completion": "Complete",
+      "optimality": "proven",
+      "exitReason": "exhausted",
+      "evaluatedCLI": 24,
+      "evaluatedWASM": 24,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 3,
+      "utf8Sha256": "1a2f6323ac060b0f57d628c0d61cc83c16dc41ac492c166409a8a6ad9c1744ba"
+    },
+    {
+      "name": "gekisou-large-integer",
+      "passed": true,
+      "completion": "Complete",
+      "optimality": "proven",
+      "exitReason": "exhausted",
+      "evaluatedCLI": 9,
+      "evaluatedWASM": 9,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 3,
+      "utf8Sha256": "01735c145f047db3ad55010347be18abe096898d8198987cec50799548bfc588"
+    },
+    {
+      "name": "stable-target",
+      "passed": true,
+      "completion": "Complete",
+      "optimality": "proven",
+      "exitReason": "exhausted",
+      "evaluatedCLI": 24,
+      "evaluatedWASM": 24,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 3,
+      "utf8Sha256": "4d33829f83d219381155d09fbf9da9dde2fd171159ab3d4f589c5660216d7951"
+    },
+    {
+      "name": "capped-target",
+      "passed": true,
+      "completion": "Complete",
+      "optimality": "proven",
+      "exitReason": "exhausted",
+      "evaluatedCLI": 24,
+      "evaluatedWASM": 24,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 3,
+      "utf8Sha256": "0a87a5e6c5254d8856f7616d35f780bb49521890a2a1f20ddc082c4bf1574700"
+    },
+    {
+      "name": "life-target",
+      "passed": true,
+      "completion": "Complete",
+      "optimality": "proven",
+      "exitReason": "exhausted",
+      "evaluatedCLI": 24,
+      "evaluatedWASM": 24,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 3,
+      "utf8Sha256": "1674660aacf3c347c3602dc95612851321dda08dec2a1b85614acacee2d1b12b"
+    },
+    {
+      "name": "event-farming",
+      "passed": true,
+      "completion": "Complete",
+      "optimality": "proven",
+      "exitReason": "exhausted",
+      "evaluatedCLI": 24,
+      "evaluatedWASM": 24,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 3,
+      "utf8Sha256": "2a1ac4c8fefdf6713c4e3c5f6ebc5f8442da5391cf5b2ec00a0ab0ff81865bb1"
+    },
+    {
+      "name": "conditional-items",
+      "passed": true,
+      "completion": "Complete",
+      "optimality": "proven",
+      "exitReason": "exhausted",
+      "evaluatedCLI": 24,
+      "evaluatedWASM": 24,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 3,
+      "utf8Sha256": "6e309d2c4af8a726480a22d2baa742ddf693af2c58daa54926a2063631afe951"
+    },
+    {
+      "name": "skip-farming",
+      "passed": true,
+      "completion": "Complete",
+      "optimality": "proven",
+      "exitReason": "exhausted",
+      "evaluatedCLI": 1,
+      "evaluatedWASM": 1,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 1,
+      "utf8Sha256": "1fb3cb7b95b776c7a3782f731a3f26ed3ca36233e6e785d44b1266632da43cfe"
+    },
+    {
+      "name": "power-paired-snaps",
+      "passed": true,
+      "completion": "Complete",
+      "optimality": "proven",
+      "exitReason": "exhausted",
+      "evaluatedCLI": 1,
+      "evaluatedWASM": 1,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 1,
+      "utf8Sha256": "f4f294ee777d7f40a74eab7f116cb4841b72d159a6edddf89c18c8fd2b6b3628"
+    },
+    {
+      "name": "live-paired-bounded",
+      "passed": true,
+      "completion": "TimedOut",
+      "optimality": "unproven",
+      "exitReason": "candidateLimit",
+      "evaluatedCLI": 200,
+      "evaluatedWASM": 200,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 3,
+      "utf8Sha256": "a99f47289fea031acebd2f67fb2bd11f8835df2aff49392a85657fb0c94fd438"
+    },
+    {
+      "name": "candidate-budget",
+      "passed": true,
+      "completion": "TimedOut",
+      "optimality": "heuristic",
+      "exitReason": "proposalLimit",
+      "evaluatedCLI": 8,
+      "evaluatedWASM": 8,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 3,
+      "utf8Sha256": "e779cd2e52f5dc366b188e4c7b7f25a52b84a2619461b233d1ee78d8dc5fc189"
+    },
+    {
+      "name": "deadline-partial",
+      "passed": true,
+      "completion": "TimedOut",
+      "optimality": "unproven",
+      "exitReason": "timeLimit",
+      "evaluatedCLI": 1,
+      "evaluatedWASM": 3,
+      "partialCLI": 1,
+      "partialWASM": 1,
+      "results": 3,
+      "utf8Sha256": "24aa6ab84de124e97d10623cb938c9c6f9aa90e3fe18434daf546eec6beea08d"
+    },
+    {
+      "name": "deadline-same-input-oracle",
+      "passed": true,
+      "completion": "Complete",
+      "optimality": "proven",
+      "exitReason": "exhausted",
+      "evaluatedCLI": 24,
+      "evaluatedWASM": 24,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 24,
+      "utf8Sha256": "346cae9bc958604959a3b705dd880f1bba671cbd31b66ed6f9cda9ed9f36ae4d"
+    },
+    {
+      "name": "network-empty",
+      "passed": true,
+      "error": "Unsupported",
+      "utf8Sha256": "2b51d09ed71f014817c327c2e1ae25ea72d5804e3f7773ab358d340abb846fd7"
+    },
+    {
+      "name": "network-null",
+      "passed": true,
+      "error": "Unsupported",
+      "utf8Sha256": "8fc5144bdfae51e27ad6b24d0be69a36a817a05c1cbcb57aee31f19ec667d545"
+    },
+    {
+      "name": "network-packet",
+      "passed": true,
+      "error": "Unsupported",
+      "utf8Sha256": "170562b9f3ee9684a908f5540e4200d71abe4d2d4685cee05461da21a6810575"
+    },
+    {
+      "name": "explicit-finished",
+      "passed": true,
+      "error": "Unsupported",
+      "utf8Sha256": "cfc2194e68027c38fb91ce7fe9ccf3cfd4972c9d51e365e97c3346d5c34fdbbe"
+    },
+    {
+      "name": "explicit-finished-null",
+      "passed": true,
+      "error": "Unsupported",
+      "utf8Sha256": "b9e68033d801da0c8a1e75c0b2d54cdf093ed641fc3d1543e22f0aac8c8c3344"
+    },
+    {
+      "name": "constraints-unknown-key",
+      "passed": true,
+      "error": "Input",
+      "utf8Sha256": "c5e84e6e86ed8330628630b2b643d330c754d0b7691c4134d7b2e6dec2dfcc96"
+    },
+    {
+      "name": "unknown-key",
+      "passed": true,
+      "error": "Input",
+      "utf8Sha256": "526b654fa4a1d64df74d592f222a8b752d4974fae5a7e8c7dc3bfc467a254e87"
+    },
+    {
+      "name": "nested-unknown-key",
+      "passed": true,
+      "error": "Input",
+      "utf8Sha256": "02438c96ef74900bb42d411f05ca05a1abb4991d4abda3c9d5b3d219b864b181"
+    },
+    {
+      "name": "stream-unknown-key",
+      "passed": true,
+      "error": "Input",
+      "utf8Sha256": "38006d9bd78abbe1160eecdf201e889df38969ce5be0f1e85d3d5e50fcfa1d82"
+    },
+    {
+      "name": "goal-mismatch",
+      "passed": true,
+      "error": "Input",
+      "utf8Sha256": "f5a6626ef1d807d5696cd666a3f8932b09e5febdf0c2f0fd7c13cc1a69057086"
+    },
+    {
+      "name": "unknown-member",
+      "passed": true,
+      "error": "Input",
+      "utf8Sha256": "f6ee34159e4bc5b22f6316404f904ebf9185b0714ffdd63acc17e9fe714be65e"
+    },
+    {
+      "name": "duplicate-field",
+      "passed": true,
+      "error": "Input",
+      "utf8Sha256": "8dde57b6c89957d9f64478cbef691b424d0a578ee5a032d0f4b13b623cd98cd0"
+    },
+    {
+      "name": "duplicate-member",
+      "passed": true,
+      "error": "Input",
+      "utf8Sha256": "1a2f6323ac060b0f57d628c0d61cc83c16dc41ac492c166409a8a6ad9c1744ba"
+    },
+    {
+      "name": "duplicate-snap",
+      "passed": true,
+      "error": "Input",
+      "utf8Sha256": "1a2f6323ac060b0f57d628c0d61cc83c16dc41ac492c166409a8a6ad9c1744ba"
+    },
+    {
+      "name": "duplicate-character-required",
+      "passed": true,
+      "completion": "Complete",
+      "optimality": "proven",
+      "exitReason": "exhausted",
+      "evaluatedCLI": 0,
+      "evaluatedWASM": 0,
+      "partialCLI": 0,
+      "partialWASM": 0,
+      "results": 0,
+      "utf8Sha256": "1a2f6323ac060b0f57d628c0d61cc83c16dc41ac492c166409a8a6ad9c1744ba"
+    }
+  ],
+  "rawUtf8RequestHashesVerified": 28,
+  "failedRosterPreservesPrevious": true,
+  "workerTermination": {
+    "entered": true,
+    "unfinishedResultPublished": false,
+    "freshWorkerSucceeded": true
+  },
+  "numericDifference": false
+}

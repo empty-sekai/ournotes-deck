@@ -7,12 +7,12 @@ use super::{
     Completion, Constraints, Deck, Objective, Pool, SearchRequest, full_setup, objective_song, resolve_allowed,
 };
 use crate::Error;
+use crate::clock::Instant;
 use crate::live::full::{GekisouSetup, LiveModel, LiveNote, LiveParams, LivePlay, Performer};
 use crate::live::random::{LiveRandom, MEMBER_SHUFFLE};
 use crate::master::Master;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::time::Instant;
 
 /// Pool indexes in physical slot order; slot 2 is leader. No controllable skill order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -129,7 +129,7 @@ impl FiniteSeedContext {
 
 // Remove obsolete random inputs before legacy objective validation. The explicit law
 // exclusively owns roots, including for Gekisou; this is not a second distribution.
-fn normalized_objective(objective: &Objective) -> Objective {
+pub(crate) fn normalized_objective(objective: &Objective) -> Objective {
     let mut objective = objective.clone();
     if let Objective::InScenario { objective: inner, .. } = &mut objective {
         **inner = normalized_objective(inner);

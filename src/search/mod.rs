@@ -9,6 +9,7 @@
 pub mod expectation;
 pub mod oracle;
 pub mod pool;
+pub mod recommendation;
 
 mod live;
 mod matching;
@@ -17,7 +18,8 @@ mod snaps;
 mod tables;
 mod topk;
 
-use std::time::{Duration, Instant};
+use crate::clock::Instant;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 

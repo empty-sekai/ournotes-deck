@@ -15,10 +15,10 @@
 //!   events, the notes whose filed damage empties the life; a candidate is dropped only when a bound is strictly
 //!   below the best exact score or the Top-K threshold.
 
+use crate::clock::Instant;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Instant;
 
 use crate::cards::{MemberView, SnapView};
 use crate::error::Error;
