@@ -9,7 +9,6 @@ Only unfinished work is listed; finished items are removed.
 - Objective: the expectation over a random member order. Each play shuffles the five members, and all 120 orders are equally likely. Results are teams (leader, four members and the Snap paired with each); apart from the leader, slot placement does not change the result. Each team also reports its score distribution over the 120 orders and the best of them.
 - An exact expectation over LUCK range lotteries, using their probabilities.
 - Interior-node bounds read from tables: each member's power and its position-averaged skill gain stay bound together, and the best few are taken per character.
-- A compact search data layout: dense small card indices in column-oriented tables, bit sets for used characters and Snaps, fixed-size packed tables of power and per-position gain for each member and Snap, and precomputed prefix sums so interior nodes look values up instead of recomputing them.
 - Tighter bounds on Gekisou charts (Rush spans on LUCK charts, bonus bounds on combo charts).
 
 ## Gekisou rank parameter
@@ -34,6 +33,7 @@ The real rank depends on the other players in the room, so the parameter is the 
 
 ## Later
 
+- A compact search data layout: dense small card indices in column-oriented tables, bit sets for used characters and Snaps, fixed-size packed tables of power and per-position gain for each member and Snap, and precomputed prefix sums so interior nodes look values up instead of recomputing them.
 - nnnotes produces chart-only data in advance, bound to the model and data identity, with an error on mismatch.
 - Joint chart and deck search; requirements below.
 
