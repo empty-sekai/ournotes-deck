@@ -13,6 +13,10 @@ struct Edge {
 struct TopSnaps([Option<Edge>; 5]);
 impl TopSnaps {
     fn insert(&mut self, choice: usize, value: i64) {
+        // Sorted by value: an edge no better than the last entry changes nothing (see `TopCharacters::insert`).
+        if self.0[4].is_some_and(|e| e.value >= value) {
+            return;
+        }
         let at = self.0.iter().position(|e| e.is_some_and(|e| e.choice == choice)).unwrap_or(4);
         if self.0[at].is_some_and(|e| e.value >= value) {
             return;
@@ -36,6 +40,10 @@ struct ResidualRow([Option<CharacterEdge>; 4]);
 impl ResidualRow {
     fn insert(&mut self, character: usize, value: i64, count: usize) {
         let row = &mut self.0[..count];
+        // Sorted by value: an edge no better than the last entry changes nothing (see `TopCharacters::insert`).
+        if row[count - 1].is_some_and(|e| e.value >= value) {
+            return;
+        }
         let at = row.iter().position(|e| e.is_some_and(|e| e.character == character)).unwrap_or(count - 1);
         if row[at].is_some_and(|e| e.value >= value) {
             return;
@@ -78,7 +86,8 @@ pub(super) struct PrefixCharacterTables {
     characters: Vec<i64>,
 }
 impl PrefixCharacterTables {
-    pub(super) fn compile(b: &JointBounds, pool: &Pool, domain: &CandidateDomain) -> Option<Self> {
+    /// Empty rows for the domain, None past the storage gate; [`compile_prefix_tables`] fills them.
+    fn empty(b: &JointBounds, pool: &Pool, domain: &CandidateDomain) -> Option<Self> {
         let mut characters: Vec<_> = domain.members().iter().map(|&m| pool.members[m].character_id).collect();
         characters.sort_unstable();
         characters.dedup();
@@ -91,23 +100,7 @@ impl PrefixCharacterTables {
         if cells > 250_000 {
             return None;
         }
-        let mut rows = vec![TopSnaps::default(); cells];
-        for profile in 0..b.lead.len() {
-            for &m in domain.members() {
-                let character = characters.binary_search(&pool.members[m].character_id).ok()?;
-                for choice in 0..=domain.snaps().len() {
-                    let power = b.a[m] + b.lead[profile][m] + if choice == 0 { 0 } else { b.w[m][choice - 1] };
-                    for position in 0..5 {
-                        for (scale, &r) in b.correlation_scales.iter().enumerate() {
-                            let q = super::prefix_resource::quantized(power, b.gains[m][choice][position], r)?;
-                            rows[((profile * 5 + position) * 3 + scale) * characters.len() + character]
-                                .insert(choice, q);
-                        }
-                    }
-                }
-            }
-        }
-        Some(Self { rows, characters })
+        Some(Self { rows: vec![TopSnaps::default(); cells], characters })
     }
     #[allow(clippy::too_many_arguments)]
     pub(super) fn upper(
@@ -163,6 +156,46 @@ impl PrefixCharacterTables {
         }
         (best < i128::MAX).then_some(best)
     }
+}
+
+/// Both prefix tables, each None past its own storage gate, in one pass: they hold the same quantized edge of every
+/// (profile, member, choice, position, scale), so each edge is quantized once. The loops run in the order each table
+/// was once filled in alone, so every resource row still receives its edges by member and every character row by
+/// member then choice. An edge outside the quantized range leaves both unavailable, as it did each one alone.
+pub(super) fn compile_prefix_tables(
+    b: &JointBounds,
+    pool: &Pool,
+    domain: &CandidateDomain,
+) -> (Option<super::prefix_resource::PrefixResourceTables>, Option<PrefixCharacterTables>) {
+    let mut resource = super::prefix_resource::PrefixResourceTables::empty(b, domain);
+    let mut character = PrefixCharacterTables::empty(b, pool, domain);
+    if resource.is_none() && character.is_none() {
+        return (None, None);
+    }
+    for profile in 0..b.lead.len() {
+        for &m in domain.members() {
+            let id = pool.members[m].character_id;
+            let column = character.as_ref().map(|t| t.characters.binary_search(&id).expect("character of the domain"));
+            for choice in 0..=domain.snaps().len() {
+                let power = b.a[m] + b.lead[profile][m] + if choice == 0 { 0 } else { b.w[m][choice - 1] };
+                for position in 0..5 {
+                    for (scale, &r) in b.correlation_scales.iter().enumerate() {
+                        let Some(q) = super::prefix_resource::quantized(power, b.gains[m][choice][position], r) else {
+                            return (None, None);
+                        };
+                        if let Some(t) = resource.as_mut() {
+                            t.insert(profile, position, scale, choice, id, q);
+                        }
+                        if let (Some(t), Some(column)) = (character.as_mut(), column) {
+                            t.rows[((profile * 5 + position) * 3 + scale) * t.characters.len() + column]
+                                .insert(choice, q);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (resource, character)
 }
 
 impl JointBounds {

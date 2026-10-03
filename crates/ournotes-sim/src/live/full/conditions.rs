@@ -1087,10 +1087,9 @@ impl Factory<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn with_life<T>(life: i32, f: impl FnOnce(&mut CheckCtx) -> T) -> T {
-        let mut life = LifeController::new(life, HashMap::new(), 1000).unwrap();
+        let mut life = LifeController::new(life, Default::default(), 1000).unwrap();
         let mut random = LiveRandom::new(0);
         f(&mut CheckCtx {
             life: &mut life,
@@ -1552,7 +1551,6 @@ mod gekisou_condition_tests {
 #[cfg(test)]
 mod gekisou_factory_tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn master(kind: i64, values: &[i32]) -> Master {
         let rows = serde_json::json!({"_allData": [{"_id": 1, "_conditionType": kind,
@@ -1562,7 +1560,7 @@ mod gekisou_factory_tests {
     }
 
     fn ask(checker: &mut Checker, ctrl: Option<&Controller>, rank: Option<i32>) -> ((bool, i64), Option<i32>) {
-        let mut life = LifeController::new(1000, HashMap::new(), 1000).unwrap();
+        let mut life = LifeController::new(1000, Default::default(), 1000).unwrap();
         let mut random = LiveRandom::new(0);
         let mut ctx = CheckCtx {
             life: &mut life,

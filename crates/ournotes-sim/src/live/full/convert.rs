@@ -1,11 +1,10 @@
 //! Judgement conversion: the note judgement converter and the target judgement convert applier (effect types 12006
 //! and 13005).
 
-use std::collections::{HashMap, HashSet};
-
 use super::StateKey;
 use super::engine::{END_FRAME, EXECUTE_FRAME};
 use crate::error::Error;
+use crate::num::{FxHashMap, FxHashSet};
 
 /// Just judgement.
 const JUST: i32 = 6;
@@ -44,19 +43,19 @@ pub(crate) struct ConvertEffect<'a> {
 pub(crate) struct Conversion {
     /// Registered function ids, head first.
     order: Vec<i32>,
-    registered: HashSet<i32>,
+    registered: FxHashSet<i32>,
     func_id: i32,
-    id_map: HashMap<StateKey, i32>,
-    params: HashMap<i32, ConvertParam>,
-    limit_finished: HashMap<StateKey, i32>,
-    context: HashMap<i64, Vec<i64>>,
-    no_just: HashSet<i64>,
+    id_map: FxHashMap<StateKey, i32>,
+    params: FxHashMap<i32, ConvertParam>,
+    limit_finished: FxHashMap<StateKey, i32>,
+    context: FxHashMap<i64, Vec<i64>>,
+    no_just: FxHashSet<i64>,
     /// Number of conversions made.
     pub converted: u64,
 }
 
 impl Conversion {
-    pub(crate) fn new(no_just: HashSet<i64>) -> Conversion {
+    pub(crate) fn new(no_just: FxHashSet<i64>) -> Conversion {
         Conversion { no_just, ..Default::default() }
     }
 

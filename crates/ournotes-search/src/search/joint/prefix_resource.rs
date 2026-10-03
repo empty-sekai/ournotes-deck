@@ -13,6 +13,11 @@ struct Edge {
 struct TopCharacters([Option<Edge>; 5]);
 impl TopCharacters {
     fn insert(&mut self, character: i64, value: i64) {
+        // The entries stay sorted by value, so an edge no better than the last one changes nothing: the character's
+        // own entry, if any, is at least as good, and otherwise the last entry would stay.
+        if self.0[4].is_some_and(|e| e.value >= value) {
+            return;
+        }
         let at = self.0.iter().position(|e| e.is_some_and(|e| e.character == character)).unwrap_or(4);
         if self.0[at].is_some_and(|e| e.value >= value) {
             return;
@@ -30,7 +35,8 @@ pub(super) struct PrefixResourceTables {
     choices: usize,
 }
 impl PrefixResourceTables {
-    pub(super) fn compile(b: &JointBounds, pool: &Pool, domain: &CandidateDomain) -> Option<Self> {
+    /// Empty rows for the domain, None past the storage gate; `prefix_character::compile_prefix_tables` fills them.
+    pub(super) fn empty(b: &JointBounds, domain: &CandidateDomain) -> Option<Self> {
         let choices = domain.snaps().len() + 1;
         // Bound optional storage and the matching solver's lexicographic i128 weights.
         if choices > 4097 {
@@ -40,22 +46,20 @@ impl PrefixResourceTables {
         if cells > 250_000 {
             return None;
         }
-        let mut rows = vec![TopCharacters::default(); cells];
-        for profile in 0..b.lead.len() {
-            for &m in domain.members() {
-                for choice in 0..choices {
-                    let power = b.a[m] + b.lead[profile][m] + if choice == 0 { 0 } else { b.w[m][choice - 1] };
-                    for position in 0..5 {
-                        for (scale, &r) in b.correlation_scales.iter().enumerate() {
-                            let q = quantized(power, b.gains[m][choice][position], r)?;
-                            rows[((profile * 5 + position) * 3 + scale) * choices + choice]
-                                .insert(pool.members[m].character_id, q);
-                        }
-                    }
-                }
-            }
-        }
-        Some(Self { rows, choices })
+        Some(Self { rows: vec![TopCharacters::default(); cells], choices })
+    }
+    /// Offers the quantized edge `q` of a member of `character` with `choice` at (profile, position, scale).
+    #[inline]
+    pub(super) fn insert(
+        &mut self,
+        profile: usize,
+        position: usize,
+        scale: usize,
+        choice: usize,
+        character: i64,
+        q: i64,
+    ) {
+        self.rows[((profile * 5 + position) * 3 + scale) * self.choices + choice].insert(character, q);
     }
     fn row(&self, profile: usize, position: usize, scale: usize, choice: usize) -> &TopCharacters {
         &self.rows[((profile * 5 + position) * 3 + scale) * self.choices + choice]

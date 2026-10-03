@@ -218,8 +218,6 @@ impl JointBounds {
         };
         let fine = (setup.gk.is_some() || points.as_ref().is_some_and(|p| p.score_tiers.is_some()))
             .then(|| envelope.into_joint_fine());
-        let mut choices: Vec<_> =
-            domain.members().iter().flat_map(|&m| (0..=domain.snaps().len()).map(move |s| (m, s))).collect();
         // This estimate only orders branches. It never removes a pair or claims a native order.
         let priority = |(m, s): (usize, usize)| {
             let power =
@@ -229,12 +227,17 @@ impl JointBounds {
                 None => power as f64 * (a0 / 5.0 + gains[m][s].iter().copied().fold(0.0, f64::max)),
             }
         };
-        choices.sort_by(|&a, &b| {
-            priority(b)
-                .total_cmp(&priority(a))
-                .then_with(|| pool.members[a.0].id.cmp(&pool.members[b.0].id))
-                .then(a.1.cmp(&b.1))
+        // Each pair's estimate is taken once, before the sort; the stable sort and its comparison are unchanged.
+        let mut keyed: Vec<_> = domain
+            .members()
+            .iter()
+            .flat_map(|&m| (0..=domain.snaps().len()).map(move |s| (m, s)))
+            .map(|c| (priority(c), c))
+            .collect();
+        keyed.sort_by(|&(pa, a), &(pb, b)| {
+            pb.total_cmp(&pa).then_with(|| pool.members[a.0].id.cmp(&pool.members[b.0].id)).then(a.1.cmp(&b.1))
         });
+        let choices: Vec<_> = keyed.into_iter().map(|(_, c)| c).collect();
         let scale =
             2.0f64.powf(((maximum_slot.max(1) as f64 * 5.0) / global.max(1e-100)).log2().round().clamp(-500.0, 500.0));
         let correlation_scales = [scale * 0.25, scale, scale * 4.0];
@@ -346,8 +349,7 @@ impl JointBounds {
         });
         self.relax_tables = relax_tables::RelaxTables::compile(self, pool, domain);
         if self.gekisou && self.points.is_none() {
-            self.prefix_resource = prefix_resource::PrefixResourceTables::compile(self, pool, domain);
-            self.prefix_character = prefix_character::PrefixCharacterTables::compile(self, pool, domain);
+            (self.prefix_resource, self.prefix_character) = prefix_character::compile_prefix_tables(self, pool, domain);
         }
     }
 

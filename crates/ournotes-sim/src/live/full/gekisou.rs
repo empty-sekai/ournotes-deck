@@ -7,13 +7,11 @@
 //! Judged notes of a range are kept in a history; the combo and Just counts are recomputed from it whenever a skill
 //! changes a bonus, a protection or a cumulative rule. Luck ranges draw lottery results from the luck random stream.
 
-use std::collections::{HashMap, HashSet};
-
 use crate::error::Error;
 use crate::live::random::{LUCK, LiveRandom};
 use crate::live::score::GekisouComboInfo;
 use crate::master::Master;
-use crate::num::{ceil_to_i32, floor_to_i32};
+use crate::num::{FxHashMap, FxHashSet, ceil_to_i32, floor_to_i32};
 
 // judgements
 const J_WAIT: i32 = 0;
@@ -187,7 +185,7 @@ pub(crate) struct LotteryMachine {
     /// `(id, result, remaining)`; remaining -1 is unlimited.
     minimum: Vec<(i32, i64, i64)>,
     minimum_counter: i32,
-    last_consumed: HashMap<i32, i32>,
+    last_consumed: FxHashMap<i32, i32>,
 }
 
 impl LotteryMachine {
@@ -221,7 +219,7 @@ impl LotteryMachine {
             tables,
             minimum: Vec::new(),
             minimum_counter: 0,
-            last_consumed: HashMap::new(),
+            last_consumed: FxHashMap::default(),
         })
     }
 
@@ -411,8 +409,8 @@ impl LuckScore {
 struct FactorStorage {
     lot_cmds: Vec<(i32, f32)>,
     gauge_cmds: Vec<(i32, f32)>,
-    lot_ids: HashMap<i32, f32>,
-    gauge_ids: HashMap<i32, f32>,
+    lot_ids: FxHashMap<i32, f32>,
+    gauge_ids: FxHashMap<i32, f32>,
     current_id: i32,
 }
 
@@ -451,7 +449,7 @@ pub(crate) struct Range {
     pub start_ms: i32,
     pub end_ms: i32,
     pub mission: i64,
-    targets: HashSet<i32>,
+    targets: FxHashSet<i32>,
 }
 
 /// The state of one range.
@@ -580,9 +578,9 @@ pub(crate) struct Controller {
     /// The chart-time spans of the rush score bonus commands: `(added at, disabled at)`, `i32::MAX` while running.
     rush_log: Vec<(i32, i32)>,
     playing: Vec<usize>,
-    combo_bonus_ids: HashMap<i32, f32>,
-    just_bonus_ids: HashMap<i32, f32>,
-    rules: HashMap<i32, Rule>,
+    combo_bonus_ids: FxHashMap<i32, f32>,
+    just_bonus_ids: FxHashMap<i32, f32>,
+    rules: FxHashMap<i32, Rule>,
     handle_id: i32,
     needs_recalc: bool,
     full_recalc: bool,
@@ -602,7 +600,7 @@ pub(crate) struct Controller {
     pr_stack: Vec<(i32, i32, i32, i32)>,
     unlimited: Vec<(i32, i32)>,
     limited: Vec<(i32, i32, i32)>,
-    limited_ids: HashSet<i32>,
+    limited_ids: FxHashSet<i32>,
     pending: Vec<Vec<(i32, i32, i32, i32)>>,
     lot_result: i64,
     /// This frame's lottery results.
@@ -669,9 +667,9 @@ impl Controller {
             rush_id: 0,
             rush_log: Vec::new(),
             playing: Vec::new(),
-            combo_bonus_ids: HashMap::new(),
-            just_bonus_ids: HashMap::new(),
-            rules: HashMap::new(),
+            combo_bonus_ids: FxHashMap::default(),
+            just_bonus_ids: FxHashMap::default(),
+            rules: FxHashMap::default(),
             handle_id: 0,
             needs_recalc: false,
             full_recalc: false,
@@ -686,7 +684,7 @@ impl Controller {
             pr_stack: Vec::new(),
             unlimited: Vec::new(),
             limited: Vec::new(),
-            limited_ids: HashSet::new(),
+            limited_ids: FxHashSet::default(),
             pending: vec![Vec::new(); n],
             lot_result: INVALID,
             lot_results: Vec::new(),

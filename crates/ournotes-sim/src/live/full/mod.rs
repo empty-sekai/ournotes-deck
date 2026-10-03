@@ -70,7 +70,7 @@ mod range_frames;
 mod scorecalc;
 pub use range_frames::RangeFrames;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use conditions::{CheckCtx, Checker, Cumulative, Factory, GkView};
 use convert::{Conversion, ConvertEffect};
@@ -90,7 +90,7 @@ use crate::live::score::{
 };
 use crate::live::skill::{FactorCommand, OWNER_MEMBER, OWNER_SNAP, judgement_factor_mill, note_factor_mill};
 use crate::master::{GekisouSkillEffectRow, Master, SupportSkillEffectRow};
-use crate::num::floor_to_i32;
+use crate::num::{FxHashMap, FxHashSet, floor_to_i32};
 
 /// Skill type digits in effect keys.
 const SKILL_TYPE_SUPPORT: i64 = 3;
@@ -330,11 +330,20 @@ enum Listed {
     Cond { updater: usize, u: usize },
 }
 
+/// Per-frame buffers kept by the live so that a frame allocates nothing; their contents never outlive the frame.
+#[derive(Clone, Debug, Default)]
+struct FrameScratch {
+    results: Vec<(LiveNote, i32)>,
+    listed: Vec<Listed>,
+    updated: Vec<usize>,
+    gk_judged: Vec<GkNote>,
+}
+
 /// Score factor handles: note / combo score up by id and the Gekisou luck (rush) bonus.
 #[derive(Clone, Debug, Default)]
 struct ScoreCtl {
     counter: i32,
-    cmds: HashMap<i32, FactorCommand>,
+    cmds: FxHashMap<i32, FactorCommand>,
 }
 
 impl ScoreCtl {
@@ -445,9 +454,9 @@ struct GekisouLive {
 /// Per-state bookkeeping of the Gekisou appliers.
 #[derive(Clone, Debug, Default)]
 struct GkAppliers {
-    ids: HashMap<StateKey, i32>,
-    exhausted: HashSet<StateKey>,
-    limit_finished: HashMap<StateKey, i32>,
+    ids: FxHashMap<StateKey, i32>,
+    exhausted: FxHashSet<StateKey>,
+    limit_finished: FxHashMap<StateKey, i32>,
 }
 
 impl GkAppliers {
@@ -550,7 +559,7 @@ pub struct LiveModel {
     rush_probes: Option<luck::RushProbes>,
     #[cfg(feature = "search-diagnostics")]
     program_has_started: bool,
-    notes: HashMap<i32, LiveNote>,
+    notes: FxHashMap<i32, LiveNote>,
     events: Vec<(i32, i32)>,
     fired: Vec<bool>,
     music_length_ms: i32,
@@ -565,9 +574,9 @@ pub struct LiveModel {
     live_pools: Vec<LivePool>,
     enabled_live: Vec<usize>,
     cond: Vec<CondSkill>,
-    guards: HashMap<StateKey, i32>,
-    life_reductions: HashMap<StateKey, i32>,
-    life_limits: HashMap<StateKey, i32>,
+    guards: FxHashMap<StateKey, i32>,
+    life_reductions: FxHashMap<StateKey, i32>,
+    life_limits: FxHashMap<StateKey, i32>,
     frame_events: Vec<(i32, i32)>,
     judged: Vec<(i32, i32, i32)>,
     trace: Vec<(i32, i32)>,
@@ -586,6 +595,7 @@ pub struct LiveModel {
     raw_pending: Option<Vec<RawJudgedNote>>,
     /// The Gekisou rank confirmation taken when the current frame began.
     frame_rank_confirmation: Option<i32>,
+    scratch: FrameScratch,
 }
 
 fn effect_row(master: &Master, r: &CondRow) -> EffectRow {
@@ -781,7 +791,7 @@ impl LiveModel {
         if !matches!(params.skill_target_music_type, 0..=5 | 99) {
             return Err(Error::Input("unknown skill target music type".into()));
         }
-        let mut map = HashMap::with_capacity(notes.len());
+        let mut map = FxHashMap::with_capacity_and_hasher(notes.len(), Default::default());
         for n in notes {
             map.insert(n.note_id, *n);
         }
@@ -807,19 +817,19 @@ impl LiveModel {
             Some(l) if l != 0 => l,
             _ => params.music_length_ms,
         };
-        let have_just: HashSet<i64> = master
+        let have_just: FxHashSet<i64> = master
             .live_judgement_timings
             .iter()
             .filter(|r| r.note_simulate_judgement == 6)
             .map(|r| r.note_judgement_type)
             .collect();
-        let no_just: HashSet<i64> = master
+        let no_just: FxHashSet<i64> = master
             .live_judgement_timings
             .iter()
             .map(|r| r.note_judgement_type)
             .filter(|t| !have_just.contains(t))
             .collect();
-        let phase_of: HashMap<i64, i64> =
+        let phase_of: FxHashMap<i64, i64> =
             master.skill_effect_settings.iter().map(|r| (r.skill_effect_type, r.phase)).collect();
         let phase = |t: i64| phase_of.get(&t).copied().unwrap_or(1);
         let factory = Factory {
@@ -1005,9 +1015,9 @@ impl LiveModel {
             live_pools,
             enabled_live: Vec::new(),
             cond,
-            guards: HashMap::new(),
-            life_reductions: HashMap::new(),
-            life_limits: HashMap::new(),
+            guards: FxHashMap::default(),
+            life_reductions: FxHashMap::default(),
+            life_limits: FxHashMap::default(),
             frame_events: Vec::new(),
             judged: Vec::new(),
             trace: Vec::new(),
@@ -1022,13 +1032,14 @@ impl LiveModel {
             raw_runtime: None,
             raw_pending: None,
             frame_rank_confirmation: None,
+            scratch: FrameScratch::default(),
         })
     }
 
     fn gekisou_live(
         master: &Master,
         setup: &GekisouSetup,
-        notes: &HashMap<i32, LiveNote>,
+        notes: &FxHashMap<i32, LiveNote>,
         external_ranking: bool,
     ) -> Result<GekisouLive, Error> {
         // The score keeps min(fever count, 3) Gekisou ranges; every fever still has its fever updater, and a later
@@ -1305,7 +1316,8 @@ impl LiveModel {
         }
         self.begin_frame_internal(t, dt)?;
         // judgement conversion and the combo counter, note by note
-        let mut results = Vec::with_capacity(judged.len());
+        let mut results = std::mem::take(&mut self.scratch.results);
+        results.clear();
         for j in judged {
             let n = *self.notes.get(&j.note_id).ok_or_else(|| Error::Input(format!("unknown note {}", j.note_id)))?;
             let conv = self.conversion.convert(j.judgement, n.judgement_type, j.judgement_time_ms)?;
@@ -1313,7 +1325,9 @@ impl LiveModel {
             results.push((n, conv));
             self.judged.push((n.note_id, conv, n.time_ms));
         }
-        self.finish_frame_internal(t, results, &[])
+        let finished = self.finish_frame_results(t, &results, &[]);
+        self.scratch.results = results;
+        finished
     }
 
     /// Configures raw timing before the first frame. Runtime timings are explicit client data.
@@ -1441,10 +1455,19 @@ impl LiveModel {
         results: Vec<(LiveNote, i32)>,
         raw: &[RawJudgedNote],
     ) -> Result<(), Error> {
+        self.finish_frame_results(t, &results, raw)
+    }
+
+    fn finish_frame_results(
+        &mut self,
+        t: i32,
+        results: &[(LiveNote, i32)],
+        raw: &[RawJudgedNote],
+    ) -> Result<(), Error> {
         let frame_rank_confirmation = self.frame_rank_confirmation.take();
         // LiveExecutor.OnUpdate (Assist level) runs after FT, before UpdateCurrentFrameParameters.
         if let Some(runtime) = self.raw_runtime.as_mut() {
-            runtime.after_ft(&results)?;
+            runtime.after_ft(results)?;
         }
         // The live combo controller consumes the simulator's frame delta, not the score combo directly.
         let simulator_combo = self.combo.timing_combo(t)?;
@@ -1504,7 +1527,8 @@ impl LiveModel {
         for c in self.cond.iter_mut() {
             c.updater.begin_frame();
         }
-        let mut listed = Vec::new();
+        let (mut listed, mut updated) =
+            (std::mem::take(&mut self.scratch.listed), std::mem::take(&mut self.scratch.updated));
         for ph in PHASES {
             listed.clear();
             let gk_view =
@@ -1545,7 +1569,8 @@ impl LiveModel {
                 }
             }
             for (ui, c) in self.cond.iter_mut().enumerate() {
-                for x in c.updater.update(ph, inp, &mut ctx)? {
+                c.updater.update_into(ph, inp, &mut ctx, &mut updated)?;
+                for &x in &updated {
                     if c.updater.updaters[x].state.state != STAY {
                         listed.push(Listed::Cond { updater: ui, u: x });
                     }
@@ -1555,6 +1580,7 @@ impl LiveModel {
                 self.apply(item)?;
             }
         }
+        (self.scratch.listed, self.scratch.updated) = (listed, updated);
         // EndFrame: a newly freed instance is not available to this frame's triggers.
         for &si in &self.enabled_live {
             let s = &self.live[si];
@@ -1573,7 +1599,7 @@ impl LiveModel {
         self.score.calculate(t, &self.combo, info)?;
         self.frame_score = self.score.score;
         if self.gk.is_some() {
-            self.gekisou_after(t, &results)?;
+            self.gekisou_after(t, results)?;
         }
         self.trace.push((t, self.score.score));
         Ok(())
@@ -1583,14 +1609,16 @@ impl LiveModel {
     /// frame gets its start and end scores and its rank bonus.
     fn gekisou_after(&mut self, t: i32, results: &[(LiveNote, i32)]) -> Result<(), Error> {
         let Some(gk) = self.gk.as_mut() else { return Ok(()) };
-        let judged: Vec<GkNote> =
-            results.iter().map(|(n, j)| (n.note_id, n.note_operate_type, n.time_ms, *j)).collect();
+        let mut judged = std::mem::take(&mut self.scratch.gk_judged);
+        judged.clear();
+        judged.extend(results.iter().map(|(n, j)| (n.note_id, n.note_operate_type, n.time_ms, *j)));
         let current = self.score.score;
         {
             let mut h = Handle { sc: &mut self.scorectl, score: &mut self.score };
             let mut env = Env { random: &mut self.random, handle: &mut h };
             gk.ctrl.update(t, &judged, &gk.fever_updates, current, &mut env)?;
         }
+        self.scratch.gk_judged = judged;
         gk.prev_lots.clear();
         gk.prev_lots.extend_from_slice(&gk.ctrl.lot_results);
         gk.prev_lot_ms = if gk.prev_lots.is_empty() { 0 } else { t };

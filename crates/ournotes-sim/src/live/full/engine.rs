@@ -4,12 +4,12 @@
 //! finish time) -> Stay. Appliers act on ExecuteFrame and EndFrame (some also on Executing). An effect with a
 //! cumulative condition carries its count in the state while it runs.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
 use super::conditions::{CheckCtx, Checker, Cumulative};
 use super::gekisou::M_ALL;
 use crate::error::Error;
-use crate::num::ceil_to_i32;
+use crate::num::{FxHashMap, ceil_to_i32};
 
 pub(crate) const STAY: u8 = 0;
 pub(crate) const EXECUTE_FRAME: u8 = 2;
@@ -282,7 +282,7 @@ pub(crate) struct ConditionSkillUpdater {
     stacks: Vec<Vec<usize>>,
     sustained: Vec<Option<Sustained>>,
     executing: Vec<usize>,
-    execute_count: HashMap<i64, i64>,
+    execute_count: FxHashMap<i64, i64>,
     trigger_checked: bool,
     cache: Vec<Option<TriggerResult>>,
     /// Gekisou (support) skills trigger only while a range of this mission is concerned (4: always).
@@ -358,7 +358,7 @@ impl ConditionSkillUpdater {
             stacks,
             sustained,
             executing: Vec::new(),
-            execute_count: HashMap::new(),
+            execute_count: FxHashMap::default(),
             trigger_checked: false,
             cache: vec![None; n],
             gate,
@@ -402,6 +402,22 @@ impl ConditionSkillUpdater {
 
     /// Updates the skill for one phase; returns the effect updaters whose states the appliers see, in order.
     pub(crate) fn update(&mut self, phase: i64, inp: FrameInput, ctx: &mut CheckCtx) -> Result<Vec<usize>, Error> {
+        let mut updated = Vec::new();
+        self.update_into(phase, inp, ctx, &mut updated)?;
+        Ok(updated)
+    }
+
+    /// [`ConditionSkillUpdater::update`] into a caller's buffer (cleared first), so a live reuses one allocation. The
+    /// idle check stays small enough to inline into the frame loop; most calls of a live end there.
+    #[inline]
+    pub(crate) fn update_into(
+        &mut self,
+        phase: i64,
+        inp: FrameInput,
+        ctx: &mut CheckCtx,
+        updated: &mut Vec<usize>,
+    ) -> Result<(), Error> {
+        updated.clear();
         // Keep active instances on the original path, including EndFrame -> Stay
         // recycling and instances of another phase. On an idle frame these admitted
         // triggers are pure false, so no condition, release, cumulative or applier is
@@ -420,9 +436,19 @@ impl ConditionSkillUpdater {
         #[cfg(any(test, feature = "search-diagnostics"))]
         super::idle_plan::update(self.idle_frame, first_idle);
         if self.idle_frame {
-            return Ok(Vec::new());
+            return Ok(());
         }
-        let mut updated = Vec::new();
+        self.update_active(phase, inp, ctx, updated)
+    }
+
+    /// The non-idle part of [`ConditionSkillUpdater::update_into`]; `updated` arrives empty.
+    fn update_active(
+        &mut self,
+        phase: i64,
+        inp: FrameInput,
+        ctx: &mut CheckCtx,
+        updated: &mut Vec<usize>,
+    ) -> Result<(), Error> {
         let mut done = Vec::new();
         for i in 0..self.executing.len() {
             let u = self.executing[i];
@@ -439,7 +465,8 @@ impl ConditionSkillUpdater {
             self.trigger_checked = true;
             self.cache.iter_mut().for_each(|c| *c = None);
             if inp.is_live_finished || !self.gate_open(ctx)? {
-                return self.finish_update(updated, done);
+                self.finish_update(done);
+                return Ok(());
             }
             for ef in self.effects.iter_mut() {
                 if let Some(r) = ef.reset.as_mut()
@@ -465,7 +492,7 @@ impl ConditionSkillUpdater {
             let trigger_type = self.effects[e].trigger_type;
             if trigger_type == SUSTAINED {
                 if phase < 1 || self.effects[e].phase == phase {
-                    updated.extend(self.update_sustained(e, inp, tr, ctx)?);
+                    self.update_sustained(e, inp, tr, ctx, updated)?;
                 }
                 continue;
             }
@@ -502,11 +529,12 @@ impl ConditionSkillUpdater {
                 *self.execute_count.entry(eid).or_insert(0) += 1;
             }
         }
-        self.finish_update(updated, done)
+        self.finish_update(done);
+        Ok(())
     }
 
     /// Puts the one-shot updaters that went back to Stay back on their stacks.
-    fn finish_update(&mut self, updated: Vec<usize>, done: Vec<usize>) -> Result<Vec<usize>, Error> {
+    fn finish_update(&mut self, done: Vec<usize>) {
         for u in done {
             let e = self.updaters[u].effect;
             self.stacks[e].push(u);
@@ -514,22 +542,23 @@ impl ConditionSkillUpdater {
                 self.executing.remove(p);
             }
         }
-        Ok(updated)
     }
 
+    /// Appends the updaters of sustained effect `e` that the appliers see to `updated`.
     fn update_sustained(
         &mut self,
         e: usize,
         inp: FrameInput,
         tr: TriggerResult,
         ctx: &mut CheckCtx,
-    ) -> Result<Vec<usize>, Error> {
+        updated: &mut Vec<usize>,
+    ) -> Result<(), Error> {
         let execute_ms = if tr.is_trigger { tr.time_ms } else { inp.time_ms };
         let mut s = self.sustained[e].take().expect("sustained updater");
         let r = if s.timed {
-            self.timed_sustained_step(&mut s, e, inp, tr, ctx)
+            self.timed_sustained_step(&mut s, e, inp, tr, ctx, updated)
         } else {
-            self.sustained_step(&mut s, e, execute_ms, inp, tr, ctx).map(|u| u.into_iter().collect())
+            self.sustained_step(&mut s, e, execute_ms, inp, tr, ctx).map(|u| updated.extend(u))
         };
         self.sustained[e] = Some(s);
         r
@@ -542,8 +571,8 @@ impl ConditionSkillUpdater {
         inp: FrameInput,
         tr: TriggerResult,
         ctx: &mut CheckCtx,
-    ) -> Result<Vec<usize>, Error> {
-        let mut updated = Vec::new();
+        updated: &mut Vec<usize>,
+    ) -> Result<(), Error> {
         if tr.is_trigger {
             let condition = self.effects[e]
                 .condition
@@ -589,7 +618,7 @@ impl ConditionSkillUpdater {
             s.executing.clear();
             s.enabled = false;
         }
-        Ok(updated)
+        Ok(())
     }
 
     fn sustained_step(
@@ -674,7 +703,7 @@ mod lifecycle_tests {
         finished: bool,
         judged: &[(i32, i32, i32)],
     ) -> Result<Vec<usize>, Error> {
-        let mut life = LifeController::new(1000, HashMap::new(), 10_000).unwrap();
+        let mut life = LifeController::new(1000, FxHashMap::default(), 10_000).unwrap();
         let mut random = LiveRandom::new(7);
         let mut ctx = CheckCtx {
             life: &mut life,

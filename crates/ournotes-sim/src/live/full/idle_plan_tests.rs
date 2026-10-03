@@ -67,8 +67,8 @@ fn event_sleep_preserves_phase_order_rng_cumulative_and_recycling() {
     let mut reference = with_idle_plan_disabled(model);
     assert!(actual.idle_plan.is_some());
     assert!(reference.idle_plan.is_none());
-    let mut life_a = LifeController::new(1000, HashMap::new(), 10_000).unwrap();
-    let mut life_b = LifeController::new(1000, HashMap::new(), 10_000).unwrap();
+    let mut life_a = LifeController::new(1000, FxHashMap::default(), 10_000).unwrap();
+    let mut life_b = LifeController::new(1000, FxHashMap::default(), 10_000).unwrap();
     let mut random_a = LiveRandom::new(-17);
     let mut random_b = LiveRandom::new(-17);
     let mut executions = 0;
@@ -99,7 +99,7 @@ fn event_sleep_preserves_phase_order_rng_cumulative_and_recycling() {
 fn trigger_cached_in_first_phase_must_still_activate_second_phase() {
     let mut updater =
         ConditionSkillUpdater::new(vec![effect(1, 2, Checker::SameMemberLiveSkill(0))], |_| Ok(None), None).unwrap();
-    let mut life = LifeController::new(1000, HashMap::new(), 10_000).unwrap();
+    let mut life = LifeController::new(1000, FxHashMap::default(), 10_000).unwrap();
     let mut random = LiveRandom::new(1);
     let mut ctx = CheckCtx {
         life: &mut life,
@@ -142,7 +142,7 @@ fn idle_path_keeps_gate_errors_and_live_finished_cache_semantics() {
     for finished in [false, true] {
         let mut actual = build();
         let mut reference = with_idle_plan_disabled(build);
-        let mut life = LifeController::new(1000, HashMap::new(), 10_000).unwrap();
+        let mut life = LifeController::new(1000, FxHashMap::default(), 10_000).unwrap();
         let mut random = LiveRandom::new(1);
         let mut ctx = CheckCtx {
             life: &mut life,

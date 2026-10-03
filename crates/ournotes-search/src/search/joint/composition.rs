@@ -152,7 +152,7 @@ impl JointBounds {
         snap_depth: usize,
     ) -> (i64, PhysicalDeck) {
         let profile = self.profile[p.members[2]];
-        let mut used = HashSet::new();
+        let mut used = ournotes_sim::num::FxHashSet::default();
         let mut base = 0;
         for (depth, &slot) in SLOTS.iter().enumerate() {
             let m = p.members[slot];
@@ -215,9 +215,9 @@ impl JointBounds {
             return self.composition_cap(table.envelope(self, pool, p, member_depth, positions), power_cap);
         }
         let profile = self.profile[p.members[2]];
-        let characters: HashSet<_> =
+        let characters: ournotes_sim::num::FxHashSet<_> =
             SLOTS[..member_depth].iter().map(|&s| pool.members[p.members[s]].character_id).collect();
-        let used: HashSet<_> = SLOTS[..snap_depth].iter().filter_map(|&s| p.snaps[s]).collect();
+        let used: ournotes_sim::num::FxHashSet<_> = SLOTS[..snap_depth].iter().filter_map(|&s| p.snaps[s]).collect();
         let row = |m: usize, choice: usize, slot: Option<usize>| {
             let power = self.a[m] + self.lead[profile][m] + if choice == 0 { 0 } else { self.w[m][choice - 1] };
             let gain = if let Some(slot) = slot {
@@ -255,7 +255,7 @@ impl JointBounds {
                 total.add(best(m, position));
             }
         }
-        let mut remaining = HashMap::<i64, Envelope>::new();
+        let mut remaining = ournotes_sim::num::FxHashMap::<i64, Envelope>::default();
         if member_depth < 5 {
             for &m in domain.members() {
                 let c = pool.members[m].character_id;

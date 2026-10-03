@@ -1,10 +1,9 @@
 //! Life of a played live: a time-stamped command log folded frame by frame, with the frame cache of the game.
 
-use std::collections::HashMap;
-
 use crate::error::Error;
 use crate::live::score::get_frame;
 use crate::master::Master;
+use crate::num::FxHashMap;
 
 const NOTE_DAMAGE: u8 = 0;
 const SKILL_DAMAGE: u8 = 1;
@@ -37,7 +36,7 @@ fn non_negative(x: i32) -> i32 {
 }
 
 /// The life settings: base life and the damage of each note judgement.
-pub(crate) fn life_settings(master: &Master) -> Result<(i32, HashMap<i64, i64>), Error> {
+pub(crate) fn life_settings(master: &Master) -> Result<(i32, FxHashMap<i64, i64>), Error> {
     let setting = |key: &str| -> Result<i64, Error> {
         let r = master
             .live_settings
@@ -48,7 +47,7 @@ pub(crate) fn life_settings(master: &Master) -> Result<(i32, HashMap<i64, i64>),
     };
     let base = setting("life_base")?;
     setting("life_denger")?;
-    let mut damage = HashMap::new();
+    let mut damage = FxHashMap::default();
     for r in &master.judgement_parameters {
         if damage.insert(r.note_simulate_judgement, r.damage).is_some() {
             return Err(Error::Master("duplicate judgement parameter".into()));
@@ -63,12 +62,12 @@ pub(crate) struct LifeController {
     initial_life: i32,
     internal_max_life: i32,
     pub current_life: i32,
-    damage: HashMap<i64, i64>,
+    damage: FxHashMap<i64, i64>,
     guard_ids: Vec<i32>,
     guard_id_counter: i32,
-    reduction_ids: HashMap<i32, i32>,
+    reduction_ids: FxHashMap<i32, i32>,
     reduction_id_counter: i32,
-    max_life_limits: HashMap<i32, i32>,
+    max_life_limits: FxHashMap<i32, i32>,
     max_life_id_counter: i32,
     max_frame: i32,
     commands: Vec<Vec<LifeCommand>>,
@@ -79,7 +78,7 @@ pub(crate) struct LifeController {
 }
 
 impl LifeController {
-    pub(crate) fn new(life: i32, damage: HashMap<i64, i64>, music_length_ms: i32) -> Result<LifeController, Error> {
+    pub(crate) fn new(life: i32, damage: FxHashMap<i64, i64>, music_length_ms: i32) -> Result<LifeController, Error> {
         let max_frame = get_frame(music_length_ms).wrapping_add(BUFFER_FRAMES);
         if max_frame < 0 {
             return Err(Error::Game("life command log: negative frame count".into()));
@@ -91,9 +90,9 @@ impl LifeController {
             damage,
             guard_ids: Vec::new(),
             guard_id_counter: 0,
-            reduction_ids: HashMap::new(),
+            reduction_ids: FxHashMap::default(),
             reduction_id_counter: 0,
-            max_life_limits: HashMap::new(),
+            max_life_limits: FxHashMap::default(),
             max_life_id_counter: 0,
             max_frame,
             commands: vec![Vec::new(); max_frame as usize],
@@ -329,7 +328,7 @@ mod tests {
     use super::*;
 
     fn controller() -> LifeController {
-        LifeController::new(1000, HashMap::from([(1, 100)]), 1000).unwrap()
+        LifeController::new(1000, FxHashMap::from_iter([(1, 100)]), 1000).unwrap()
     }
 
     #[test]
