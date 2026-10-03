@@ -1,0 +1,19 @@
+[workspace]
+members = ["crates/ournotes-sim", "crates/ournotes-search"]
+# separate packages with their own lockfiles and release profiles
+exclude = ["wasm/replay", "wasm/recommend", "tools/search-harness"]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/empty-sekai/ournotes-deck"
+
+[workspace.lints.clippy]
+# Slot and position loops index several parallel arrays at once.
+needless_range_loop = "allow"
+
+[profile.release]
+debug = 1

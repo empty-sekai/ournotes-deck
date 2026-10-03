@@ -1,0 +1,875 @@
+//! Versioned structured telemetry of one search (`ournotes-deck.telemetry/1`), carried by every recommendation
+//! result and every session progress snapshot. Field meanings, units and the page/developer split are documented in
+//! `docs/telemetry.md`.
+//!
+//! Every wall-clock quantity has a key ending in `Ms`. Removing those keys leaves content that is identical for
+//! identical inputs whenever the search stops at the same point (in particular for every completed search).
+//!
+//! Recording is cheap by construction: counters are array increments, one clock read is added per joint node (the
+//! node already read the clock for its deadline), and leaf activities (bounds, simulations) are timed once each.
+use crate::clock::Instant;
+use serde::Serialize;
+
+pub const TELEMETRY_FORMAT: &str = "ournotes-deck.telemetry/1";
+/// Joint search depths: members placed, leader first.
+pub(crate) const DEPTHS: usize = 6;
+/// Incumbent timeline entries kept; older entries are thinned to every other one when it fills.
+const TIMELINE: usize = 256;
+/// Chart-progress buckets of stopped simulations.
+const STOP_BUCKETS: usize = 10;
+/// Frontier levels tracked for the position-based progress.
+const LEVELS: usize = 16;
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Telemetry {
+    pub format: &'static str,
+    pub environment: Environment,
+    pub proof: Proof,
+    pub incumbents: Incumbents,
+    pub phases: Vec<Phase>,
+    pub time: TimeBreakdown,
+    /// Search tree nodes of every traversal (joint, composition, classes, exhaustive, session cursor steps).
+    pub nodes: u64,
+    pub leaves: Leaves,
+    pub joint: Joint,
+    pub composition: Composition,
+    pub candidate: CandidateStrategy,
+    pub luck_replay: LuckReplay,
+    pub caches: Caches,
+}
+
+impl Default for Telemetry {
+    fn default() -> Self {
+        Self {
+            format: TELEMETRY_FORMAT,
+            environment: Environment::default(),
+            proof: Proof::default(),
+            incumbents: Incumbents {
+                updates: 0,
+                stride: 1,
+                timeline: Vec::new(),
+                first_full: None,
+                warm_start: WarmStart::default(),
+            },
+            phases: Vec::new(),
+            time: TimeBreakdown::default(),
+            nodes: 0,
+            leaves: Leaves::default(),
+            joint: Joint::default(),
+            composition: Composition::default(),
+            candidate: CandidateStrategy::default(),
+            luck_replay: LuckReplay::default(),
+            caches: Caches::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Traversal {
+    /// Nothing ran (preparation stopped, empty domain).
+    #[default]
+    None,
+    /// Power/skip canonical member-set search.
+    Canonical,
+    /// One requested deck evaluated.
+    Fixed,
+    /// Joint member/Snap branch-and-bound (Gekisou objectives).
+    Joint,
+    /// Leader, member compositions, layouts and Snaps (Live without Gekisou, class schedules).
+    Composition,
+    /// Every physical deck, no bounds.
+    Exhaustive,
+    /// Heuristic proposals.
+    Candidate,
+    /// Resumable exhaustive session cursor.
+    Session,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Environment {
+    pub crate_version: &'static str,
+    /// `OURNOTES_DECK_COMMIT` at build time; null when the build did not declare it.
+    pub commit: Option<&'static str>,
+    pub features: Vec<&'static str>,
+    pub arch: &'static str,
+    pub os: &'static str,
+    /// Built without debug assertions.
+    pub optimized: bool,
+    pub data: Option<DataIdentity>,
+    pub route: Option<crate::handler::SolverRoute>,
+    pub traversal: Traversal,
+    pub k: usize,
+    /// Effective deadline from the search start (after problem construction), and the other limits.
+    pub time_limit_ms: Option<u64>,
+    pub max_candidates: Option<u64>,
+    pub cache_entries: usize,
+    pub law: Option<Law>,
+    pub domain: Option<Domain>,
+    pub bounds: BoundSetup,
+}
+
+impl Default for Environment {
+    fn default() -> Self {
+        let mut features = Vec::new();
+        if cfg!(feature = "search-diagnostics") {
+            features.push("search-diagnostics");
+        }
+        Self {
+            crate_version: env!("CARGO_PKG_VERSION"),
+            commit: option_env!("OURNOTES_DECK_COMMIT"),
+            features,
+            arch: std::env::consts::ARCH,
+            os: std::env::consts::OS,
+            optimized: !cfg!(debug_assertions),
+            data: None,
+            route: None,
+            traversal: Traversal::None,
+            k: 0,
+            time_limit_ms: None,
+            max_candidates: None,
+            cache_entries: 0,
+            law: None,
+            domain: None,
+            bounds: BoundSetup::default(),
+        }
+    }
+}
+
+/// The dataset searched, from its provenance (absent fields are null) and the SHA-256 of its JSON text.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataIdentity {
+    pub region: Option<String>,
+    pub master_version: Option<String>,
+    pub client_version: Option<String>,
+    pub resource_version: Option<String>,
+    pub sha256: Option<String>,
+}
+
+impl DataIdentity {
+    pub(crate) fn of(data: &ournotes_sim::data::DeckData) -> Self {
+        let text = |pointer: &str| data.provenance.pointer(pointer).and_then(|v| v.as_str()).map(str::to_owned);
+        Self {
+            region: text("/region"),
+            master_version: text("/master/version"),
+            client_version: text("/client/versionName"),
+            resource_version: text("/catalog/resourceVersion"),
+            sha256: data.sha256.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Law {
+    pub atoms: usize,
+    /// Distinct native performance orders among the atoms.
+    pub orders: usize,
+    /// Denominator of every payoff numerator in this document.
+    pub total_weight: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Domain {
+    pub members: usize,
+    pub snaps: usize,
+    pub required: usize,
+    pub leader_fixed: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoundSetup {
+    /// Joint bounds compiled for branch-and-bound; false with exhaustive/candidate strategies or after a fallback.
+    pub compiled: bool,
+    /// Why branch-and-bound fell back to exhaustive traversal.
+    pub fallback: Option<String>,
+    pub compile_ms: f64,
+    /// Joint (member, Snap choice) list length: the branching of every joint depth.
+    pub choices: usize,
+    /// Correlated and resource node bounds enabled (for the last search part started).
+    pub correlated: bool,
+    pub resource: bool,
+    pub fine: bool,
+    /// LUCK Rush refinement applies, and the replay oracle was admitted.
+    pub rush: bool,
+    pub luck_oracle: bool,
+    pub class_search: bool,
+    pub pt_regime: Option<PtRegime>,
+    pub conversion: Option<Conversion>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtRegime {
+    pub members_removed: usize,
+    pub fallback: Option<String>,
+    pub compile_ms: f64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Conversion {
+    /// Converting Snaps of the domain.
+    pub snaps: usize,
+    /// Search parts (each partition with each of its slot rules), searched one after another.
+    pub parts: usize,
+    pub fallback: Option<String>,
+    pub compile_ms: f64,
+}
+
+/// Proof status. `upperBound` is a true upper bound of the payoff numerator of every deck the search has not
+/// examined or pruned; with it, the best deck of the whole domain pays at most `max(best, upperBound)`.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Proof {
+    pub complete: bool,
+    /// Position-based share of the search tree already decided, 0..=1 (1 when complete). Branches differ in size,
+    /// so this is a progress indicator, not a time estimate. Null for traversals without a tracked position.
+    pub fraction: Option<f64>,
+    /// Sequential search parts and those finished (conversion partitions; 1 otherwise).
+    pub parts: u64,
+    pub parts_done: u64,
+    /// Top-level branches (depth-0 choices, or leaders) decided in the current part, of the total.
+    pub top_level_done: Option<u64>,
+    pub top_level_total: Option<u64>,
+    /// Payoff numerators over `environment.law.totalWeight`.
+    pub best: Option<String>,
+    pub kth: Option<String>,
+    pub upper_bound: Option<String>,
+    /// `(upperBound - x) / x` for the best and K-th payoffs, 0 when the bound does not exceed them.
+    pub best_gap: Option<f64>,
+    pub kth_gap: Option<f64>,
+    /// Time spent computing `upperBound` after the stop (not part of the search deadline).
+    pub bound_ms: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Incumbents {
+    /// Top-K insertions.
+    pub updates: u64,
+    /// Every `stride`-th update is in the timeline (doubling whenever it fills); the last update is always kept.
+    pub stride: u64,
+    pub timeline: Vec<IncumbentPoint>,
+    /// The update that first filled the Top-K (the timeline may have thinned it out).
+    pub first_full: Option<IncumbentPoint>,
+    pub warm_start: WarmStart,
+}
+
+/// Incumbents of the joint search evaluated outside its traversal (`search/warm.rs`): the warm start before it (phase
+/// `seed`) and the polishing around new best decks during it. Each is an exact evaluation of a legal deck.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WarmStart {
+    /// Exact evaluations of the warm start, and leaf-bound evaluations of its local search and of polishing.
+    pub evaluations: u64,
+    pub leaf_bound_checks: u64,
+    /// The K-th payoff numerator after the warm start, once the Top-K is full.
+    pub kth: Option<String>,
+    /// Final Top-K decks that the warm start or polishing evaluated first.
+    pub final_top_k: usize,
+    /// Polishing after strictly better best decks: rounds, exact evaluations, wall time (inside the search phases).
+    pub polish_rounds: u64,
+    pub polish_evaluations: u64,
+    pub polish_ms: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncumbentPoint {
+    /// Ordinal of the update (1-based).
+    pub update: u64,
+    pub at_ms: f64,
+    pub nodes: u64,
+    pub candidates: u64,
+    pub simulations: u64,
+    /// Decks in the Top-K after the update.
+    pub filled: usize,
+    pub best: String,
+    /// The K-th payoff once the Top-K is full.
+    pub kth: Option<String>,
+    pub fraction: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Phase {
+    pub name: &'static str,
+    pub label: Option<String>,
+    /// Offset from the request start.
+    pub start_ms: f64,
+    pub wall_ms: f64,
+    pub nodes: u64,
+    pub candidates: u64,
+    pub simulations: u64,
+}
+
+/// Exclusive wall time of the search loop by activity. The activities partition the time from the first search
+/// phase to the end of the last one; `luckReplay.replayMs` is nested inside fine bounds, cutoff tables and Rush caps.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeBreakdown {
+    /// Joint node work at each depth: bounds, choice loops and bookkeeping, excluding the activities below.
+    pub depth_ms: [f64; DEPTHS],
+    pub composition_ms: f64,
+    pub fine_bound_ms: f64,
+    pub cutoff_table_ms: f64,
+    pub simulation_ms: f64,
+    /// Simulations stopped early by the cutoff.
+    pub stopped_simulation_ms: f64,
+    pub rush_prefix_ms: f64,
+    /// Warm start and polishing, outside the simulations and cutoff tables they run.
+    pub warm_start_ms: f64,
+    pub other_ms: f64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Leaves {
+    /// Candidate decks handed to evaluation (cache hits in `caches.candidates`), and the new decks among them.
+    pub proposed: u64,
+    pub visited: u64,
+    /// Decks evaluated completely (every atom).
+    pub evaluated: u64,
+    /// A stop interrupted their evaluation.
+    pub partial: u64,
+    /// Atoms reusing an earlier atom of the same root.
+    pub duplicate_atoms: u64,
+    /// Decks dropped after some atoms: their exact atoms plus the metric's cap stay below the K-th.
+    pub atom_bound_pruned: u64,
+    /// Whole-live simulations run to the end.
+    pub simulations: u64,
+    pub cutoff: Cutoff,
+    pub peak_retained: usize,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Cutoff {
+    /// Candidates simulated with a cutoff table, and those whose every order lacked a finite table.
+    pub tables: u64,
+    pub unavailable: u64,
+    /// Simulations stopped early (their candidate cannot reach the Top-K), and the chart progress (played frames)
+    /// at the stop in tenths: `stoppedAt[i]` counts stops in `[i/10, (i+1)/10)`.
+    pub stopped: u64,
+    pub stopped_at: [u64; STOP_BUCKETS],
+    /// Cutoff tables (one per performance order) whose exact power is below the relaxed power the leaf fine bound
+    /// read; the relaxed power is never below the exact one (checked).
+    pub relaxed_power_above: u64,
+}
+
+/// Bound checks and prunes by the depth of the node checked (tail and pair: the parent's depth).
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Checks {
+    pub checks: [u64; DEPTHS],
+    pub pruned: [u64; DEPTHS],
+}
+
+impl Checks {
+    #[inline]
+    pub(crate) fn check(&mut self, depth: usize) {
+        self.checks[depth] += 1;
+    }
+    #[inline]
+    pub(crate) fn prune(&mut self, depth: usize) {
+        self.pruned[depth] += 1;
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Joint {
+    pub nodes: [u64; DEPTHS],
+    pub branch: Checks,
+    /// Assignment power cap, checked on payoff ties only.
+    pub assignment: Checks,
+    pub correlated: Checks,
+    pub resource: Checks,
+    pub bonus: Checks,
+    pub bonus_unavailable: [u64; DEPTHS],
+    pub raw: Checks,
+    pub fine: Checks,
+    pub tail: Checks,
+    pub tail_choices_skipped: [u64; DEPTHS],
+    pub pair: Checks,
+    pub root_order: RootOrder,
+    pub carriers: Carriers,
+    /// Node bounds (branch, bonus, fine) and pair bounds equal to the K-th payoff, surviving on power.
+    pub node_ties: [u64; DEPTHS],
+    pub pair_ties: [u64; DEPTHS],
+    /// PT warm start: prefixes outside the maximum-bonus regime.
+    pub seed_bonus_skipped: [u64; DEPTHS],
+    pub rush_prefix: RushPrefix,
+}
+
+/// Gekisou score with a combo range: the cheap bounds of decks with at most `n` combo carriers (a member and Snap
+/// bringing combo bonus windows). A node with `c` carriers placed and `r` slots to fill reads level `c + r`.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Carriers {
+    /// Levels compiled apart from the pool-wide bounds (the largest over the search parts).
+    pub levels: usize,
+    /// Bounded nodes by the level they read, 0 to 5.
+    pub nodes: [u64; 6],
+}
+
+/// Root children visited in descending order of their depth-1 bound: once one is strictly inferior to the K-th, the
+/// loop skips it and every later one (each would be pruned at depth 1).
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RootOrder {
+    pub skipped: u64,
+    /// Root traversals (whole domain, or one Gekisou conversion part with its slot rules) whose best root child was
+    /// already inferior.
+    pub traversals_pruned: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RushPrefix {
+    pub checks: u64,
+    pub pruned: u64,
+    pub unavailable: u64,
+    pub variants: u64,
+    pub choices_pruned: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Count {
+    pub checks: u64,
+    pub pruned: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Composition {
+    /// Member-composition nodes by members placed (leader first).
+    pub member_nodes: [u64; DEPTHS],
+    pub snap_nodes: u64,
+    pub class_nodes: u64,
+    pub binding_nodes: u64,
+    /// Member sets reached.
+    pub compositions: u64,
+    pub composition: Count,
+    pub layout: Count,
+    pub fine: Count,
+    pub class: Count,
+    pub class_binding: Count,
+    pub class_infeasible: u64,
+    pub class_resource_checks: u64,
+    pub class_resource_tightened: u64,
+    pub seeds: Seeds,
+    pub power_frontier_closed: u64,
+}
+
+/// Seed decks evaluated before their layout's search.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Seeds {
+    pub preseed: u64,
+    pub layout: u64,
+    pub weighted: u64,
+    pub class: u64,
+    pub power_frontier: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CandidateStrategy {
+    pub warmup_member_sets: usize,
+    pub warmup_proposals: u64,
+    pub exploration_proposals: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LuckReplay {
+    pub enabled: bool,
+    pub queries: u64,
+    pub cache_hits: u64,
+    /// Root replays run (each within the bounded branch budget).
+    pub runs: u64,
+    pub replay_ms: f64,
+    pub unavailable: Unavailable,
+    pub sites: Sites,
+    /// Leaves past the fine bound whose positions buckets have several replay branches: the fine bound taken at its
+    /// maximum over each bucket's branches instead of their union, and the leaves it pruned.
+    pub branch_bound: Count,
+    /// Diagnostics builds only: queries by site and outcome, leaf mask coverage, declined replays and a sample of
+    /// the leaves that survived the fine bound.
+    #[cfg(feature = "search-diagnostics")]
+    pub diagnostics: Option<serde_json::Value>,
+}
+
+/// Queries answered without masks, by reason.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Unavailable {
+    pub total: u64,
+    /// A member/Snap pair of the deck has no LUCK signature.
+    pub no_variant: u64,
+    /// The law has no root at these positions.
+    pub no_roots: u64,
+    /// A root replay declined (branch budget or unsupported formation).
+    pub declined: u64,
+    /// Root replays disagree in shape and cannot be united.
+    pub root_shape: u64,
+    /// Cache hits of an earlier unavailable answer.
+    pub cached: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Site {
+    pub queries: u64,
+    pub unavailable: u64,
+}
+
+/// Replay queries by caller: leaf fine bounds, cutoff tables, Rush prefix caps, per-branch leaf fine bounds.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Sites {
+    pub fine: Site,
+    pub cutoff: Site,
+    pub prefix: Site,
+    pub branch: Site,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheUse {
+    pub lookups: u64,
+    pub hits: u64,
+    /// Entries dropped (one at a time, or all at once when the cache is cleared).
+    pub evictions: u64,
+    pub peak_entries: usize,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Caches {
+    /// Physical decks already evaluated or pruned.
+    pub candidates: CacheUse,
+    pub luck_replay: CacheUse,
+    /// LUCK replay branch lists, kept apart from the unions.
+    pub luck_branches: CacheUse,
+    /// PT bonus cap rows by prefix state; `bonusRowsRefused` lookups found the table full.
+    pub bonus_rows: CacheUse,
+    pub bonus_rows_refused: u64,
+    /// Rush entry windows by (spec, masks).
+    pub rush_windows: CacheUse,
+}
+
+/// Exclusive-time activities of the search loop.
+pub(crate) mod slot {
+    pub(crate) const COMPOSITION: usize = super::DEPTHS;
+    pub(crate) const FINE: usize = COMPOSITION + 1;
+    pub(crate) const CUTOFF_TABLE: usize = FINE + 1;
+    pub(crate) const SIMULATION: usize = CUTOFF_TABLE + 1;
+    pub(crate) const STOPPED: usize = SIMULATION + 1;
+    pub(crate) const RUSH_PREFIX: usize = STOPPED + 1;
+    pub(crate) const WARM: usize = RUSH_PREFIX + 1;
+    pub(crate) const OTHER: usize = WARM + 1;
+    pub(crate) const COUNT: usize = OTHER + 1;
+}
+
+/// Exclusive activity clock: each lap charges the time since the previous lap to the current activity.
+pub(crate) struct Clock {
+    mark: Instant,
+    slot: usize,
+    nanos: [u64; slot::COUNT],
+}
+
+impl Clock {
+    pub(crate) fn new(now: Instant) -> Self {
+        Self { mark: now, slot: slot::OTHER, nanos: [0; slot::COUNT] }
+    }
+    /// Charge the elapsed time to the current activity and switch to `next`; returns the time read and the activity
+    /// left.
+    #[inline]
+    pub(crate) fn lap(&mut self, next: usize) -> (Instant, usize) {
+        let now = super::budget::now();
+        self.nanos[self.slot] += now.saturating_duration_since(self.mark).as_nanos() as u64;
+        self.mark = now;
+        (now, std::mem::replace(&mut self.slot, next))
+    }
+    /// Like `lap`, charging the elapsed time to `charged` instead of the current activity.
+    #[inline]
+    pub(crate) fn lap_as(&mut self, charged: usize, next: usize) {
+        let now = super::budget::now();
+        self.nanos[charged] += now.saturating_duration_since(self.mark).as_nanos() as u64;
+        self.mark = now;
+        self.slot = next;
+    }
+    /// Close the clock into the breakdown.
+    pub(crate) fn add_to(&mut self, time: &mut TimeBreakdown) {
+        self.lap(slot::OTHER);
+        let ms = |n: u64| n as f64 / 1e6;
+        for d in 0..DEPTHS {
+            time.depth_ms[d] += ms(self.nanos[d]);
+        }
+        time.composition_ms += ms(self.nanos[slot::COMPOSITION]);
+        time.fine_bound_ms += ms(self.nanos[slot::FINE]);
+        time.cutoff_table_ms += ms(self.nanos[slot::CUTOFF_TABLE]);
+        time.simulation_ms += ms(self.nanos[slot::SIMULATION]);
+        time.stopped_simulation_ms += ms(self.nanos[slot::STOPPED]);
+        time.rush_prefix_ms += ms(self.nanos[slot::RUSH_PREFIX]);
+        time.warm_start_ms += ms(self.nanos[slot::WARM]);
+        time.other_ms += ms(self.nanos[slot::OTHER]);
+        self.nanos = [0; slot::COUNT];
+    }
+}
+
+/// The current path of a traversal: at each level the index of the branch being explored and the branch count.
+/// Everything before the path in traversal order is decided.
+#[derive(Default)]
+pub(crate) struct Frontier {
+    len: usize,
+    at: [(u32, u32); LEVELS],
+}
+
+impl Frontier {
+    #[inline]
+    pub(crate) fn set(&mut self, level: usize, index: usize, count: usize) {
+        self.at[level] = (index as u32, count as u32);
+        self.len = level + 1;
+    }
+    pub(crate) fn clear(&mut self) {
+        self.len = 0;
+    }
+    pub(crate) fn fraction(&self) -> f64 {
+        let (mut done, mut scale) = (0.0, 1.0);
+        for &(index, count) in &self.at[..self.len] {
+            debug_assert!(index < count);
+            scale /= count as f64;
+            done += index as f64 * scale;
+        }
+        done
+    }
+    /// Decided top-level branches and their count.
+    pub(crate) fn top_level(&self) -> Option<(u64, u64)> {
+        (self.len > 0).then(|| (self.at[0].0 as u64, self.at[0].1 as u64))
+    }
+}
+
+/// Recording state that is not part of the wire document.
+pub(crate) struct Recorder {
+    pub(crate) origin: Instant,
+    pub(crate) clock: Clock,
+    pub(crate) frontier: Frontier,
+    open: Option<(usize, Instant, [u64; 3])>,
+    /// Sequential search parts and those finished.
+    pub(crate) parts: u64,
+    pub(crate) parts_done: u64,
+    /// Whether the running traversal maintains `frontier`.
+    pub(crate) tracked: bool,
+    /// Whether the running traversal bounds what a stop leaves unexplored, and that bound (None: nothing left).
+    pub(crate) bounded: bool,
+    pub(crate) unexplored: Option<i128>,
+}
+
+impl Recorder {
+    pub(crate) fn new(origin: Instant) -> Self {
+        Self {
+            origin,
+            clock: Clock::new(super::budget::now()),
+            frontier: Frontier::default(),
+            open: None,
+            parts: 1,
+            parts_done: 0,
+            tracked: false,
+            bounded: false,
+            unexplored: None,
+        }
+    }
+
+    /// Position-based progress over all parts.
+    pub(crate) fn progress(&self) -> Option<f64> {
+        self.tracked.then(|| (self.parts_done as f64 + self.frontier.fraction()) / self.parts as f64)
+    }
+
+    pub(crate) fn since_origin_ms(&self, at: Instant) -> f64 {
+        at.saturating_duration_since(self.origin).as_secs_f64() * 1000.0
+    }
+
+    /// Open a phase; the previous one must be closed.
+    pub(crate) fn begin(&mut self, tel: &mut Telemetry, name: &'static str, label: Option<String>) {
+        assert!(self.open.is_none(), "phase {name} opened inside another phase");
+        let now = super::budget::now();
+        tel.phases.push(Phase {
+            name,
+            label,
+            start_ms: self.since_origin_ms(now),
+            wall_ms: 0.0,
+            nodes: 0,
+            candidates: 0,
+            simulations: 0,
+        });
+        self.open = Some((tel.phases.len() - 1, now, [tel.nodes, tel.leaves.visited, tel.leaves.simulations]));
+    }
+
+    pub(crate) fn end(&mut self, tel: &mut Telemetry) {
+        let (index, started, [nodes, candidates, simulations]) = self.open.take().expect("an open phase");
+        self.clock.lap(slot::OTHER);
+        let phase = &mut tel.phases[index];
+        phase.wall_ms = super::budget::now().saturating_duration_since(started).as_secs_f64() * 1000.0;
+        phase.nodes = tel.nodes - nodes;
+        phase.candidates = tel.leaves.visited - candidates;
+        phase.simulations = tel.leaves.simulations - simulations;
+    }
+
+    /// Close any open phase (an error or a stop unwound through it).
+    pub(crate) fn end_open(&mut self, tel: &mut Telemetry) {
+        if self.open.is_some() {
+            self.end(tel);
+        }
+    }
+
+    /// Fold an upper bound of a region the stop leaves unexplored.
+    pub(crate) fn unexplored(&mut self, upper: i128) {
+        self.unexplored = Some(self.unexplored.map_or(upper, |u| u.max(upper)));
+    }
+
+    /// Record a Top-K insertion: the best payoff, the K-th once the Top-K is full, and the decks held.
+    pub(crate) fn incumbent(&self, tel: &mut Telemetry, best: i128, kth: Option<i128>, filled: usize) {
+        tel.incumbents.updates += 1;
+        if kth.is_some() && tel.incumbents.first_full.is_none() {
+            tel.incumbents.first_full = Some(self.point(tel, best, kth, filled, self.progress()));
+        }
+        let i = &mut tel.incumbents;
+        if (i.updates - 1) % i.stride != 0 {
+            return;
+        }
+        if i.timeline.len() == TIMELINE {
+            let mut keep = 0;
+            i.timeline.retain(|_| {
+                keep += 1;
+                keep % 2 == 1
+            });
+            i.stride *= 2;
+            if (i.updates - 1) % i.stride != 0 {
+                return;
+            }
+        }
+        let point = self.point(tel, best, kth, filled, self.progress());
+        tel.incumbents.timeline.push(point);
+    }
+
+    /// The last update is always in the timeline.
+    pub(crate) fn close_timeline(&self, tel: &mut Telemetry, best: i128, kth: Option<i128>, filled: usize) {
+        let i = &tel.incumbents;
+        if i.updates > 0 && i.timeline.last().is_none_or(|p| p.update != i.updates) {
+            let point = self.point(tel, best, kth, filled, None);
+            tel.incumbents.timeline.push(point);
+        }
+    }
+
+    /// The incumbent standing at the latest update.
+    fn point(
+        &self,
+        tel: &Telemetry,
+        best: i128,
+        kth: Option<i128>,
+        filled: usize,
+        fraction: Option<f64>,
+    ) -> IncumbentPoint {
+        IncumbentPoint {
+            update: tel.incumbents.updates,
+            at_ms: self.since_origin_ms(super::budget::now()),
+            nodes: tel.nodes,
+            candidates: tel.leaves.visited,
+            simulations: tel.leaves.simulations,
+            filled,
+            best: best.to_string(),
+            kth: kth.map(|v| v.to_string()),
+            fraction,
+        }
+    }
+}
+
+/// Record where in the chart a stopped simulation stopped.
+pub(crate) fn record_stop(cutoff: &mut Cutoff, played: usize, frames: usize) {
+    cutoff.stopped += 1;
+    let bucket = (played * STOP_BUCKETS).checked_div(frames).unwrap_or(0).min(STOP_BUCKETS - 1);
+    cutoff.stopped_at[bucket] += 1;
+}
+
+/// `(upper - x) / x`, zero when the bound does not exceed `x`; null for a nonpositive `x`.
+pub(crate) fn gap(upper: i128, x: i128) -> Option<f64> {
+    (x > 0).then(|| if upper <= x { 0.0 } else { (upper - x) as f64 / x as f64 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frontier_fraction_is_the_mixed_radix_position() {
+        let mut f = Frontier::default();
+        assert_eq!(f.fraction(), 0.0);
+        f.set(0, 1, 4);
+        assert_eq!(f.fraction(), 0.25);
+        f.set(1, 2, 4);
+        assert_eq!(f.fraction(), 0.25 + 2.0 / 16.0);
+        f.set(0, 3, 4);
+        assert_eq!(f.fraction(), 0.75);
+        assert_eq!(f.top_level(), Some((3, 4)));
+    }
+
+    #[test]
+    fn timeline_thins_to_every_other_update_and_keeps_the_last() {
+        let rec = Recorder::new(super::super::budget::now());
+        let mut tel = Telemetry::default();
+        for v in 1..=1000 {
+            tel.nodes = v as u64;
+            rec.incumbent(&mut tel, v, None, 1);
+        }
+        assert!(tel.incumbents.timeline.len() <= TIMELINE);
+        assert_eq!(tel.incumbents.stride, 4);
+        assert!(tel.incumbents.timeline.iter().all(|p| (p.update - 1) % 4 == 0));
+        rec.close_timeline(&mut tel, 1000, None, 1);
+        assert_eq!(tel.incumbents.timeline.last().unwrap().update, 1000);
+        assert_eq!(tel.incumbents.timeline[0].update, 1);
+    }
+
+    #[test]
+    fn the_first_full_top_k_is_kept_apart_from_the_thinned_timeline() {
+        let rec = Recorder::new(super::super::budget::now());
+        let mut tel = Telemetry::default();
+        for v in 1..=600 {
+            tel.nodes = v as u64;
+            let kth = (v >= 3).then_some(v - 2);
+            rec.incumbent(&mut tel, v, kth, (v as usize).min(3));
+        }
+        let first = tel.incumbents.first_full.as_ref().expect("the Top-K filled");
+        assert_eq!((first.update, first.nodes, first.filled), (3, 3, 3));
+        assert_eq!(first.kth.as_deref(), Some("1"));
+        assert!(tel.incumbents.timeline.iter().all(|p| p.update != 3));
+    }
+
+    #[test]
+    fn stops_fall_in_tenths_of_the_chart() {
+        let mut c = Cutoff::default();
+        record_stop(&mut c, 0, 300);
+        record_stop(&mut c, 299, 300);
+        record_stop(&mut c, 150, 300);
+        assert_eq!(c.stopped, 3);
+        assert_eq!(c.stopped_at[0], 1);
+        assert_eq!(c.stopped_at[5], 1);
+        assert_eq!(c.stopped_at[9], 1);
+    }
+
+    #[test]
+    fn gaps_are_relative_and_never_negative() {
+        assert_eq!(gap(110, 100), Some(0.1));
+        assert_eq!(gap(90, 100), Some(0.0));
+        assert_eq!(gap(5, 0), None);
+    }
+}

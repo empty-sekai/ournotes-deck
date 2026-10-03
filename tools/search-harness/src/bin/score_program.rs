@@ -1,0 +1,35 @@
+//! Audit exact power-parameterized score replay against fresh complete runs.
+use ournotes_search::{handler, search::diagnostics, types::RecommendationRequest};
+use ournotes_sim::{cards::Roster, data::DeckData};
+use serde::Deserialize;
+use std::{env, fs};
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Deck {
+    members: [i64; 5],
+    snaps: [Option<i64>; 5],
+}
+fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<_> = env::args().skip(1).collect();
+    if args.len() != 6 {
+        return Err("score_program DATA ROSTER REQUEST DECKS POWERS OUTPUT".into());
+    }
+    let data = DeckData::from_path(&args[0])?;
+    let roster = Roster::from_json(&fs::read_to_string(&args[1])?)?;
+    let request: RecommendationRequest = serde_json::from_str(&fs::read_to_string(&args[2])?)?;
+    let built = handler::build_card_pool(&data, &roster, &request)?;
+    let decks: Vec<Deck> = serde_json::from_str(&fs::read_to_string(&args[3])?)?;
+    let powers: Vec<i32> = serde_json::from_str(&fs::read_to_string(&args[4])?)?;
+    let values = decks
+        .into_iter()
+        .map(|d| diagnostics::audit_score_program(&built, d.members, d.snaps, &powers))
+        .collect::<Result<Vec<_>, _>>()?;
+    fs::write(&args[5], serde_json::to_vec_pretty(&values)?)?;
+    Ok(())
+}
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
+}

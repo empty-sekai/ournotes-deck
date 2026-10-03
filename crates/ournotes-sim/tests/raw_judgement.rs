@@ -1,0 +1,64 @@
+//! Replays reference vectors of the client's note judgement.
+#![cfg(feature = "native-fixtures")]
+mod reference;
+use ournotes_sim::live::raw::*;
+use serde_json::{Value, json};
+#[test]
+fn client_reference_vectors() {
+    let rows: Vec<Value> = serde_json::from_str(&reference::read("raw_judgement_native.json")).unwrap();
+    assert!(rows.len() >= 1268);
+    let units = [
+        TimingUnit::new(6, 10, 10),
+        TimingUnit::new(5, 30, 30),
+        TimingUnit::new(4, 60, 60),
+        TimingUnit::new(1, 100, 100),
+    ];
+    for row in rows {
+        let args = row["args"].as_array().unwrap();
+        let n = |i: usize| args[i].as_i64().unwrap() as i32;
+        let f = |i: usize| args[i].as_f64().unwrap() as f32;
+        let result = match row["op"].as_str().unwrap() {
+            "phase" => json!(input_state(n(0)) as i32),
+            "timing" => serde_json::to_value(note_judgement(n(0), n(1), n(2), &units)).unwrap(),
+            "predicate" => {
+                let kind = serde_json::from_value(args[0].clone()).unwrap();
+                let input = [InputState::None, InputState::Enter, InputState::Press, InputState::Exit][n(1) as usize];
+                let state = [
+                    NoteState::Wait,
+                    NoteState::First,
+                    NoteState::Before,
+                    NoteState::Just,
+                    NoteState::After,
+                    NoteState::Last,
+                    NoteState::Done,
+                ][n(2) as usize];
+                json!(is_judgement(kind, input, state, n(3), n(4), n(5)))
+            }
+            "assist" => {
+                let mut current = units;
+                current[1].add(20, 20);
+                current[2].add(20, 20);
+                json!(
+                    ournotes_sim::live::raw_windows::resolve_assist(
+                        n(0),
+                        n(1),
+                        args[2].as_bool().unwrap(),
+                        &units,
+                        &current
+                    )
+                    .unwrap()
+                )
+            }
+            "geometry" => json!(
+                judgement_lane(
+                    Vec2 { x: f(0), y: f(1) },
+                    &[Vec2 { x: 100., y: 50. }, Vec2 { x: 200., y: 50. }, Vec2 { x: 310., y: 50. }],
+                    Vec2 { x: 20., y: 5. }
+                )
+                .unwrap()
+            ),
+            _ => panic!("unknown reference vector"),
+        };
+        assert_eq!(result, row["result"], "{row}");
+    }
+}

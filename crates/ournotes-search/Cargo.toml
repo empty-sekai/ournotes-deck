@@ -1,0 +1,29 @@
+[package]
+name = "ournotes-search"
+description = "Exact Top-K deck search of BanG Dream! Our Notes over the ournotes-sim model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.en.md"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+ournotes-sim = { path = "../ournotes-sim" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value", "arbitrary_precision"] }
+
+[features]
+search-diagnostics = ["ournotes-sim/search-diagnostics"]
+# Tests against reference vectors that are not distributed with the crate; see ../ournotes-sim/tests/reference/mod.rs.
+native-fixtures = []
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = "1"

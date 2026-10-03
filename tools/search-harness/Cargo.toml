@@ -1,0 +1,13 @@
+[package]
+name = "ournotes-search-harness"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+ournotes-search = { path = "../../crates/ournotes-search", features = ["search-diagnostics"] }
+ournotes-sim = { path = "../../crates/ournotes-sim" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }

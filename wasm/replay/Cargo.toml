@@ -1,0 +1,18 @@
+[package]
+name = "ournotes-replay-wasm"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ournotes-sim = { path = "../../crates/ournotes-sim" }
+wasm-bindgen = "=0.2.127"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
