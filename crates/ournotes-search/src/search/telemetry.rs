@@ -611,20 +611,30 @@ impl Clock {
     /// Close the clock into the breakdown.
     pub(crate) fn add_to(&mut self, time: &mut TimeBreakdown) {
         self.lap(slot::OTHER);
-        let ms = |n: u64| n as f64 / 1e6;
-        for d in 0..DEPTHS {
-            time.depth_ms[d] += ms(self.nanos[d]);
-        }
-        time.composition_ms += ms(self.nanos[slot::COMPOSITION]);
-        time.fine_bound_ms += ms(self.nanos[slot::FINE]);
-        time.cutoff_table_ms += ms(self.nanos[slot::CUTOFF_TABLE]);
-        time.simulation_ms += ms(self.nanos[slot::SIMULATION]);
-        time.stopped_simulation_ms += ms(self.nanos[slot::STOPPED]);
-        time.rush_prefix_ms += ms(self.nanos[slot::RUSH_PREFIX]);
-        time.warm_start_ms += ms(self.nanos[slot::WARM]);
-        time.other_ms += ms(self.nanos[slot::OTHER]);
+        add_nanos(&self.nanos, time);
         self.nanos = [0; slot::COUNT];
     }
+    /// The breakdown `add_to` would give at `now`, leaving the clock running.
+    pub(crate) fn peek_into(&self, now: Instant, time: &mut TimeBreakdown) {
+        let mut nanos = self.nanos;
+        nanos[self.slot] += now.saturating_duration_since(self.mark).as_nanos() as u64;
+        add_nanos(&nanos, time);
+    }
+}
+
+fn add_nanos(nanos: &[u64; slot::COUNT], time: &mut TimeBreakdown) {
+    let ms = |n: u64| n as f64 / 1e6;
+    for d in 0..DEPTHS {
+        time.depth_ms[d] += ms(nanos[d]);
+    }
+    time.composition_ms += ms(nanos[slot::COMPOSITION]);
+    time.fine_bound_ms += ms(nanos[slot::FINE]);
+    time.cutoff_table_ms += ms(nanos[slot::CUTOFF_TABLE]);
+    time.simulation_ms += ms(nanos[slot::SIMULATION]);
+    time.stopped_simulation_ms += ms(nanos[slot::STOPPED]);
+    time.rush_prefix_ms += ms(nanos[slot::RUSH_PREFIX]);
+    time.warm_start_ms += ms(nanos[slot::WARM]);
+    time.other_ms += ms(nanos[slot::OTHER]);
 }
 
 /// The current path of a traversal: at each level the index of the branch being explored and the branch count.
@@ -659,12 +669,15 @@ impl Frontier {
     }
 }
 
+/// An open phase: its index, start and the node, candidate and simulation counts at its start.
+type OpenPhase = (usize, Instant, [u64; 3]);
+
 /// Recording state that is not part of the wire document.
 pub(crate) struct Recorder {
     pub(crate) origin: Instant,
     pub(crate) clock: Clock,
     pub(crate) frontier: Frontier,
-    open: Option<(usize, Instant, [u64; 3])>,
+    open: Option<OpenPhase>,
     /// Sequential search parts and those finished.
     pub(crate) parts: u64,
     pub(crate) parts_done: u64,
@@ -716,19 +729,22 @@ impl Recorder {
     }
 
     pub(crate) fn end(&mut self, tel: &mut Telemetry) {
-        let (index, started, [nodes, candidates, simulations]) = self.open.take().expect("an open phase");
+        let open = self.open.take().expect("an open phase");
         self.clock.lap(slot::OTHER);
-        let phase = &mut tel.phases[index];
-        phase.wall_ms = super::budget::now().saturating_duration_since(started).as_secs_f64() * 1000.0;
-        phase.nodes = tel.nodes - nodes;
-        phase.candidates = tel.leaves.visited - candidates;
-        phase.simulations = tel.leaves.simulations - simulations;
+        close_phase(tel, open, super::budget::now());
     }
 
     /// Close any open phase (an error or a stop unwound through it).
     pub(crate) fn end_open(&mut self, tel: &mut Telemetry) {
         if self.open.is_some() {
             self.end(tel);
+        }
+    }
+
+    /// Close the open phase, if any, at `now` in a copy of the document, leaving it open here.
+    pub(crate) fn peek_open(&self, tel: &mut Telemetry, now: Instant) {
+        if let Some(open) = self.open {
+            close_phase(tel, open, now);
         }
     }
 
@@ -792,6 +808,14 @@ impl Recorder {
             fraction,
         }
     }
+}
+
+fn close_phase(tel: &mut Telemetry, (index, started, [nodes, candidates, simulations]): OpenPhase, now: Instant) {
+    let phase = &mut tel.phases[index];
+    phase.wall_ms = now.saturating_duration_since(started).as_secs_f64() * 1000.0;
+    phase.nodes = tel.nodes - nodes;
+    phase.candidates = tel.leaves.visited - candidates;
+    phase.simulations = tel.leaves.simulations - simulations;
 }
 
 /// Record where in the chart a stopped simulation stopped.

@@ -18,10 +18,13 @@ use std::time::Duration;
 
 #[path = "composition.rs"]
 mod composition;
+#[path = "progress.rs"]
+mod progress;
 #[path = "session.rs"]
 mod session;
 #[path = "warm.rs"]
 mod warm;
+pub(crate) use progress::ProgressHook;
 pub use session::{
     GOAL_SPEC_VERSION, GoalSpec, SESSION_FORMAT, SearchSession, SessionBinding, SessionProgress, SessionStatus,
     StepBudget,
@@ -133,30 +136,31 @@ struct Engine<'a, 'm> {
     root_order: Option<warm::RootOrder>,
     /// Whole-domain context of the warm start and of polishing new best decks (joint searches only).
     warm: Option<warm::Warm<'a>>,
+    /// Optional progress reports (`progress.rs`).
+    progress: Option<progress::Reporter<'a>>,
 }
 impl Engine<'_, '_> {
     fn expired(&mut self) -> bool {
         if self.stop.is_some() {
             return true;
         }
-        if self.budget.expired() {
-            self.stop = Some(ExitReason::TimeLimit);
-            true
-        } else {
-            false
+        if self.budget.deadline().is_none() && self.progress.is_none() {
+            return false;
         }
+        // One clock read serves the deadline and the progress reports.
+        self.expired_at(super::budget::now())
     }
-    /// `expired` with a clock value the caller has just read.
+    /// `expired` with a clock value the caller has just read; a progress report is due at the same checks.
     fn expired_at(&mut self, now: Instant) -> bool {
         if self.stop.is_some() {
             return true;
         }
         if self.budget.expired_at(now) {
             self.stop = Some(ExitReason::TimeLimit);
-            true
-        } else {
-            false
+            return true;
         }
+        self.progress_at(now);
+        false
     }
     fn remember(&mut self, p: PhysicalDeck) {
         if self.limits.cache_entries == 0 {
@@ -475,6 +479,7 @@ impl Engine<'_, '_> {
             if better {
                 self.polish()?;
             }
+            self.report_progress();
         }
         self.tel.leaves.peak_retained = self.tel.leaves.peak_retained.max(self.top.len());
         Ok(true)
@@ -559,22 +564,29 @@ impl Engine<'_, '_> {
     fn finish_telemetry(&mut self, standing: (i128, Option<i128>, usize)) {
         self.rec.end_open(&mut self.tel);
         self.rec.clock.add_to(&mut self.tel.time);
+        let mut tel = std::mem::take(&mut self.tel);
+        self.close_telemetry(&mut tel, standing, true);
+        self.tel = tel;
+    }
+
+    /// The counters kept outside the document, the last incumbent and the proof. `stopped` is true when the search
+    /// has ended (completed or stopped, with what a stop leaves unexplored bounded); a progress report is neither.
+    fn close_telemetry(&self, tel: &mut Telemetry, standing: (i128, Option<i128>, usize), stopped: bool) {
         if let Some(oracle) = &self.luck {
-            self.tel.luck_replay = oracle.stats.clone();
-            self.tel.caches.luck_replay = oracle.cache_use;
-            self.tel.caches.luck_branches = oracle.branch_cache_use;
+            tel.luck_replay = oracle.stats.clone();
+            tel.caches.luck_replay = oracle.cache_use;
+            tel.caches.luck_branches = oracle.branch_cache_use;
             #[cfg(feature = "search-diagnostics")]
             {
-                self.tel.luck_replay.diagnostics =
-                    Some(oracle.diag.report(oracle.variant_count(), oracle.distinct_masks()));
+                tel.luck_replay.diagnostics = Some(oracle.diag.report(oracle.variant_count(), oracle.distinct_masks()));
             }
         }
-        (self.tel.caches.bonus_rows, self.tel.caches.bonus_rows_refused) = self.bonus_scratch.cache_use();
-        self.tel.caches.rush_windows = self.bound_scratch.rush_windows();
+        (tel.caches.bonus_rows, tel.caches.bonus_rows_refused) = self.bonus_scratch.cache_use();
+        tel.caches.rush_windows = self.bound_scratch.rush_windows();
         let (best, kth, filled) = standing;
-        self.rec.close_timeline(&mut self.tel, best, kth, filled);
-        let complete = self.stop.is_none();
-        let proof = &mut self.tel.proof;
+        self.rec.close_timeline(tel, best, kth, filled);
+        let complete = stopped && self.stop.is_none();
+        let proof = &mut tel.proof;
         proof.complete = complete;
         proof.parts = self.rec.parts;
         proof.parts_done = if complete { self.rec.parts } else { self.rec.parts_done };
@@ -589,7 +601,7 @@ impl Engine<'_, '_> {
             proof.best = Some(best.to_string());
         }
         proof.kth = kth.map(|v| v.to_string());
-        if !complete && self.rec.bounded {
+        if stopped && !complete && self.rec.bounded {
             proof.upper_bound = self.rec.unexplored.map(|v| v.to_string());
             let gap = |x: i128| match self.rec.unexplored {
                 Some(upper) => telemetry::gap(upper, x),
@@ -598,6 +610,75 @@ impl Engine<'_, '_> {
             proof.best_gap = (filled > 0).then(|| gap(best)).flatten();
             proof.kth_gap = kth.and_then(gap);
         }
+    }
+
+    /// Decks of the Top-K the warm start evaluated first.
+    fn seeded_in_top(&self) -> usize {
+        self.top.iter().filter(|t| self.seeded.contains(&t.physical)).count()
+    }
+
+    /// The result ended by `exit_reason` with these decks and telemetry, `elapsed` after the search start; `fixed`
+    /// marks the evaluation of one requested deck. The final result and the progress reports share it.
+    fn outcome(
+        &self,
+        strategy: &Strategy,
+        exit_reason: ExitReason,
+        fixed: bool,
+        results: Vec<RecommendedDeck>,
+        telemetry: Telemetry,
+        elapsed: Duration,
+    ) -> RecommendationOutcome {
+        let proven = exit_reason == ExitReason::Exhausted;
+        let optimality = if fixed {
+            Optimality::NotApplicable
+        } else if proven {
+            Optimality::Proven
+        } else if matches!(strategy, Strategy::Candidate { .. }) {
+            Optimality::Heuristic
+        } else {
+            Optimality::Unproven
+        };
+        let (request, law) = (self.request, self.law);
+        let probability_law = if matches!(request.objective.inner(), Objective::LiveScore { .. }) {
+            serde_json::json!({"kind":"explicitFiniteNativeRoots","atoms":law.atoms().iter().map(|(r,w)|serde_json::json!([r,w.to_string()])).collect::<Vec<_>>(),"totalWeight":law.total_weight().to_string(),"populationLaw":"unknown; no TickCount population law inferred"})
+        } else {
+            serde_json::json!({"kind":"deterministic"})
+        };
+        RecommendationOutcome {
+            format: RESULT_FORMAT,
+            completion: if proven { Completion::Complete } else { Completion::TimedOut },
+            optimality,
+            exit_reason,
+            result_identity: if fixed { "fixedPhysicalDeck" } else { "physicalDeck" },
+            metric: self.metric.clone(),
+            player_goal: None,
+            strategy: strategy.clone(),
+            probability_law,
+            proof_scope: "conditional on declared master, roster, complete judgement/clock inputs, finite native-root law and optional external confirmations; client counters are not server reward authority",
+            resolved_context: serde_json::Value::Null,
+            results,
+            telemetry,
+            elapsed_ms: elapsed.as_secs_f64() * 1000.0,
+        }
+    }
+
+    /// A progress report at `now`: the result the search would return if its time limit expired now. The telemetry
+    /// so far is closed on a copy (the recording stays open); it has no bound of the unexplored part, which only a
+    /// stop computes.
+    fn report_outcome(
+        &self,
+        strategy: &Strategy,
+        start: Instant,
+        now: Instant,
+    ) -> Result<RecommendationOutcome, Error> {
+        let mut tel = self.tel.clone();
+        tel.incumbents.warm_start.final_top_k = self.seeded_in_top();
+        self.rec.peek_open(&mut tel, now);
+        self.rec.clock.peek_into(now, &mut tel.time);
+        self.close_telemetry(&mut tel, self.standing(), false);
+        let results = self.top.iter().cloned().map(|e| e.wire(self.metric)).collect::<Result<Vec<_>, _>>()?;
+        let elapsed = now.saturating_duration_since(start);
+        Ok(self.outcome(strategy, ExitReason::TimeLimit, false, results, tel, elapsed))
     }
 }
 
@@ -804,10 +885,12 @@ pub fn solve_physical(
         None,
         None,
         origin,
+        None,
     )
 }
 
-/// `origin` is the request start; telemetry phases and incumbents are timed from it.
+/// `origin` is the request start; telemetry phases and incumbents are timed from it. `progress` receives reports
+/// (`progress.rs`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn solve_physical_impl(
     pool: &Pool,
@@ -822,6 +905,7 @@ pub(crate) fn solve_physical_impl(
     fixed: Option<PhysicalDeck>,
     compiled: Option<&crate::handler::ExecutionPlan>,
     origin: Instant,
+    progress: Option<ProgressHook<'_>>,
 ) -> Result<RecommendationOutcome, Error> {
     reject_unsupported_lifecycle(network, simulation.live_finished_from_frame)?;
     let start = Instant::now();
@@ -913,6 +997,7 @@ pub(crate) fn solve_physical_impl(
         seeded: HashSet::new(),
         root_order: None,
         warm: None,
+        progress: progress.map(|hook| progress::Reporter::new(hook.interval, hook.report, strategy, start)),
     };
     if let Some(p) = fixed {
         engine.tel.environment.traversal = Traversal::Fixed;
@@ -1124,45 +1209,15 @@ pub(crate) fn solve_physical_impl(
             }
         }
     }
-    engine.tel.incumbents.warm_start.final_top_k =
-        engine.top.iter().filter(|t| engine.seeded.contains(&t.physical)).count();
+    engine.tel.incumbents.warm_start.final_top_k = engine.seeded_in_top();
     let exit_reason = engine.stop.unwrap_or(ExitReason::Exhausted);
-    let proven = exit_reason == ExitReason::Exhausted;
-    let optimality = if fixed.is_some() {
-        Optimality::NotApplicable
-    } else if proven {
-        Optimality::Proven
-    } else if matches!(strategy, Strategy::Candidate { .. }) {
-        Optimality::Heuristic
-    } else {
-        Optimality::Unproven
-    };
-    let probability_law = if matches!(request.objective.inner(), Objective::LiveScore { .. }) {
-        serde_json::json!({"kind":"explicitFiniteNativeRoots","atoms":law.atoms().iter().map(|(r,w)|serde_json::json!([r,w.to_string()])).collect::<Vec<_>>(),"totalWeight":law.total_weight().to_string(),"populationLaw":"unknown; no TickCount population law inferred"})
-    } else {
-        serde_json::json!({"kind":"deterministic"})
-    };
     let standing = engine.standing();
     engine.rec.begin(&mut engine.tel, "finish", None);
     let results = std::mem::take(&mut engine.top).into_iter().map(|e| e.wire(metric)).collect::<Result<Vec<_>, _>>()?;
     engine.rec.end(&mut engine.tel);
     engine.finish_telemetry(standing);
-    Ok(RecommendationOutcome {
-        format: RESULT_FORMAT,
-        completion: if proven { Completion::Complete } else { Completion::TimedOut },
-        optimality,
-        exit_reason,
-        result_identity: if fixed.is_some() { "fixedPhysicalDeck" } else { "physicalDeck" },
-        metric: metric.clone(),
-        player_goal: None,
-        strategy: strategy.clone(),
-        probability_law,
-        proof_scope: "conditional on declared master, roster, complete judgement/clock inputs, finite native-root law and optional external confirmations; client counters are not server reward authority",
-        resolved_context: serde_json::Value::Null,
-        results,
-        telemetry: engine.tel,
-        elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
-    })
+    let telemetry = std::mem::take(&mut engine.tel);
+    Ok(engine.outcome(strategy, exit_reason, fixed.is_some(), results, telemetry, start.elapsed()))
 }
 
 /// Gekisou score: partition the physical domain by its converting Snaps.

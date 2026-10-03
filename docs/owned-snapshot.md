@@ -62,10 +62,12 @@ and retains the original unknowns in `snapshot()`. Callers cannot obtain its Poo
 `search` reject a different goal before using the shared core. Physical slots and unique Snap constraints use the
 existing Pool checks, with slot 2 as leader. `snap_skill_derivation` exposes only rank-derived metadata.
 
-Normal Live reports missing ordinary member skill levels. Gekisou Live additionally reports missing Gekisou
-levels. Both return `unsupported_goal` even if all fields are present: the resolver does not expose a
-Live projection or bypass the model/skill-closure check. Scene/play/root-law dependencies belong to the shared
-evaluation boundary and are not invented from the card snapshot.
+Normal Live requires the ordinary skill level of every eligible member that has a live skill; Gekisou Live also
+requires the Gekisou skill level of every member that has one. A known level must have effect rows in
+`MasterLiveSkillEffect` or `MasterGekisouSkillEffect`, otherwise it is a `master_row_missing` error rather than a
+member playing without the skill. Levels the goal does not read stay unavailable in the private projection and
+unknown in `snapshot()`. `GoalDependencies::of(&request.execution)` gives the goal of a request. Scene/play/root-law
+dependencies belong to the shared evaluation boundary and are not invented from the card snapshot.
 
 Assumptions annotate explicitly supplied fields with a path and reason; they never fill unknown values. Consumers
 must retain these annotations and coverage declarations in result scope. Neither a complete declaration nor a
@@ -82,9 +84,13 @@ let result = resolved.evaluate_deck(member_ids_in_slot_order, paired_snap_ids, &
 ```
 
 For the shared scenario/goal entry points, use `snapshot.resolve_data(&dataset, verified_dataset_id, goal)`.
+`engine::recommend_snapshot(&dataset, snapshot_json, request_json, progress)` does all of this from JSON text: it
+derives the goal from the request, resolves against `DeckData::sha256` (the SHA-256 of the deck data text) as the
+dataset identity, and returns `missing`/`errors` with a `status` instead of failing; the browser adapter in
+`wasm/recommend` exposes exactly this answer.
 The resolved value borrows the entire `DeckData`, so safe Rust cannot change its charts or provenance while
 that value is in use. `recommend`, `evaluate_fixed`, and `rank_fixed_songs` require that same bound object and
-the matching Power/Skip capability. They preserve the private projection and reject a request that replaces
+the goal the snapshot was resolved for. They preserve the private projection and reject a request that replaces
 the resolved active-event facts. A Master-only resolution cannot call these entry points.
 
 Every shared result carries the snapshot revision, owned and eligible coverage, assumptions, and whether the

@@ -2,6 +2,7 @@
 //! or the game model. Unknown facts never become persisted default cultivation.
 
 use crate::auxiliary::{FixedSongRanking, SongTarget};
+use crate::search::physical::ProgressHook;
 use crate::search::{self, Objective, SearchOutcome, SearchRequest};
 use crate::search::{SearchSession, SessionBinding};
 use crate::types::{Execution, RecommendationOutcome, RecommendationRequest};
@@ -29,6 +30,18 @@ pub enum GoalDependencies {
     Skip,
     NormalLive,
     GekisouLive,
+}
+
+impl GoalDependencies {
+    /// The facts an execution reads: Live needs ordinary member skill levels, Gekisou Live also Gekisou levels.
+    pub fn of(execution: &Execution) -> Self {
+        match execution {
+            Execution::Power { .. } => Self::Power,
+            Execution::Skip { .. } => Self::Skip,
+            Execution::Live { gekisou: false, .. } => Self::NormalLive,
+            Execution::Live { gekisou: true, .. } => Self::GekisouLive,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -174,8 +187,9 @@ pub struct Resolution<'m> {
     pub resolved: Option<ResolvedOwnedSnapshot<'m>>,
 }
 
-/// The projection and its zero-valued unavailable skill slots are private. They
-/// cannot be passed by an external caller to a Live evaluator as known skills.
+/// The projection is private. Skill levels the goal does not read are zero-valued
+/// unavailable slots; they cannot be passed by an external caller to a Live
+/// evaluator as known skills.
 #[derive(Debug)]
 pub struct ResolvedOwnedSnapshot<'m> {
     snapshot: OwnedSnapshot,
@@ -243,10 +257,7 @@ impl ResolvedOwnedSnapshot<'_> {
         if !std::ptr::eq(bound, data) {
             return Err(Error::Input("evaluation must use the complete dataset bound by resolve_data".into()));
         }
-        if !matches!(
-            (self.goal, &request.execution),
-            (GoalDependencies::Power, Execution::Power { .. }) | (GoalDependencies::Skip, Execution::Skip { .. })
-        ) {
+        if self.goal != GoalDependencies::of(&request.execution) {
             return Err(Error::Input("execution is not authorized by this resolved snapshot".into()));
         }
         if let Some(context) = &request.context {
@@ -286,7 +297,7 @@ impl ResolvedOwnedSnapshot<'_> {
                 "eventEffects":{"status":"unmodeledLatestNative","currentCoreUsesDeclaredFacts":true},
                 "fullAccountLegality":"unmodeled"
             },
-            "scope": "validated Power/Skip input projection; account-wide legality and native model certification remain separate"
+            "scope": "validated input projection for the selected goal; account-wide legality and native model certification remain separate"
         })
     }
 
@@ -297,8 +308,40 @@ impl ResolvedOwnedSnapshot<'_> {
     /// Search through the shared goal/scenario boundary without exposing the
     /// private projection or granting access to unknown Live skill fields.
     pub fn recommend(&self, data: &DeckData, request: &RecommendationRequest) -> Result<RecommendationOutcome, Error> {
+        self.recommend_hooked(data, request, None)
+    }
+
+    /// [`recommend`](Self::recommend) with progress reports; each report carries the same snapshot scope.
+    pub fn recommend_with_progress(
+        &self,
+        data: &DeckData,
+        request: &RecommendationRequest,
+        progress: crate::engine::Progress<'_>,
+    ) -> Result<RecommendationOutcome, Error> {
+        let crate::engine::Progress { interval, report } = progress;
+        let mut forward = |out: RecommendationOutcome| report(&out);
+        self.recommend_hooked(data, request, Some(ProgressHook { interval, report: &mut forward }))
+    }
+
+    pub(crate) fn recommend_hooked(
+        &self,
+        data: &DeckData,
+        request: &RecommendationRequest,
+        progress: Option<ProgressHook<'_>>,
+    ) -> Result<RecommendationOutcome, Error> {
         self.check_request(data, request)?;
-        let mut outcome = crate::engine::recommend(data, &self.projection, request)?;
+        let mut scoped;
+        let progress = match progress {
+            Some(ProgressHook { interval, report }) => {
+                scoped = move |mut out: RecommendationOutcome| {
+                    self.attach_scope(&mut out);
+                    report(out)
+                };
+                Some(ProgressHook { interval, report: &mut scoped })
+            }
+            None => None,
+        };
+        let mut outcome = crate::engine::recommend_hooked(data, &self.projection, request, progress)?;
         self.attach_scope(&mut outcome);
         Ok(outcome)
     }
@@ -631,12 +674,16 @@ impl OwnedSnapshot {
                 }
             }
             let live = matches!(goal, GoalDependencies::NormalLive | GoalDependencies::GekisouLive);
-            if live && row.live_skill_id != 0 {
-                out.required(&format!("{path}.liveSkillLevel"), fact.live_skill_level);
-            }
-            if goal == GoalDependencies::GekisouLive && row.gekisou_skill_id != 0 {
-                out.required(&format!("{path}.gekisouSkillLevel"), fact.gekisou_skill_level);
-            }
+            let live_skill_level = if live && row.live_skill_id != 0 {
+                out.required(&format!("{path}.liveSkillLevel"), fact.live_skill_level)
+            } else {
+                None
+            };
+            let gekisou_skill_level = if goal == GoalDependencies::GekisouLive && row.gekisou_skill_id != 0 {
+                out.required(&format!("{path}.gekisouSkillLevel"), fact.gekisou_skill_level)
+            } else {
+                None
+            };
             for (name, value) in
                 [("liveSkillLevel", fact.live_skill_level), ("gekisouSkillLevel", fact.gekisou_skill_level)]
             {
@@ -644,16 +691,35 @@ impl OwnedSnapshot {
                     out.error(format!("{path}.{name}"), "invalid_value", "known skill level must be positive");
                 }
             }
+            // A level without effect rows would silently play as no skill.
+            if let Some(level) = live_skill_level.filter(|level| *level > 0)
+                && !master.live_skill_effects.iter().any(|r| r.live_skill_id == row.live_skill_id && r.level == level)
+            {
+                out.error(
+                    format!("{path}.liveSkillLevel"),
+                    "master_row_missing",
+                    "no live skill effect row for this level",
+                );
+            }
+            if let Some(level) = gekisou_skill_level.filter(|level| *level > 0)
+                && !master.gekisou_skill_effects.iter().any(|r| r.skill_id == row.gekisou_skill_id && r.level == level)
+            {
+                out.error(
+                    format!("{path}.gekisouSkillLevel"),
+                    "master_row_missing",
+                    "no Gekisou skill effect row for this level",
+                );
+            }
             if let (Some(level), Some(awake), Some(rank)) = (level, awake, rank) {
-                // Unused skill slots are deliberately unavailable, never facts.
+                // Skill slots the goal does not read are deliberately unavailable, never facts.
                 members.push(OwnedMember {
                     id: fact.id,
                     level: Some(level),
                     exp: fact.exp,
                     awake,
                     rank,
-                    live_skill_level: 0,
-                    gekisou_skill_level: 0,
+                    live_skill_level: live_skill_level.unwrap_or(0),
+                    gekisou_skill_level: gekisou_skill_level.unwrap_or(0),
                 });
             }
         }
@@ -689,9 +755,6 @@ impl OwnedSnapshot {
             if let (Some(level), Some(rank)) = (level, rank) {
                 snaps.push(OwnedSnap { id: fact.id, level: Some(level), exp: fact.exp, rank });
             }
-        }
-        if matches!(goal, GoalDependencies::NormalLive | GoalDependencies::GekisouLive) {
-            out.error("goal", "unsupported_goal", "the resolver exposes only Power/Skip; Live dependencies are reported but model/skill closure is not certified");
         }
         if out.errors.is_empty() && out.missing.is_empty() {
             let player = Player {

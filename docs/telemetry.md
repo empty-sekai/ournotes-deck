@@ -77,6 +77,7 @@
 
 null 的含义：已完成时不需要上界；`traversal` 为 `exhaustive`、`candidate`、`canonical`、`session` 时没有上界
 （`bestGap` 也为 null）；有上界的遍历停止时若已没有未探索的编成，`upperBound` 为 null 而差距为 0。
+进度报告取自搜索进行中，不是停止：`complete` 为 false，`upperBound` 和差距为 null。
 
 ## `incumbents`
 

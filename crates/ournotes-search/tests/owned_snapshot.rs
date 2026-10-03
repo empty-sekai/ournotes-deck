@@ -16,6 +16,17 @@ fn fixture() -> (Master, Value) {
     let mut data = synth(&mut Rng::new(351), 6, 2);
     set_column(&mut data, "MasterMemberCard", &mut |row| row["_characterID"] = row["_id"].clone());
     extend_table(&mut data, "MasterMemberCardLevelLimit", (1..=5).flat_map(|rarity| (1..=5).map(move |awake| json!({"_id":rarity*10+awake,"_rarity":rarity,"_awakeCount":awake,"_limitLevel":10+awake*10}))).collect());
+    // Every member's Gekisou skill (ID 1) has effect rows at level 1 only.
+    extend_table(
+        &mut data,
+        "MasterGekisouSkillEffect",
+        vec![json!({
+            "_id":1,"_gekisouSkillID":1,"_level":1,"_skillTriggerType":1,"_skillTriggerConditionGroup":0,
+            "_skillConditionGroup":0,"_skillReleaseConditionGroup":0,"_skillTargetIDs":[],"_skillEffectType":2000,
+            "_activationTimeSecond":0.4,"_effectValue":900,"_maxEffectValue":0,"_effectLimitCount":0,
+            "_skillCumulativeConditionID":0,"_effectExecuteLimitCount":0,"_effectExecuteLimitResetConditionGroup":0
+        })],
+    );
     let master = data.master();
     let ranks: Vec<_> = master.characters.iter().map(|row| json!({"id":row.id,"value":1})).collect();
     let snapshot = json!({
@@ -64,7 +75,7 @@ fn strict_nested_json_and_exact_integer_tokens() {
 }
 
 #[test]
-fn unknown_skills_remain_unknown_and_do_not_authorize_live() {
+fn live_goals_require_their_skill_levels_and_keep_other_skills_unknown() {
     let (master, value) = fixture();
     let snapshot = parse(&value);
     for goal in [Goal::Power, Goal::Skip] {
@@ -84,6 +95,40 @@ fn unknown_skills_remain_unknown_and_do_not_authorize_live() {
     let gk = snapshot.resolve(&master, "synthetic-351", Goal::GekisouLive);
     assert!(gk.resolved.is_none());
     assert!(gk.missing.iter().any(|i| i.path.ends_with(".gekisouSkillLevel")));
+
+    // Known ordinary levels resolve Normal Live, whose Gekisou levels stay unknown facts.
+    let mut known = value.clone();
+    for member in known["eligible"]["members"].as_array_mut().unwrap() {
+        member["liveSkillLevel"] = json!(2);
+    }
+    let snapshot = parse(&known);
+    let normal = snapshot.resolve(&master, "synthetic-351", Goal::NormalLive);
+    assert!(normal.errors.is_empty() && normal.missing.is_empty(), "{:?} {:?}", normal.errors, normal.missing);
+    assert_eq!(normal.resolved.unwrap().snapshot().eligible.members[0].gekisou_skill_level, None);
+    let gk = snapshot.resolve(&master, "synthetic-351", Goal::GekisouLive);
+    assert!(gk.resolved.is_none() && gk.errors.is_empty());
+    assert_eq!(gk.missing.len(), 6);
+    assert!(gk.missing.iter().all(|i| i.path.ends_with(".gekisouSkillLevel")));
+    for member in known["eligible"]["members"].as_array_mut().unwrap() {
+        member["gekisouSkillLevel"] = json!(1);
+    }
+    let gk = parse(&known).resolve(&master, "synthetic-351", Goal::GekisouLive);
+    assert!(gk.errors.is_empty() && gk.missing.is_empty(), "{:?} {:?}", gk.errors, gk.missing);
+
+    // A level without effect rows is rejected instead of playing as a member without that skill.
+    known["eligible"]["members"][0]["liveSkillLevel"] = json!(99);
+    known["eligible"]["members"][1]["gekisouSkillLevel"] = json!(2);
+    let report = parse(&known).resolve(&master, "synthetic-351", Goal::GekisouLive);
+    assert!(report.resolved.is_none());
+    for path in ["eligible.members[1].liveSkillLevel", "eligible.members[2].gekisouSkillLevel"] {
+        assert!(
+            report.errors.iter().any(|i| i.path == path && i.code == "master_row_missing"),
+            "{path}: {:?}",
+            report.errors
+        );
+    }
+    // Power never reads skills, so an unusable skill level is not its concern.
+    assert!(parse(&known).resolve(&master, "synthetic-351", Goal::Power).resolved.is_some());
 }
 
 #[test]

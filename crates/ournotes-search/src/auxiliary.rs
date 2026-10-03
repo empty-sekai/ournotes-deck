@@ -14,7 +14,7 @@ pub fn evaluate_built(
     members: [i64; 5],
     snaps: [Option<i64>; 5],
 ) -> Result<RecommendationOutcome, Error> {
-    crate::search::dispatch::execute(built, Some((members, snaps)), Instant::now(), 0.0)
+    crate::search::dispatch::execute(built, Some((members, snaps)), Instant::now(), 0.0, None)
 }
 
 /// Evaluate exactly these physical slots and paired Snaps through the same
@@ -33,7 +33,8 @@ pub fn evaluate_fixed(
     request.strategy = Strategy::Exhaustive;
     let start = Instant::now();
     let built = crate::handler::build_card_pool(data, roster, &request)?;
-    crate::search::dispatch::execute(&built, Some((members, snaps)), start, start.elapsed().as_secs_f64() * 1000.0)
+    let build_ms = start.elapsed().as_secs_f64() * 1000.0;
+    crate::search::dispatch::execute(&built, Some((members, snaps)), start, build_ms, None)
 }
 
 /// Explicit scenario identity for each chart; special-mode IDs are never

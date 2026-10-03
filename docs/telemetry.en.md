@@ -83,7 +83,8 @@ PT warm start, the prefixes the warm start skipped by bonus are unexplored too, 
 
 Nulls: a complete search needs no bound; the `exhaustive`, `candidate`, `canonical` and `session` traversals have no
 bound (and `bestGap` is null); when a bounded traversal stops with nothing left unexplored, `upperBound` is null and
-the gaps are 0.
+the gaps are 0. A progress report is taken while the search runs, not at a stop: `complete` is false and `upperBound`
+and the gaps are null.
 
 ## `incumbents`
 

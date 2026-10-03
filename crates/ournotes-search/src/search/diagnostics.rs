@@ -25,7 +25,7 @@ pub fn recommend_experiment(
     let start = crate::clock::Instant::now();
     let mut built = crate::handler::build_card_pool(data, roster, request)?;
     configure_schedule(&mut built, schedule)?;
-    super::dispatch::execute(&built, None, start, start.elapsed().as_secs_f64() * 1000.0)
+    super::dispatch::execute(&built, None, start, start.elapsed().as_secs_f64() * 1000.0, None)
 }
 
 fn configure_schedule(built: &mut BuiltProblem<'_>, schedule: Schedule) -> Result<(), Error> {

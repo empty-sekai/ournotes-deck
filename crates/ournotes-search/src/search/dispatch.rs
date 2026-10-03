@@ -1,5 +1,5 @@
 //! Solver routing for a built problem. Fixed evaluation uses the same physical leaf path.
-use super::physical::{score_summary, solve_physical_impl};
+use super::physical::{ProgressHook, score_summary, solve_physical_impl};
 use super::telemetry::{Phase, Telemetry, Traversal};
 use super::{
     Completion,
@@ -13,14 +13,17 @@ use std::{collections::BTreeMap, time::Duration};
 /// Search a frozen problem. Each call gets fresh budget/frontier/Top-K state.
 /// The deadline starts here; engine::recommend additionally includes construction time.
 pub fn recommend_built(built: &crate::handler::BuiltProblem<'_>) -> Result<RecommendationOutcome, Error> {
-    execute(built, None, Instant::now(), 0.0)
+    execute(built, None, Instant::now(), 0.0, None)
 }
 
+/// `progress` receives the physical searches' reports, completed like the final result. Fixed evaluation and the
+/// canonical power/skip search make no reports.
 pub(crate) fn execute(
     built: &crate::handler::BuiltProblem<'_>,
     fixed: Option<([i64; 5], [Option<i64>; 5])>,
     start: Instant,
     build_ms: f64,
+    progress: Option<ProgressHook<'_>>,
 ) -> Result<RecommendationOutcome, Error> {
     let pool = &built.pool;
     let ctx = &built.context;
@@ -48,6 +51,7 @@ pub(crate) fn execute(
             Some(physical),
             Some(&ctx.plan),
             start,
+            None,
         )?
     } else if ctx.route == crate::handler::SolverRoute::CanonicalPowerSkip {
         // Skip score is f(power) with f monotone in the checked domain. Both
@@ -129,6 +133,17 @@ pub(crate) fn execute(
             elapsed_ms: s.elapsed.as_secs_f64() * 1000.0,
         }
     } else {
+        let mut forward;
+        let progress = match progress {
+            Some(ProgressHook { interval, report }) => {
+                forward = move |mut out: RecommendationOutcome| {
+                    finish(&mut out, built, false, start, build_ms);
+                    report(out)
+                };
+                Some(ProgressHook { interval, report: &mut forward })
+            }
+            None => None,
+        };
         solve_physical_impl(
             pool,
             request,
@@ -142,12 +157,27 @@ pub(crate) fn execute(
             None,
             Some(&ctx.plan),
             start,
+            progress,
         )?
     };
+    finish(&mut out, built, fixed.is_some(), start, build_ms);
+    Ok(out)
+}
+
+/// The request-level fields of a solver outcome, for the final result and for each progress report.
+fn finish(
+    out: &mut RecommendationOutcome,
+    built: &crate::handler::BuiltProblem<'_>,
+    fixed: bool,
+    start: Instant,
+    build_ms: f64,
+) {
+    let ctx = &built.context;
+    let r = &ctx.spec;
     if let Some(l) = &r.seed_law {
         out.probability_law["provenance"] = serde_json::Value::String(l.provenance.clone());
     }
-    if fixed.is_some() {
+    if fixed {
         out.proof_scope = "evaluation of the requested physical deck under declared inputs only; no deck-search optimality, account completeness or latest-native certification is implied";
         if matches!(r.execution, Execution::Power { .. }) {
             for deck in &mut out.results {
@@ -173,7 +203,6 @@ pub(crate) fn execute(
         out.telemetry.phases.splice(0..0, built_phases);
     }
     out.elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-    Ok(out)
 }
 
 fn phase(name: &'static str, start_ms: f64, wall_ms: f64) -> Phase {

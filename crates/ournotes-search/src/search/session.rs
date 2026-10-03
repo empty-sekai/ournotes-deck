@@ -413,6 +413,7 @@ impl<'m> SearchSession<'m> {
             seeded: HashSet::new(),
             root_order: None,
             warm: None,
+            progress: None,
         };
         let run = (|| -> Result<(), Error> {
             while self.last_step_work_units < slice.max_work_units {

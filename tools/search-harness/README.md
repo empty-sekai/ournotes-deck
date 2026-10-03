@@ -83,20 +83,30 @@ The following binaries take a `DECKS` JSON array of `{"members":[...],"snaps":[.
 - `explain_fixed DATA ROSTER REQUEST DECKS OUTPUT` separates a fixed deck's candidate-specific floating margin from coefficient/window slack. Its `diagnosticScoreWithZeroMargin` is explicitly not an admissible bound and must never authorize pruning.
 - `score_program DATA ROSTER REQUEST DECKS POWERS OUTPUT` records exact score programs for the declared roots, then compares evaluations at every supplied power with fresh complete simulations. `POWERS` is an array of i32 values. The audit also attempts an explicit nondecreasing-score certificate on power 0 through 2,000,000, reported separately from sampled replay equality. These diagnostics do not search, merge decks or certify PT. See [score programs](../../docs/score-programs.md).
 
-## Chromium Worker verification
+## WebAssembly verification
 
-After generating the recommendation package with the matching wasm-bindgen CLI,
-run `node tools/search-harness/browser.cjs MANIFEST.json WASM_PACKAGE OUTPUT_DIR`
-with Playwright installed in the Node module path. The manifest contains `cases`
-with `name`, `data`, `roster`, `request` and `reference` paths relative to itself;
-each reference must be a complete native recommendation outcome for the same
-effective request. The optional `timeoutMs` bounds each Worker externally.
+Both runners read a manifest with `cases` of `name`, `data`, `snapshot`, `request`
+and `reference` paths relative to itself; each reference is the complete native
+answer `ournotes-recommend --data DATA --snapshot SNAPSHOT --request REQUEST`
+(`ournotes-deck.snapshot-recommendation/1`) for the same inputs.
 
-The verifier sends original UTF-8 strings to a real Chromium Worker, checks their
-SHA-256s inside the Worker and compares every semantic outcome field. Object keys
-are canonicalized while JSON number tokens remain strings, so integers above
+`node tools/search-harness/wasm-node.cjs MANIFEST.json WASM_PACKAGE OUTPUT_DIR`
+loads a package built with `wasm-bindgen --target nodejs`. For each case it checks
+the dataset identity against the SHA-256 of the deck data text, compares the WASM
+answer with the reference, runs the case again with a progress callback (manifest
+`progressIntervalMs`, default 250) and checks that the answer and all
+telemetry fields other than times are unchanged, that every report is a `TimedOut` result with the same
+context, and that node counts and the best payoff never decrease across reports.
+
+`node tools/search-harness/browser.cjs MANIFEST.json WASM_PACKAGE OUTPUT_DIR` runs
+a `--target web` package in real Chromium Workers, with Playwright installed in the
+Node module path. The optional `timeoutMs` bounds each Worker externally. It checks
+the SHA-256s of the original UTF-8 strings inside the Worker.
+
+Both compare every semantic answer field (`json-tokens.cjs`). Object keys are
+canonicalized while JSON number tokens remain strings, so integers above
 JavaScript's safe range cannot silently compare equal. Only diagnostics/timing
-fields are excluded. It records browser, runner, manifest and WASM identities.
+fields are excluded. They record runtime, runner, manifest and WASM identities.
 This verifies the declared corpus and transport, not every browser or game parity.
 
 ## Mock rosters

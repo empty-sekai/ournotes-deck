@@ -1,4 +1,4 @@
-// Compare complete native outcomes with the same Rust core in Chromium Workers.
+// Compare complete native owned-snapshot answers with the same Rust core in Chromium Workers.
 // Keep JSON number tokens intact, including integers above JavaScript's safe range.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -6,57 +6,8 @@ const http = require('node:http');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { chromium } = require('playwright');
+const { projection } = require('./json-tokens.cjs');
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
-
-function projection(text) {
-  JSON.parse(text); // Syntax only. The recursive comparison keeps number tokens.
-  let i = 0;
-  const space = () => { while (/\s/.test(text[i] || '')) i++; };
-  const string = () => {
-    const start = i++;
-    let escaped = false;
-    while (i < text.length) {
-      const c = text[i++];
-      if (escaped) escaped = false;
-      else if (c === '\\') escaped = true;
-      else if (c === '"') return JSON.parse(text.slice(start, i));
-    }
-    throw Error('unterminated string');
-  };
-  const value = () => {
-    space();
-    if (text[i] === '"') return ['string', string()];
-    if (text[i] === '{') {
-      i++; space(); const fields = [];
-      while (text[i] !== '}') {
-        const key = string(); space(); assert.equal(text[i++], ':');
-        fields.push([key, value()]); space();
-        if (text[i] !== ',') break;
-        i++; space();
-      }
-      assert.equal(text[i++], '}');
-      return ['object', fields.sort(([a], [b]) => a.localeCompare(b))];
-    }
-    if (text[i] === '[') {
-      i++; space(); const items = [];
-      while (text[i] !== ']') {
-        items.push(value()); space();
-        if (text[i] !== ',') break;
-        i++; space();
-      }
-      assert.equal(text[i++], ']'); return ['array', items];
-    }
-    const start = i;
-    while (i < text.length && !/[\s,\]}]/.test(text[i])) i++;
-    const token = text.slice(start, i);
-    return [/^(true|false|null)$/.test(token) ? 'literal' : 'number', token];
-  };
-  const root = value(); assert.equal(root[0], 'object');
-  return root[1].filter(([key]) => key !== 'telemetry' && key !== 'elapsedMs');
-}
-assert.notDeepEqual(projection('{"n":9007199254740992}'), projection('{"n":9007199254740993}'));
-assert.deepEqual(projection('{"a":[{"s":"a,}\\\"","n":1}],"telemetry":{},"elapsedMs":1}'),
-  projection('{ "a": [ { "n": 1, "s": "a,}\\\"" } ] }'));
 
 async function main() {
   const [manifestFile, pkgDirectory, outputDirectory] = process.argv.slice(2);
@@ -65,14 +16,14 @@ async function main() {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const pkg = path.resolve(pkgDirectory), out = path.resolve(outputDirectory);
   fs.mkdirSync(out, { recursive: true });
-  const worker = `import init,{RecommendationSession} from '/pkg/ournotes_recommend_wasm.js';
-self.onmessage=async({data})=>{let session;try{await init();
-const hashes=await Promise.all([data.data,data.roster,data.request].map(async text=>
+  const worker = `import init,{DeckSolver} from '/pkg/ournotes_recommend_wasm.js';
+self.onmessage=async({data})=>{let solver;try{await init();
+const hashes=await Promise.all([data.data,data.snapshot,data.request].map(async text=>
 Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text))),x=>x.toString(16).padStart(2,'0')).join('')));
-session=new RecommendationSession(data.data);session.setRoster(data.roster);
-const begin=performance.now();const result=session.recommend(data.request);
-postMessage({result,hashes,searchWallMs:performance.now()-begin});
-}catch(e){postMessage({error:String(e)});}finally{session?.free();}};`;
+solver=new DeckSolver(data.data);
+const begin=performance.now();const result=solver.recommend(data.snapshot,data.request);
+postMessage({result,hashes,datasetId:solver.datasetId,searchWallMs:performance.now()-begin});
+}catch(e){postMessage({error:String(e)});}finally{solver?.free();}};`;
   const files = new Set(['ournotes_recommend_wasm.js', 'ournotes_recommend_wasm_bg.wasm']);
   const server = http.createServer((req, res) => {
     if (req.url === '/') { res.setHeader('Content-Type', 'text/html'); return res.end('<!doctype html><title>Search verification</title>'); }
@@ -91,9 +42,9 @@ postMessage({result,hashes,searchWallMs:performance.now()-begin});
     const cases = [];
     for (const entry of manifest.cases) {
       assert.match(entry.name, /^[A-Za-z0-9_-]+$/);
-      const input = Object.fromEntries(['data', 'roster', 'request'].map(k => [k, fs.readFileSync(path.resolve(root, entry[k]), 'utf8')]));
+      const input = Object.fromEntries(['data', 'snapshot', 'request'].map(k => [k, fs.readFileSync(path.resolve(root, entry[k]), 'utf8')]));
       const reference = fs.readFileSync(path.resolve(root, entry.reference), 'utf8');
-      assert.deepEqual(new Map(projection(reference)).get('completion'), ['string', 'Complete'], `${entry.name}: reference must be complete`);
+      assert.equal(JSON.parse(reference).result?.completion, 'Complete', `${entry.name}: reference must be complete`);
       const begin = performance.now();
       const actual = await page.evaluate(({ input, timeout }) => new Promise((resolve, reject) => {
         const worker = new Worker('/worker.js', { type: 'module' });
@@ -103,7 +54,8 @@ postMessage({result,hashes,searchWallMs:performance.now()-begin});
         worker.postMessage(input);
       }), { input, timeout: manifest.timeoutMs || 300000 });
       assert.equal(actual.error, undefined, `${entry.name}: ${actual.error}`);
-      assert.deepEqual(actual.hashes, ['data', 'roster', 'request'].map(k => sha(input[k])), `${entry.name}: original UTF-8 transport`);
+      assert.deepEqual(actual.hashes, ['data', 'snapshot', 'request'].map(k => sha(input[k])), `${entry.name}: original UTF-8 transport`);
+      assert.equal(actual.datasetId, sha(input.data), `${entry.name}: dataset identity`);
       assert.deepEqual(projection(actual.result), projection(reference), `${entry.name}: exact semantic JSON tokens`);
       fs.writeFileSync(path.join(out, `${entry.name}.json`), actual.result);
       const row = { name: entry.name, complete: true, exactSemanticTokensMatch: true, inputSha256: actual.hashes,

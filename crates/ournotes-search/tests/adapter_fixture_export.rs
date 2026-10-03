@@ -15,14 +15,17 @@ const SCORE_ID: i64 = 1004;
 const EVENT_ID: i64 = 7;
 
 fn joint_request(mode: &str, gekisou: bool, metric: Value) -> ournotes_search::types::RecommendationRequest {
-    serde_json::from_value(json!({"format":"ournotes-deck.recommendation-request/1",
+    serde_json::from_value(joint_request_json(mode, gekisou, metric)).unwrap()
+}
+
+fn joint_request_json(mode: &str, gekisou: bool, metric: Value) -> Value {
+    json!({"format":"ournotes-deck.recommendation-request/1",
         "execution":{"kind":"live","scoreId":SCORE_ID,"gekisou":gekisou,"play":{"kind":"theoreticalBest"}},
         "scenario":{"kind":mode,"musicId":10},"context":context_document(false,false,false),
         "metric":metric,"k":12,"constraints":{"leader":3},
         "seedLaw":{"atoms":[[1,1],[-1,2],[1,3]],"provenance":"synthetic joint bound regression"},
         "strategy":{"kind":"branchAndBound"},"limits":{"timeLimitMs":null,"maxCandidates":null,"cacheEntries":0}
-    }))
-    .unwrap()
+    })
 }
 
 #[test]
@@ -1083,4 +1086,170 @@ fn resolved_owned_facts_use_all_three_shared_entrypoints_without_leaking_default
             assert_eq!(empty.owned_snapshot_scope.unwrap()["revision"], "owned-r1");
         }
     }
+}
+
+/// The owned snapshot stating exactly the facts of `roster_document`.
+fn snapshot_document(dataset_id: &str, members: i64, snaps: i64, characters: i64) -> Value {
+    let roster = roster_document(members, snaps, characters);
+    json!({
+        "format":"ournotes.owned-snapshot/1","datasetId":dataset_id,"revision":"r1",
+        "ownedFacts":{"memberIds":(1..=members).collect::<Vec<_>>(),"snapIds":(1..=snaps).collect::<Vec<_>>(),
+            "memberCoverage":"complete","snapCoverage":"complete"},
+        "eligible":{"members":roster["members"],"snaps":roster["snaps"]},
+        "player":{"characterRanks":{"coverage":"complete",
+                "values":(1..=characters).map(|id|json!({"id":id,"value":10})).collect::<Vec<_>>()},
+            "characterTotalRank":null,"vipRank":3,"bandItems":[],
+            "memory":{"musicRanks":[],"unlockedMembers":[],"unlockedSnaps":[]},"eventIds":[EVENT_ID]},
+        "assumptions":[]
+    })
+}
+
+#[test]
+fn snapshot_recommendation_matches_the_same_roster_and_locates_every_input_problem() {
+    use ournotes_search::engine::{SnapshotStatus, recommend, recommend_snapshot};
+    let mut s = synthetic_master(6, 2, 5);
+    extend_table(
+        &mut s,
+        "MasterMemberCardLevelLimit",
+        (1..=5)
+            .flat_map(|rarity| {
+                (1..=5).map(
+                    move |awake| json!({"_id":rarity*10+awake,"_rarity":rarity,"_awakeCount":awake,"_limitLevel":100}),
+                )
+            })
+            .collect(),
+    );
+    let data = DeckData::from_json(&data_document(&s, 6, 2, 5).to_string()).unwrap();
+    let id = data.sha256.clone().unwrap();
+    assert!(id.len() == 64 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
+    let roster = Roster::from_json(&roster_document(6, 2, 5).to_string()).unwrap();
+    let snapshot = snapshot_document(&id, 6, 2, 5);
+    for (mode, gekisou) in [("free", false), ("mission", true)] {
+        for metric in [json!({"kind":"score"}), json!({"kind":"clientEventPoints","eventId":EVENT_ID})] {
+            let request = joint_request_json(mode, gekisou, metric.clone()).to_string();
+            let answer = recommend_snapshot(&data, &snapshot.to_string(), &request, None);
+            assert_eq!(
+                answer.status,
+                SnapshotStatus::Ok,
+                "{mode} {metric:?}: {:?} {:?}",
+                answer.missing,
+                answer.errors
+            );
+            assert_eq!(answer.dataset_id.as_deref(), Some(id.as_str()));
+            let result = answer.result.unwrap();
+            let expected = recommend(&data, &roster, &joint_request(mode, gekisou, metric.clone())).unwrap();
+            assert_eq!(result.results, expected.results, "{mode} {metric:?}");
+            assert_eq!(result.resolved_context["ownedSnapshot"]["revision"], "r1");
+        }
+    }
+
+    let gekisou = joint_request_json("mission", true, json!({"kind":"score"})).to_string();
+    let normal = joint_request_json("free", false, json!({"kind":"score"})).to_string();
+    let mut unknown = snapshot.clone();
+    unknown["eligible"]["members"][3]["gekisouSkillLevel"] = Value::Null;
+    let answer = recommend_snapshot(&data, &unknown.to_string(), &gekisou, None);
+    assert_eq!(answer.status, SnapshotStatus::Incomplete);
+    assert!(answer.result.is_none() && answer.errors.is_empty());
+    let missing: Vec<_> = answer.missing.iter().map(|i| (i.path.as_str(), i.code.as_str())).collect();
+    assert_eq!(missing, [("eligible.members[4].gekisouSkillLevel", "missing")]);
+    let wire = serde_json::to_value(&answer).unwrap();
+    assert_eq!(wire["format"], "ournotes-deck.snapshot-recommendation/1");
+    assert_eq!(wire["status"], "incomplete");
+    assert_eq!(wire["result"], Value::Null);
+    // Normal Live does not read Gekisou levels.
+    assert_eq!(recommend_snapshot(&data, &unknown.to_string(), &normal, None).status, SnapshotStatus::Ok);
+
+    let mut foreign = snapshot.clone();
+    foreign["datasetId"] = json!("0".repeat(64));
+    let answer = recommend_snapshot(&data, &foreign.to_string(), &normal, None);
+    assert_eq!(answer.status, SnapshotStatus::Invalid);
+    assert!(answer.errors.iter().any(|i| i.path == "datasetId" && i.code == "dataset_mismatch"));
+
+    let answer = recommend_snapshot(&data, "{", "{}", None);
+    assert_eq!(answer.status, SnapshotStatus::Invalid);
+    let errors: Vec<_> = answer.errors.iter().map(|i| (i.path.as_str(), i.code.as_str())).collect();
+    assert_eq!(errors, [("request", "parse"), ("snapshot", "parse")]);
+
+    let mut no_law = joint_request_json("free", false, json!({"kind":"score"}));
+    no_law.as_object_mut().unwrap().remove("seedLaw");
+    let answer = recommend_snapshot(&data, &snapshot.to_string(), &no_law.to_string(), None);
+    assert_eq!(answer.status, SnapshotStatus::Invalid);
+    let errors: Vec<_> = answer.errors.iter().map(|i| (i.path.as_str(), i.code.as_str())).collect();
+    assert_eq!(errors, [("request", "input")]);
+}
+
+/// Telemetry without its millisecond fields, which are the only ones allowed to differ between two runs.
+fn untimed(outcome: &ournotes_search::types::RecommendationOutcome) -> Value {
+    fn strip(value: &mut Value) {
+        match value {
+            Value::Object(map) => {
+                map.retain(|key, _| !key.ends_with("Ms"));
+                map.values_mut().for_each(strip);
+            }
+            Value::Array(items) => items.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    let mut telemetry = serde_json::to_value(&outcome.telemetry).unwrap();
+    strip(&mut telemetry);
+    telemetry
+}
+
+#[test]
+fn progress_reports_exact_decks_and_leave_the_search_unchanged() {
+    use ournotes_search::{
+        auxiliary::evaluate_fixed,
+        engine::{Progress, recommend, recommend_with_progress},
+        search::Completion,
+        types::RecommendationOutcome,
+    };
+    use std::time::Duration;
+    let synth = synthetic_master(6, 2, 5);
+    let data = DeckData::from_json(&data_document(&synth, 6, 2, 5).to_string()).unwrap();
+    let roster = Roster::from_json(&roster_document(6, 2, 5).to_string()).unwrap();
+    let numerator =
+        |out: &RecommendationOutcome| out.results.first().map(|d| d.expected_payoff.numerator.parse::<i128>().unwrap());
+    for (mode, gekisou) in [("free", false), ("mission", true)] {
+        for metric in [json!({"kind":"score"}), json!({"kind":"clientEventPoints","eventId":EVENT_ID})] {
+            let case = format!("{mode} {metric:?}");
+            let request = joint_request(mode, gekisou, metric);
+            let plain = recommend(&data, &roster, &request).unwrap();
+            let mut reports = Vec::new();
+            let mut report = |out: &RecommendationOutcome| reports.push(out.clone());
+            let progress = Progress { interval: Duration::ZERO, report: &mut report };
+            let hooked = recommend_with_progress(&data, &roster, &request, progress).unwrap();
+            assert_eq!(hooked.completion, Completion::Complete, "{case}");
+            assert_eq!(hooked.results, plain.results, "{case}");
+            assert_eq!(untimed(&hooked), untimed(&plain), "{case}");
+            assert!(!reports.is_empty(), "{case}");
+            assert_eq!(reports.last().unwrap().results, hooked.results, "{case}");
+            let mut decks = BTreeMap::new();
+            for (before, after) in reports.iter().zip(&reports[1..]) {
+                assert!(before.telemetry.nodes <= after.telemetry.nodes, "{case}");
+                assert!(numerator(before) <= numerator(after), "{case}");
+            }
+            for r in &reports {
+                assert_eq!(r.completion, Completion::TimedOut, "{case}");
+                assert_eq!(r.resolved_context, plain.resolved_context, "{case}");
+                assert!(r.telemetry.nodes <= hooked.telemetry.nodes, "{case}");
+                assert!(!r.telemetry.proof.complete && r.telemetry.proof.upper_bound.is_none(), "{case}");
+                for d in &r.results {
+                    decks.insert((d.members, d.snaps), d.expected_payoff.clone());
+                }
+            }
+            // Every reported deck is exactly evaluated.
+            for ((members, snaps), payoff) in decks {
+                let fixed = evaluate_fixed(&data, &roster, &request, members, snaps).unwrap();
+                assert_eq!(fixed.results[0].expected_payoff, payoff, "{case} {members:?} {snaps:?}");
+            }
+        }
+    }
+    // The canonical power search makes no reports.
+    let power = fixed_request(json!({"kind":"power","musicId":10,"eventParameter":false}), json!({"kind":"power"}));
+    let mut count = 0;
+    let mut report = |_: &RecommendationOutcome| count += 1;
+    let progress = Progress { interval: Duration::ZERO, report: &mut report };
+    let out = recommend_with_progress(&data, &roster, &power, progress).unwrap();
+    assert_eq!(out.results, recommend(&data, &roster, &power).unwrap().results);
+    assert_eq!(count, 0);
 }

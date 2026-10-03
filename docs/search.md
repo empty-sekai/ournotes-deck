@@ -70,6 +70,13 @@ without preparing tables or visiting decks. K is a result limit, so requesting m
 allocate K entries up front. Cooperative deadlines do not provide preemption, resumability or a browser Worker
 step API; these remain separate requirements.
 
+Physical-deck searches can report progress (`engine::recommend_with_progress`, `Progress`). A report is the
+result the search would return if its deadline expired at that point: `TimedOut`, with the exactly evaluated
+Top-K so far and the telemetry so far. The report's telemetry is closed on a copy, so its proof is not complete and
+has no upper bound of the unexplored part, which only a stop computes. Reports are made at the deadline checks and
+after Top-K insertions, at most once per interval. Building a report only reads the search state, so a complete
+search visits the same nodes and returns the same result with or without reports.
+
 For Skip search, ordering by power additionally requires a proof over the entire feasible power domain. The
 solver combines target-aware lower bounds for signed leader effects with required members and distinct-character
 constraints, and takes the largest prepared leader bound as its power upper bound. It rejects a domain unless

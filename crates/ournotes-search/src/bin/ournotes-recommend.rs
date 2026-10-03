@@ -1,37 +1,61 @@
-//! Production JSON boundary: one recommendation request in, one recommendation result out.
-use ournotes_search::{engine::recommend, types::RecommendationRequest};
+//! Production JSON boundary: one recommendation request with a roster or an owned snapshot in, one result out.
+use ournotes_search::engine::{Progress, recommend, recommend_snapshot, recommend_with_progress};
+use ournotes_search::types::{RecommendationOutcome, RecommendationRequest};
 use ournotes_sim::{Error, cards::Roster, data::DeckData};
-use std::{path::PathBuf, process::ExitCode};
+use std::{path::PathBuf, process::ExitCode, time::Duration};
+const USAGE: &str = "ournotes-recommend --data DECK_DATA.json (--roster ROSTER.json | --snapshot OWNED_SNAPSHOT.json)
+                   --request REQUEST.json [--progress-ms N] [-o RESULT.json]
+--snapshot writes the owned-snapshot answer (ournotes-deck.snapshot-recommendation/1), whose missing/errors lists
+replace an error exit for snapshot and request problems. --progress-ms N writes each progress report, at most one
+per N ms, as one JSON line to stderr.";
 fn run() -> Result<(), Error> {
     let mut args = std::env::args().skip(1);
-    let (mut data, mut roster, mut request, mut output) = (None, None, None, None);
+    let (mut data, mut roster, mut snapshot, mut request, mut output, mut progress_ms) =
+        (None, None, None, None, None, None);
     while let Some(a) = args.next() {
         if a == "--help" || a == "-h" {
-            println!(
-                "ournotes-recommend --data DECK_DATA.json --roster ROSTER.json --request REQUEST.json [-o RESULT.json]"
-            );
+            println!("{USAGE}");
             return Ok(());
         }
-        let v = args.next().ok_or_else(|| Error::Input(format!("{a} requires a path")))?;
+        let v = args.next().ok_or_else(|| Error::Input(format!("{a} requires a value")))?;
         match a.as_str() {
             "--data" => data = Some(v),
             "--roster" => roster = Some(v),
+            "--snapshot" => snapshot = Some(v),
             "--request" => request = Some(v),
+            "--progress-ms" => {
+                progress_ms = Some(v.parse::<u64>().map_err(|_| Error::Input(format!("bad --progress-ms {v}")))?)
+            }
             "-o" | "--out" => output = Some(PathBuf::from(v)),
             _ => return Err(Error::Input(format!("unknown option {a}"))),
         }
     }
     let read = |p: String| std::fs::read_to_string(&p).map_err(|e| Error::Input(format!("{p}: {e}")));
     let d = DeckData::from_path(data.ok_or_else(|| Error::Input("--data is required".into()))?)?;
-    let roster = roster.ok_or_else(|| Error::Input("--roster is required".into()))?;
-    let text = read(roster.clone())?;
-    check_mock_source(&roster, &text, &d)?;
-    let r = Roster::from_json(&text)?;
-    let q: RecommendationRequest =
-        serde_json::from_str(&read(request.ok_or_else(|| Error::Input("--request is required".into()))?)?)
-            .map_err(|e| Error::Input(format!("request: {e}")))?;
-    let value = recommend(&d, &r, &q)?;
-    let text = serde_json::to_string_pretty(&value).map_err(|e| Error::Domain(format!("result JSON: {e}")))?;
+    let request_text = read(request.ok_or_else(|| Error::Input("--request is required".into()))?)?;
+    let mut report = |out: &RecommendationOutcome| {
+        eprintln!("{}", serde_json::to_string(out).expect("result JSON"));
+    };
+    let progress = progress_ms.map(|ms| Progress { interval: Duration::from_millis(ms), report: &mut report });
+    let text = match (roster, snapshot) {
+        (Some(roster), None) => {
+            let text = read(roster.clone())?;
+            check_mock_source(&roster, &text, &d)?;
+            let r = Roster::from_json(&text)?;
+            let q: RecommendationRequest =
+                serde_json::from_str(&request_text).map_err(|e| Error::Input(format!("request: {e}")))?;
+            let value = match progress {
+                Some(progress) => recommend_with_progress(&d, &r, &q, progress)?,
+                None => recommend(&d, &r, &q)?,
+            };
+            serde_json::to_string_pretty(&value)
+        }
+        (None, Some(snapshot)) => {
+            serde_json::to_string_pretty(&recommend_snapshot(&d, &read(snapshot)?, &request_text, progress))
+        }
+        _ => return Err(Error::Input("exactly one of --roster and --snapshot is required".into())),
+    }
+    .map_err(|e| Error::Domain(format!("result JSON: {e}")))?;
     if let Some(p) = output {
         std::fs::write(&p, text).map_err(|e| Error::Input(format!("{}: {e}", p.display())))?
     } else {
