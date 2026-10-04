@@ -245,6 +245,10 @@ ournotes-deck chart-stats --data deck-data.json --no-gekisou-aptitude -o baselin
 `OURNOTES_DECK_SNAPS_SEED0`、`OURNOTES_DECK_SNAPS_MEMBERS`、`OURNOTES_DECK_SNAPS_SNAPS`、`OURNOTES_DECK_SNAPS_NOTES`、
 `OURNOTES_DECK_SNAPS_VARIANTS` 扩大比较规模。
 
+## 版本记录
+
+改动见 [CHANGELOG.md](CHANGELOG.md)，由 [git-cliff](https://git-cliff.org/) 根据提交（Conventional Commits）生成。发版时，改版本号的那个提交同时重新生成它：`git cliff --tag vX.Y.Z -o CHANGELOG.md`。
+
 ## 许可证
 
 MIT OR Apache-2.0。

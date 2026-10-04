@@ -292,6 +292,12 @@ files and compares the search with exhaustive enumeration on small synthetic poo
 skills, `OURNOTES_DECK_SNAPS_CASES`, `OURNOTES_DECK_SNAPS_SEED0`, `OURNOTES_DECK_SNAPS_MEMBERS`,
 `OURNOTES_DECK_SNAPS_SNAPS`, `OURNOTES_DECK_SNAPS_NOTES` and `OURNOTES_DECK_SNAPS_VARIANTS` do the same.
 
+## Changelog
+
+[CHANGELOG.md](CHANGELOG.md) lists the changes, generated from the commits (Conventional Commits) by
+[git-cliff](https://git-cliff.org/). The commit that bumps the version regenerates it with
+`git cliff --tag vX.Y.Z -o CHANGELOG.md`.
+
 ## Licence
 
 MIT OR Apache-2.0.
