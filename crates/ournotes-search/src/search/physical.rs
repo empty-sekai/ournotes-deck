@@ -413,7 +413,8 @@ impl Engine<'_, '_> {
     /// The branches still open are bounded by `open` (None: no branch open): offer the larger of it and the best
     /// payoff as the global upper bound. Only a traversal of the whole remaining domain (one search part) offers it.
     fn note_open(&mut self, open: Option<i128>) {
-        if self.rec.parts != 1 {
+        // The interval frontier has no scalar Top-K; `open` alone would omit its retained candidates.
+        if self.rec.parts != 1 || self.certified.is_some() {
             return;
         }
         let best = self.top.first().map(|e| e.evaluation.expected_payoff.numerator);
@@ -436,10 +437,21 @@ impl Engine<'_, '_> {
         self.rec.end_open(&mut self.tel);
         self.rec.clock.add_to(&mut self.tel.time);
         let complete = self.stop.is_none();
-        if complete || self.rec.bounded {
-            // Complete: nothing is open. Stopped: the unexplored bound covers everything left.
-            let open = if complete { None } else { self.rec.unexplored };
-            self.note_open(open);
+        if self.certified.is_none() {
+            // `top` has already moved into the results. Its saved standing, not the now-empty vector, covers the
+            // evaluated domain. An empty result supplies no scalar best, including no synthetic zero.
+            let best = (standing.2 > 0).then_some(standing.0);
+            if complete {
+                // Every part has closed: the exact best is the whole-domain optimum, even with several parts or
+                // an exhaustive traversal that offered no running bound.
+                self.rec.upper = best;
+            } else if self.rec.bounded {
+                // Unwinding folded all remaining branches, including a pool-wide bound for any later parts.
+                // Their maximum with the saved incumbent covers the whole domain; no new bounds are computed here.
+                if let Some(upper) = best.max(self.rec.unexplored) {
+                    self.rec.offer_upper(upper);
+                }
+            }
         }
         let mut tel = std::mem::take(&mut self.tel);
         self.close_telemetry(&mut tel, standing, true);

@@ -67,13 +67,13 @@ reports the work so far, a recommendation result reports the whole request.
 | `fraction` | Position-based share decided, 0 to 1; 1 when complete. Every branch before the current path has been evaluated, pruned or skipped. Branches differ in size, so this indicates progress, not remaining time. Null for traversals without a tracked position |
 | `parts`, `partsDone` | Search parts run one after another, and those finished (Gekisou score conversion parts; 1 otherwise) |
 | `topLevelDone`, `topLevelTotal` | Top-level branches decided in the current part, of the total (depth-0 joint choices, or leaders of the composition traversal); given when not complete |
-| `best`, `kth` | Payoff numerators of the best and the K-th deck; `best` is null with an empty Top-K, `kth` while it is not full |
+| `best`, `kth` | Exact payoff numerators of the best and the K-th deck; `best` is null with an empty Top-K, `kth` while it is not full. Both are null on the LUCK interval path; see each result's `payoffInterval` |
 | `upperBound` | Payoff bound (numerator) of **the part not yet explored** at the stop |
-| `globalUpperBound` | Bound of the best payoff numerator over the whole domain: the larger of `best` and the bounds of the branches still open. It only decreases during the search and equals `best` once complete. Null when the traversal does not track it (the bounds of a later Gekisou conversion part are not known while an earlier part runs, and the `candidate` strategy has none) |
+| `globalUpperBound` | Bound of the best payoff numerator over the whole domain, covering retained decks and every open branch; nonincreasing once known. A completed deterministic physical search sets it to `best`, including exhaustive and multipart conversion searches. Null for a completed empty domain, the LUCK interval path, and traversals that do not record this field |
 | `bestGap`, `kthGap` | `(upperBound − x) / x`; 0 when the bound does not exceed x; null when x is not positive |
 | `boundMs` | Time spent computing `upperBound` after the stop (outside the search deadline) |
 
-`upperBound` is a true upper bound: the best deck of the whole domain pays at most `max(best, upperBound)`, and every
+For deterministic searches, `upperBound` is a true upper bound: the best deck of the whole domain pays at most `max(best, upperBound)`, and every
 deck of the true Top-K that was not kept pays at most `max(upperBound, kth)`. A stopped search can therefore show
 "not proven; the optimum exceeds the current best by at most `bestGap`".
 
@@ -83,8 +83,13 @@ choice, which is the first remaining one when the root follows that bound's desc
 yet started, the pool-wide bound), and take the maximum. When the stop happens in the
 PT warm start, the prefixes the warm start skipped by bonus are unexplored too, and the whole-domain root bound is used.
 
-Nulls: a complete search needs no bound; the `exhaustive`, `candidate`, `canonical` and `session` traversals have no
-bound (and `bestGap` is null); when a bounded traversal stops with nothing left unexplored, `upperBound` is null and
+One running conversion part cannot supply a whole-domain bound on its own, so `globalUpperBound` may be null then.
+At a stop, the retained best and the `upperBound` covering all remaining parts supply a whole-domain bound;
+on completion every part has closed. Evaluated LUCK candidates live on the interval frontier and must not be treated
+as an empty exact Top-K or a zero payoff.
+
+`upperBound` nulls: a complete search has no unexplored part; the `exhaustive`, `candidate`, `canonical` and `session` traversals do not
+record an unexplored bound (and `bestGap` is null); when a bounded traversal stops with nothing left unexplored, `upperBound` is null and
 the gaps are 0. A progress report is taken while the search runs, not at a stop: `complete` is false and `upperBound`
 and the gaps are null.
 

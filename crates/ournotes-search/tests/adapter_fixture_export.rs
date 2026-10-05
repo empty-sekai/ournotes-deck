@@ -16,6 +16,8 @@ const EVENT_ID: i64 = 7;
 
 #[path = "fixtures/numeric_domain.rs"]
 mod numeric_domain;
+#[path = "fixtures/proof_telemetry.rs"]
+mod proof_telemetry;
 #[path = "fixtures/sustained_combo.rs"]
 mod sustained_combo;
 
