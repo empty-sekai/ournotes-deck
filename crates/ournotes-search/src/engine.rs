@@ -45,7 +45,18 @@ pub(crate) fn recommend_hooked(
     request: &RecommendationRequest,
     progress: Option<ProgressHook<'_>>,
 ) -> Result<RecommendationOutcome, Error> {
-    let start = Instant::now();
+    recommend_hooked_started(data, roster, request, progress, Instant::now())
+}
+
+/// Continue a request whose budget already began at its transport boundary. Validation and problem construction
+/// still run before the solver observes the remaining budget, so an expired request does not hide invalid input.
+pub(crate) fn recommend_hooked_started(
+    data: &DeckData,
+    roster: &Roster,
+    request: &RecommendationRequest,
+    progress: Option<ProgressHook<'_>>,
+    start: Instant,
+) -> Result<RecommendationOutcome, Error> {
     let built = crate::handler::build_card_pool(data, roster, request)?;
     crate::search::dispatch::execute(&built, None, start, start.elapsed().as_secs_f64() * 1000.0, progress)
 }
@@ -164,7 +175,9 @@ pub use crate::recommendation::{Answer, AnswerProgress};
 /// given as their original JSON text. The account must name this deck data by its SHA-256 and is resolved for the
 /// facts the request's goal reads; unknown facts are reported in `missing` and invalid input in `errors`, each with
 /// its JSON path, and nothing unknown is replaced by a default. `progress`, when given, receives complete answers
-/// with `final: false` at most once per interval while the search runs. See `docs/recommendation.md`.
+/// with `final: false` at most once per interval while the search runs. The cooperative search budget starts before
+/// account/request parsing and resolution. Dataset loading precedes this call; validation, atomic operations and
+/// result materialization are not preempted at the deadline. See `docs/recommendation.md`.
 pub fn recommend_account(
     data: &DeckData,
     account_json: &str,

@@ -1323,7 +1323,18 @@ pub(crate) fn recommend(
     request_json: &str,
     progress: Option<AnswerProgress<'_>>,
 ) -> Answer {
-    let start = Instant::now();
+    recommend_started(data, account_json, request_json, progress, Instant::now())
+}
+
+/// Keep one origin through parsing, resolution, problem construction and search. A supplied origin is private to
+/// this module; tests use it to represent elapsed request work without sleeping or exposing a clock override.
+fn recommend_started(
+    data: &DeckData,
+    account_json: &str,
+    request_json: &str,
+    progress: Option<AnswerProgress<'_>>,
+    start: Instant,
+) -> Answer {
     let mut answer = Answer {
         format: ANSWER_FORMAT,
         dataset_id: data.sha256.clone(),
@@ -1379,7 +1390,7 @@ pub(crate) fn recommend(
         }
         None => None,
     };
-    let outcome = crate::engine::recommend_hooked(data, resolved.roster(), &parsed.search, hook)
+    let outcome = crate::engine::recommend_hooked_started(data, resolved.roster(), &parsed.search, hook, start)
         .and_then(|outcome| result_of(&outcome, &parsed, &scope, start, true));
     match outcome {
         Ok(result) => answer.result = Some(result),
@@ -1457,6 +1468,10 @@ pub fn capabilities() -> Value {
         },
     })
 }
+
+#[cfg(test)]
+#[path = "../tests/fixtures/request_budget.rs"]
+mod request_budget;
 
 #[cfg(test)]
 mod tests {

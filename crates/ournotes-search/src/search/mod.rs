@@ -682,3 +682,8 @@ fn preparation_timeout(start: Instant) -> SearchOutcome {
 
 #[cfg(test)]
 mod gate_tests;
+
+#[cfg(test)]
+pub(crate) mod test_common {
+    pub(crate) use super::gate_tests::common::{Rng, every_table, replace_table, set_column, synth};
+}
