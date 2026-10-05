@@ -40,6 +40,7 @@ def main():
         if module == "native":
             assert args.target
             metadata["target"] = args.target
+            metadata["strip"] = "symbols"
             extension = ".exe" if "windows" in args.target else ""
             for binary in ["ournotes-deck", "ournotes-recommend"]:
                 shutil.copy2(source / "target" / args.target / "release" / (binary + extension), staging)

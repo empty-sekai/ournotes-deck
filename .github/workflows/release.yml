@@ -64,6 +64,7 @@ jobs:
       SOURCE_COMMIT: ${{ needs.resolve.outputs.commit }}
       BUILD_TARGET: ${{ matrix.target }}
       MACOSX_DEPLOYMENT_TARGET: '11.0'
+      CARGO_PROFILE_RELEASE_STRIP: symbols
     steps:
       - uses: actions/checkout@v7
         with:
@@ -91,7 +92,7 @@ jobs:
       - name: Export synthetic CLI inputs
         working-directory: source
         env:
-          BDON_HARNESS_OUT: work/corpus
+          BDON_HARNESS_OUT: ${{ github.workspace }}/source/work/corpus
         run: cargo test --release --locked --target "$BUILD_TARGET" --test adapter_fixture_export export_search_harness_inputs -- --ignored --exact
       - name: Package and run extracted binaries
         run: |
@@ -141,7 +142,7 @@ jobs:
       - name: Export native account references
         working-directory: source
         env:
-          OURNOTES_ACCOUNT_CORPUS: work/account-corpus
+          OURNOTES_ACCOUNT_CORPUS: ${{ github.workspace }}/source/work/account-corpus
         run: cargo test --release --locked --test adapter_fixture_export export_account_transport_corpus -- --ignored --exact
       - name: Package and verify extracted WASM in Node and Chromium
         env:
