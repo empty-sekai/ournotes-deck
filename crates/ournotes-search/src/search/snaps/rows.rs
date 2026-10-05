@@ -476,6 +476,8 @@ pub(super) struct ActiveRow {
     /// A Gekisou row: its factor windows in chart time `(start, end, concurrent executions)` and the play-frame
     /// index ranges `(a, b]` whose judgements its conversion can see.
     pub(super) gk_win: Option<Vec<(i64, i64, f64)>>,
+    /// The executions each window of `gk_win` covers.
+    pub(super) gk_starts: Option<Vec<Rc<RampStarts>>>,
     pub(super) gk_execs: Option<Vec<f64>>,
     /// A sustained combo bonus started by one Gekisou combo count condition: its threshold and its span components
     /// `(start, end, playing range of every start frame)` (see `combo_gate`).

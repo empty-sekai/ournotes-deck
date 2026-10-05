@@ -97,7 +97,8 @@ impl ComboTriggers {
     }
 
     /// Only a sole positive checker guarantees the group's override comes from
-    /// this 7005. Compound/negative triggers keep the original timestamp envelope.
+    /// this 7005. Compound triggers carry no override (`frame_timed`); a negative one keeps the original timestamp
+    /// envelope.
     pub(super) fn trigger_time(&self, env: &Env, group: i64, frame: usize) -> Option<i64> {
         let sets = env.sets.get(&group)?;
         if sets.len() != 1 || sets[0].len() != 1 {
@@ -238,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn compiled_7005_window_moves_past_range_start_but_compound_override_stays_wide() {
+    fn compiled_7005_window_moves_past_range_start_and_a_compound_group_starts_at_its_frame() {
         let master = Master::from_json_tables(|name| match name {
             "MasterSkillCondition" => Some(
                 r#"{"_allData":[
@@ -295,10 +296,9 @@ mod tests {
         let window = gk_row_timing(&env, &direct);
         assert_eq!(window.starts, [3, 4]);
         assert_eq!(window.win, [(61, i64::MAX, 1.0)]);
-        // Count necessary conditions are safe within AND, but another checker
-        // can supply the compound group's override. Do not narrow that timestamp.
+        // an AND reports no override: the same start frames trigger at their frame times
         direct.trigger = 2;
-        assert_eq!(gk_row_timing(&env, &direct).win, [(0, i64::MAX, 1.0)]);
+        assert_eq!(gk_row_timing(&env, &direct).win, [(120, i64::MAX, 1.0)]);
     }
 
     #[test]

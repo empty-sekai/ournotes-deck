@@ -38,6 +38,7 @@ pub(super) fn active_row(env: &Env, r: &Row, can_start: bool, event_bound: bool)
         gk_win: w
             .as_ref()
             .map(|x| if FILED_IN_ORDER.contains(&r.effect_type) { x.filed.clone() } else { x.win.clone() }),
+        gk_starts: w.as_ref().map(|x| x.win_starts.clone()),
         gk_gate: w.as_ref().and_then(|x| combo_gate(env, r).map(|t| (t, x.parts.clone()))),
         gk_execs: w.as_ref().map(|x| x.executions.clone()),
         gk_event_win: (r.gk && event_bound).then(|| std::array::from_fn(|k| gk_event_windows(env, r, k))),
@@ -543,6 +544,8 @@ pub(super) struct GkRowWin {
     pub(super) executions: Vec<f64>,
     pub(super) conv: Vec<(i64, i64)>,
     pub(super) starts: Vec<usize>,
+    /// The executions each window of `win` (and `filed`) covers.
+    pub(super) win_starts: Vec<Rc<RampStarts>>,
     /// A sustained row (one execution at a time): the union of its start frames' factor spans, each component with
     /// the playing range of all its start frames when they agree (empty for other rows).
     pub(super) parts: Vec<SpanPart>,
@@ -551,8 +554,9 @@ pub(super) struct GkRowWin {
 /// The timing of a Gekisou row (it reads only the trigger, the trigger type, the gate, the activation time and the
 /// release), computed once per search. Every frame in which the row can start gives one factor window from the
 /// earliest trigger time there to its latest end; with many such frames, one window over all of them with at most
-/// five executions (the updaters of one effect), or one for a sustained effect. Registered in a frame in which it
-/// can start, a conversion converts the notes judged in the next frames up to the frame that processes its end.
+/// five executions (the updaters of one effect). A sustained effect runs one execution at a time inside the span of
+/// its start frame: one window per component of the spans' union. Registered in a frame in which it can start, a
+/// conversion converts the notes judged in the next frames up to the frame that processes its end.
 pub(super) fn gk_row(env: &Env, r: &Row) -> Rc<GkRowWin> {
     let key = (r.trigger, r.trigger_type, r.gate, r.act.to_bits(), r.release);
     if let Some(w) = env.gk_cache.borrow().get(&key) {
@@ -571,6 +575,8 @@ pub(super) fn gk_row_timing(env: &Env, r: &Row) -> GkRowWin {
             executions: vec![f64::INFINITY],
             conv: vec![(i64::MIN, i64::MAX)],
             starts: Vec::new(),
+            // without Gekisou frames no combo count is read
+            win_starts: vec![Rc::default()],
             parts: Vec::new(),
         };
     };
@@ -586,27 +592,47 @@ pub(super) fn gk_row_timing(env: &Env, r: &Row) -> GkRowWin {
             _ => conv.push((a, b)),
         }
     }
+    let framed = frame_timed(env, r.trigger);
     let spans: Vec<(i64, i64)> = s
         .iter()
         .zip(&ends)
         .map(|(&f, e)| {
+            if framed {
+                return (g.times[f] as i64, e.0);
+            }
             let lower = g.combo_triggers.as_ref().and_then(|c| c.trigger_time(env, r.trigger, f));
             (lower.map_or(g.wlo[f], |t| g.wlo[f].max(t)), e.0)
         })
         .collect();
+    // the start frames each window covers: one each for a few one-shot starts; for a sustained row (one execution at
+    // a time, inside the span of its start frame) those of each component of the spans' union; else all of them
+    let groups: Vec<Vec<usize>> = if spans.is_empty() {
+        Vec::new()
+    } else if r.trigger_type == 1 && spans.len() <= 8 {
+        (0..spans.len()).map(|i| vec![i]).collect()
+    } else if r.trigger_type == 2 {
+        components(&spans)
+    } else {
+        vec![(0..spans.len()).collect()]
+    };
+    let mult = if r.trigger_type == 2 || (r.trigger_type == 1 && spans.len() <= 8) {
+        1.0
+    } else {
+        POOL.min(spans.len() as f64)
+    };
     let windows = |spans: &[(i64, i64)]| -> Vec<(i64, i64, f64)> {
-        if spans.is_empty() {
-            Vec::new()
-        } else if r.trigger_type == 1 && spans.len() <= 8 {
-            spans.iter().map(|&(a, b)| (a, b, 1.0)).collect()
-        } else {
-            let a = spans.iter().map(|x| x.0).min().unwrap_or(i64::MIN);
-            let b = spans.iter().map(|x| x.1).max().unwrap_or(i64::MAX);
-            let mult = if r.trigger_type == 2 { 1.0 } else { POOL.min(spans.len() as f64) };
-            vec![(a, b, mult)]
-        }
+        groups
+            .iter()
+            .map(|c| {
+                let a = c.iter().map(|&i| spans[i].0).min().unwrap_or(i64::MIN);
+                let b = c.iter().map(|&i| spans[i].1).max().unwrap_or(i64::MAX);
+                (a, b, mult)
+            })
+            .collect()
     };
     let win = windows(&spans);
+    let win_starts: Vec<Rc<RampStarts>> =
+        groups.iter().map(|c| Rc::new(RampStarts::new(c.iter().map(|&i| (spans[i].0, s[i])).collect()))).collect();
     // the frame that processes an end (`end_of`) files it
     let filed_spans: Vec<(i64, i64)> = spans
         .iter()
@@ -618,35 +644,68 @@ pub(super) fn gk_row_timing(env: &Env, r: &Row) -> GkRowWin {
         })
         .collect();
     let filed = windows(&filed_spans);
-    let executions = if win.is_empty() {
-        Vec::new()
-    } else if r.trigger_type == 1 && spans.len() <= 8 {
+    let executions = if r.trigger_type == 1 && spans.len() <= 8 {
         vec![1.0; spans.len()]
     } else {
-        vec![(s.len() as f64).next_up()]
+        groups.iter().map(|c| (c.len() as f64).next_up()).collect()
     };
     // every execution of a sustained row runs inside the span of its start frame, so inside one component of their
     // union, and starts in one of that component's start frames
     let parts = if r.trigger_type == 2 {
-        let mut by: Vec<SpanPart> = spans.iter().zip(&s).map(|(&(a, b), &f)| (a, b, g.current[f])).collect();
-        by.sort_unstable_by_key(|x| x.0);
-        let mut out: Vec<SpanPart> = Vec::with_capacity(by.len());
-        for (a, b, c) in by {
-            match out.last_mut() {
-                Some(l) if a <= l.1 => {
-                    l.1 = l.1.max(b);
-                    if l.2 != c {
-                        l.2 = None;
-                    }
-                }
-                _ => out.push((a, b, c)),
-            }
-        }
-        out
+        groups
+            .iter()
+            .zip(&win)
+            .map(|(c, &(a, b, _))| {
+                let current = g.current[s[c[0]]];
+                (a, b, current.filter(|_| c.iter().all(|&i| g.current[s[i]] == current)))
+            })
+            .collect()
     } else {
         Vec::new()
     };
-    GkRowWin { win, filed, executions, conv, starts: s, parts }
+    GkRowWin { win, filed, executions, conv, starts: s, win_starts, parts }
+}
+
+/// The spans (by index) of each component of their union, by start.
+fn components(spans: &[(i64, i64)]) -> Vec<Vec<usize>> {
+    let mut by: Vec<usize> = (0..spans.len()).collect();
+    by.sort_unstable_by_key(|&i| spans[i]);
+    let mut out: Vec<(i64, Vec<usize>)> = Vec::new();
+    for i in by {
+        let (a, b) = spans[i];
+        match out.last_mut() {
+            Some(l) if a <= l.0 => {
+                l.0 = l.0.max(b);
+                l.1.push(i);
+            }
+            _ => out.push((b, vec![i])),
+        }
+    }
+    out.into_iter().map(|x| x.1).collect()
+}
+
+/// Whether a trigger group triggers at the time of the frame that checks it. The simulation drops the conditions of
+/// type 0, combines the rest of a set with an AND and two or more non-empty sets with an OR; neither combination
+/// reports a trigger time of its own, so only a group of one set with one remaining condition can carry an earlier
+/// one.
+pub(super) fn frame_timed(env: &Env, group: i64) -> bool {
+    let Some(sets) = env.sets.get(&group) else { return false };
+    let (mut nonempty, mut widest) = (0usize, 0usize);
+    for s in sets {
+        let mut n = 0usize;
+        for &cid in s.iter() {
+            match env.master.skill_condition(cid) {
+                None => return false,
+                Some(c) if c.condition_type == 0 => {}
+                Some(_) => n += 1,
+            }
+        }
+        if n > 0 {
+            nonempty += 1;
+            widest = widest.max(n);
+        }
+    }
+    nonempty >= 2 || widest >= 2
 }
 
 /// The 4010 checker has no time override and can fire only on this performer's event frames.
@@ -848,6 +907,13 @@ mod filed_end_tests {
         assert_eq!(frame_time(&frames, register_end(&frames, i0, 10.0)), i64::MAX);
         assert_eq!(frame_end(&frames, 2000, i0, 10.0), i64::MAX);
     }
+
+    #[test]
+    fn sustained_spans_split_where_their_union_has_a_gap() {
+        let spans = [(30, 40), (0, 10), (25, 26), (5, 20), (40, 41)];
+        assert_eq!(components(&spans), [vec![1, 3], vec![2], vec![0, 4]]);
+        assert!(components(&[]).is_empty());
+    }
 }
 
 #[cfg(test)]
@@ -891,7 +957,8 @@ mod count_hit_tests {
                 {"_id":2,"_conditionType":1030,"_conditionValues":[3],"_isPositive":true,"_conditionTargetIDs":[41,41]},
                 {"_id":3,"_conditionType":5000,"_isPositive":true},
                 {"_id":4,"_conditionType":1030,"_conditionValues":[2],"_isPositive":false,"_conditionTargetIDs":[41]},
-                {"_id":5,"_conditionType":7020,"_isPositive":true,"_conditionTargetIDs":[57]}]}"#,
+                {"_id":5,"_conditionType":7020,"_isPositive":true,"_conditionTargetIDs":[57]},
+                {"_id":6,"_conditionType":0,"_isPositive":true}]}"#,
             ),
             "MasterSkillConditionSet" => Some(
                 r#"{"_allData":[
@@ -902,7 +969,9 @@ mod count_hit_tests {
                 {"_id":5,"_group":4,"_conditionIds":[3]},
                 {"_id":6,"_group":5,"_conditionIds":[4]},
                 {"_id":7,"_group":6,"_conditionIds":[5,1]},
-                {"_id":8,"_group":7,"_conditionIds":[1,5]}]}"#,
+                {"_id":8,"_group":7,"_conditionIds":[1,5]},
+                {"_id":9,"_group":8,"_conditionIds":[6,1]},
+                {"_id":10,"_group":8,"_conditionIds":[6]}]}"#,
             ),
             _ => None,
         })
@@ -959,6 +1028,19 @@ mod count_hit_tests {
         // a judgement that can be converted to a target counts
         env.count_reach[4] |= 1 << 5;
         assert_eq!(g.count_trigger_hits(&env, 1, MISSION_ALL), Some(3));
+    }
+
+    #[test]
+    fn only_a_lone_condition_can_trigger_before_its_frame() {
+        let master = master();
+        let env = env(&master);
+        // an AND of a counter and a fixed condition, and an OR of two sets, trigger at the frame time
+        assert!(frame_timed(&env, 1));
+        assert!(frame_timed(&env, 2));
+        // one condition, also once the conditions of type 0 and the sets they empty are dropped, keeps its own time
+        assert!(!frame_timed(&env, 4));
+        assert!(!frame_timed(&env, 8));
+        assert!(!frame_timed(&env, 10));
     }
 
     fn env(master: &Master) -> Env<'_> {

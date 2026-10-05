@@ -1222,6 +1222,23 @@ mod tests {
     }
 
     #[test]
+    fn a_combination_reports_no_override_time_of_its_items() {
+        with_life(1000, |ctx| {
+            ctx.judged = &[(1, 5, 300)];
+            let judged = || Checker::NoteJudgementMatch { kind: 1000, targets: vec![5], override_ms: None };
+            let mut lone = judged();
+            assert_eq!(lone.check(ctx).unwrap(), (true, 1));
+            assert_eq!(lone.override_time(), Some(300));
+            let mut and = Checker::And { items: vec![judged(), Checker::Fixed(true)], resettable: vec![false, false] };
+            assert_eq!(and.check(ctx).unwrap(), (true, 1));
+            assert_eq!(and.override_time(), None);
+            let mut or = Checker::Or(vec![judged(), Checker::Fixed(false)]);
+            assert_eq!(or.check(ctx).unwrap(), (true, 1));
+            assert_eq!(or.override_time(), None);
+        });
+    }
+
+    #[test]
     fn elapsed_time_catches_up_one_period_and_reset_rebases() {
         with_life(1000, |ctx| {
             let mut c = Checker::ElapsedTime { period: 1000, elapsed: 0, previous: 100 };

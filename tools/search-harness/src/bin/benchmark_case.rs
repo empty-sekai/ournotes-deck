@@ -17,6 +17,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() != 4 {
         return Err("benchmark_case DATA SNAPSHOT REQUEST OUTPUT".into());
     }
+    // Diagnostics: OURNOTES_CENSUS=<payoff numerator> counts the teams the caps leave open at that threshold instead
+    // of simulating them (no warm start); OURNOTES_ABLATE=<bits> sets the validation switches.
+    let census = env::var("OURNOTES_CENSUS").ok().map(|v| v.parse::<i128>()).transpose()?;
+    let mut ablation = env::var("OURNOTES_ABLATE").ok().map(|v| v.parse::<u32>()).transpose()?.unwrap_or(0);
+    if census.is_some() {
+        ablation |= ournotes_search::search::ablate::NO_WARM_START;
+    }
+    ournotes_search::search::set_census(census);
+    ournotes_search::search::set_bound_ablation(ablation);
     let setup = Instant::now();
     let data = DeckData::from_path(&args[0])?;
     let snapshot = fs::read_to_string(&args[1])?;

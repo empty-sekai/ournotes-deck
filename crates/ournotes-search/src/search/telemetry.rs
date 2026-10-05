@@ -375,6 +375,68 @@ pub struct Leaves {
     pub cutoff: Cutoff,
     pub order_tree: OrderTree,
     pub peak_retained: usize,
+    /// Diagnostics only: the census of the teams the caps leave open at a fixed threshold (`set_census`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub census: Option<Census>,
+}
+
+/// The teams whose per-order caps reach a census threshold, counted instead of simulated.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Census {
+    pub threshold: String,
+    /// Teams counted, and the distinct member sets among them.
+    pub open: u64,
+    pub member_sets: u64,
+    /// Teams reaching a leaf without joint bounds (not counted in `open`).
+    pub unbounded: u64,
+    /// The counted teams by the ratio of their cap sum to the threshold, minus one: below each of
+    /// `CENSUS_EDGES`, then at least the last one; once with the cheap caps, once with the fine caps.
+    pub cheap_ratio: [u64; CENSUS_EDGES.len() + 1],
+    pub fine_ratio: [u64; CENSUS_EDGES.len() + 1],
+    /// Per traversal with an ordered root: the root children whose depth-1 bound reaches the threshold, and all.
+    pub root: Vec<[usize; 2]>,
+    /// The first `CENSUS_TEAMS` counted teams: member card IDs, Snap IDs, power, cheap and fine cap sums.
+    pub teams: Vec<CensusTeam>,
+    #[serde(skip)]
+    sets: std::collections::HashSet<[usize; 5]>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CensusTeam {
+    pub members: [i64; 5],
+    pub snaps: [Option<i64>; 5],
+    pub power: i32,
+    pub cheap: String,
+    pub fine: String,
+}
+
+pub const CENSUS_EDGES: [f64; 8] = [0.001, 0.0025, 0.005, 0.01, 0.02, 0.03, 0.05, 0.08];
+const CENSUS_TEAMS: usize = 100_000;
+
+impl Census {
+    pub(crate) fn new(threshold: i128) -> Self {
+        Self { threshold: threshold.to_string(), ..Default::default() }
+    }
+
+    pub(crate) fn record(&mut self, members: [usize; 5], team: CensusTeam, cheap: i128, fine: i128) {
+        if self.teams.len() < CENSUS_TEAMS {
+            self.teams.push(team);
+        }
+        let threshold: f64 = self.threshold.parse().expect("census threshold");
+        let bucket = |cap: i128| {
+            let excess = cap as f64 / threshold - 1.0;
+            CENSUS_EDGES.iter().position(|&edge| excess < edge).unwrap_or(CENSUS_EDGES.len())
+        };
+        self.cheap_ratio[bucket(cheap)] += 1;
+        self.fine_ratio[bucket(fine)] += 1;
+        self.open += 1;
+        let mut set = members;
+        set.sort_unstable();
+        if self.sets.insert(set) {
+            self.member_sets += 1;
+        }
+    }
 }
 
 /// The performance orders of a team played as one tree (frames the orders share are played once).

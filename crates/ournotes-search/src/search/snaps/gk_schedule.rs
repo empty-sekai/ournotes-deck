@@ -125,9 +125,45 @@ pub(super) struct GkCombo {
     /// Table thresholds in ascending order, each with the largest factor at a count from 0 up to it.
     pub(super) tab: Vec<(i64, f64)>,
     pub(super) gmax: f64,
-    /// Entries whose combo-count reading may still come from the previously playing range: the first chart time
-    /// of their range and everything within 100 ms of its start. Combo ramps keep their flat factor there.
-    pub(super) fresh: Vec<bool>,
+    /// Per entry: the number of play frames with a time up to its chart time.
+    pub(super) frame: Vec<u32>,
+    /// Per play frame: what a combo count updated in the frame's skill phase reads, the playing range's combo after
+    /// the judgements of the earlier frames: an index into `fill`'s sums, `READ_ZERO` without a playing range, or
+    /// `READ_UNKNOWN` (a range without sums).
+    pub(super) read: Vec<u32>,
+    /// Per play frame: the first frame of its run of frames with the same playing range.
+    pub(super) run: Vec<u32>,
+}
+
+/// `GkCombo::read` of a frame without a playing range (the count is 0) and of one whose playing range has no sums.
+pub(super) const READ_ZERO: u32 = u32::MAX - 1;
+pub(super) const READ_UNKNOWN: u32 = u32::MAX;
+
+/// The executions one factor window of a row covers: each one's start frame and the earliest time its first factor
+/// can be filed at, by that time ascending (`at`); `lo[i]` and `hi[i]` are the least and the greatest start frame
+/// among the first `i + 1`.
+#[derive(Clone, Debug, Default)]
+pub(super) struct RampStarts {
+    pub(super) at: Vec<i64>,
+    pub(super) lo: Vec<u32>,
+    pub(super) hi: Vec<u32>,
+}
+
+impl RampStarts {
+    /// From `(earliest filing time, start frame)` pairs.
+    pub(super) fn new(mut starts: Vec<(i64, usize)>) -> RampStarts {
+        starts.sort_unstable();
+        let mut out = RampStarts::default();
+        let (mut lo, mut hi) = (u32::MAX, 0u32);
+        for (a, f) in starts {
+            let f = u32::try_from(f).expect("play frame index fits in u32");
+            (lo, hi) = (lo.min(f), hi.max(f));
+            out.at.push(a);
+            out.lo.push(lo);
+            out.hi.push(hi);
+        }
+        out
+    }
 }
 
 impl GkCombo {
@@ -174,49 +210,118 @@ impl GkCombo {
         }
     }
 
-    /// After `fill`: per entry, an upper bound on its playing range's combo count over the range's entries with a
-    /// chart time up to its own (all bonuses included), or NaN where no ramp may be read.
-    pub(super) fn inclusive_counts(&self, times: &[i32], sums: &[f64], out: &mut Vec<f64>) {
-        out.clear();
-        out.resize(self.range.len(), f64::NAN);
+    /// After `fill` (`sums`): an upper bound on the combo count whose cumulative factor entry `e` (chart time `t`)
+    /// reads from an execution of a window with starts `starts`, NaN where unknown. An updater counts in the skill
+    /// phase of every frame it runs in and files a changed factor at the frame's time; its first factor may be
+    /// backdated to its trigger time. Its end lands no later than the time of the frame that processes it, so an
+    /// execution started in frame `f` whose factor the entry reads still runs in the last frame `F` with a time up
+    /// to `t`, and the entry reads the count of frame `max(f, F)`. Within a run of frames with the same playing
+    /// range, the count does not decrease.
+    pub(super) fn ramp_count(&self, sums: &[f64], starts: &RampStarts, e: usize, t: i64) -> f64 {
+        let i = starts.at.partition_point(|&a| a <= t);
+        if i == 0 {
+            return 0.0;
+        }
+        let (lo, hi) = (starts.lo[i - 1] as i64, starts.hi[i - 1] as i64);
+        let last = self.frame[e] as i64 - 1;
+        let count = |f: usize| match self.read[f] {
+            READ_ZERO => 0.0,
+            READ_UNKNOWN => f64::NAN,
+            k => sums[k as usize],
+        };
+        let mut best = 0f64;
+        if lo <= last {
+            best = count(last as usize);
+            if best.is_nan() {
+                return f64::NAN;
+            }
+        }
+        // the backdated first factors of executions started after `last`
+        let floor = lo.max(last + 1);
+        let mut f = hi;
+        while f >= floor {
+            let c = count(f as usize);
+            if c.is_nan() {
+                return f64::NAN;
+            }
+            best = best.max(c);
+            f = self.run[f as usize] as i64 - 1;
+        }
+        best
+    }
+
+    /// The read data (`frame`, `read`, `run`) of the combo ranges `entries`/`ordered` (as in `fill`'s sums) for
+    /// entries at `times` judged in the play frames `judged` (frame times `frames`) with the playing range of every
+    /// frame `current`.
+    pub(super) fn reads(
+        entries: &[Vec<u32>],
+        ordered: &[bool],
+        times: &[i32],
+        judged: &[usize],
+        frames: &[i32],
+        current: &[Option<usize>],
+    ) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        let frame = times
+            .iter()
+            .map(|&t| u32::try_from(frames.partition_point(|&x| x <= t)).expect("play frame count fits in u32"))
+            .collect();
+        // per ordered combo range: its offset in the sums and, by judgement frame, the shortest chart-order prefix
+        // of its entries holding every entry judged up to that frame
+        let mut offset = vec![None; entries.len()];
+        let mut prefix: Vec<Vec<(usize, usize)>> = vec![Vec::new(); entries.len()];
         let mut at = 0usize;
-        for (ri, list) in self.entries.iter().enumerate() {
-            if !self.ordered[ri] {
+        for (ri, list) in entries.iter().enumerate() {
+            if !ordered[ri] {
                 continue;
             }
-            let mut q = 0usize;
-            while q < list.len() {
-                let t = times[list[q] as usize];
-                let mut g = q;
-                while g + 1 < list.len() && times[list[g + 1] as usize] <= t {
-                    g += 1;
-                }
-                for &e in &list[q..=g] {
-                    if !self.fresh[e as usize] {
-                        out[e as usize] = sums[at + g + 1];
-                    }
-                }
-                q = g + 1;
-            }
+            offset[ri] = Some(at);
             at += list.len() + 1;
+            let mut by: Vec<(usize, usize)> =
+                list.iter().enumerate().map(|(q, &e)| (judged[e as usize], q + 1)).collect();
+            by.sort_unstable();
+            let mut k = 0;
+            for x in by.iter_mut() {
+                k = k.max(x.1);
+                x.1 = k;
+            }
+            prefix[ri] = by;
         }
+        let read = (0..frames.len())
+            .map(|f| match current[f] {
+                None => READ_ZERO,
+                Some(r) => match offset[r] {
+                    None => READ_UNKNOWN,
+                    Some(at) => {
+                        let p = &prefix[r];
+                        let i = p.partition_point(|x| x.0 < f);
+                        let k = if i == 0 { 0 } else { p[i - 1].1 };
+                        u32::try_from(at + k).expect("sums index fits in u32")
+                    }
+                },
+            })
+            .collect();
+        let mut run = Vec::with_capacity(frames.len());
+        for f in 0..frames.len() {
+            run.push(if f > 0 && current[f] == current[f - 1] { run[f - 1] } else { f as u32 });
+        }
+        (frame, read, run)
     }
 }
 
 /// The Gekisou combo factor bound of every deck whose members bring combo bonus windows in at most `n` slots (its
 /// carriers; `member_cb`: each allowed member's distinct window lists over its classes). The running bonus of such a
 /// deck at a time is at most the sum of the `n` largest members' there (each the largest over its lists), and the
-/// count it builds, which opens the gates, is at most the one this bonus builds. `n = 5` covers every deck. `counts`
-/// receives the same decks' combo count bound of every entry (`GkCombo::inclusive_counts`).
+/// count it builds, which opens the gates, is at most the one this bonus builds. `n = 5` covers every deck. `sums`
+/// receives the same decks' combo count bounds (`GkCombo::fill`'s sums, which `GkCombo::ramp_count` reads).
 pub(super) fn carrier_factors(
     gc: &GkCombo,
     times: &[i32],
     member_cb: &[Vec<Vec<ComboBonusRow>>],
     n: usize,
     out: &mut Vec<f64>,
-    counts: &mut Vec<f64>,
+    sums: &mut Vec<f64>,
 ) {
-    keyed_factors(gc, times, member_cb, &[], n, out, counts);
+    keyed_factors(gc, times, member_cb, &[], n, out, sums);
 }
 
 /// `carrier_factors` of the decks with carriers of the window lists `placed` and at most `r` other carriers: the
@@ -228,31 +333,30 @@ pub(super) fn keyed_factors(
     placed: &[&[ComboBonusRow]],
     r: usize,
     out: &mut Vec<f64>,
-    counts: &mut Vec<f64>,
+    sums: &mut Vec<f64>,
 ) {
-    let mut sums = Vec::new();
+    // each running bonus is at least a candidate's, so each running count is at least its count
     gc.fill(
         times,
         |ri, q, acc, group| {
             let t = times[gc.entries[ri][q] as usize] as i64;
-            let running = |l: &[ComboBonusRow], open: &dyn Fn(Option<(i64, u32)>) -> bool| {
-                l.iter().filter(|w| w.0 <= t && t <= w.1 && open(w.3)).map(|w| w.2).sum::<f64>()
+            let running = |l: &[ComboBonusRow], open: &dyn Fn(&ComboBonusRow) -> bool| {
+                l.iter().filter(|w| w.0 <= t && t <= w.1 && open(w)).map(|w| w.2).sum::<f64>()
             };
-            let top = |open: &dyn Fn(Option<(i64, u32)>) -> bool| {
+            let top = |open: &dyn Fn(&ComboBonusRow) -> bool| {
                 let mut vals: Vec<f64> =
                     member_cb.iter().map(|lists| lists.iter().map(|l| running(l, open)).fold(0f64, f64::max)).collect();
                 vals.sort_by(|a, b| b.total_cmp(a));
                 placed.iter().map(|l| running(l, open)).sum::<f64>() + vals.iter().take(r).sum::<f64>()
             };
-            // the step reads every window open; a gate opened by it only adds bonus
-            let step = (1.0 + top(&|_| true).max(0.0)).floor();
-            top(&|gate| gate_open(gate, ri, acc, group, step))
+            // every window open bounds a deck's running bonus, the rest besides a window it runs among them; a gate
+            // opened by it only adds bonus
+            let all = top(&|_| true);
+            top(&|w| gate_open(w.3, ri, acc, group, gate_step(all, w.2)))
         },
         out,
-        &mut sums,
+        sums,
     );
-    // each running bonus is at least a candidate's, so each running count is at least its count
-    gc.inclusive_counts(times, &sums, counts);
 }
 
 /// The note factor a combo ramp window `w` adds at an entry whose playing range's combo count is at most `count`
@@ -273,12 +377,21 @@ pub(super) fn ramp_factor(w: &Window, ramp: &ComboRamp, count: f64) -> f64 {
 ///
 /// Its start needs the threshold counted from judgements processed before that frame; judged in chart order, those
 /// are at chart times up to the trigger time (the last combo judgement, or the frame time), and the bonus reaches
-/// the judgements from the trigger time on.
+/// the judgements from the trigger time on. `step` is the window's `gate_step`.
 pub(super) fn gate_open(gate: Option<(i64, u32)>, ri: usize, acc: f64, group: usize, step: f64) -> bool {
     match gate {
         None => true,
         Some((threshold, range)) => range as usize != ri || acc + group as f64 * step >= threshold as f64,
     }
+}
+
+/// The most one judgement at a gated window's chart time adds to the count its trigger reads, when the running
+/// bonuses there total at most `all` with the window's own `own` among them. An entry counts the bonus only once the
+/// first of the window's executions has started, at a trigger time no later than the entry's: at an earlier time the
+/// count is at most the earlier entries' bound, and at the same time it reads judgements none of those executions
+/// reached.
+pub(super) fn gate_step(all: f64, own: f64) -> f64 {
+    (1.0 + (all - own).max(0.0)).floor()
 }
 
 pub(super) fn bonus_at(windows: &[(i64, i64, f64)], ev: &mut Vec<(i64, f64)>) {
@@ -299,9 +412,9 @@ pub(super) struct GkFactors {
     /// With a combo range: `carriers[n]` bounds the Gekisou combo factor of every deck with at most `n < 5` carrier
     /// slots (a slot whose member and Snap bring Gekisou combo bonus windows); each is at most `g` (empty: none).
     pub(super) carriers: Vec<Vec<f64>>,
-    /// With a combo range: `counts[n]` bounds the combo count of every entry for the decks of `carriers[n]`, `n = 5` for
-    /// every deck (`GkCombo::inclusive_counts`; empty: none).
-    pub(super) counts: Vec<Vec<f64>>,
+    /// With a combo range: `sums[n]` bounds the combo counts of the decks of `carriers[n]`, `n = 5` for every deck
+    /// (`GkCombo::fill`'s sums, which `GkCombo::ramp_count` reads; empty: none).
+    pub(super) sums: Vec<Vec<f64>>,
     pub(super) l: Vec<f64>,
     pub(super) r: Vec<f64>,
     /// Per completing range with a rank bonus: (range end time, percent / 100, the entries of its range score).
@@ -353,7 +466,7 @@ impl GkFactors {
         let mut gv: Vec<f64> =
             times.iter().map(|&t| if combo.iter().any(|&(a, b)| a <= t && t <= b) { gmax } else { 1.0 }).collect();
         let mut carriers: Vec<Vec<f64>> = Vec::new();
-        let mut counts: Vec<Vec<f64>> = Vec::new();
+        let mut sums: Vec<Vec<f64>> = Vec::new();
         let gcombo = if combo.is_empty() || ablated(ablate::GEKISOU_COMBO) {
             None
         } else {
@@ -400,25 +513,18 @@ impl GkFactors {
                     }
                 })
                 .collect();
-            let fresh: Vec<bool> = (0..ne)
-                .map(|e| match range[e] {
-                    None => true,
-                    Some(r) => {
-                        let first = lists[r as usize].first().map_or(i32::MAX, |&q| times[q as usize]);
-                        times[e] <= first.max(ranges[r as usize].start.saturating_add(100))
-                    }
-                })
-                .collect();
-            let gc = GkCombo { range, upto, entries: lists, ordered, tab, gmax, fresh };
+            let judged: Vec<usize> = order.iter().map(|&i| entries[i].0).collect();
+            let (frame, read, run) = GkCombo::reads(&lists, &ordered, &times, &judged, frames, current);
+            let gc = GkCombo { range, upto, entries: lists, ordered, tab, gmax, frame, read, run };
             let mut every = Vec::new();
             carrier_factors(&gc, &times, member_cb, 5, &mut gv, &mut every);
             for n in 0..5 {
                 let (mut v, mut c) = (Vec::new(), Vec::new());
                 carrier_factors(&gc, &times, member_cb, n, &mut v, &mut c);
                 carriers.push(v);
-                counts.push(c);
+                sums.push(c);
             }
-            counts.push(every);
+            sums.push(every);
             Some(gc)
         };
 
@@ -594,7 +700,7 @@ impl GkFactors {
             let (score_frames, floors) = rerun_floors(setup, &times, &exec_lo, &reexec);
             rv = network_rank_factors(&judged, &score_frames, &floors, &snapshots);
         }
-        Ok(GkFactors { g: gv, carriers, counts, l: lv, r: rv, ranks, nobreak, exec_lo, confirm, combo: gcombo })
+        Ok(GkFactors { g: gv, carriers, sums, l: lv, r: rv, ranks, nobreak, exec_lo, confirm, combo: gcombo })
     }
 }
 
@@ -782,8 +888,8 @@ pub(super) struct CarrierLevel {
 
 /// `terms[e] = (pre, combo, rank)` of each entry, so that the pool-wide coefficient is
 /// `pre * G_e * combo / cnc * rank`; `factors[n]` the combo factor bound of decks with at most `n` carriers and
-/// `counts[n]` their combo count bound (`GkFactors::counts`, `n = 5` for every deck). A level whose factor and counts
-/// equal the next one's (or the pool-wide ones) is `None`: the next level covers it unchanged.
+/// `sums[n]` their combo count bounds (`GkFactors::sums`, `n = 5` for every deck). A level whose factor and count
+/// bounds equal the next one's (or the pool-wide ones) is `None`: the next level covers it unchanged.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn carrier_level_envelopes(
     coef: &Coef,
@@ -791,7 +897,8 @@ pub(super) fn carrier_level_envelopes(
     cnc: f64,
     pool_factor: &[f64],
     factors: &[Vec<f64>],
-    counts: &[Vec<f64>],
+    gc: &GkCombo,
+    sums: &[Vec<f64>],
     members: &[usize],
     contrib: &[Vec<[Contrib; 5]>],
 ) -> Vec<Option<CarrierLevel>> {
@@ -801,7 +908,7 @@ pub(super) fn carrier_level_envelopes(
     for n in 0..factors.len() {
         let g = &factors[n];
         let next = factors.get(n + 1).map_or(pool_factor, |v| &v[..]);
-        if g == next && same_bits(&counts[n], &counts[n + 1]) {
+        if g == next && same_bits(&sums[n], &sums[n + 1]) {
             continue;
         }
         let (ks, pc, pj) = factor_sums(coef, terms, cnc, |e| g[e]);
@@ -813,7 +920,8 @@ pub(super) fn carrier_level_envelopes(
                 .iter()
                 .map(|arr| {
                     std::array::from_fn(|k| {
-                        let v = window_gain(&arr[k], &pc, &pj, Some(&counts[n]));
+                        let reads = RampReads { gc, sums: &sums[n], times: &coef.times };
+                        let v = window_gain(&arr[k], &pc, &pj, Some(reads));
                         best[k] = best[k].max(v);
                         v
                     })
@@ -850,19 +958,35 @@ fn factor_sums(
     (ks, pc, pj)
 }
 
+/// What a combo ramp window reads at an entry: the combo count bounds `sums` of some decks (`GkCombo::fill`'s) at
+/// the count `GkCombo::ramp_count` finds for the entry's chart time (`times`).
+#[derive(Clone, Copy)]
+pub(super) struct RampReads<'a> {
+    pub(super) gc: &'a GkCombo,
+    pub(super) sums: &'a [f64],
+    pub(super) times: &'a [i32],
+}
+
+impl RampReads<'_> {
+    /// The note factor ramp window `w` (with its ramp `ramp`) adds at entry `e`.
+    pub(super) fn factor(&self, w: &Window, ramp: &ComboRamp, e: usize) -> f64 {
+        ramp_factor(w, ramp, self.gc.ramp_count(self.sums, &ramp.starts, e, self.times[e] as i64))
+    }
+}
+
 /// The gain of a member, class and position (its windows and conversion budget) under the prefix sums of some
 /// coefficients, by the operations of the pool-wide gains. The conversion budget read the pool-wide coefficients,
-/// never smaller. With combo count bounds `counts`, a combo ramp window adds its factor at each entry's count
+/// never smaller. With combo count bounds `reads`, a combo ramp window adds its factor at each entry's count
 /// (`ramp_factor`), as the candidate cap reads it.
-pub(super) fn window_gain(c: &Contrib, pc: &[f64], pj: &[Vec<f64>; 4], counts: Option<&[f64]>) -> f64 {
+pub(super) fn window_gain(c: &Contrib, pc: &[f64], pj: &[Vec<f64>; 4], reads: Option<RampReads<'_>>) -> f64 {
     let mut v = 0f64;
     for x in &c.windows {
         let (lo, hi) = (x.lo as usize, x.hi as usize);
-        match counts.filter(|_| x.ramp != 0) {
-            Some(counts) => {
+        match reads.filter(|_| x.ramp != 0) {
+            Some(reads) => {
                 let ramp = &c.ramps[x.ramp as usize - 1];
                 for e in lo..hi {
-                    v += ramp_factor(x, ramp, counts[e]) * (pc[e + 1] - pc[e]);
+                    v += reads.factor(x, ramp, e) * (pc[e + 1] - pc[e]);
                 }
             }
             None => v += x.note * (pc[hi] - pc[lo]),
@@ -876,7 +1000,7 @@ pub(super) fn window_gain(c: &Contrib, pc: &[f64], pj: &[Vec<f64>; 4], counts: O
     v + c.budget
 }
 
-/// Whether two count bounds hold the same values (NaN where no ramp may be read).
+/// Whether two count bounds hold the same values.
 fn same_bits(a: &[f64], b: &[f64]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
 }
@@ -902,8 +1026,8 @@ pub(crate) struct CarrierKeys {
     cnc: f64,
     /// The combo factor bound of decks with at most `n` carriers, `n` in 0..=5 (5: every deck).
     levels: Vec<Vec<f64>>,
-    /// The combo count bound of the same decks (`GkFactors::counts`).
-    level_counts: Vec<Vec<f64>>,
+    /// The combo count bounds of the same decks (`GkFactors::sums`).
+    level_sums: Vec<Vec<f64>>,
     /// With the additive drift envelope, what its offset reads; the factor commands and their largest factor of every
     /// pool member and choice at any position.
     additive: Option<KeyedDrift>,
@@ -941,8 +1065,8 @@ pub(crate) struct KeyedEnvelope {
     sensitivity: f64,
     pc: Vec<f64>,
     pj: [Vec<f64>; 4],
-    /// The combo count bound of every entry (`GkCombo::inclusive_counts`).
-    counts: Vec<f64>,
+    /// The combo count bounds (`GkCombo::fill`'s sums).
+    sums: Vec<f64>,
     gains: RefCell<HashMap<(usize, usize), [f64; 5]>>,
 }
 
@@ -954,7 +1078,7 @@ impl CarrierKeys {
         terms: Vec<(f64, f64, f64)>,
         cnc: f64,
         levels: Vec<Vec<f64>>,
-        level_counts: Vec<Vec<f64>>,
+        level_sums: Vec<Vec<f64>>,
         members: &[usize],
         class_of: &[Vec<u16>],
         contrib: &[Vec<[Contrib; 5]>],
@@ -1024,7 +1148,7 @@ impl CarrierKeys {
             terms,
             cnc,
             levels,
-            level_counts,
+            level_sums,
             additive,
             commands,
             cache: RefCell::default(),
@@ -1046,12 +1170,12 @@ impl CarrierKeys {
             return e.clone();
         }
         let lists: Vec<&[ComboBonusRow]> = ids.iter().map(|&i| &self.lists[i as usize][..]).collect();
-        let (mut g, mut counts) = (Vec::new(), Vec::new());
-        keyed_factors(&self.gc, &self.coef.times, &self.member_cb, &lists, r, &mut g, &mut counts);
+        let (mut g, mut sums) = (Vec::new(), Vec::new());
+        keyed_factors(&self.gc, &self.coef.times, &self.member_cb, &lists, r, &mut g, &mut sums);
         let n = (ids.len() + r).min(5);
         let level = &self.levels[n];
-        for (c, &l) in counts.iter_mut().zip(&self.level_counts[n]) {
-            *c = if c.is_nan() || l.is_nan() { f64::NAN } else { c.min(l) };
+        for (c, &l) in sums.iter_mut().zip(&self.level_sums[n]) {
+            *c = c.min(l);
         }
         let (ks, pc, pj) = factor_sums(&self.coef, &self.terms, self.cnc, |e| g[e].min(level[e]));
         let a0 = pc[ks.len()];
@@ -1060,7 +1184,7 @@ impl CarrierKeys {
             let coef = Coef { k: ks, z: self.coef.z.clone(), ..Default::default() };
             factor_error_sensitivity(&coef, d.judgement_max).expect("keyed sensitivity at most the pool-wide one")
         });
-        let e = Rc::new(KeyedEnvelope { a0, sensitivity, pc, pj, counts, gains: RefCell::default() });
+        let e = Rc::new(KeyedEnvelope { a0, sensitivity, pc, pj, sums, gains: RefCell::default() });
         let mut cache = self.cache.borrow_mut();
         if cache.len() >= KEYED_CACHE {
             cache.clear();
@@ -1115,7 +1239,8 @@ impl CarrierKeys {
             return *g;
         }
         let class = self.class_of[m][choice];
-        let g = self.windows[m][class].each_ref().map(|c| window_gain(c, &env.pc, &env.pj, Some(&env.counts)));
+        let reads = RampReads { gc: &self.gc, sums: &env.sums, times: &self.coef.times };
+        let g = self.windows[m][class].each_ref().map(|c| window_gain(c, &env.pc, &env.pj, Some(reads)));
         env.gains.borrow_mut().insert((m, choice), g);
         g
     }
@@ -1132,13 +1257,13 @@ impl CarrierKeys {
         let coef: Vec<f64> = (0..ne).map(|e| env.pc[e + 1] - env.pc[e]).collect();
         let mut term = coef.clone();
         let mut budget = 0f64;
+        let reads = RampReads { gc: &self.gc, sums: &env.sums, times: &self.coef.times };
         for &(m, choice, k) in placed {
             let c = &self.windows[m][self.class_of[m][choice]][k];
             budget += c.budget;
             for x in &c.windows {
                 for e in x.lo as usize..x.hi as usize {
-                    let note =
-                        if x.ramp == 0 { x.note } else { ramp_factor(x, &c.ramps[x.ramp as usize - 1], env.counts[e]) };
+                    let note = if x.ramp == 0 { x.note } else { reads.factor(x, &c.ramps[x.ramp as usize - 1], e) };
                     term[e] += note * coef[e];
                     for j in 0..4 {
                         term[e] += x.judge[j] * (env.pj[j][e + 1] - env.pj[j][e]);
@@ -1266,22 +1391,24 @@ mod tests {
             ordered: vec![true],
             tab: Vec::new(),
             gmax: 1.0,
-            fresh: vec![false; 4],
+            frame: vec![0; 4],
+            read: Vec::new(),
+            run: Vec::new(),
         };
-        // a +5 bonus gated at a count of 10 in range 0
-        let w: ComboBonusRow = (0, 100, 5.0, Some((10, 0)));
+        // a +5 bonus gated at a count of 3 in range 0
+        let w: ComboBonusRow = (0, 100, 5.0, Some((3, 0)));
         let (mut out, mut sums) = (Vec::new(), Vec::new());
         gc.fill(
             &times,
-            |ri, _, acc, group| {
-                let step = (1.0 + w.2).floor();
-                if gate_open(w.3, ri, acc, group, step) { w.2 } else { 0.0 }
-            },
+            |ri, _, acc, group| if gate_open(w.3, ri, acc, group, gate_step(w.2, w.2)) { w.2 } else { 0.0 },
             &mut out,
             &mut sums,
         );
-        // closed for the first entry (0 + 6 < 10); the pair at 20 can reach it (1 + 2 * 6), so both count the bonus
+        // its own bonus never counts toward its threshold: closed for the first entry (0 + 1 < 3); the pair at 20 can
+        // reach it (1 + 2 * 1), so both count the bonus
         assert_eq!(sums, vec![0.0, 1.0, 7.0, 13.0, 19.0]);
+        assert_eq!(gate_step(5.0, 5.0), 1.0);
+        assert_eq!(gate_step(7.5, 5.0), 3.0);
         // a gate naming another range never closes
         assert!(gate_open(Some((1000, 1)), 0, 0.0, 1, 1.0));
         assert!(gate_open(None, 0, 0.0, 1, 1.0));
@@ -1298,7 +1425,9 @@ mod tests {
             ordered: vec![true, true],
             tab: vec![(5, 1.05), (20, 1.1), (60, 1.2), (150, 1.3)],
             gmax: 1.3,
-            fresh: vec![false; 40],
+            frame: vec![0; 40],
+            read: Vec::new(),
+            run: Vec::new(),
         };
         // per member, its window lists: plain and gated bonuses of different lengths
         let mut seed = 7u64;
@@ -1321,7 +1450,7 @@ mod tests {
                     .collect()
             })
             .collect();
-        let (bound, counts): (Vec<Vec<f64>>, Vec<Vec<f64>>) = (0..=5)
+        let (bound, sums): (Vec<Vec<f64>>, Vec<Vec<f64>>) = (0..=5)
             .map(|n| {
                 let (mut v, mut c) = (Vec::new(), Vec::new());
                 carrier_factors(&gc, &times, &members, n, &mut v, &mut c);
@@ -1330,7 +1459,7 @@ mod tests {
             .unzip();
         for n in 0..5 {
             assert!(bound[n].iter().zip(&bound[n + 1]).all(|(a, b)| a <= b), "{n}");
-            assert!(counts[n].iter().zip(&counts[n + 1]).all(|(a, b)| a <= b), "{n}");
+            assert!(sums[n].iter().zip(&sums[n + 1]).all(|(a, b)| a <= b), "{n}");
         }
         // every deck: a subset of the members, each with one of its lists, through the candidate fill
         for mask in 0usize..1 << members.len() {
@@ -1344,23 +1473,21 @@ mod tests {
                     .enumerate()
                     .flat_map(|(i, &m)| members[m][((choice >> i) & 1).min(members[m].len() - 1)].iter().copied())
                     .collect();
-                let (mut own, mut sums) = (Vec::new(), Vec::new());
+                let (mut own, mut own_sums) = (Vec::new(), Vec::new());
                 gc.fill(
                     &times,
                     |ri, q, acc, group| {
                         let t = times[gc.entries[ri][q] as usize] as i64;
                         let running = || windows.iter().filter(|w| w.0 <= t && t <= w.1);
-                        let step = (1.0 + running().map(|w| w.2).sum::<f64>()).floor();
-                        running().filter(|w| gate_open(w.3, ri, acc, group, step)).map(|w| w.2).sum()
+                        let all = running().map(|w| w.2).sum::<f64>();
+                        running().filter(|w| gate_open(w.3, ri, acc, group, gate_step(all, w.2))).map(|w| w.2).sum()
                     },
                     &mut own,
-                    &mut sums,
+                    &mut own_sums,
                 );
-                let mut own_counts = Vec::new();
-                gc.inclusive_counts(&times, &sums, &mut own_counts);
                 let level = &bound[picks.len()];
                 assert!(own.iter().zip(level).all(|(a, b)| a <= b), "{picks:?} {choice}");
-                assert!(own_counts.iter().zip(&counts[picks.len()]).all(|(a, b)| a <= b), "{picks:?} {choice}");
+                assert!(own_sums.iter().zip(&sums[picks.len()]).all(|(a, b)| a <= b), "{picks:?} {choice}");
                 // any of its carriers placed with their lists, the others among the slots to fill
                 for placed in 0usize..1 << picks.len() {
                     let lists: Vec<&[ComboBonusRow]> = picks
@@ -1369,16 +1496,136 @@ mod tests {
                         .filter(|(i, _)| placed & (1 << i) != 0)
                         .map(|(i, &m)| &members[m][((choice >> i) & 1).min(members[m].len() - 1)][..])
                         .collect();
-                    let (mut keyed, mut keyed_counts) = (Vec::new(), Vec::new());
+                    let (mut keyed, mut keyed_sums) = (Vec::new(), Vec::new());
                     let r = picks.len() - lists.len();
-                    keyed_factors(&gc, &times, &members, &lists, r, &mut keyed, &mut keyed_counts);
+                    keyed_factors(&gc, &times, &members, &lists, r, &mut keyed, &mut keyed_sums);
                     assert!(own.iter().zip(&keyed).all(|(a, b)| a <= b), "{picks:?} {choice} {placed}");
-                    assert!(own_counts.iter().zip(&keyed_counts).all(|(a, b)| a <= b), "{picks:?} {choice} {placed}");
+                    assert!(own_sums.iter().zip(&keyed_sums).all(|(a, b)| a <= b), "{picks:?} {choice} {placed}");
                 }
             }
         }
         // fewer carriers really count less here
         assert!(bound[1].iter().sum::<f64>() < bound[5].iter().sum::<f64>());
-        assert!(counts[1].iter().sum::<f64>() < counts[5].iter().sum::<f64>());
+        assert!(sums[1].iter().sum::<f64>() < sums[5].iter().sum::<f64>());
+    }
+
+    #[test]
+    fn ramp_count_reads_the_count_of_the_frame_the_factor_comes_from() {
+        // entries at 100, 200, 300, 400 judged in the first frame at or after their time; frames every 60 ms
+        let frames: Vec<i32> = (0..9).map(|f| 60 * f).collect();
+        let times = [100, 200, 300, 400];
+        let judged: Vec<usize> = times.iter().map(|&t| frames.partition_point(|&x| x < t)).collect();
+        assert_eq!(judged, vec![2, 4, 5, 7]);
+        let entries = vec![vec![0u32, 1, 2, 3]];
+        let current = vec![Some(0); frames.len()];
+        let (frame, read, run) = GkCombo::reads(&entries, &[true], &times, &judged, &frames, &current);
+        let gc = GkCombo {
+            range: vec![Some(0); 4],
+            upto: vec![0; 4],
+            entries,
+            ordered: vec![true],
+            tab: Vec::new(),
+            gmax: 1.0,
+            frame,
+            read,
+            run,
+        };
+        let sums = [0.0, 1.0, 2.0, 3.0, 4.0];
+        let at = |starts: &RampStarts| -> Vec<f64> {
+            (0..4).map(|e| gc.ramp_count(&sums, starts, e, times[e] as i64)).collect()
+        };
+        // one execution running from the start: the count of the last frame up to each entry, never the entry itself
+        assert_eq!(at(&RampStarts::new(vec![(i64::MIN, 0)])), vec![0.0, 1.0, 2.0, 3.0]);
+        // a first factor backdated to 100 from frame 7 carries the count of frame 7 to the earlier entries
+        assert_eq!(at(&RampStarts::new(vec![(100, 7)])), vec![3.0, 3.0, 3.0, 3.0]);
+        // nothing started by the entry's time is read as zero
+        assert_eq!(at(&RampStarts::new(vec![(250, 6)])), vec![0.0, 0.0, 3.0, 3.0]);
+    }
+
+    #[test]
+    fn ramp_count_covers_every_start_it_may_read() {
+        let mut seed = 11u64;
+        let mut next = move |m: u64| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) % m
+        };
+        for _ in 0..300 {
+            // two ordered combo ranges with sums from random steps; playing ranges in runs, some without one
+            let nf = 30usize;
+            let frames: Vec<i32> = (0..nf as i32).map(|f| 50 * f).collect();
+            let ne = 20usize;
+            let mut times: Vec<i32> = (0..ne).map(|_| next(1450) as i32).collect();
+            times.sort_unstable();
+            let judged: Vec<usize> =
+                times.iter().map(|&t| (frames.partition_point(|&x| x < t) + next(2) as usize).min(nf - 1)).collect();
+            let mut judged_sorted = judged.clone();
+            judged_sorted.sort_unstable();
+            let judged = judged_sorted;
+            let split = 1 + next(ne as u64 - 1) as usize;
+            let entries: Vec<Vec<u32>> = vec![(0..split as u32).collect(), (split as u32..ne as u32).collect()];
+            let mut current = vec![None; nf];
+            let mut f = 0;
+            while f < nf {
+                let len = 1 + next(6) as usize;
+                let r = match next(4) {
+                    0 => None,
+                    1 => Some(0),
+                    _ => Some(1),
+                };
+                for c in current.iter_mut().skip(f).take(len) {
+                    *c = r;
+                }
+                f += len;
+            }
+            let (frame, read, run) = GkCombo::reads(&entries, &[true, true], &times, &judged, &frames, &current);
+            let gc = GkCombo {
+                range: Vec::new(),
+                upto: Vec::new(),
+                entries: entries.clone(),
+                ordered: vec![true, true],
+                tab: Vec::new(),
+                gmax: 1.0,
+                frame,
+                read,
+                run,
+            };
+            let mut sums = Vec::new();
+            for list in &entries {
+                let mut acc = 0.0;
+                sums.push(acc);
+                for _ in list {
+                    acc += (1 + next(4)) as f64;
+                    sums.push(acc);
+                }
+            }
+            // the count frame `f` reads: the playing range's sum over its entries judged before `f`
+            let count = |f: usize| -> f64 {
+                match current[f] {
+                    None => 0.0,
+                    Some(r) => {
+                        let at = if r == 0 { 0 } else { entries[0].len() + 1 };
+                        let k = entries[r].iter().rposition(|&e| judged[e as usize] < f).map_or(0, |q| q + 1);
+                        sums[at + k]
+                    }
+                }
+            };
+            let starts: Vec<(i64, usize)> =
+                (0..1 + next(4)).map(|_| (next(1500) as i64 - 50, next(nf as u64) as usize)).collect();
+            let rs = RampStarts::new(starts.clone());
+            for e in 0..ne {
+                let t = times[e] as i64;
+                let last = frames.partition_point(|&x| x as i64 <= t) as i64 - 1;
+                let exact = starts
+                    .iter()
+                    .filter(|s| s.0 <= t)
+                    .map(|&(_, f)| count((f as i64).max(last) as usize))
+                    .fold(0f64, f64::max);
+                let bound = gc.ramp_count(&sums, &rs, e, t);
+                assert!(bound >= exact, "{e}: {bound} < {exact}");
+                if starts.len() == 1 {
+                    assert_eq!(bound, exact, "{e}");
+                }
+            }
+        }
     }
 }

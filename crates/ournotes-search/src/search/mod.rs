@@ -51,6 +51,8 @@ use ournotes_sim::scenario::ResolvedContext;
 
 use ournotes_sim::pool::{Deck, Pool};
 pub use power::PowerStats;
+#[cfg(feature = "search-diagnostics")]
+pub use snaps::set_census;
 pub use snaps::{ablate, set_bound_ablation};
 
 use budget::SearchBudget;

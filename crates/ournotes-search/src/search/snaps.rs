@@ -90,6 +90,23 @@ pub(crate) fn ablated(bit: u32) -> bool {
     ABLATION.with(|a| a.get() & bit != 0)
 }
 
+thread_local! {
+    static CENSUS: Cell<Option<i128>> = const { Cell::new(None) };
+}
+
+/// Diagnostics: the joint searches run on the calling thread prune against the fixed payoff numerator `threshold`
+/// instead of their K-th, and count the played-live teams whose per-order caps reach it (`leaves.census`) instead
+/// of simulating them. None (the default) runs the search.
+#[cfg(feature = "search-diagnostics")]
+#[doc(hidden)]
+pub fn set_census(threshold: Option<i128>) {
+    CENSUS.with(|c| c.set(threshold));
+}
+
+pub(crate) fn census() -> Option<i128> {
+    CENSUS.with(Cell::get)
+}
+
 #[path = "snaps/ramp.rs"]
 mod ramp;
 #[path = "snaps/raw.rs"]

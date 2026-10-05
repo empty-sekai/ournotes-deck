@@ -200,7 +200,20 @@ pub(super) fn windows(
                     // the ramp per entry instead.
                     let ramp = match &r.combo_ramp {
                         Some((unit, max_count, table)) if judge.iter().all(|&x| x == 0.0) => {
-                            ramps.push(ComboRamp { unit: *unit, max_count: *max_count, table: table.clone(), mult });
+                            // an own-event window starts at its event frame's time
+                            let starts = match (&r.gk_event_win, &r.gk_starts) {
+                                (Some(_), _) | (None, None) => {
+                                    Rc::new(RampStarts::new(vec![(a, geo.frames.partition_point(|&x| (x as i64) < a))]))
+                                }
+                                (None, Some(s)) => s[wi].clone(),
+                            };
+                            ramps.push(ComboRamp {
+                                unit: *unit,
+                                max_count: *max_count,
+                                table: table.clone(),
+                                mult,
+                                starts,
+                            });
                             ramps.len() as u32
                         }
                         _ => 0,

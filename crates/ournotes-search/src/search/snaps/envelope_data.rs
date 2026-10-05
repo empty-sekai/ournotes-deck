@@ -186,13 +186,14 @@ pub(super) struct Window {
 }
 
 /// A Gekisou cumulative note score up counting the playing range's combo (7001): its note factor by unit count
-/// (the last value repeats) and its concurrent executions in the window.
+/// (the last value repeats), its concurrent executions in the window and the executions' starts.
 #[derive(Clone, Debug)]
 pub(super) struct ComboRamp {
     pub(super) unit: i64,
     pub(super) max_count: i64,
     pub(super) table: Rc<Vec<f64>>,
     pub(super) mult: f64,
+    pub(super) starts: Rc<RampStarts>,
 }
 
 /// The bound data of one (member, class, position).

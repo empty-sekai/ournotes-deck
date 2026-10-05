@@ -25,12 +25,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let roster = roster_of(&data, &fs::read_to_string(&args[1])?, &request)?;
     let built = handler::build_card_pool(&data, &roster, &request)?;
     let decks: Vec<Deck> = serde_json::from_str(&fs::read_to_string(&args[3])?)?;
+    // PATH_BOUNDS_PAYOFF_ONLY=1 evaluates the decks without their bounds.
+    let payoff_only = env::var_os("PATH_BOUNDS_PAYOFF_ONLY").is_some();
     let mut values = Vec::new();
     for d in decks {
         let value = auxiliary::evaluate_built(&built, d.members, d.snaps)?;
         let payoff = value.results.first().and_then(|r| r.expected_payoff.as_ref()).map(|f| f.numerator.clone());
-        values.push(serde_json::json!({"members":d.members,"snaps":d.snaps,"payoffNumerator":payoff,
-            "bounds":diagnostics::path_bounds(&built, d.members, d.snaps)?}));
+        let bounds =
+            if payoff_only { serde_json::Value::Null } else { diagnostics::path_bounds(&built, d.members, d.snaps)? };
+        values.push(serde_json::json!({"members":d.members,"snaps":d.snaps,"payoffNumerator":payoff,"bounds":bounds}));
     }
     fs::write(
         &args[4],

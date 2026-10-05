@@ -136,6 +136,10 @@ impl Engine<'_, '_> {
     /// Integer node threshold over 120 orders. On the certified frontier an equal node upper is closed only below
     /// the returned power (i32::MIN when no K candidates prove that tie); public-ID ties are not used.
     pub(super) fn safe_cutoff(&self) -> Option<(i128, i32)> {
+        // A census prunes against its fixed threshold, without a power tie-break.
+        if let (None, Some(threshold)) = (&self.certified, crate::search::snaps::census()) {
+            return Some((threshold, i32::MIN));
+        }
         match &self.certified {
             Some(state) => state.cutoff,
             None => (self.top.len() == self.request.k).then(|| {

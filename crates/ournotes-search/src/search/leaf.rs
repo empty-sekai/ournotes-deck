@@ -131,6 +131,9 @@ impl Engine<'_, '_> {
             let evaluation = crate::search::certified_search::aggregate_orders(score.orders, &map)?;
             return Ok(Leaf::Certified(evaluation, program, payoff));
         }
+        if let Some(threshold) = crate::search::snaps::census() {
+            return self.census_leaf(physical, power, cut, threshold);
+        }
         if let Some(scores) = self.team_scores.get(physical, power, &mut self.tel.caches.team_scores) {
             let outcomes = self
                 .orders
@@ -373,5 +376,57 @@ impl Engine<'_, '_> {
                 Ok(Leaf::Stopped)
             }
         }
+    }
+
+    /// Census leaf (`snaps::census`): the team's cheap, then raw and fine caps against the fixed threshold; a team
+    /// they leave at or above it is counted, not simulated.
+    fn census_leaf(
+        &mut self,
+        physical: &PhysicalDeck,
+        power: i32,
+        cut: Option<(&crate::search::joint::JointBounds, &crate::domain::CandidateDomain)>,
+        threshold: i128,
+    ) -> Result<Leaf, Error> {
+        let below = |total: i128| total < threshold;
+        let census = self.tel.leaves.census.get_or_insert_with(|| telemetry::Census::new(threshold));
+        let Some((b, domain)) = cut else {
+            census.unbounded += 1;
+            return Ok(Leaf::Pruned);
+        };
+        let mut caps = b.order_cheap_caps(domain, physical, i64::from(power), &self.positions);
+        let cheap = cap_sum(&caps);
+        if below(cheap) {
+            self.tel.leaves.cheap_pruned += 1;
+            return Ok(Leaf::Pruned);
+        }
+        if b.has_fine() {
+            let (_, resume) = self.rec.clock.lap(slot::FINE);
+            let pruned = b.tighten_order_caps_until(
+                domain,
+                physical,
+                i64::from(power),
+                &self.positions,
+                &mut caps,
+                &mut self.bound_scratch,
+                below,
+                &mut self.tel.leaves.fine_orders,
+            );
+            self.rec.clock.lap(resume);
+            if pruned {
+                self.tel.leaves.fine_pruned += 1;
+                return Ok(Leaf::Pruned);
+            }
+        }
+        let fine = cap_sum(&caps);
+        let team = telemetry::CensusTeam {
+            members: physical.members.map(|i| self.pool.members[i].id),
+            snaps: physical.snaps.map(|i| i.map(|i| self.pool.snaps[i].id)),
+            power,
+            cheap: cheap.to_string(),
+            fine: fine.to_string(),
+        };
+        let census = self.tel.leaves.census.as_mut().expect("census started");
+        census.record(physical.members, team, cheap, fine);
+        Ok(Leaf::Pruned)
     }
 }

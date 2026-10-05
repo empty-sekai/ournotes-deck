@@ -606,6 +606,15 @@ consecutiveness and prior firings only increases the count. This gives a necessa
 prove a row unreachable when the entire gated stream is below its threshold. It is a state-reachability bound,
 not an estimate from an average Great/Perfect rate.
 
+**Compound trigger times.** The simulation drops the conditions of type 0 from a trigger group, combines the rest
+of each set with an AND and two or more non-empty sets with an OR. Neither combination reports a trigger time, so
+such a row triggers at the time of the frame that checks it, and its Gekisou factor windows start there; only a
+group of one set with one remaining condition can carry an earlier override time.
+
+**Sustained windows.** A sustained Gekisou effect runs one execution at a time, each inside the span of its start
+frame (its earliest trigger time to the first later frame whose trigger fails), so its factor windows are the
+components of the union of those spans, each with the executions of its own start frames.
+
 **Candidate suffixes.** Candidate-suffix envelopes precompute component maxima after every position in the
 ordered member/Snap choice list. For a surviving prefix, the next slot is bounded by its suffix and the other
 remaining slots by a character/resource relaxation. Their overlaps only enlarge the legal completion set. A
@@ -776,25 +785,34 @@ pool-wide search.
 
 ### COMBO
 
-**Combo-count ramps.** A cumulative note score-up that counts the playing range's combo (7001) reads, in the
-candidate cap only, the ramp value at an inclusive upper bound of the range's combo count from the candidate's
-own combo bonus windows. The first chart time of a range and anything within 100 ms of its start keep the flat
-factor (the previous range can still be current there), as do unordered ranges and entries outside combo ranges.
-Prefix and gain tables keep the flat windows.
+**Combo-count ramps.** A cumulative note score-up that counts the playing range's combo (7001) updates its count
+in the skill phase of every frame it runs in, from the playing range's combo after the judgements of the earlier
+frames, and files a changed factor at the frame's time; its first factor can be backdated to its trigger time. An
+execution ends no later than the time of the frame that processes its end, so an entry reading the factor of an
+execution started in frame `f` reads the count of frame `max(f, F)`, `F` the last frame with a time up to the
+entry's chart time. Per factor window and entry, the bounds read the largest such count over the window's start
+frames whose earliest trigger time is at most the entry's chart time. A frame's count is bounded by the prefix sum
+of its playing range's largest per-entry increments over the shortest chart-order prefix holding the entries
+judged before the frame; within a run of frames with one playing range it does not decrease. A frame whose playing
+range is not an ordered combo range keeps the flat factor. The candidate cap reads the increments of the
+candidate's own combo bonus windows, the gain tables those of their carrier level or keyed envelope.
 
 **Gated combo bonuses.** A combo bonus window whose trigger is a sole positive combo-count condition on its own
 range counts at an entry only once the range's combo can reach the threshold by the entry's chart time. Its start
 needs the threshold counted from judgements processed before that frame; judged in chart order, those are at
 chart times up to the trigger time, and the bonus reaches the judgements from the trigger time on. The bound
 counts every earlier entry of the range with its largest possible increment and lets each entry at the same
-chart time add at most one step, the increment read with every open window included; a gate opened this way
-only adds bonus. A window without such a gate, or whose gate names another range, always counts.
+chart time add at most one step, the increment read with every other running window included; a gate opened this
+way only adds bonus. The window's own bonus stays out of its step: an entry counts the bonus only once the first
+of the window's executions has started, at a trigger time no later than the entry's, and at the entry's own chart
+time that first start reads judgements none of those executions reached. A window without such a gate, or whose
+gate names another range, always counts.
 
 **Threshold trigger times.** A sole positive COMBO threshold trigger (7005) gains a necessary trigger time from
 prior-frame Good-through-Just processing and the largest exact integer effect-12000 increment of any admitted
 five-member deck (conditions, character uniqueness and Snap uniqueness relaxed; a member has its own rows plus at
 most one allowed Snap row list). Same-frame skill phases cannot use increments before the controller recount.
-Unsafe controller effects and compound trigger groups keep the broad bound.
+Unsafe controller effects keep the broad bound; compound trigger groups trigger at their frame's time.
 
 ### LUCK
 

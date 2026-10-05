@@ -1390,7 +1390,13 @@ fn ordered_root(
     if !warm::static_order() {
         // Root-level bound work.
         e.rec.clock.lap(0);
-        e.root_order = Some(warm::RootOrder::new(domain, bounds, orders, e)?);
+        let root = warm::RootOrder::new(domain, bounds, orders, e)?;
+        if let Some(threshold) = super::snaps::census() {
+            let open = root.caps.iter().filter(|c| c.0 >= threshold).count();
+            let census = e.tel.leaves.census.get_or_insert_with(|| telemetry::Census::new(threshold));
+            census.root.push([open, root.caps.len()]);
+        }
+        e.root_order = Some(root);
     }
     joint_rec(0, 0, p, domain, bounds, orders, e, None)
 }

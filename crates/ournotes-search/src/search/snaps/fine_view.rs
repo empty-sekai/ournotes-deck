@@ -215,30 +215,29 @@ impl FineView<'_> {
                         return cur;
                     }
                     let running = || gated.iter().filter(|w| w.0 <= t && t <= w.1);
-                    // the step reads every window open; a gate opened by it only adds bonus
-                    let step = (1.0 + (cur + running().map(|w| w.2).sum::<f64>()).max(0.0)).floor();
-                    cur + running().filter(|w| gate_open(w.3, ri, acc, group, step)).map(|w| w.2).sum::<f64>()
+                    // the step reads every other window open; a gate opened by it only adds bonus
+                    let all = cur + running().map(|w| w.2).sum::<f64>();
+                    cur + running()
+                        .filter(|w| gate_open(w.3, ri, acc, group, gate_step(all, w.2)))
+                        .map(|w| w.2)
+                        .sum::<f64>()
                 },
                 &mut gk_g,
                 &mut scratch.sums,
             );
             scratch.ev = ev;
         }
-        // Combo ramps: each entry reads the factor at its range's combo bound (the flat factor where unknown).
+        // Combo ramps: each entry reads the factor at the count of the frame it reads (the flat factor where unknown).
         scratch.ramp.clear();
         scratch.ramp.resize(ne, 0.0);
-        if let Some(gc) = &f.gcombo
-            && !scratch.ramp_windows.is_empty()
-        {
-            let mut counts = std::mem::take(&mut scratch.counts);
-            gc.inclusive_counts(&c.times, &scratch.sums, &mut counts);
+        if let Some(gc) = &f.gcombo {
+            let reads = RampReads { gc, sums: &scratch.sums, times: &c.times };
             for &(k, w) in &scratch.ramp_windows {
                 let r = &parts[k].ramps[w.ramp as usize - 1];
                 for e in w.lo as usize..w.hi as usize {
-                    scratch.ramp[e] += ramp_factor(&w, r, counts[e]);
+                    scratch.ramp[e] += reads.factor(&w, r, e);
                 }
             }
-            scratch.counts = counts;
         }
         // the candidate's rows with a conversion budget
         scratch.brow.clear();
@@ -611,10 +610,9 @@ pub(super) struct Scratch {
     /// Budget rows of one candidate (source, row, next eligible entry) and their conversion gains.
     pub(super) brow: Vec<(u32, usize, usize)>,
     pub(super) bterms: Vec<Vec<f64>>,
-    /// Combo ramp windows of the candidate (part, window), their per-entry note factors and range counts.
+    /// Combo ramp windows of the candidate (part, window) and their per-entry note factors.
     pub(super) ramp_windows: Vec<(usize, Window)>,
     pub(super) ramp: Vec<f64>,
-    pub(super) counts: Vec<f64>,
     /// Per-entry terms of the last bound, when requested (search cutoff tables).
     pub(super) terms: Option<CapTerms>,
     /// Diagnostics only: per entry `[time, floored bound, rank factor, k, 1 + note factors, life factor, Just

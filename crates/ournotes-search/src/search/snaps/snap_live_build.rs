@@ -903,8 +903,13 @@ impl<'a> SnapLive<'a> {
         // command and factor totals for the drift margin: per position, the largest over members and classes
         let mut cmd_k = [0f64; 5];
         let mut fac_k = [0f64; 5];
-        // with a combo range, every deck's combo count bound: a combo ramp window adds its factor at it
-        let pool_counts = gkf.as_ref().filter(|_| fine.gcombo.is_some()).and_then(|g| g.counts.get(5)).map(|c| &c[..]);
+        // with a combo range, every deck's combo count bounds: a combo ramp window adds its factor at them
+        let pool_reads = match gkf.as_ref() {
+            Some(GkFactors { combo: Some(gc), sums, .. }) => {
+                sums.get(5).map(|sums| RampReads { gc, sums, times: &coef.times })
+            }
+            _ => None,
+        };
         for &m in &members {
             let mut per = Vec::with_capacity(classes[m].len());
             for c in &classes[m] {
@@ -932,7 +937,7 @@ impl<'a> SnapLive<'a> {
                         ramps,
                         rush,
                     };
-                    arr[k].gain = window_gain(&arr[k], &coef.pc, &coef.pj, pool_counts);
+                    arr[k].gain = window_gain(&arr[k], &coef.pc, &coef.pj, pool_reads);
                 }
                 per.push(arr);
             }
@@ -1073,14 +1078,15 @@ impl<'a> SnapLive<'a> {
         let joint_additive =
             additive.and_then(|(roundings, b)| additive_joint_envelope(a0, global, eps, roundings, b, chain_extra));
         let carrier_levels = match gkf.as_ref() {
-            Some(g) if !level_terms.is_empty() => {
+            Some(g @ GkFactors { combo: Some(gc), .. }) if !level_terms.is_empty() => {
                 carrier_level_envelopes(
                     &coef,
                     &level_terms,
                     cnc as f64,
                     &g.g,
                     &g.carriers,
-                    &g.counts,
+                    gc,
+                    &g.sums,
                     &members,
                     &contrib,
                 )
@@ -1132,7 +1138,7 @@ impl<'a> SnapLive<'a> {
                     level_terms.clone(),
                     cnc as f64,
                     levels,
-                    g.counts.clone(),
+                    g.sums.clone(),
                     &members,
                     &class_of,
                     &contrib,
