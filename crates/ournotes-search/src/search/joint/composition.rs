@@ -122,15 +122,26 @@ impl JointBounds {
     /// power even when a complex leader profile's constant term is only bounded.
     pub(crate) fn layout_power_frontier(
         &self,
+        pool: &Pool,
         domain: &CandidateDomain,
         p: &PhysicalDeck,
         k: usize,
     ) -> Vec<PhysicalDeck> {
-        super::super::matching::best_k_assignments(p.members.map(|m| self.w[m].as_slice()), k)
+        // The composition uses heuristic member order, but the frontier's ties
+        // must use public-ID canonical order before retaining only K bindings.
+        let mut nonleader = super::super::uniform::NONLEADER;
+        nonleader.sort_unstable_by_key(|&slot| pool.members[p.members[slot]].id);
+        let slots = [nonleader[0], nonleader[1], 2, nonleader[2], nonleader[3]];
+        super::super::matching::best_k_assignments(slots.map(|slot| self.w[p.members[slot]].as_slice()), k)
             .into_iter()
-            .map(|(_, binding)| PhysicalDeck {
-                members: p.members,
-                snaps: binding.map(|s| s.map(|j| domain.snaps()[j])),
+            .map(|(_, binding)| {
+                // Keep proposals in the caller's layout for its local identity
+                // set and for the remaining Snap traversal.
+                let mut snaps = [None; 5];
+                for (canonical_slot, &slot) in slots.iter().enumerate() {
+                    snaps[slot] = binding[canonical_slot].map(|j| domain.snaps()[j]);
+                }
+                PhysicalDeck { members: p.members, snaps }
             })
             .collect()
     }

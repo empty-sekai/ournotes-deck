@@ -2353,3 +2353,48 @@ fn export_account_transport_corpus() {
     fs::write(root.join("cases.json"), serde_json::to_string(&names).unwrap()).unwrap();
     fs::write(root.join("coverage.json"), serde_json::to_string(&json!({"scope":"synthetic formal account transport witnesses, not native-game truth or the real-domain benchmark", "cases":coverage})).unwrap()).unwrap();
 }
+
+#[test]
+fn composition_power_frontier_keeps_canonical_ties_in_heuristic_layout() {
+    use ournotes_search::{engine, search::Completion};
+    let mut synth = synthetic_master(5, 2, 5);
+    set_column(&mut synth, "MasterMemberCard", &mut |row| {
+        row["_cardType"] = json!(1);
+        row["_memberCardLevelGroup"] = json!(1);
+        row["_leaderSkillID"] = json!(0);
+        row["_liveSkillID"] = json!(0);
+        row["_gekisouSkillID"] = json!(0);
+        // Equal base power makes all Snap edges tie. Member 5's song-tag
+        // bonus changes its member-only power and the heuristic layout.
+        row["_bestMusicTagIDs"] = if row["_id"] == 5 { json!([1]) } else { json!([]) };
+        for key in ["_performancePowerMax", "_technicPowerMax", "_visualPowerMax"] {
+            row[key] = json!(5000);
+        }
+    });
+    set_column(&mut synth, "MasterSupportCard", &mut |row| {
+        row["_cardType"] = json!(2);
+        row["_supportSkillId01"] = json!(0);
+        row["_supportSkillId02"] = json!(0);
+        for key in ["_performancePowerMax", "_technicPowerMax", "_visualPowerMax"] {
+            row[key] = json!(1000);
+        }
+    });
+    replace_table(&mut synth, "MasterEventEffect", json!([]));
+    let data = DeckData::from_json(&data_document(&synth, 5, 2, 5).to_string()).unwrap();
+    let roster = Roster::from_json(&roster_document(5, 2, 5).to_string()).unwrap();
+    let mut request = joint_request("free", false, json!({"kind":"cappedScore","threshold":1}));
+    request.constraints.leader = Some(1);
+    request.k = 12;
+    request.strategy = Strategy::Exhaustive;
+    let oracle = engine::recommend(&data, &roster, &request).unwrap();
+    assert_eq!(oracle.completion, Completion::Complete);
+    assert_eq!(oracle.results[0].snaps, [None, None, None, Some(1), Some(2)]);
+    request.strategy = Strategy::BranchAndBound;
+    for k in [1, 3, 12] {
+        request.k = k;
+        let actual = engine::recommend(&data, &roster, &request).unwrap();
+        assert_eq!(actual.completion, Completion::Complete);
+        assert!(actual.telemetry.composition.power_frontier_closed > 0);
+        assert_eq!(actual.results, oracle.results[..k], "K={k}");
+    }
+}
