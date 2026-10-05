@@ -14,6 +14,8 @@ const FIXTURE_SEED: u64 = 20_261_001;
 const SCORE_ID: i64 = 1004;
 const EVENT_ID: i64 = 7;
 
+#[path = "fixtures/numeric_domain.rs"]
+mod numeric_domain;
 #[path = "fixtures/sustained_combo.rs"]
 mod sustained_combo;
 
