@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 def version(command):
-    return subprocess.check_output(command, text=True).strip()
+    return subprocess.check_output(command, encoding="utf-8").strip()
 
 
 def main():
@@ -25,7 +25,7 @@ def main():
     args = parser.parse_args()
     source = args.source.resolve()
     assert version(["git", "-C", str(source), "rev-parse", "HEAD"]) == args.commit
-    assert tomllib.loads((source / "Cargo.toml").read_text())["workspace"]["package"]["version"] == args.tag[1:]
+    assert tomllib.loads((source / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"] == args.tag[1:]
     args.output.mkdir(parents=True, exist_ok=True)
     names = ["native"] if args.kind == "native" else ["replay", "recommend"]
     for module in names:
@@ -59,7 +59,7 @@ def main():
                 shutil.copytree(source / "work" / "bindings" / module / binding, folder)
                 package = {"name": f"ournotes-{module}-wasm-{binding}", "version": args.tag[1:],
                            "private": True, "type": "module" if binding == "web" else "commonjs"}
-                (folder / "package.json").write_text(json.dumps(package, indent=2) + "\n")
+                (folder / "package.json").write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
             usage = f"Web: import init, {{ {'DeckSolver' if module == 'recommend' else 'ReplaySession'} }} from './web/ournotes_{module}_wasm.js'; await init();\n"
             usage += f"Node: const {{ {'DeckSolver' if module == 'recommend' else 'ReplaySession'} }} = require('./nodejs/ournotes_{module}_wasm.js');\n"
             usage += "Keep each JS file beside its matching _bg.wasm file. TypeScript declarations are included.\n"
