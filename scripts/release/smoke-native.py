@@ -23,11 +23,14 @@ with tempfile.TemporaryDirectory() as temporary:
         assert hashlib.sha256((root / name).read_bytes()).hexdigest() == digest, name
     extension = ".exe" if "windows" in metadata["target"] else ""
     deck = str(root / ("ournotes-deck" + extension))
-    recommend = str(root / ("ournotes-recommend" + extension))
-    for binary, expected_code in [(deck, 2), (recommend, 0)]:
-        help_result = subprocess.run([binary, "--help"], capture_output=True, encoding="utf-8")
-        assert help_result.returncode == expected_code, help_result.stderr
+    assert not (root / ("ournotes-recommend" + extension)).exists()
+    for command in [[deck, "--help"], [deck, "recommend", "--help"]]:
+        help_result = subprocess.run(command, capture_output=True, encoding="utf-8")
+        assert help_result.returncode == 0, help_result.stderr
         assert "--data" in help_result.stdout + help_result.stderr
+    invalid = subprocess.run([deck, "recommend", "--unknown", "value"], capture_output=True, encoding="utf-8")
+    assert invalid.returncode == 2
+    assert json.loads(invalid.stderr)["error"]["code"] == "Input"
     for mode in ["power", "skip"]:
         command = [deck, mode, "--data", str(corpus / "DeckData.json"), "--roster", str(corpus / "roster.json"), "-k", "3"]
         if mode == "skip":
@@ -36,7 +39,7 @@ with tempfile.TemporaryDirectory() as temporary:
         assert result["completion"] == "Complete" and len(result["results"]) > 0, result
     for name in ["free-score", "free-pt", "mission-score", "mission-pt"]:
         request = corpus / (name + "-request.json")
-        result = json.loads(subprocess.check_output([recommend, "--data", str(corpus / "DeckData.json"),
+        result = json.loads(subprocess.check_output([deck, "recommend", "--data", str(corpus / "DeckData.json"),
             "--roster", str(corpus / "roster.json"), "--request", str(request)], encoding="utf-8"))
         assert result["completion"] == "Complete" and len(result["results"]) == 3, name
     print(json.dumps({"target": metadata["target"], "commit": metadata["commit"], "cliCases": 6, "status": "passed"}))

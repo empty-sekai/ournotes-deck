@@ -2,10 +2,11 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [0.0.1](https://github.com/empty-sekai/ournotes-deck/releases/tag/v0.0.1) - 2026-10-05
+## [0.0.1](https://github.com/empty-sekai/ournotes-deck/releases/tag/v0.0.1) - 2026-10-06
 
 ### Features
 
+- One `ournotes-deck` CLI entry point, with JSON recommendation under the `recommend` subcommand; native and WASM release packages with SHA-256 checksums.
 - Snapshot recommendation in wasm and search progress reports ([7112cc1](https://github.com/empty-sekai/ournotes-deck/commit/7112cc13e5855ac8636ce503ff21e637f2a9ce64))
 - Rank played teams by their mean payoff over the 120 performance orders ([dadc22f](https://github.com/empty-sekai/ournotes-deck/commit/dadc22f558714dcaaf7704c01f8568f2fe04558a))
 
@@ -43,5 +44,4 @@ All notable changes to this project are listed here. Versions follow [Semantic V
 ### Miscellaneous
 
 - Initial commit ([e27d289](https://github.com/empty-sekai/ournotes-deck/commit/e27d289d549aff74955977659e1bee5c72d6a4f5))
-
 

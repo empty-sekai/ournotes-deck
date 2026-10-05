@@ -11,7 +11,7 @@ BanG Dream! Our Notes 的综合力、跳过分数与演出分数计算，以及�
 | crate | 内容 |
 | --- | --- |
 | `crates/ournotes-sim` | 模型：综合力、跳过分数、演出分数与整场模拟（`live`）、活动点数（`event`）、场景（`scenario`）、名册解析成的卡池（`pool::{Pool, Deck}`）、deck data 文件（`data`）、谱面统计（`chartstats`）、单局回放（`replay`） |
-| `crates/ournotes-search` | 精确 Top-K 组卡搜索与推荐入口（下文“推荐主链”的模块），以及命令行程序 `ournotes-deck` 和 `ournotes-recommend` |
+| `crates/ournotes-search` | 精确 Top-K 组卡搜索与推荐入口（下文“推荐主链”的模块），以及统一命令行程序 `ournotes-deck` |
 
 只需要计算或模拟（例如谱面统计、回放）时依赖 `ournotes-sim`；要搜索时依赖 `ournotes-search`，模型类型仍从 `ournotes-sim`
 引用。`wasm/replay` 是基于 `ournotes-sim` 的回放 WASM，`wasm/recommend` 是基于 `ournotes-search` 的推荐 WASM，
@@ -149,6 +149,17 @@ for deck in &out.results {
 ```
 
 ## 命令行
+
+统一入口为 `ournotes-deck`。JSON 推荐请求使用 `recommend` 子命令：
+
+```sh
+ournotes-deck recommend --data deck-data.json --roster box.json --request request.json
+ournotes-deck recommend --data deck-data.json --snapshot owned-snapshot.json --request request.json
+ournotes-deck recommend --help
+```
+
+`--roster` 和 `--snapshot` 二选一；`--progress-ms N` 将进度 JSON 行写到标准错误，`-o FILE` 将最终结果写入文件。
+按任务指定参数的接口如下：
 
 ```sh
 ournotes-deck power --data deck-data.json --roster box.json -k 10

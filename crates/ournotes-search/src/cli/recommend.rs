@@ -3,13 +3,14 @@ use ournotes_search::engine::{Progress, recommend, recommend_snapshot, recommend
 use ournotes_search::types::{RecommendationOutcome, RecommendationRequest};
 use ournotes_sim::{Error, cards::Roster, data::DeckData};
 use std::{path::PathBuf, process::ExitCode, time::Duration};
-const USAGE: &str = "ournotes-recommend --data DECK_DATA.json (--roster ROSTER.json | --snapshot OWNED_SNAPSHOT.json)
+const USAGE: &str =
+    "ournotes-deck recommend --data DECK_DATA.json (--roster ROSTER.json | --snapshot OWNED_SNAPSHOT.json)
                    --request REQUEST.json [--progress-ms N] [-o RESULT.json]
 --snapshot writes the owned-snapshot answer (ournotes-deck.snapshot-recommendation/1), whose missing/errors lists
 replace an error exit for snapshot and request problems. --progress-ms N writes each progress report, at most one
 per N ms, as one JSON line to stderr.";
-fn run() -> Result<(), Error> {
-    let mut args = std::env::args().skip(1);
+fn run(arguments: &[String]) -> Result<(), Error> {
+    let mut args = arguments.iter().cloned();
     let (mut data, mut roster, mut snapshot, mut request, mut output, mut progress_ms) =
         (None, None, None, None, None, None);
     while let Some(a) = args.next() {
@@ -80,8 +81,8 @@ fn check_mock_source(path: &str, text: &str, data: &DeckData) -> Result<(), Erro
     }
     Ok(())
 }
-fn main() -> ExitCode {
-    match run() {
+pub(super) fn main(arguments: &[String]) -> ExitCode {
+    match run(arguments) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             let code = match &e {

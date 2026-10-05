@@ -15,9 +15,11 @@ SHA-256 hashes of its contents. `SHA256SUMS` covers all seven archives.
 | `ournotes-replay-wasm-vVERSION.tar.gz` | Replay WASM with `web/` and `nodejs/` bindings |
 | `ournotes-recommend-wasm-vVERSION.tar.gz` | Recommendation WASM with `web/` and `nodejs/` bindings |
 
-Native packages contain `ournotes-deck` and `ournotes-recommend` (with `.exe` on
-Windows). These are command-line executables. Rust library consumers use the
-tagged Git dependencies described in the repository README.
+Native packages contain one executable, `ournotes-deck` (`ournotes-deck.exe` on
+Windows). Its `recommend` subcommand accepts a JSON request plus a roster or
+owned snapshot; `power`, `skip`, `live`, and `chart-stats` provide the task-specific
+interfaces. Use `ournotes-deck --help` and `ournotes-deck recommend --help`.
+Rust library consumers use the tagged Git dependencies described in the README.
 
 Both WASM packages include JavaScript, TypeScript declarations, and the matching
 `_bg.wasm` files. Keep each binding directory together. The web directory uses ES

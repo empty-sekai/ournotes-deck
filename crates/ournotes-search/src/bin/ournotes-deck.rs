@@ -1,5 +1,8 @@
 //! Command-line front end: `ournotes-deck <power|skip|live> --data FILE --roster FILE [options]`, and
-//! `ournotes-deck chart-stats --data FILE`.
+//! `ournotes-deck chart-stats --data FILE` and `ournotes-deck recommend --request FILE ...`.
+
+#[path = "../cli/recommend.rs"]
+mod recommend_cli;
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -15,12 +18,16 @@ use ournotes_sim::scenario::{ContextInput, PowerSnapshotInput, Scenario};
 use serde_json::json;
 
 const USAGE: &str = "usage:
+  ournotes-deck recommend --data FILE (--roster FILE | --snapshot FILE) --request FILE
+                      [--progress-ms N] [-o FILE]
   ournotes-deck power --data FILE --roster FILE [common options]
   ournotes-deck skip  --data FILE --roster FILE --score ID [common options]
   ournotes-deck live  --data FILE --roster FILE --score ID --expectation finite --seed-law FILE [--play FILE]
                       [--gekisou] [common options]
   ournotes-deck chart-stats --data FILE [--seeds N] [--no-gekisou-aptitude] [--aptitude-max-seeds N]
                       [--aptitude-cross-seeds N] [--charts ID[,ID...]] [--jobs N] [-o FILE]
+recommend consumes the JSON recommendation request and writes the unified recommendation result.
+Use ournotes-deck recommend --help for its input and progress options.
 --data is a deck data file (nnnotes.deck-data/1). live ranks by the expected score of the whole-live simulation
 with snap skills over the native member-order roots of the finite law in --seed-law (JSON
 [[rootSeed,positiveWeight],...]); --play is a judgement stream and defaults to the theoretical best play; --gekisou
@@ -474,6 +481,13 @@ fn run(args: &[String]) -> Result<serde_json::Value, String> {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.is_empty() || matches!(args[0].as_str(), "-h" | "--help") {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    if args[0] == "recommend" {
+        return recommend_cli::main(&args[1..]);
+    }
     match run(&args) {
         Ok(serde_json::Value::Null) => ExitCode::SUCCESS,
         Ok(v) => {

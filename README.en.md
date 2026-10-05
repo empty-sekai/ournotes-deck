@@ -11,7 +11,7 @@ The repository is a Cargo workspace of two crates; the search depends on the mod
 | crate | contents |
 | --- | --- |
 | `crates/ournotes-sim` | the model: deck power, skip score, live score and the whole-live simulation (`live`), event points (`event`), live modes (`scenario`), the card pool a roster resolves to (`pool::{Pool, Deck}`), the deck data file (`data`), chart statistics (`chartstats`) and single-live replay (`replay`) |
-| `crates/ournotes-search` | the exact Top-K deck search and the recommendation pipeline (the modules below), and the `ournotes-deck` and `ournotes-recommend` command-line programs |
+| `crates/ournotes-search` | the exact Top-K deck search and the recommendation pipeline (the modules below), and the unified `ournotes-deck` command-line program |
 
 Depend on `ournotes-sim` for computation or simulation alone (chart statistics, replay); depend on `ournotes-search`
 to search, and take the model's types from `ournotes-sim`. `wasm/replay` is the replay WASM over `ournotes-sim`,
@@ -169,6 +169,19 @@ for deck in &out.results {
 ```
 
 ## Command line
+
+Use one entry point, `ournotes-deck`. JSON recommendation requests use its
+`recommend` subcommand:
+
+```sh
+ournotes-deck recommend --data deck-data.json --roster box.json --request request.json
+ournotes-deck recommend --data deck-data.json --snapshot owned-snapshot.json --request request.json
+ournotes-deck recommend --help
+```
+
+Choose exactly one of `--roster` and `--snapshot`. `--progress-ms N` writes JSON
+progress lines to stderr; `-o FILE` writes the final result to a file.
+The task-specific interfaces are:
 
 ```sh
 ournotes-deck power --data deck-data.json --roster box.json -k 10

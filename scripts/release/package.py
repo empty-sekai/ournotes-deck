@@ -42,12 +42,12 @@ def main():
             metadata["target"] = args.target
             metadata["strip"] = "symbols"
             extension = ".exe" if "windows" in args.target else ""
-            for binary in ["ournotes-deck", "ournotes-recommend"]:
+            for binary in ["ournotes-deck"]:
                 shutil.copy2(source / "target" / args.target / "release" / (binary + extension), staging)
             usage = "Run ./ournotes-deck power --data deck-data.json --roster box.json -k 10.\n"
-            usage += "Run ./ournotes-recommend --help for the JSON recommendation CLI.\n"
+            usage += "Run ./ournotes-deck recommend --help for JSON recommendation inputs.\n"
             if extension:
-                usage += "On Windows use .\\ournotes-deck.exe and .\\ournotes-recommend.exe.\n"
+                usage += "On Windows use .\\ournotes-deck.exe.\n"
             if "linux" in args.target:
                 usage += "Linux binaries use musl and are statically linked.\n"
             if "apple" in args.target:
