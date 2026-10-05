@@ -64,20 +64,23 @@
 | `fraction` | 按位置估计的已决定比例，0 到 1；完成时为 1。遍历当前路径之前的分支都已评估、剪枝或跳过。各分支大小不同，这是进度指示，不是剩余时间估计。没有位置跟踪的遍历为 null |
 | `parts`、`partsDone` | 依次搜索的分段数与已完成数（撃奏分数的转换分段；其他为 1） |
 | `topLevelDone`、`topLevelTotal` | 当前分段里已决定的顶层分支数与总数（联合搜索的深度 0 选择，或成员组合遍历的队长）；未完成时给出 |
-| `best`、`kth` | 当前最佳与第 K 名的收益分子；Top-K 为空时 `best` 为 null，未满时 `kth` 为 null |
+| `best`、`kth` | 当前最佳与第 K 名的精确收益分子；Top-K 为空时 `best` 为 null，未满时 `kth` 为 null。LUCK 区间路径两者均为 null，收益范围见结果的 `payoffInterval` |
 | `upperBound` | 停止时**尚未探索部分**的收益上界（分子） |
-| `globalUpperBound` | 全域最佳收益分子的上界：`best` 与所有未关闭分支上界中的较大者。搜索过程中只降不升，完成时等于 `best`。遍历不跟踪它时为 null（撃奏转换分段在前一分段运行时还不知道后续分段的上界，`candidate` 策略没有上界） |
+| `globalUpperBound` | 全域最佳收益分子的上界，覆盖已找到的编成与全部未关闭分支；得到后只降不升。确定性 physical 搜索完成时等于 `best`，也适用于完整枚举及多个转换分段。已完成的空域、LUCK 区间路径及不跟踪此字段的遍历为 null |
 | `bestGap`、`kthGap` | `(upperBound − x) / x`，上界不超过 x 时为 0；x 不为正时为 null |
 | `boundMs` | 停止后计算 `upperBound` 的耗时（不占搜索时限） |
 
-`upperBound` 是真上界：全域最佳编成的收益不超过 `max(best, upperBound)`；真正 Top-K 里没有被保留的编成，
+确定性搜索的 `upperBound` 是真上界：全域最佳编成的收益不超过 `max(best, upperBound)`；真正 Top-K 里没有被保留的编成，
 收益都不超过 `max(upperBound, kth)`。因此超时时可以显示“未证明，最优与当前最佳相差不超过 `bestGap`”。
 
 计算方式：停止后，沿当前路径对每一层剩余的分支，取搜索本身在那里会检查的上界（节点上界、尾部上界；
 根层逐个分支取深度 1 的节点上界，根层按这个上界降序访问时就是剩余分支里的第一个；尚未开始的转换分段取全池上界），再取最大值。PT 预热阶段就停止时，
 预热按奖金过滤跳过的前缀也算未探索，取全域根上界。
 
-null 的含义：已完成时不需要上界；`traversal` 为 `exhaustive`、`candidate`、`canonical`、`session` 时没有上界
+运行中的某一转换分段不能单独提供全域上界，`globalUpperBound` 此时可能为 null。停止时将已保留的最佳值与覆盖所有剩余分段的
+`upperBound` 合并，就能提供全域上界；完成时所有分段均已关闭。LUCK 的已评估候选在区间前沿中，不能将它们当作空的精确 Top-K 或零收益。
+
+`upperBound` 为 null 的含义：已完成时没有未探索部分；`traversal` 为 `exhaustive`、`candidate`、`canonical`、`session` 时不记录未探索上界
 （`bestGap` 也为 null）；有上界的遍历停止时若已没有未探索的编成，`upperBound` 为 null 而差距为 0。
 进度报告取自搜索进行中，不是停止：`complete` 为 false，`upperBound` 和差距为 null。
 

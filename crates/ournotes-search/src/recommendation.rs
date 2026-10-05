@@ -1255,12 +1255,13 @@ fn result_of(
         })
     } else {
         // Payoff numerators of the proof are over the target's denominator.
+        // upper_bound covers only unexplored branches. It cannot replace a missing global bound: retained
+        // interval candidates can exceed it, and a displayed Top-K does not certify the rest of that frontier.
         let target = outcome.telemetry.environment.target.as_ref().and_then(|t| t.denominator.parse::<u128>().ok());
         let denominator = target.unwrap_or(if live { ORDERS as u128 } else { 1 });
         proof
             .global_upper_bound
             .as_deref()
-            .or(proof.upper_bound.as_deref())
             .and_then(|u| u.parse::<i128>().ok())
             .map(|n| bound(metric, n, denominator, true))
     };
@@ -1472,6 +1473,10 @@ pub fn capabilities() -> Value {
 #[cfg(test)]
 #[path = "../tests/fixtures/request_budget.rs"]
 mod request_budget;
+
+#[cfg(test)]
+#[path = "../tests/fixtures/account_bounds.rs"]
+mod account_bounds;
 
 #[cfg(test)]
 mod tests {
