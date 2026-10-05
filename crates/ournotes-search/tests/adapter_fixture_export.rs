@@ -474,6 +474,48 @@ fn warm_start_and_visit_order_leave_the_canonical_topk_unchanged() {
 }
 
 #[test]
+fn ranked_bound_winner_evicted_by_initial_deck_cannot_close_search() {
+    use ournotes_search::{auxiliary, engine, handler, search::Completion};
+
+    let mut synth = synthetic_master(6, 2, 5);
+    // Member 1 trades lower power for a stronger skill than the same-character member 6.
+    set_column(&mut synth, "MasterLiveSkillEffect", &mut |row| {
+        if row["_liveSkillID"] == json!(1) {
+            row["_effectValue"] = json!(10000);
+        }
+    });
+    let data = DeckData::from_json(&data_document(&synth, 6, 2, 5).to_string()).unwrap();
+    let roster = Roster::from_json(&roster_document(6, 2, 5).to_string()).unwrap();
+    let mut request = joint_request("free", false, json!({"kind":"scoreAtLeast","threshold":991147}));
+    request.k = 1;
+    request.constraints.leader = Some(2);
+    request.strategy = Strategy::Exhaustive;
+    let oracle = engine::recommend(&data, &roster, &request).unwrap();
+    assert_eq!(oracle.completion, Completion::Complete);
+    let a = DeckInput { members: [3, 4, 2, 5, 6], snaps: [Some(1), None, None, None, Some(2)] };
+    let b = DeckInput { members: [1, 3, 2, 4, 5], snaps: [None; 5] };
+    let built = handler::build_card_pool(&data, &roster, &request).unwrap();
+    let a_value = auxiliary::evaluate_built(&built, a.members, a.snaps).unwrap();
+    let b_value = auxiliary::evaluate_built(&built, b.members, b.snaps).unwrap();
+    let numerator = |row: &ournotes_search::types::RecommendedDeck| {
+        row.expected_payoff.as_ref().unwrap().numerator.parse::<i128>().unwrap()
+    };
+    assert_eq!(numerator(&a_value.results[0]), 0);
+    assert_eq!(numerator(&b_value.results[0]), 16);
+    assert_eq!(numerator(&oracle.results[0]), 64);
+    assert!(a_value.results[0].power > oracle.results[0].power);
+    request.strategy = Strategy::BranchAndBound;
+    request.initial_decks = vec![a, b];
+    for cache in [0, 64] {
+        request.limits.cache_entries = cache;
+        let result = engine::recommend(&data, &roster, &request).unwrap();
+        assert_eq!(result.completion, Completion::Complete);
+        assert_eq!(result.results, oracle.results, "evicted initial bound winner; cache={cache}");
+        assert!(result.telemetry.environment.bounds.deck_payoff.as_ref().unwrap().handed_over);
+    }
+}
+
+#[test]
 fn leader_score_cache_preserves_native_order_values_and_full_topk() {
     use ournotes_search::{auxiliary, engine, search::Completion};
     let synth = synthetic_master(5, 2, 5);
