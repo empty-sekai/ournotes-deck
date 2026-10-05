@@ -262,7 +262,12 @@ impl<'m> SearchSession<'m> {
         let event = prepared.context.plan.event;
         let skip = prepared.context.plan.skip.clone();
         let cursor = Cursor::new(prepared.domain());
-        prepared.context.resolved_context["ownedSnapshot"] = owned_scope;
+        let scope_key = if owned_scope.get("server").is_some() && owned_scope.get("cards").is_some() {
+            "account"
+        } else {
+            "ownedSnapshot"
+        };
+        prepared.context.resolved_context[scope_key] = owned_scope;
         #[cfg(test)]
         crate::search::budget::test_clock::stage("session_prepare");
         let status = if budget.expired() { SessionStatus::TimeLimit } else { SessionStatus::Running };
@@ -388,10 +393,8 @@ impl<'m> SearchSession<'m> {
         let mut engine = Engine {
             pool: &self.prepared.pool,
             request: &self.prepared.context.request,
-            law: &self.prepared.context.law,
             metric: &self.request.metric,
             event_input: self.prepared.context.context_input.event_payoff.as_ref(),
-            network: None,
             simulation: &self.request.simulation,
             limits: &self.request.limits,
             budget: self.budget,
@@ -401,19 +404,25 @@ impl<'m> SearchSession<'m> {
             correlated: false,
             resource: false,
             bound_scratch: super::super::snaps::JointScratch::default(),
-            luck: None,
             bonus_scratch: super::super::joint::BonusScratch::default(),
             top: std::mem::take(&mut self.top),
+            certified: None, // This incremental cursor evaluates deterministic Power/Skip only.
+            lottery_free: None,
             seen: std::mem::take(&mut self.seen),
             fifo: std::mem::take(&mut self.fifo),
-            input: None,
+            team_scores: super::team_scores::TeamScores::new(0),
+            programs: super::program_cache::ProgramCache::new(0),
             song: self.song.as_ref(),
             event: self.event,
             skip: self.skip.as_ref(),
+            live: false,
+            orders: Vec::new(),
+            positions: Vec::new(),
             seeded: HashSet::new(),
             root_order: None,
             warm: None,
             progress: None,
+            offered: None,
         };
         let run = (|| -> Result<(), Error> {
             while self.last_step_work_units < slice.max_work_units {
@@ -470,6 +479,7 @@ impl<'m> SearchSession<'m> {
     fn snapshot(&self) -> Result<SessionProgress, Error> {
         let complete = self.status == SessionStatus::Exhausted;
         let mut telemetry = self.tel.clone();
+        telemetry.memory = crate::search::telemetry::Memory::now();
         let numerator = |e: &Entry| e.evaluation.expected_payoff.numerator;
         let best = self.top.first().map_or(0, numerator);
         let kth = (self.top.len() == self.request.k).then(|| numerator(self.top.last().expect("K decks")));

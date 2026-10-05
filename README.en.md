@@ -35,17 +35,23 @@ The one-shot deadline includes construction; execution on an already built probl
 Outcomes carry `telemetry` (`ournotes-deck.telemetry/1`, see [telemetry](docs/telemetry.en.md)) with problem construction, bound compilation and search as separate phases; reused problems have no construction phase.
 
 The facade supports Snap-inclusive Free Live, conditional Mission Gekisou, score and client event points.
-Power/Skip retain canonical member-set identity; full Live/PT retain physical slots and Snap pairings.
-Native skill order is sampled from the explicit finite root law, never chosen as a player action.
-The default `branchAndBound` decomposes ordinary Live into member compositions, physical layouts and Snap assignments;
-Gekisou retains joint member/Snap traversal. Both bound score under the actual declared root-to-position maps
-and bounding normal-played PT in a certified nonwrapping bonus domain. Unsupported bounds fall back to enumeration with
+Power/Skip retain canonical member-set identity. Played Live/PT rank teams (a leader, four other members and the Snap
+paired with each) by their mean payoff over the 120 equally likely performance orders; the positions of the four
+non-leader members are a layout, not a decision, and each team is reported in a canonical layout with its score
+distribution over the orders and its best order. A skill probability check with Gekisou off is rejected as
+unsupported. In a Gekisou live without a LUCK range it gates nothing that can run, so each order keeps one exact
+score; a LUCK range ranks decks by certified intervals over the native lottery probabilities, and an overlapping
+frontier ends `RefinementRequired`.
+The default `branchAndBound` decomposes ordinary Live into member compositions and Snap pairings; Gekisou retains
+joint member/Snap traversal. Both bound the mean score with position-mean skill gains and bound normal-played PT in a
+certified nonwrapping bonus domain. Unsupported bounds fall back to enumeration with
 `telemetry.environment.bounds.fallback`. Both completed `branchAndBound` and `exhaustive` certify conditional Top-K; candidate searches remain heuristic.
-`telemetry.joint` reports bound checks and prunes by depth. See the [joint-bound argument](docs/search.md#joint-physical-deck-search-under-a-finite-native-root-law).
-`telemetry.composition` reports the decomposition stages; the [composition argument](docs/search.md#member-compositions-physical-layouts-and-power-frontiers) covers complete physical-variant recovery and conditional PT closure.
+`telemetry.joint` reports bound checks and prunes by depth. See the [search argument](docs/search.md#uniform-member-order-search).
+`telemetry.composition` reports the decomposition stages; the [composition argument](docs/search.md#member-compositions-snap-pairings-and-power-frontiers) covers the Snap search and conditional PT closure.
+`telemetry.proof.globalUpperBound` bounds the best value of the whole domain while the search runs.
 The default deadline is three seconds with no candidate-count cap. Explicit budgets remain available; only exhausted/proven search returns `Complete`.
 The reproducible correctness experiments (bounded exhaustive comparisons, bound audits and cutoff audits) and how to run them are listed under [search validation](docs/search.md#validation).
-The lower-level `search` API below has a separate contract: one result per member set, with a chosen performance order, rather than the facade's finite root law.
+The lower-level `search` API below has a separate contract: one result per member set, with a chosen performance order, rather than the facade's uniform order target.
 
 ## What it computes
 

@@ -9,7 +9,7 @@ between native skill programs or monotonicity of their actual scores in power.
 
 For a positive scale `r`, each member/Snap pair contributes an outward-rounded
 integer upper bound on `power + r * gain`. The table is indexed by leader profile,
-native skill position, scale and Snap (including None). Each cell retains the five
+skill position, scale and Snap (including None). Each cell retains the five
 largest values from distinct characters. At an unfinished five-member prefix,
 at most four characters are occupied, so this table retains the exact largest
 unoccupied-character value for that cell, even with duplicate member variants.
@@ -18,15 +18,16 @@ The remaining slots are matched to unused Snaps; assigned slots use dummy column
 Row shifts restore the None contribution exactly. Remaining character uniqueness
 and required-member restrictions are relaxed, while already occupied characters
 and Snaps remain excluded. The resulting sum bounds `P + r*A`, hence
-`P*A <= (P+r*A)^2/(4*r)`. Native-root positions remain fixed. Per-root integer caps
-are combined using checked integer masses.
+`P*A <= (P+r*A)^2/(4*r)`. Gains are position means (see
+[uniform member-order search](search.md#uniform-member-order-search)); the cap times 120 bounds the payoff
+numerator.
 
 Storage and numerical limits disable this optional table, never truncate the
 candidate domain. A bounded prefix probe controls whether production pays its
 runtime cost; the independent oracle still audits the cap when that probe skips
 it. Prune counts and bound-check counts are reported separately.
 
-The dual table indexes leader profile, native position, scale and character.
+The dual table indexes leader profile, position, scale and character.
 Its five best distinct Snap choices retain the best available edge after at
 most four prefix Snaps are excluded; None is always reusable. Match remaining
 positions to distinct unoccupied characters, relaxing future Snap uniqueness
@@ -98,7 +99,7 @@ remain in force. A counter ramp is not an exact simulation trace.
 
 ## Constant-cost bounds when judgements cannot change
 
-For a particular class and native position, the existing conservative conversion
+For a particular class and position, the existing conservative conversion
 bitmap can prove that no chart entry's judgement can change. This includes
 conversion programs whose targets never occur inside their possible windows;
 the mere presence of a conversion skill is not sufficient to reject the shortcut.
@@ -122,94 +123,16 @@ scorer's binary32 calculations.
 
 If any selected program can change a judgement, search proceeds to the existing
 per-note envelope. Every surviving candidate still receives full evaluation.
-For PT, score caps pass through the maximum reward among reachable tiers for
-each atom before masses are summed; no reward is applied to an average score.
-
-## LUCK Rush timing refinement
-
-The optional LUCK replay produces possible skill-phase values of the native
-`LuckRushPlaying` checker for each mission gate and each declared frame. Its
-branch union is an upper possibility mask, not a predicted play. If a branch is
-unsupported, a replay limit is reached, or any mask has the wrong shape, the
-existing wide score windows remain available.
-
-The search admits this mask only when every reachable converted judgement inside
-a LUCK range has the same controller behavior as the raw judgement. The classes
-are `{0,7}`, `{-1,1}`, `{2}`, `{3}`, `{4}`, and `{5,6}`. Wait/Pass skip the
-controller's judgement path; Miss can consume a pending lottery despite having
-zero base points. Those cases cannot share a class. The current reach bitmap
-does not represent negative raw judgements, so those inputs retain the wide
-envelope. This check uses each search partition's complete conversion reach,
-including limited conversions.
-
-A refinable score row has effect 2000 or 2004 and exactly one trigger condition:
-one positive 7021 in one condition set. The condition updater checks this trigger
-on every open-gate frame before testing its pool, execution limit or activation
-phase. It therefore observes the same sticky state as the replay's gate probe.
-A 7021 inside `And`/`Or` can be skipped and keep a stale flag; its negation also
-cannot be bounded by a union of true outcomes. Compound, negative, missing and
-otherwise unsupported trigger groups keep their original windows.
-
-A direct 7021 supplies no trigger-time override. Each possible execution starts
-at its processing frame time, without the generic range/count backdating. For
-untimed sustained effects, the first later open-gate frame whose union mask is
-false must terminate any execution that is still active. Conditions and release
-checks can end activity earlier. The union of those intervals is emitted as
-disjoint windows with multiplicity one; a closed gate does not force an end.
-
-For one-shot effects, every possible start gets the existing duration and
-release upper bound. Turning Rush off does not prematurely terminate a timed
-one-shot execution. Up to eight possible starts retain separate windows; larger
-sets use the original five-updater pool envelope. Sustained effects with a
-modeled duration and cumulative score rows retain their original treatment.
-
-A pooled window's concurrency limit is not its lifetime execution count: updater
-slots can be reused. Compiled score rows therefore charge start/end commands for every
-possible activation, and cumulative replacement commands are bounded by both
-per-execution changes and concurrent updaters per processing frame. Command
-representation error charges two roundings per lifetime command: the integer
-mill value is cast to binary32 and then divided by100000. Both are needed at
-saturation and integer precision boundaries. Factor amplitude
-windows and conversion budgets retain their separate existing relaxations.
-
-For direct untimed Rush rows with a fixed formation condition, no release and a
-2000/2004 applier, each actual true run can start at most one execution. Replay
-records the maximum run count over completed branches independently of its flag
-union; the number of components in the union would be unsafe. Root unions take
-the maximum of those counts. Candidate margins can use this smaller count while
-prefix margins retain the generic activation bound.
-
-Native drift checks its rounding-feedback coefficient and uses an outward
-`1/(1-alpha)` amplification, or a one-percent reserve when that is larger. If no finite certificate exists, the optional cap is unavailable;
-the physical domain is retained. Drift and score-chain allowances are composed
-multiplicatively rather than dropping their cross term.
-
-The refined difference arrays separately account for binary64 accumulation:
-with `W` emitted windows and outward endpoint absolute sum `S`,
-`gamma_(4W+1)*S` bounds endpoint construction, nonzero prefix additions and one
-input multiplication. This absolute error is safely converted to a relative
-allowance because each selected score-up factor is at least one after the
-envelope's nonnegative clamps. Nonfinite arithmetic disables the fine cap. No
-unspecified reserve in the native binary32 margin pays for arbitrarily many new
-window operations.
-
-Fine-bound diagnostics and slack traces use the same optional mask path.
-Cached intervals retain the mask/spec allocations
-used for identity and clear at 1024 entries, so allocation-address reuse cannot
-return stale windows and storage remains bounded.
-
-Validation of this refinement checks native checker-mask inclusion
-(`rush_audit`), per-note caps against actual scores and exhaustive ordered Top-K
-comparisons under the same finite root law, including LUCK-changing member and
-Snap skills.
+For PT, the score cap of each performance order passes through the maximum reward among reachable tiers before
+the orders are summed; no step reward is applied to an average score.
 
 ## Validation
 
-The harness checks resource-prefix, character-prefix, Rush and compiled leaf caps
-against independently enumerated physical completions, in addition to the class,
-binding, composition and per-note audits; see [validation](search.md#validation).
-Only `Complete` certifies canonical Top-K under the declared model and finite root
-law. Agreement of the model with the game is a separate question.
+The harness checks resource-prefix, character-prefix and compiled leaf caps
+against independently enumerated teams, in addition to the class, binding,
+composition and per-note audits; see [validation](search.md#validation).
+Only `Complete` certifies canonical Top-K under the declared model and the uniform
+member-order target. Agreement of the model with the game is a separate question.
 
 [Exact score programs](score-programs.md) record one execution as a
 power-parameterized expression with optional checked monotonicity certificates.

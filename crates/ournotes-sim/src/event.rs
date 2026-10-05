@@ -10,6 +10,9 @@ use crate::error::Error;
 use crate::master::{EventEffectRow, Master};
 use crate::num::floor_to_i32;
 
+mod skip_rank;
+pub use skip_rank::{SkipResultRank, skip_result_rank};
+
 /// Event bonus kinds.
 pub const EVENT_POINT: i64 = 0;
 pub const EVENT_ITEM: i64 = 1;
@@ -570,6 +573,9 @@ pub struct EventPointRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EventPointPreview {
     pub points: Vec<(i64, i32)>,
+    /// Newly earned points on normal routes; challenge routes spend points and earn none.
+    #[serde(default)]
+    pub challenge_points: Vec<(i64, i32)>,
     pub local_events: Vec<LocalEvent>,
     pub missing_point_rows: Vec<MissingSkipEventPoint>,
 }
@@ -577,6 +583,9 @@ pub struct EventPointPreview {
 impl EventPointPreview {
     pub fn points_for(&self, event_id: i64) -> i32 {
         self.points.iter().filter(|(id, _)| *id == event_id).fold(0i32, |sum, (_, p)| sum.wrapping_add(*p))
+    }
+    pub fn challenge_points_for(&self, event_id: i64) -> i32 {
+        self.challenge_points.iter().filter(|(id, _)| *id == event_id).fold(0i32, |sum, (_, p)| sum.wrapping_add(*p))
     }
 }
 
@@ -639,7 +648,22 @@ pub fn preview_client_event_points(
             out.points
         }
     };
-    Ok(EventPointPreview { points, local_events: local, missing_point_rows })
+    let challenge_points = if matches!(request.route, EventResultRoute::NormalPlayed | EventResultRoute::NormalSkip) {
+        local
+            .iter()
+            .map(|row| {
+                let before = request
+                    .local_events
+                    .iter()
+                    .find(|old| old.event_id == row.event_id)
+                    .map_or(0, |old| old.challenge_points);
+                (row.event_id, row.challenge_points.wrapping_sub(before))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Ok(EventPointPreview { points, challenge_points, local_events: local, missing_point_rows })
 }
 
 /// A server-selected event reward row. Neither its selection nor its probability is inferred by this crate.

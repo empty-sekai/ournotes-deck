@@ -2,16 +2,16 @@
 use crate::search::expectation::ExactExpectation;
 use crate::search::telemetry::Telemetry;
 use crate::search::{Completion, Constraints};
-use ournotes_sim::live::model::JudgementStream;
+use ournotes_sim::live::model::{Accuracy, JudgementStream};
 use ournotes_sim::replay::RankConfirmation;
 use ournotes_sim::scenario::{ContextInput, Scenario};
 use serde::{Deserialize, Serialize};
 
-pub const REQUEST_FORMAT: &str = "ournotes-deck.recommendation-request/1";
-pub const RESULT_FORMAT: &str = "ournotes-deck.recommendation-result/2";
+pub const REQUEST_FORMAT: &str = "ournotes-deck.search-request/1";
+pub const RESULT_FORMAT: &str = "ournotes-deck.recommendation-result/3";
 pub const MAX_K: usize = 100;
-pub const MAX_ATOMS: usize = 4096;
-pub(crate) const MAX_RESULT_ATOMS: usize = 65_536;
+/// Most decks a request may supply as initial incumbents.
+pub const MAX_INITIAL_DECKS: usize = 100;
 fn five() -> usize {
     5
 }
@@ -26,7 +26,6 @@ pub struct RecommendationRequest {
     pub metric: Metric,
     /// Optional player intent. It is checked against execution/metric, never cosmetic.
     pub goal: Option<PlayerGoal>,
-    pub seed_law: Option<SeedLawInput>,
     #[serde(default, deserialize_with = "strict_constraints")]
     pub constraints: Constraints,
     #[serde(default = "five")]
@@ -40,10 +39,22 @@ pub struct RecommendationRequest {
     pub network_confirmations: Option<Vec<RankConfirmation>>,
     #[serde(default)]
     pub simulation: SimulationInput,
+    /// Legal decks of the domain evaluated exactly before the search (for example a fast heuristic's best decks).
+    /// They only fill the Top-K earlier; the result and its proof do not depend on them.
+    #[serde(default)]
+    pub initial_decks: Vec<DeckInput>,
 }
 
-// An explicitly supplied null still declares unsupported network input. Absence
-// alone means this adapter should use the current core's Solo behavior.
+/// A deck by public IDs: member cards in physical slots (slot 2 leads) and each slot's Snap.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeckInput {
+    pub members: [i64; 5],
+    pub snaps: [Option<i64>; 5],
+}
+
+// An explicitly supplied null declares an empty network timeline (validated as
+// incomplete when the chart has ranges). Absence does not invent peer ranks.
 fn explicit_network_confirmations<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Vec<RankConfirmation>>, D::Error> {
@@ -85,7 +96,12 @@ pub enum Execution {
 #[derive(Clone, Debug)]
 pub enum PlayPolicy {
     TheoreticalBest,
-    Stream { stream: JudgementStream },
+    /// The theoretical best play with a stated share of Great and Just judgements
+    /// (`JudgementStream::with_accuracy`).
+    Accuracy(Accuracy),
+    Stream {
+        stream: JudgementStream,
+    },
 }
 
 // Internally tagged enums buffer their contents before dispatch. With
@@ -180,6 +196,10 @@ struct PlayPolicyWire {
     kind: String,
     #[serde(default, deserialize_with = "strict_stream")]
     stream: RequestField<JudgementStream>,
+    #[serde(default)]
+    great_fraction: RequestField<f64>,
+    #[serde(default)]
+    just_fraction: RequestField<f64>,
 }
 fn strict_stream<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<RequestField<JudgementStream>, D::Error> {
     #[derive(Deserialize)]
@@ -211,10 +231,23 @@ impl<'de> Deserialize<'de> for PlayPolicy {
         match w.kind.as_str() {
             "theoreticalBest" => {
                 w.stream.reject("stream", &["kind"])?;
+                w.great_fraction.reject("greatFraction", &["kind"])?;
+                w.just_fraction.reject("justFraction", &["kind"])?;
                 Ok(Self::TheoreticalBest)
             }
-            "stream" => Ok(Self::Stream { stream: w.stream.required("stream")? }),
-            other => Err(serde::de::Error::unknown_variant(other, &["theoreticalBest", "stream"])),
+            "accuracy" => {
+                w.stream.reject("stream", &["kind", "greatFraction", "justFraction"])?;
+                Ok(Self::Accuracy(Accuracy {
+                    great_fraction: w.great_fraction.required("greatFraction")?,
+                    just_fraction: w.just_fraction.required("justFraction")?,
+                }))
+            }
+            "stream" => {
+                w.great_fraction.reject("greatFraction", &["kind", "stream"])?;
+                w.just_fraction.reject("justFraction", &["kind", "stream"])?;
+                Ok(Self::Stream { stream: w.stream.required("stream")? })
+            }
+            other => Err(serde::de::Error::unknown_variant(other, &["theoreticalBest", "accuracy", "stream"])),
         }
     }
 }
@@ -277,6 +310,11 @@ pub enum Metric {
         #[serde(rename = "eventId")]
         event_id: i64,
     },
+    /// Challenge points earned by an ordinary played/skip result, before any later challenge consumption.
+    ClientChallengePoints {
+        #[serde(rename = "eventId")]
+        event_id: i64,
+    },
     ConditionalClientEventItems {
         #[serde(rename = "eventId")]
         event_id: i64,
@@ -289,13 +327,15 @@ pub enum Metric {
 impl Metric {
     pub(crate) fn event(&self) -> Option<i64> {
         match *self {
-            Self::ClientEventPoints { event_id } | Self::ConditionalClientEventItems { event_id, .. } => Some(event_id),
+            Self::ClientEventPoints { event_id }
+            | Self::ClientChallengePoints { event_id }
+            | Self::ConditionalClientEventItems { event_id, .. } => Some(event_id),
             _ => None,
         }
     }
     pub(crate) fn upper(&self) -> Option<i128> {
         match self {
-            Self::Score | Self::ClientEventPoints { .. } => Some(i32::MAX as i128),
+            Self::Score | Self::ClientEventPoints { .. } | Self::ClientChallengePoints { .. } => Some(i32::MAX as i128),
             Self::ScoreAtLeast { .. } | Self::ScoreAndLifeAtLeast { .. } => Some(1),
             Self::CappedScore { threshold } => Some(*threshold as i128),
             _ => None,
@@ -330,13 +370,6 @@ pub struct GoalDescription {
     pub payoff_meaning: &'static str,
     pub assumptions: Vec<&'static str>,
 }
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SeedLawInput {
-    pub atoms: Vec<(i32, u64)>,
-    pub provenance: String,
-}
-
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Strategy {
@@ -389,6 +422,7 @@ pub enum ExitReason {
     TimeLimit,
     CandidateLimit,
     ProposalLimit,
+    RefinementRequired,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -401,25 +435,117 @@ impl From<ExactExpectation> for Fraction {
         Self { numerator: v.numerator.to_string(), denominator: v.denominator.to_string() }
     }
 }
+/// Certified endpoints are exact binary64 rationals, not estimates of the expectation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct FractionInterval {
+    pub lower: Fraction,
+    pub upper: Fraction,
+    #[serde(skip)]
+    binary: [u64; 2],
+}
+impl FractionInterval {
+    pub fn from_f64(lower: f64, upper: f64) -> Result<Self, ournotes_sim::Error> {
+        if !lower.is_finite() || !upper.is_finite() || lower > upper {
+            return Err(ournotes_sim::Error::Domain("invalid certified interval endpoints".into()));
+        }
+        Ok(Self {
+            lower: binary_fraction(lower),
+            upper: binary_fraction(upper),
+            binary: [lower.to_bits(), upper.to_bits()],
+        })
+    }
+    pub fn lower_f64(&self) -> f64 {
+        f64::from_bits(self.binary[0])
+    }
+    pub fn upper_f64(&self) -> f64 {
+        f64::from_bits(self.binary[1])
+    }
+}
+
+fn binary_fraction(value: f64) -> Fraction {
+    let bits = value.to_bits();
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let mut mantissa = bits & ((1u64 << 52) - 1);
+    let mut shift = if exponent == 0 {
+        -1074
+    } else {
+        mantissa |= 1u64 << 52;
+        exponent - 1023 - 52
+    };
+    if mantissa == 0 {
+        return Fraction { numerator: "0".into(), denominator: "1".into() };
+    }
+    let trailing = mantissa.trailing_zeros() as i32;
+    mantissa >>= trailing;
+    shift += trailing;
+    fn double_decimal(value: &mut String) {
+        let mut carry = 0;
+        let mut digits = value.as_bytes().to_vec();
+        for digit in digits.iter_mut().rev() {
+            let next = (*digit - b'0') * 2 + carry;
+            *digit = b'0' + next % 10;
+            carry = next / 10;
+        }
+        if carry != 0 {
+            digits.insert(0, b'0' + carry);
+        }
+        *value = String::from_utf8(digits).expect("decimal digits");
+    }
+    let mut numerator = mantissa.to_string();
+    let mut denominator = "1".to_string();
+    for _ in 0..shift.max(0) {
+        double_decimal(&mut numerator);
+    }
+    for _ in 0..(-shift).max(0) {
+        double_decimal(&mut denominator);
+    }
+    if value.is_sign_negative() {
+        numerator.insert(0, '-');
+    }
+    Fraction { numerator, denominator }
+}
+
+#[cfg(test)]
+mod certified_wire_tests {
+    use super::*;
+    #[test]
+    fn binary_endpoints_are_exact_rationals_even_outside_i128_capacity() {
+        let tenth = binary_fraction(0.1);
+        assert_eq!(tenth.numerator, "3602879701896397");
+        assert_eq!(tenth.denominator, "36028797018963968");
+        assert_eq!(binary_fraction(-1.5), Fraction { numerator: "-3".into(), denominator: "2".into() });
+        let smallest = binary_fraction(f64::from_bits(1));
+        assert_eq!(smallest.numerator, "1");
+        assert_eq!(smallest.denominator.len(), 324);
+        for (lo, hi) in [(-1.5, 0.1), (f64::from_bits(1), f64::from_bits(2)), (f64::MAX, f64::MAX)] {
+            let v = FractionInterval::from_f64(lo, hi).unwrap();
+            assert_eq!(v.lower_f64().to_bits(), lo.to_bits());
+            assert_eq!(v.upper_f64().to_bits(), hi.to_bits());
+            let json = serde_json::to_value(v).unwrap();
+            assert!(json.get("binary").is_none());
+            assert_eq!(json["lower"]["numerator"], binary_fraction(lo).numerator);
+        }
+        assert!(FractionInterval::from_f64(f64::NAN, 1.0).is_err());
+        assert!(FractionInterval::from_f64(2.0, 1.0).is_err());
+    }
+}
+/// One performance order of a played-live result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AtomResult {
-    pub root_seed: i32,
-    pub weight: String,
+pub struct OrderResult {
+    /// The physical slots of the result's `members` in performance order.
     pub performance_order: [usize; 5],
+    /// The member cards in performance order.
+    pub members: [i64; 5],
     pub score: i32,
     pub payoff: String,
-    pub network_applications: Vec<(usize, usize)>,
-    /// Present for played lives. Zero does not infer the server's failure/continue route.
-    pub final_life: Option<i32>,
-    pub converted_judgements: Option<u64>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScoreSummary {
     pub minimum: i32,
     pub maximum: i32,
-    /// Lower weighted quantiles, under the SAME declared finite law as the objective.
+    /// Lower quantiles over the outcomes of the value (the 120 equally likely performance orders of a played live).
     pub p10: i32,
     pub p50: i32,
     pub p90: i32,
@@ -427,6 +553,8 @@ pub struct ScoreSummary {
     pub probability_at_least: Option<Fraction>,
     pub expected_shortfall: Option<Fraction>,
 }
+/// One result. For a played live it is a team in its canonical layout (the leader in slot 2, the other members in
+/// ascending card ID order, each with its Snap), valued by its mean over the 120 performance orders.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecommendedDeck {
@@ -434,9 +562,21 @@ pub struct RecommendedDeck {
     pub snaps: [Option<i64>; 5],
     pub power: i32,
     pub expected_score: Option<Fraction>,
-    pub expected_payoff: Fraction,
+    pub expected_payoff: Option<Fraction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score_interval: Option<FractionInterval>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payoff_interval: Option<FractionInterval>,
+    /// True only for a rank individually established by the certified frontier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rank_certified: Option<bool>,
     pub score_summary: Option<ScoreSummary>,
-    pub atoms: Vec<AtomResult>,
+    /// Played lives: the performance order with the highest payoff (then score; the first in lexicographic order).
+    pub best_order: Option<OrderResult>,
+    /// Played lives: each of the 120 performance orders (the result's slots in performance order) with its score
+    /// and payoff; empty otherwise. Not part of the JSON result.
+    #[serde(skip)]
+    pub order_outcomes: Vec<([usize; 5], i32, i128)>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

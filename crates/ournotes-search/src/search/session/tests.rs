@@ -67,13 +67,13 @@ fn request(metric: Metric) -> RecommendationRequest {
         context: None,
         metric,
         goal: None,
-        seed_law: None,
         constraints: Constraints::default(),
         k: 7,
         strategy: Strategy::Exhaustive,
         limits: Limits { time_limit_ms: None, max_candidates: None, cache_entries: 13 },
         network_confirmations: None,
         simulation: SimulationInput::default(),
+        initial_decks: Vec::new(),
     }
 }
 fn resolve<'m>(
@@ -107,12 +107,12 @@ struct OracleRow {
     score: Option<i32>,
 }
 fn row(deck: &RecommendedDeck) -> OracleRow {
-    assert_eq!(deck.expected_payoff.denominator, "1");
+    assert_eq!(deck.expected_payoff.as_ref().expect("exact deterministic fixture").denominator, "1");
     OracleRow {
         members: deck.members,
         snaps: deck.snaps,
         power: deck.power,
-        payoff: deck.expected_payoff.numerator.parse().unwrap(),
+        payoff: deck.expected_payoff.as_ref().expect("exact deterministic fixture").numerator.parse().unwrap(),
         score: deck.expected_score.as_ref().map(|score| {
             assert_eq!(score.denominator, "1");
             score.numerator.parse().unwrap()
@@ -234,12 +234,9 @@ fn independent_oracle_matches_four_goals_and_every_step_boundary() {
             assert_eq!(result.telemetry.leaves.peak_retained, request.k);
         }
         if matches!(request.metric, Metric::Power) {
-            assert!(
-                exact
-                    .results
-                    .iter()
-                    .all(|deck| deck.expected_score.is_none() && deck.score_summary.is_none() && deck.atoms.is_empty())
-            );
+            assert!(exact.results.iter().all(|deck| deck.expected_score.is_none()
+                && deck.score_summary.is_none()
+                && deck.best_order.is_none()));
         }
     }
 }
@@ -439,7 +436,10 @@ fn no_step_or_zero_budget_bypasses_capability_and_input_validation() {
         match change {
             0 => invalid.k = 0,
             1 => invalid.constraints.leader = Some(999),
-            2 => invalid.seed_law = Some(SeedLawInput { atoms: vec![(0, 1)], provenance: "not for power".into() }),
+            2 => {
+                invalid.initial_decks =
+                    vec![DeckInput { members: [1, 2, 3, 4, 5], snaps: [None; 5] }; MAX_INITIAL_DECKS + 1]
+            }
             _ => invalid.strategy = Strategy::Candidate { power_seeds: 1, proposals: 1, proposal_seed: 1 },
         }
         assert!(resolved.start_search_session(&data, &invalid, binding()).is_err());

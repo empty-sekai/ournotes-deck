@@ -229,6 +229,28 @@ fn gk_once(triggered: &mut bool, eligible: bool) -> bool {
 }
 
 impl Checker {
+    /// Whether this checker or one it combines satisfies `f`.
+    pub(crate) fn any(&self, f: &dyn Fn(&Checker) -> bool) -> bool {
+        f(self)
+            || match self {
+                Checker::And { items, .. } | Checker::Or(items) => items.iter().any(|c| c.any(f)),
+                Checker::Not(inner) => inner.any(f),
+                _ => false,
+            }
+    }
+
+    /// Whether the checker can hold given the fixed answers it combines (formation predicates); every other checker
+    /// is taken as able to hold.
+    pub(crate) fn may_hold(&self) -> bool {
+        match self {
+            Checker::Fixed(b) => *b,
+            Checker::And { items, .. } => items.iter().all(Checker::may_hold),
+            Checker::Or(items) => items.iter().any(Checker::may_hold),
+            Checker::Not(inner) => !matches!(**inner, Checker::Fixed(true)),
+            _ => true,
+        }
+    }
+
     /// Whether an AND resets this item's count when another item fails.
     fn count_resettable(&self) -> bool {
         matches!(
@@ -380,6 +402,9 @@ impl Checker {
                 let ok = ctx.events.iter().any(|&(index, _)| index == *k);
                 Ok((ok, ok as i64))
             }
+            // LUCK coefficient lives draw no lottery, so the luck chain effects a probability gates do nothing
+            // (`LiveModel::set_luck_weights` admits no other gated effect).
+            Checker::Probability(_) if ctx.gk.is_some_and(|g| g.ctrl.luck_weighted) => Ok((false, 0)),
             Checker::Probability(rate) => Ok((ctx.random.value(SKILL) < *rate, 0)),
             Checker::Fixed(ok) => Ok((*ok, *ok as i64)),
             Checker::NoteJudgementMatch { kind, targets, override_ms } => {
@@ -567,7 +592,7 @@ impl Checker {
                 let c = ctx.ctrl(7021)?;
                 let idx = c.current_playing_index;
                 if idx >= 0 && c.ranges[idx as usize].mission == M_LUCK {
-                    *rush = c.states[idx as usize].luck.rush_combo != 0;
+                    *rush = c.luck_weighted || c.states[idx as usize].luck.rush_combo != 0;
                 }
                 for &i in &c.state_updates {
                     let s = c.states[i].state;
@@ -594,6 +619,20 @@ impl Checker {
             | Checker::RangePlaying { override_ms, .. } => *override_ms,
             Checker::Not(inner) => inner.override_time(),
             _ => None,
+        }
+    }
+
+    /// Moves the checker to other performance positions: a check of position `k` becomes a check of `map[k]`.
+    pub(crate) fn move_positions(&mut self, map: &[usize]) {
+        match self {
+            Checker::SameMemberLiveSkill(k) => {
+                if let Some(&to) = usize::try_from(*k).ok().and_then(|i| map.get(i)) {
+                    *k = to as i32;
+                }
+            }
+            Checker::And { items, .. } | Checker::Or(items) => items.iter_mut().for_each(|c| c.move_positions(map)),
+            Checker::Not(inner) => inner.move_positions(map),
+            _ => {}
         }
     }
 

@@ -204,6 +204,15 @@ impl LiveScoreSettings {
     }
 }
 
+/// The expectation over the lottery of a LUCK weighted live: the deck's note score-up per lottery-dependent score-up
+/// shape and the probabilities as steps `(from ms, [rush, s_0, rs_0, s_1, rs_1, ...])` with increasing times, `s_j`
+/// the probability that a score-up of shape `j` runs and `rs_j` that it and the rush do.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LuckWeights {
+    pub values: Vec<f32>,
+    pub steps: Vec<(i32, Vec<f32>)>,
+}
+
 /// The running factor state of a live.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScoreFactorState {
@@ -248,6 +257,9 @@ impl ScoreFactorState {
 /// Reports whether a Gekisou combo is running at a music time, and its count.
 pub trait GekisouComboInfo {
     fn gekisou_combo(&self, time_ms: i32) -> Option<i32>;
+    /// Appends `(start_ms, end_ms, version)` of every range [`Self::gekisou_combo`] may read. A range's version
+    /// changes whenever its reads may change; a read at a time outside every listed range never changes.
+    fn combo_windows(&self, out: &mut Vec<(i32, i32, u64)>);
 }
 
 /// The per-note score calculator.
@@ -263,6 +275,8 @@ pub struct LiveScoreCalculator {
     pub judgement_score_factor_percent: HashMap<i32, i32>,
     pub state: ScoreFactorState,
     pub combo_table: Option<ComboTable>,
+    /// LUCK weighted lives: the expectation over the lottery (see [`LiveScoreCalculator::score_up_and_luck`]).
+    pub luck_weight: Option<std::sync::Arc<LuckWeights>>,
 }
 
 impl LiveScoreCalculator {
@@ -287,7 +301,30 @@ impl LiveScoreCalculator {
             judgement_score_factor_percent: settings.judgement_score_factor_percent.clone(),
             state: ScoreFactorState::new(total_power),
             combo_table,
+            luck_weight: None,
         }
+    }
+
+    /// The score-up and luck factors of a note of a score type at a chart time: the state's score-up `u` (note
+    /// score-up plus judgement factor) and luck factor `l = min(100 + added luck bonus, 200) / 100`. In a LUCK
+    /// weighted live, whose luck ranges run the rush throughout, their expectation over the lottery instead: with
+    /// `r` the probability in force at that time that the rush runs and, per lottery-dependent score-up shape `j`,
+    /// `s_j` that a score-up of that shape runs and `rs_j` that both do (all 0 before the first step), and `v_j` the
+    /// deck's score-up of that shape, the score-up `u (1 + r (l - 1)) + sum_j v_j (s_j + rs_j (l - 1))` at luck
+    /// factor 1.
+    pub fn score_up_and_luck(&self, score_type: i32, time_ms: i32) -> (f32, f32) {
+        let u = self.state.note_score_up + self.state.judgement_factor(score_type);
+        let l = get_luck_factor_percent(self.state.added_luck_bonus) as f32 / 100f32;
+        let Some(w) = &self.luck_weight else { return (u, l) };
+        let i = w.steps.partition_point(|s| s.0 <= time_ms);
+        let Some((_, p)) = i.checked_sub(1).map(|i| &w.steps[i]) else { return (u, 1f32) };
+        let mut up = u * (1f32 + p[0] * (l - 1f32));
+        for (j, &v) in w.values.iter().enumerate() {
+            if v != 0f32 {
+                up += v * (p[1 + 2 * j] + p[2 + 2 * j] * (l - 1f32));
+            }
+        }
+        (up, 1f32)
     }
 
     fn table(&self, type_: i32, combo: i32) -> Result<f32, Error> {
@@ -317,13 +354,12 @@ impl LiveScoreCalculator {
         let cum = self.table(COMBO, current_combo)?;
         let combo_up = self.state.combo_score_up;
         let gk = self.gekisou_combo_bonus_factor(gekisou, time_ms)?;
-        let score_up = self.state.note_score_up + self.state.judgement_factor(score_type);
-        let luck = get_luck_factor_percent(self.state.added_luck_bonus);
+        let (score_up, luck) = self.score_up_and_luck(score_type, time_ms);
         let combo_factor = gk * (combo_up + (min_ignoring_nan(cum, 1f32) + 1f32));
         self.note_score_core(current_life, note_operate_type, score_type, combo_factor, score_up, luck)
     }
 
-    /// The note score from explicit combo, score-up and luck factors.
+    /// The note score from explicit combo, score-up and luck factors ([`LiveScoreCalculator::score_up_and_luck`]).
     pub fn note_score_core(
         &self,
         current_life: i32,
@@ -331,7 +367,7 @@ impl LiveScoreCalculator {
         score_type: i32,
         combo_bonus_factor: f32,
         score_up_factor: f32,
-        luck_score_factor_percent: i32,
+        luck_factor: f32,
     ) -> Result<i32, Error> {
         let note_pct = *self
             .note_factor_percent
@@ -346,7 +382,7 @@ impl LiveScoreCalculator {
         let a = (note_pct as f32 / 100f32) * t;
         let b = (judge_pct as f32 / 100f32) * a;
         let c = (b * combo_bonus_factor) * score_up_factor;
-        let d = (luck_score_factor_percent as f32 / 100f32) * c;
+        let d = luck_factor * c;
         let x = d / self.converted_note_count as f32;
         let y = floor_as_float(x);
         let z = self.assist_factor * (life * (y * self.event_bonus_factor));

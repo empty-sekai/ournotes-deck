@@ -26,6 +26,8 @@ pub(crate) struct ComboCounter {
     entries: Vec<Entry>,
     states: Vec<State>,
     add_order: i32,
+    /// The time of every recorded judgement, in recording order.
+    judgement_times: Vec<i32>,
 }
 
 fn out_of_range() -> Error {
@@ -39,6 +41,7 @@ impl ComboCounter {
             entries: Vec::with_capacity(total_note_count),
             states: Vec::with_capacity(total_note_count),
             add_order: 0,
+            judgement_times: Vec::with_capacity(total_note_count),
         }
     }
 
@@ -76,7 +79,13 @@ impl ComboCounter {
         self.entries.insert(i, new);
         self.states.insert(i, State::default());
         self.recompute_from(i);
+        self.judgement_times.push(time_ms);
         Ok(())
+    }
+
+    /// Recorded judgement times in recording order. A judgement at `t` changes [`Self::timing_combo`] only after `t`.
+    pub(crate) fn judgement_times(&self) -> &[i32] {
+        &self.judgement_times
     }
 
     fn recompute_from(&mut self, start: usize) {

@@ -52,11 +52,18 @@
 use serde::Serialize;
 
 mod aptitude;
+mod luck;
 
 pub use aptitude::{
     AptitudeHeader, AptitudeOptions, ChartAptitude, Condition, Cumulative, Effect, RangeDelta, RangeFactors, SeedRule,
     Shape, ShapeSkill, Variant, VariantCheck, aptitude_header, shapes,
 };
+pub use luck::{
+    LUCK_RUNS, LuckEntry, LuckOptions, LuckSteps, LuckTable, luck_compose, luck_neutral, luck_table_dp,
+    luck_table_dp_certified, luck_table_steps,
+};
+#[cfg(feature = "search-diagnostics")]
+pub use luck::{MODEL as LUCK_TABLE_MODEL, diagnostic_luck_table};
 
 use crate::data::{DataChart, DeckData};
 use crate::error::Error;

@@ -145,6 +145,7 @@ fn memory_last_eligible_owned_intersection_and_empty_targets() {
     );
     let state = MemoryState {
         music_ranks: BTreeMap::from([(1, 5), (2, 5)]),
+        music_groups: None,
         unlocked_members: [1, 2].into(),
         unlocked_supports: [1, 2].into(),
     };

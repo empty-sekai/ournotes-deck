@@ -2,8 +2,9 @@
 //!
 //! Tables are read from the JSON form `{"_allData": [row, ...]}` (UTF-8 with or without a byte-order mark); the
 //! deck data file ([`crate::data`]) supplies them and must carry every table of [`TABLES`], the one list of the
-//! tables this crate reads. Unknown columns are ignored and missing columns read as zero / empty. Lookups that need
-//! a row report [`Error::Master`] or [`Error::Input`].
+//! tables this crate reads. Unknown columns are ignored and missing columns read as zero / empty, except
+//! `MasterCharacterRank._exp`, whose absence is retained for the account resolver to reject. Lookups that need a row report [`Error::Master`] or
+//! [`Error::Input`].
 
 use std::collections::HashMap;
 
@@ -153,14 +154,19 @@ row!(
     }
 );
 
-row!(
-    /// `MasterCharacterRank`.
-    CharacterRankRow {
-        id: i64 = "_id",
-        rank: i64 = "_rank",
-        bonus: i64 = "_bonus",
-    }
-);
+/// `MasterCharacterRank`. A missing `_exp` is retained, never interpreted as zero.
+/// The account resolver requires experience thresholds; legacy typed power calculations do not read them.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct CharacterRankRow {
+    #[serde(rename = "_id", default)]
+    pub id: i64,
+    #[serde(rename = "_rank", default)]
+    pub rank: i64,
+    #[serde(rename = "_exp", default)]
+    pub exp: Option<i64>,
+    #[serde(rename = "_bonus", default)]
+    pub bonus: i64,
+}
 
 row!(
     /// `MasterCharacterTotalRank`.
@@ -301,6 +307,7 @@ row!(
     /// `MasterParameter` (string key and value).
     ParameterRow {
         id: String = "_id",
+        value_type: Option<String> = "_type",
         value: String = "_value",
     }
 );
@@ -1103,8 +1110,8 @@ impl Master {
         self.parameters.iter().find(|r| r.id == key).map(|r| r.value.as_str())
     }
 
-    /// The member level row of `group` reached with `exp`: the group's rows in level order, the last one whose
-    /// `_exp <= exp` before the first that is not.
+    /// The member level row of `group` reached with `exp`: the group's rows in `_exp` order (stable), the last one
+    /// whose `_exp <= exp` before the first that is not.
     pub fn member_level_by_exp(&self, group: i64, exp: i64) -> Option<&LevelRow> {
         level_by_exp(&self.member_card_levels, group, exp)
     }
@@ -1134,6 +1141,18 @@ impl Master {
         self.member_card_ranks.iter().find(|r| r.group == group && r.rank == rank)
     }
 
+    /// The character rank row reached with `exp`: of the rows in `_rank` order, the last whose `_exp <= exp`.
+    pub fn character_rank_by_exp(&self, exp: i64) -> Option<&CharacterRankRow> {
+        let mut rows: Vec<&CharacterRankRow> = self.character_ranks.iter().collect();
+        rows.sort_by_key(|r| r.rank);
+        rows.into_iter().rfind(|r| r.exp.is_some_and(|threshold| threshold <= exp))
+    }
+
+    /// The highest level of a live skill: the largest `_level` of its `MasterLiveSkillEffect` rows.
+    pub fn live_skill_max_level(&self, skill_id: i64) -> Option<i64> {
+        self.live_skill_effects.iter().filter(|r| r.live_skill_id == skill_id).map(|r| r.level).max()
+    }
+
     /// Exact represented player rank; a bonus row never grants membership.
     pub fn vip_rank(&self, rank: i64) -> Option<&VipRow> {
         self.vip_ranks.iter().find(|row| row.vip_rank == rank)
@@ -1150,20 +1169,75 @@ impl Master {
 
 fn level_by_exp(rows: &[LevelRow], group: i64, exp: i64) -> Option<&LevelRow> {
     let mut g: Vec<&LevelRow> = rows.iter().filter(|r| r.group == group).collect();
-    g.sort_by_key(|r| r.level);
-    let mut last = None;
-    for r in g {
-        if r.exp > exp {
-            break;
-        }
-        last = Some(r);
-    }
-    last
+    g.sort_by_key(|r| r.exp);
+    g.into_iter().take_while(|r| r.exp <= exp).last()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn tables(tables: &[(&str, serde_json::Value)]) -> Result<Master, Error> {
+        let texts: Vec<(&str, String)> =
+            tables.iter().map(|(name, rows)| (*name, json!({ "_allData": rows }).to_string())).collect();
+        Master::from_json_tables(|name| texts.iter().find(|(n, _)| *n == name).map(|(_, t)| t.as_str()))
+    }
+
+    #[test]
+    fn level_by_exp_reads_a_groups_rows_in_experience_order() {
+        // Level 4 needs less experience than level 3 here: the rows are taken in experience order.
+        let m = tables(&[(
+            "MasterMemberCardLevel",
+            json!([
+                {"_group": 1, "_level": 3, "_exp": 25}, {"_group": 1, "_level": 1, "_exp": 0},
+                {"_group": 1, "_level": 4, "_exp": 20}, {"_group": 1, "_level": 2, "_exp": 10},
+                {"_group": 1, "_level": 5, "_exp": 40}, {"_group": 2, "_level": 9, "_exp": 0},
+            ]),
+        )])
+        .unwrap();
+        let level = |exp| m.member_level_by_exp(1, exp).map(|r| r.level);
+        assert_eq!([0, 9, 10, 19, 20, 22, 25, 39, 40, 1000].map(level), [1, 1, 2, 2, 4, 4, 3, 3, 5, 5].map(Some));
+        assert_eq!(m.member_level_by_exp(2, 0).map(|r| r.level), Some(9));
+        assert!(m.member_level_by_exp(3, 0).is_none());
+        assert!(m.support_level_by_exp(1, 0).is_none());
+    }
+
+    #[test]
+    fn character_rank_by_exp_takes_the_highest_rank_reached() {
+        let m = tables(&[(
+            "MasterCharacterRank",
+            json!([
+                {"_id": 2, "_rank": 2, "_exp": 3, "_bonus": 5}, {"_id": 1, "_rank": 1, "_exp": 0, "_bonus": 0},
+                {"_id": 3, "_rank": 3, "_exp": 7, "_bonus": 9},
+            ]),
+        )])
+        .unwrap();
+        let rank = |exp| m.character_rank_by_exp(exp).map(|r| r.rank);
+        assert_eq!([0, 2, 3, 6, 7, 500].map(rank), [1, 1, 2, 2, 3, 3].map(Some));
+        assert!(rank(-1).is_none());
+    }
+
+    #[test]
+    fn character_rank_rows_need_their_experience_column() {
+        let master = tables(&[("MasterCharacterRank", json!([{"_id": 1, "_rank": 1, "_bonus": 0}]))]).unwrap();
+        assert_eq!(master.character_ranks[0].exp, None);
+        assert!(master.character_rank_by_exp(0).is_none());
+    }
+
+    #[test]
+    fn live_skill_max_level_is_the_highest_effect_level() {
+        let m = tables(&[(
+            "MasterLiveSkillEffect",
+            json!([
+                {"_id": 1, "_liveSkillID": 7, "_level": 1}, {"_id": 2, "_liveSkillID": 7, "_level": 4},
+                {"_id": 3, "_liveSkillID": 7, "_level": 2}, {"_id": 4, "_liveSkillID": 8, "_level": 9},
+            ]),
+        )])
+        .unwrap();
+        assert_eq!(m.live_skill_max_level(7), Some(4));
+        assert_eq!(m.live_skill_max_level(6), None);
+    }
 
     #[test]
     fn tables_lists_what_the_master_reads_in_order() {

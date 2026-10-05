@@ -54,6 +54,7 @@ pub fn synth(rng: &mut Rng, members: i64, snaps: i64) -> Synth {
     add(
         "MasterParameter",
         json!([
+            {"_id": "live_skip_result_score_rank", "_type": "String", "_value": "D"},
             {"_id": "music_type_base_bonus_rate", "_value": "400"},
             {"_id": "music_tag_base_bonus_rate", "_value": "300"},
             {"_id": "type_link_base_bonus_rate", "_value": "600"},

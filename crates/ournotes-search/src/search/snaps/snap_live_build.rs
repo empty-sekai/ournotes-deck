@@ -590,11 +590,13 @@ impl<'a> SnapLive<'a> {
             coef.jp.push(jp);
             coef.vmask.push(vmask);
             // with no life recovery or guard among the allowed cards, the life-zero factor where life is certainly 0
-            coef.z.push(if pool_life_up || !dead_stream[i] {
-                assist as f64 * life_f
-            } else {
-                assist as f64 * onus as f64
-            });
+            coef.z.push(
+                if pool_life_up || setup.gk.as_ref().is_some_and(|g| g.confirmations.is_some()) || !dead_stream[i] {
+                    assist as f64 * life_f
+                } else {
+                    assist as f64 * onus as f64
+                },
+            );
         }
         let ne = coef.times.len();
         coef.pc = vec![0f64; ne + 1];
@@ -639,11 +641,11 @@ impl<'a> SnapLive<'a> {
             dead: order.iter().map(|&i| dead_stream[i]).collect(),
             rank: gkf.as_ref().map(|g| g.r.clone()).unwrap_or_default(),
             rank_ranges: gkf.as_ref().map(|g| g.ranks.clone()).unwrap_or_default(),
+            network_ranking: setup.gk.as_ref().is_some_and(|g| g.confirmations.is_some()),
             nobreak: gkf.as_ref().map(|g| g.nobreak.clone()).unwrap_or_default(),
             z_dead: assist as f64 * onus as f64,
             life: vec![Vec::new(); n],
             base,
-            life_range: (env.life_lo, env.life_hi),
             #[cfg(feature = "search-diagnostics")]
             exec_profile: Vec::new(),
             slot_end: Vec::new(),
@@ -1139,7 +1141,8 @@ impl<'a> SnapLive<'a> {
         };
         // the class search bounds life only when some entry can read life 0 (when the fold without recoveries never
         // reaches 0, no fold with recoveries does) at a factor below `Coef::z`
-        let life_bound = env.life_lo <= 0
+        let life_bound = !fine.network_ranking
+            && env.life_lo <= 0
             && (fine.dead_from < coef.times.len() || fine.zero_from([0; 5]) != i64::MAX)
             && (0..coef.times.len()).any(|e| fine.z_dead < coef.z[e]);
         let split = if life_bound { split_envelopes(&contrib, &fine, &coef) } else { Vec::new() };

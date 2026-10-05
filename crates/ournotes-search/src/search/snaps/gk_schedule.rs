@@ -50,7 +50,13 @@ impl Schedule {
     pub(super) fn new(master: &Master, setup: &FullSetup, g: &GkPlay) -> Result<Schedule, Error> {
         let perf = vec![Performer::default(); 5];
         let params = LiveParams { total_power: 0, ..setup.params };
-        let mut lm = LiveModel::new_gekisou(master, &perf, &setup.notes, &setup.events, params, &g.setup)?;
+        let mut lm = if let Some(confirmations) = &g.confirmations {
+            let mut lm = LiveModel::new_gekisou_external(master, &perf, &setup.notes, &setup.events, params, &g.setup)?;
+            lm.set_rank_confirmation_timeline(confirmations)?;
+            lm
+        } else {
+            LiveModel::new_gekisou(master, &perf, &setup.notes, &setup.events, params, &g.setup)?
+        };
         let mut states = Vec::with_capacity(setup.play.frames.len());
         for (f, &dt) in setup.play.frames.iter().zip(&g.dt) {
             lm.frame_timed(f.time_ms, &f.judged, dt)?;
@@ -65,6 +71,9 @@ impl Schedule {
                 if r.mission_pattern == pattern && r.count == i as i64 + 1 && r.rank == 1 {
                     pct = r.score_bonus_percent;
                 }
+            }
+            if let Some(confirmations) = &g.confirmations {
+                pct = confirmations.iter().find(|c| c.range == i).map_or(0, |c| c.percent);
             }
             let mission = *g.setup.missions.get(i).ok_or_else(|| Error::Input("fewer missions than fevers".into()))?;
             ranges.push(RangeFacts {
@@ -446,35 +455,68 @@ impl GkFactors {
         let mut nobreak = vec![false; ne];
         let mut confirm = Vec::new();
         let mut ranks = Vec::new();
-        for (ri, r) in ranges.iter().enumerate() {
-            let Some(c) = r.f_complete else { continue };
-            if r.pct < 0 {
-                return Err(Error::Domain("negative rank bonus percent".into()));
-            }
-            let (fs, fe) = (sframe(r.start), sframe(r.end));
-            for (rj, q) in ranges.iter().enumerate() {
-                let x = sframe(q.end);
-                if rj != ri && q.f_complete.is_some() && fs < x && x <= fe {
-                    return Err(Error::Unsupported("a rank bonus filed inside another range's score".into()));
+        let external = setup.gk.as_ref().and_then(|g| g.confirmations.as_deref());
+        // Network snapshots and, per confirmed range, (play frame of its application, range start).
+        let mut network = None;
+        if let Some(confirmations) = external {
+            // Network range differences use two actual controller snapshots. A note judged before the range can
+            // change between them when a calculation in between re-executes its score frame, and a difference
+            // (hence a fixed bonus) can be negative. Bound both signs of every bonus in application order. No
+            // settled-prefix subtraction is valid for these retained snapshots. A note's cap must cover its value
+            // at any snapshot, including before a later combo break.
+            let mut snapshots = Vec::new();
+            let mut reexec = Vec::new();
+            for c in confirmations {
+                let r = ranges.get(c.range).ok_or_else(|| Error::Input("network range outside schedule".into()))?;
+                if c.percent < 0 {
+                    return Err(Error::Domain("negative rank bonus percent".into()));
                 }
+                let Some(complete) = r.f_complete else { continue };
+                let applied = complete.max(c.frame);
+                if applied >= frames.len() {
+                    continue;
+                }
+                let end = sc.states.iter().position(|s| s[c.range] >= RS_END);
+                snapshots.push((applied, c.range, r.f_start, end, c.percent));
+                confirm.push((r.start, frames[applied]));
+                reexec.push((applied, r.start));
             }
-            confirm.push((r.start, frames[c]));
-            let inw: Vec<usize> = (0..ne).filter(|&q| fs < sframe(times[q]) && sframe(times[q]) <= fe).collect();
-            let Some(maxt) = inw.iter().map(|&q| times[q]).max() else { continue };
-            // every command that ends a factor before one of these entries is filed by the confirmation frame
-            if frames[c] <= maxt {
-                return Err(Error::Unsupported("a Gekisou range completes before the play reaches its notes".into()));
-            }
-            let late = entries.iter().any(|e| e.0 > c && e.1.time_ms < maxt);
-            if !ablated(ablate::RANK_BONUS) {
-                ranks.push((r.end, r.pct as f64 / 100.0, inw.iter().map(|&q| q as u32).collect()));
-            }
-            for &q in &inw {
+            snapshots.sort_by_key(|&(applied, range, ..)| (applied, range));
+            network = Some((snapshots, reexec));
+            nobreak.fill(true);
+        } else {
+            for (ri, r) in ranges.iter().enumerate() {
+                let Some(c) = r.f_complete else { continue };
+                if r.pct < 0 {
+                    return Err(Error::Domain("negative rank bonus percent".into()));
+                }
+                let (fs, fe) = (sframe(r.start), sframe(r.end));
+                for (rj, q) in ranges.iter().enumerate() {
+                    let x = sframe(q.end);
+                    if rj != ri && q.f_complete.is_some() && fs < x && x <= fe {
+                        return Err(Error::Unsupported("a rank bonus filed inside another range's score".into()));
+                    }
+                }
+                confirm.push((r.start, frames[c]));
+                let inw: Vec<usize> = (0..ne).filter(|&q| fs < sframe(times[q]) && sframe(times[q]) <= fe).collect();
+                let Some(maxt) = inw.iter().map(|&q| times[q]).max() else { continue };
+                // every command that ends a factor before one of these entries is filed by the confirmation frame
+                if frames[c] <= maxt {
+                    return Err(Error::Unsupported(
+                        "a Gekisou range completes before the play reaches its notes".into(),
+                    ));
+                }
+                let late = entries.iter().any(|e| e.0 > c && e.1.time_ms < maxt);
                 if !ablated(ablate::RANK_BONUS) {
-                    rv[q] += r.pct as f64 / 100.0;
+                    ranks.push((r.end, r.pct as f64 / 100.0, inw.iter().map(|&q| q as u32).collect()));
                 }
-                if late {
-                    nobreak[q] = true;
+                for &q in &inw {
+                    if !ablated(ablate::RANK_BONUS) {
+                        rv[q] += r.pct as f64 / 100.0;
+                    }
+                    if late {
+                        nobreak[q] = true;
+                    }
                 }
             }
         }
@@ -525,8 +567,108 @@ impl GkFactors {
                 }
             }
         }
+        if let Some((snapshots, reexec)) = network.filter(|_| !ablated(ablate::RANK_BONUS)) {
+            let judged: Vec<usize> = order.iter().map(|&i| entries[i].0).collect();
+            let (score_frames, floors) = rerun_floors(setup, &times, &exec_lo, &reexec);
+            rv = network_rank_factors(&judged, &score_frames, &floors, &snapshots);
+        }
         Ok(GkFactors { g: gv, carriers, l: lv, r: rv, ranks, nobreak, exec_lo, confirm, combo: gcombo })
     }
+}
+
+/// The score frame of each chart time and, per play frame, the first score frame its calculations can re-execute, as
+/// [`super::score_windows::Exec`] reads them: the previous play frame's frame, the chart time of each judged note,
+/// `exec_lo`, and the frame after the start of a range whose rank bonus applies in that play frame.
+fn rerun_floors(setup: &FullSetup, times: &[i32], exec_lo: &[i32], reexec: &[(usize, i32)]) -> (Vec<i32>, Vec<i32>) {
+    let max_frame = get_frame(setup.params.music_length_ms).wrapping_add(50).max(1);
+    let clamp = |t: i32| {
+        let g = get_frame(t);
+        if g >= max_frame { max_frame - 1 } else { g.max(0) }
+    };
+    let notes: std::collections::HashMap<i32, i32> = setup.notes.iter().map(|n| (n.note_id, n.time_ms)).collect();
+    let mut floors = Vec::with_capacity(setup.play.frames.len());
+    let mut prev_to = 0;
+    for (i, f) in setup.play.frames.iter().enumerate() {
+        let mut lo = if i == 0 { 0 } else { prev_to };
+        for j in &f.judged {
+            if let Some(&t) = notes.get(&j.note_id) {
+                lo = lo.min(clamp(t));
+            }
+        }
+        match exec_lo.get(i) {
+            Some(&x) => lo = lo.min(clamp(x)),
+            None => lo = 0,
+        }
+        for &(at, start) in reexec {
+            if at == i {
+                lo = lo.min(clamp(start).saturating_add(1));
+            }
+        }
+        floors.push(lo);
+        prev_to = clamp(f.time_ms);
+    }
+    (times.iter().map(|&t| clamp(t)).collect(), floors)
+}
+
+/// A network rank bonus: (application frame, range, range start frame, range end frame, percent).
+type NetworkSnapshot = (usize, usize, Option<usize>, Option<usize>, i64);
+
+/// Positive/negative fixed-bonus envelopes per note. A snapshot has nonnegative raw note scores plus previously
+/// applied signed bonuses. For P = pct * (end - start), discard the nonnegative raw start, add positive bonuses
+/// visible at end and negative magnitudes visible at start; the negative envelope is symmetric. Ranks apply after
+/// the frame's score calculations. The start snapshot is from the preceding calculation, so including every
+/// application strictly before its frame is conservative. End sees only applications strictly before its frame.
+/// Since raw start is a subset of raw end, induction gives negative <= positive. Thus 1 + sum(positive) also bounds
+/// the absolute value of all intermediate snapshots, used by the existing nonwrapping score-domain check.
+///
+/// Two exact cancellations tighten this. A note judged before the start whose score frame lies below every frame
+/// the calculations from the start's play frame to the end's re-execute (`floors`) holds one value in both
+/// snapshots. A rank bonus files with the first calculation after its application and stays a constant, so one
+/// applied at least two play frames before the start is in both snapshots.
+fn network_rank_factors(
+    judgement_frames: &[usize],
+    score_frames: &[i32],
+    floors: &[i32],
+    snapshots: &[NetworkSnapshot],
+) -> Vec<f64> {
+    let ne = judgement_frames.len();
+    let mut positive: Vec<Vec<f64>> = Vec::new();
+    let mut negative: Vec<Vec<f64>> = Vec::new();
+    let mut out = vec![1.0; ne];
+    for (i, &(_, _, start, end, pct)) in snapshots.iter().enumerate() {
+        let scale = (pct as f64 / 100.0).next_up();
+        let between = start.zip(end).filter(|(s, e)| s <= e);
+        // The lowest score frame re-executed between the snapshots (none when a play frame is unknown).
+        let floor = between.map_or(i32::MIN, |(s, e)| {
+            (s..=e).map(|k| floors.get(k).copied().unwrap_or(i32::MIN)).min().unwrap_or(i32::MIN)
+        });
+        let mut p = vec![0.0; ne];
+        let mut n = vec![0.0; ne];
+        for (e, &f) in judgement_frames.iter().enumerate() {
+            let held = start.is_some_and(|start| f < start) && score_frames[e] < floor;
+            let mut hi = if !held && end.is_some_and(|end| f <= end) { 1.0f64 } else { 0.0 };
+            let mut lo = if !held && start.is_some_and(|start| f < start) { 1.0f64 } else { 0.0 };
+            for (j, &(applied, ..)) in snapshots[..i].iter().enumerate() {
+                if between.is_some_and(|(s, _)| applied + 2 <= s) {
+                    continue;
+                }
+                if end.is_some_and(|end| applied < end) {
+                    hi = (hi + positive[j][e]).next_up();
+                    lo = (lo + negative[j][e]).next_up();
+                }
+                if start.is_some_and(|start| applied < start) {
+                    hi = (hi + negative[j][e]).next_up();
+                    lo = (lo + positive[j][e]).next_up();
+                }
+            }
+            p[e] = (hi * scale).next_up();
+            n[e] = (lo * scale).next_up();
+            out[e] = (out[e] + p[e]).next_up();
+        }
+        positive.push(p);
+        negative.push(n);
+    }
+    out
 }
 
 /// The largest number of luck rush commands that can be undone before they apply: the controller files a rush start
@@ -927,6 +1069,102 @@ pub(super) fn is_carrier_class(contrib: &[Vec<[Contrib; 5]>], m: usize, c: usize
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_snapshot_envelope_covers_negative_retroactive_range_scores() {
+        // Snapshot raw values can vary independently inside the per-note cap. Include negative early bonuses
+        // read by later start snapshots, late packets, two ranks applied together, and notes judged after an end.
+        let frames = [0, 2, 4, 7];
+        let snapshots = [(3, 0, Some(1), Some(2), 150), (6, 1, Some(4), Some(5), 70), (6, 2, Some(2), Some(4), 30)];
+        let caps = [31.0, 67.0, 43.0, 101.0];
+        let factors = network_rank_factors(&frames, &[0; 4], &[i32::MIN; 8], &snapshots);
+        let bound: f64 = factors.iter().zip(caps).map(|(r, v)| r * v).sum();
+        for bits in 0..4096u64 {
+            let mut bonus = Vec::new();
+            for (i, &(_, _, start, end, pct)) in snapshots.iter().enumerate() {
+                let raw = |at: Option<usize>, start: bool, shift: usize| -> f64 {
+                    frames
+                        .iter()
+                        .zip(caps)
+                        .enumerate()
+                        .filter(|(e, (frame, _))| {
+                            at.is_some_and(|at| if start { **frame < at } else { **frame <= at })
+                                && (bits >> ((shift + e) % 12)) & 1 != 0
+                        })
+                        .map(|(_, (_, cap))| cap)
+                        .sum()
+                };
+                let mut s0 = raw(start, true, i * 4);
+                let mut s1 = raw(end, false, i * 4 + 2);
+                for (j, &(applied, ..)) in snapshots[..i].iter().enumerate() {
+                    if start.is_some_and(|start| applied < start) {
+                        s0 += bonus[j];
+                    }
+                    if end.is_some_and(|end| applied < end) {
+                        s1 += bonus[j];
+                    }
+                }
+                bonus.push(((s1 - s0) * pct as f64 / 100.0).trunc());
+            }
+            let score = caps.iter().sum::<f64>() + bonus.iter().sum::<f64>();
+            assert!(score <= bound, "{bits}: {score} > {bound}");
+        }
+        assert!(factors[3] < 1.000001, "notes after every end receive no rank contribution");
+    }
+
+    #[test]
+    fn network_snapshot_envelope_cancels_held_notes_and_filed_bonuses() {
+        // A note changes only in its judgement frame and in play frames whose calculations re-execute its score
+        // frame. A bonus files with the calculation after its application, or (a stronger adversary) at once.
+        let judged = [0, 1, 3, 5, 8];
+        let score_frames = [0, 2, 4, 6, 9];
+        let floors = [0, 0, 0, 3, 3, 3, 5, 5, 5, 8];
+        let snapshots = [(2, 0, Some(1), Some(2), 150), (6, 1, Some(5), Some(6), 80), (7, 2, Some(6), Some(7), 40)];
+        let caps = [31.0, 67.0, 43.0, 101.0, 59.0];
+        let factors = network_rank_factors(&judged, &score_frames, &floors, &snapshots);
+        let bound: f64 = factors.iter().zip(caps).map(|(r, v)| r * v).sum();
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..20_000 {
+            // value[e][k]: the note's value after the calculations of play frame k
+            let mut value = vec![vec![0.0f64; floors.len()]; caps.len()];
+            for (e, row) in value.iter_mut().enumerate() {
+                let mut v = 0.0;
+                for (k, slot) in row.iter_mut().enumerate() {
+                    let can = k == judged[e] || (k > judged[e] && floors[k] <= score_frames[e]);
+                    if can {
+                        v = caps[e] * (next() % 5) as f64 / 4.0;
+                    }
+                    *slot = if k >= judged[e] { v } else { 0.0 };
+                }
+            }
+            let at_once: Vec<bool> = snapshots.iter().map(|_| next() & 1 != 0).collect();
+            let mut bonus: Vec<f64> = Vec::new();
+            for (i, &(_, _, start, end, pct)) in snapshots.iter().enumerate() {
+                let (s, e) = (start.unwrap(), end.unwrap());
+                // The start snapshot opens play frame `s`, after the applications of frame `s - 1`; the end
+                // snapshot precedes the applications of frame `e`.
+                let total = |k: usize, filed: &dyn Fn(usize) -> bool| -> f64 {
+                    value.iter().map(|row| row[k]).sum::<f64>()
+                        + (0..i).filter(|&j| filed(j)).map(|j| bonus[j]).sum::<f64>()
+                };
+                let s0 = total(s - 1, &|j| s - 1 > snapshots[j].0 || (at_once[j] && s - 1 == snapshots[j].0));
+                let s1 = total(e, &|j| e > snapshots[j].0);
+                bonus.push(((s1 - s0) * pct as f64 / 100.0).trunc());
+            }
+            let last = floors.len() - 1;
+            let score = value.iter().map(|row| row[last]).sum::<f64>() + bonus.iter().sum::<f64>();
+            assert!(score <= bound, "{score} > {bound}");
+        }
+        // The first note moves only within the first range; the first bonus is in both snapshots of the later ones.
+        assert!(factors[0] < 2.51, "{factors:?}");
+        assert!(factors[4] < 1.000001);
+    }
 
     #[test]
     fn gated_bonus_opens_once_the_time_group_can_reach_the_threshold() {

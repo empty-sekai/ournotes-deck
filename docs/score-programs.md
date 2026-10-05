@@ -82,7 +82,7 @@ Within an identical program, certified monotone score plus the score
 objective's secondary descending-power order would permit power-based Top-K
 binding recovery. Physical identities, resource uniqueness and canonical ties
 must still be retained. PT additionally depends on the physical event bonus and
-must be calculated for each native-root outcome before weighting; monotone score
+must be calculated for each performance order before averaging; monotone score
 alone does not order all PT bindings.
 
 The `score_program` harness binary compares each recorded program against fresh

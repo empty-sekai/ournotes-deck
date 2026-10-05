@@ -79,6 +79,8 @@ pub(super) struct Fine {
     pub(super) rank: Vec<f64>,
     /// With Gekisou on: per completing range with a rank bonus, (range end time, percent / 100, its entries).
     pub(super) rank_ranges: Vec<(i32, f64, Vec<u32>)>,
+    /// Network rank bonuses retain historical frame snapshots, so their cap cannot shrink by settled prefix.
+    pub(super) network_ranking: bool,
     pub(super) nobreak: Vec<bool>,
     pub(super) z_dead: f64,
     /// The rows of each member and class that can raise the life.
@@ -89,8 +91,6 @@ pub(super) struct Fine {
     /// for each position, the slot of each of its skill events' recoveries and how many times the fold can apply
     /// it; for each entry, the smallest chart time of the entries judged after it.
     pub(super) base: i64,
-    /// Every life the live can reach, at any time, lies in `[.0, .1]` (`Env::life_lo`, `Env::life_hi`).
-    pub(super) life_range: (i64, i64),
     /// Diagnostics only: the executions bound of each score frame (`Exec::e`).
     #[cfg(feature = "search-diagnostics")]
     pub(super) exec_profile: Vec<u32>,

@@ -94,6 +94,9 @@ pub struct ResolvedContext {
     pub power_event_ids: Vec<i64>,
     pub power_snapshot_jst_ticks: Option<i64>,
     pub result_clock: Option<crate::event::EventResultClock>,
+    /// Declared network rank arrivals. They select controller score snapshots,
+    /// never the solo timestamp-query scoring path.
+    pub rank_confirmations: Option<Vec<crate::replay::RankConfirmation>>,
 }
 
 impl ResolvedContext {
@@ -131,6 +134,7 @@ impl ResolvedContext {
             power_event_ids,
             power_snapshot_jst_ticks: None,
             result_clock: None,
+            rank_confirmations: None,
         })
     }
 
@@ -239,6 +243,43 @@ pub struct EventPayoffInput {
     pub multiplayer_ranks: Option<Vec<MultiplayerRankInput>>,
     /// Explicit result-panel adapter. It models the result panel, not network save semantics.
     pub multiplayer_result_panel: Option<MultiplayerResultPanelInput>,
+    /// Declared room model, evaluated separately for each terminal local score.
+    pub multiplayer_score_policy: Option<MultiplayerScorePolicy>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum MultiplayerScorePolicy {
+    SameScore { players: i64 },
+    FixedOthersAverage { players: i64, score: i32 },
+}
+
+impl MultiplayerScorePolicy {
+    pub fn players(&self) -> i64 {
+        match *self {
+            Self::SameScore { players } | Self::FixedOthersAverage { players, .. } => players,
+        }
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        if !(1..=5).contains(&self.players()) || matches!(self, Self::FixedOthersAverage { score, .. } if *score < 0) {
+            return Err(Error::Input("room requires 1..5 players and a nonnegative other-player score".into()));
+        }
+        Ok(())
+    }
+    pub fn total_and_count(&self, local_score: i32) -> Result<(i32, i64), Error> {
+        self.validate()?;
+        let peer = match *self {
+            Self::SameScore { .. } => local_score,
+            Self::FixedOthersAverage { score, .. } => score,
+        };
+        let mut total = local_score;
+        for _ in 1..self.players() {
+            total = total
+                .checked_add(peer)
+                .ok_or_else(|| Error::Game("declared room checked Int32 score sum overflow".into()))?;
+        }
+        Ok((total, self.players()))
+    }
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -349,11 +390,24 @@ impl ResolvedContext {
         if matches!(self.scenario, Scenario::Battle(_) | Scenario::Arena(_))
             && input.multiplayer_ranks.is_none()
             && input.multiplayer_result_panel.is_none()
+            && input.multiplayer_score_policy.is_none()
         {
             return Err(Error::Input("Battle/Arena event payoff requires multiplayerRanks from an explicit total-score/peer adapter; solo rank and player-count defaults are not valid".into()));
         }
-        if input.multiplayer_ranks.is_some() && input.multiplayer_result_panel.is_some() {
-            return Err(Error::Input("choose multiplayerRanks OR multiplayerResultPanel, not both".into()));
+        if [
+            input.multiplayer_ranks.is_some(),
+            input.multiplayer_result_panel.is_some(),
+            input.multiplayer_score_policy.is_some(),
+        ]
+        .into_iter()
+        .filter(|&present| present)
+        .count()
+            > 1
+        {
+            return Err(Error::Input("choose exactly one multiplayer rank, result-panel or room-score adapter".into()));
+        }
+        if let Some(policy) = &input.multiplayer_score_policy {
+            policy.validate()?;
         }
         if input.multiplayer_result_panel.as_ref().is_some_and(|p| p.other_players.len() > 4) {
             return Err(Error::Input("multiplayer result panel allows at most four other players".into()));
@@ -387,8 +441,20 @@ impl ResolvedContext {
         pool.check_deck(deck)?;
         let request = self.event_request(pool.master, input, target_event_id)?;
         let group = music(pool.master, self.resolved.live_music_id)?.live_score_rank_group;
-        let rank = if matches!(self.scenario, Scenario::Battle(_) | Scenario::Arena(_)) {
-            if let Some(panel) = &input.multiplayer_result_panel {
+        let rank = if matches!(
+            request.route,
+            crate::event::EventResultRoute::NormalSkip | crate::event::EventResultRoute::ChallengeSkip { .. }
+        ) {
+            // Skip first resolves its EXP row from the computed score. That lookup can fail before the fixed
+            // result rank is parsed. Counter rewards then always read the configured out-rank, even on parse
+            // failure (None). EXP's success-dependent override and server-selected items are separate paths.
+            crate::event::score_rank(pool.master, group, i64::from(final_score))?;
+            crate::event::skip_result_rank(pool.master)?.rank
+        } else if matches!(self.scenario, Scenario::Battle(_) | Scenario::Arena(_)) {
+            if let Some(policy) = &input.multiplayer_score_policy {
+                let (total, count) = policy.total_and_count(final_score)?;
+                crate::event::battle_score_rank(pool.master, group, i64::from(total), count)
+            } else if let Some(panel) = &input.multiplayer_result_panel {
                 let (total, count) = panel.total_and_count(final_score)?;
                 crate::event::battle_score_rank(pool.master, group, i64::from(total), count)
             } else {

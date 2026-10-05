@@ -544,7 +544,7 @@ fn explicit_ownership_coverage_and_not_owned_ids_survive_zero_budget_shared_eval
     let report = snapshot.resolve_data(&data, "synthetic-351", Goal::Power);
     assert!(report.errors.is_empty() && report.missing.is_empty());
     let request: RecommendationRequest = serde_json::from_value(json!({
-        "format":"ournotes-deck.recommendation-request/1","execution":{"kind":"power"},"metric":{"kind":"power"},
+        "format":"ournotes-deck.search-request/1","execution":{"kind":"power"},"metric":{"kind":"power"},
         "limits":{"timeLimitMs":0}
     }))
     .unwrap();

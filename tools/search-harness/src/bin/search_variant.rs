@@ -15,9 +15,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let built = ournotes_search::handler::build_card_pool(&data, &roster, &request)?;
     let mut explanations = Vec::new();
     for deck in &outcome.results {
-        for atom in &deck.atoms {
-            explanations.push(serde_json::json!({"members":deck.members,"snaps":deck.snaps,"root":atom.root_seed,
-                "score":atom.score,"bound":diagnostics::describe_bound(&built,deck.members,deck.snaps,atom.root_seed)?}));
+        if let Some(best) = &deck.best_order {
+            explanations.push(serde_json::json!({"members":deck.members,"snaps":deck.snaps,
+                "order":best.performance_order,"score":best.score,
+                "bound":diagnostics::describe_bound(&built,deck.members,deck.snaps,best.performance_order)?}));
         }
     }
     fs::write(

@@ -1,5 +1,6 @@
 //! Live score: per-note score, skip score, live skills and the live's random streams.
 
+pub mod certified;
 pub mod full;
 pub mod model;
 pub mod random;

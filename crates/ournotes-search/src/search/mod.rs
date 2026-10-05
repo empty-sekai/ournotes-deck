@@ -1,14 +1,18 @@
 //! Power/skip Top-K search and explicit native-root expectation search.
 //! Played native objectives use [`expectation::oracle`]; order optimization is diagnostic only.
 //!
-//! A search returns the best decks under one objective, one result per set of five member cards; each result is
+//! Formal recommendations return leader/member-Snap teams, retaining distinct leaders and bindings. The legacy
+//! [`search`] function returns one result per set of five member cards; each legacy result is
 //! the best representative of its set (leader, snaps, performance order) under the canonical order documented in
 //! `docs/search.md`. A [`Completion::Complete`] outcome is exactly the canonical Top-K; a
 //! [`Completion::TimedOut`] outcome holds legal, exactly evaluated decks but proves nothing about their rank.
 
 pub(crate) mod dispatch;
 pub use dispatch::recommend_built;
+pub(crate) mod certified_payoff;
+pub mod certified_search;
 pub mod expectation;
+pub mod interval_topk;
 pub mod oracle;
 pub(crate) mod physical;
 pub(crate) use physical::session_start_clock;
@@ -18,17 +22,19 @@ pub use physical::{
 };
 
 mod budget;
+pub(crate) mod deck_payoff;
 #[cfg(feature = "search-diagnostics")]
 pub mod diagnostics;
 pub(crate) mod joint;
 mod live;
-mod luck;
 mod matching;
 mod power;
 mod snaps;
 mod tables;
+pub(crate) mod team_power;
 pub mod telemetry;
 mod topk;
+pub mod uniform;
 
 use crate::clock::Instant;
 use std::time::Duration;
@@ -167,6 +173,8 @@ pub enum Completion {
     Complete,
     /// The time limit was reached; the results are legal and exactly evaluated but unproven.
     TimedOut,
+    /// The candidate domain is exhausted, but overlapping certified intervals still need refinement.
+    RefinementRequired,
 }
 
 /// One result.
@@ -442,6 +450,8 @@ pub(crate) fn full_setup(pool: &Pool, o: &Objective) -> Result<Option<FullSetup>
         stream.check_just(chart, judgement_types, &rule)?;
         let dt = stream.delta_times()?;
         setup.set_gekisou(gs, dt, g.seeds.seeds()?);
+        setup.gk.as_mut().expect("Gekisou setup just installed").confirmations =
+            o.context().and_then(|context| context.rank_confirmations.clone());
     }
     Ok(Some(setup))
 }

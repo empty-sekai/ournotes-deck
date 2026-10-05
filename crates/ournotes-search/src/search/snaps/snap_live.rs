@@ -381,13 +381,7 @@ impl<'a> SnapLive<'a> {
     /// Move the compiled per-note data into the native-root joint solver. No scorer state is retained.
     pub(crate) fn into_joint_fine(self) -> JointFineBounds {
         let raw = raw::RawEnvelope::compile(&self.coef, &self.fine, &self.contrib, self.eps, self.chain_extra);
-        // The replayed spans also refine the Rush score factor itself (`Fine::pre_plain`), with or without
-        // Rush-triggered skill windows.
-        let rush_eligible = self.fine.rush_eligible
-            && (!self.fine.pre_plain.is_empty()
-                || self.contrib.iter().flatten().flatten().any(|part| part.windows.iter().any(|w| w.rush != 0)));
         JointFineBounds {
-            rush_eligible,
             coef: self.coef,
             fine: self.fine,
             chain_extra: self.chain_extra,
@@ -603,7 +597,7 @@ mod additive_drift_tests {
                 let (base, _, chain) =
                     additive_joint_envelope(1.0, 1.0 + gains, delta, 1000.0, sensitivity, 0.0).unwrap();
                 let actual =
-                    calc.note_score_core(1000, 1, JUST, 1.0, (1.0 + skill + delta) as f32, 100).unwrap() as i64;
+                    calc.note_score_core(1000, 1, JUST, 1.0, (1.0 + skill + delta) as f32, 1.0).unwrap() as i64;
                 let cap = ub(power as i64, base + gains, chain);
                 assert!(cap >= actual);
                 assert!(cap < ub(power as i64, 1.0 + gains, delta));

@@ -11,11 +11,13 @@ use crate::master::{Master, MemoryLevelRow, MemoryMusicBonusRow};
 use crate::power::CardPower;
 
 /// The player's memory progress.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct MemoryState {
     /// Memory music id -> unlocked score rank.
     pub music_ranks: BTreeMap<i64, i64>,
+    /// Explicit save groups; `Some(empty)` means no groups owned. Legacy inputs use `music_ranks`.
+    pub music_groups: Option<BTreeMap<i64, Vec<(i64, i64)>>>,
     /// Member card ids whose memory is unlocked.
     pub unlocked_members: BTreeSet<i64>,
     /// Snap ids whose memory is unlocked.
@@ -41,6 +43,14 @@ pub fn current_music_bonus<'m>(
     group_id: i64,
     state: &MemoryState,
 ) -> Option<&'m MemoryMusicBonusRow> {
+    if let Some(groups) = &state.music_groups {
+        let musics = groups.get(&group_id)?;
+        return master
+            .memory_music_bonuses
+            .iter()
+            .filter(|r| r.group_id == group_id)
+            .rfind(|r| musics.iter().all(|&(_, rank)| r.score_rank <= rank));
+    }
     master
         .memory_music_bonuses
         .iter()

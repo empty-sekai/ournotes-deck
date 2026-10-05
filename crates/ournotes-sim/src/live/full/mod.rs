@@ -13,7 +13,7 @@
 //! A command that lands in a 40 ms frame the score has already executed (a late judgement, a skill starting at its
 //! trigger time) undoes the frames down to it and executes them again; the factor state after such a rewind is the
 //! game's, which can differ in the last bits from applying every command once. The life keeps the game's frame
-//! cache, which a command in an earlier frame does not fully invalidate. Confirming a range's rank bonus computes
+//! cache, which a command in a completed frame fully invalidates. Confirming a range's rank bonus computes
 //! the score at the range's start and end, which undoes the frames after the end; they are executed again with the
 //! next frame.
 //!
@@ -37,7 +37,10 @@
 //! skills update, where 4000..=4004 and 13001 drive the mutable judgement windows. Without the runtime these effect
 //! types are [`Error::Unsupported`] (4004 of Gekisou and Gekisou support skills keeps its no-op on a judged stream).
 
+mod applier_plan;
 mod combo;
+#[cfg(feature = "search-diagnostics")]
+pub use applier_plan::with_applier_plan_disabled;
 mod conditions;
 mod convert;
 mod engine;
@@ -52,6 +55,20 @@ pub use gekisou::{
 };
 mod life;
 mod luck;
+mod luck_dp;
+pub use luck_dp::{
+    LuckDpCertifiedResult, LuckDpResult, luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified,
+    luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events,
+    luck_rush_dp_with_ranking,
+};
+mod luck_score_bounds;
+pub use luck_score_bounds::{
+    LuckScoreBounds, LuckScoreSummary, luck_score_bounds, luck_score_bounds_with_ranking,
+    luck_score_summary_with_ranking, prepare_lottery_free,
+};
+#[cfg(feature = "search-diagnostics")]
+pub use luck_score_bounds::{LuckScoreProfile, take_luck_score_profile};
+mod orders;
 #[cfg(feature = "search-diagnostics")]
 #[doc(hidden)]
 pub use luck::LuckSignature;
@@ -59,12 +76,16 @@ pub use luck::LuckSignature;
 #[doc(hidden)]
 pub use luck::{RushDecline, rush_frames};
 #[doc(hidden)]
-pub use luck::{RushMasks, luck_judgement_class, luck_signature, rush_branches_why};
+pub use luck::{RushMasks, luck_judgement_class, luck_rush_samples, luck_signature, rush_branches_why};
+mod luck_shapes;
+pub use luck_shapes::{
+    FORMATION, LOTTERY_CONDITIONS, LUCK_REPLAY_CONDITIONS, LuckCondition, LuckScoreShape, LuckShapeProbe, LuckSkillKey,
+    LuckSkills, LuckSource, formation_targets, is_luck_chain, luck_holder, luck_skill_key, luck_skills,
+};
+pub use orders::{OrderSharing, OrderedLive, OrdersOutcome, RecordedOrder};
 mod raw_runtime;
-#[cfg(feature = "search-diagnostics")]
 mod score_program;
 pub use raw_runtime::{RELAX_TARGET_JUDGEMENTS, RawJudgedNote, RawJudgementRuntime};
-#[cfg(feature = "search-diagnostics")]
 pub use score_program::ScoreProgram;
 mod range_frames;
 mod scorecalc;
@@ -85,8 +106,8 @@ use scorecalc::{IncrementalCalculator, NoteCommand};
 use crate::error::Error;
 use crate::live::random::LiveRandom;
 use crate::live::score::{
-    ComboTable, GekisouComboInfo, LiveScoreCalculator, LiveScoreSettings, ScoreFactorState, convert_score_type,
-    get_frame,
+    ComboTable, GekisouComboInfo, LiveScoreCalculator, LiveScoreSettings, LuckWeights, ScoreFactorState,
+    convert_score_type, get_frame,
 };
 use crate::live::skill::{FactorCommand, OWNER_MEMBER, OWNER_SNAP, judgement_factor_mill, note_factor_mill};
 use crate::master::{GekisouSkillEffectRow, Master, SupportSkillEffectRow};
@@ -244,6 +265,7 @@ struct EffectRow {
     effect_limit_count: i64,
     /// Judgements of the effect's targets, or the first target id that is not in the master.
     targets: Result<Vec<i64>, i64>,
+    applier: applier_plan::ApplierPlan,
 }
 
 impl EffectRow {
@@ -321,7 +343,17 @@ fn aggregate_live_state(effects: &[LiveEffect]) -> u8 {
 struct CondSkill {
     member: usize,
     skill_type: i64,
+    /// The list a Gekisou skill joins (its mission group); 0 for the other skill types.
+    group: i64,
     updater: ConditionSkillUpdater,
+}
+
+impl CondSkill {
+    /// The position in the updater list: snap skills by member, Gekisou skills by mission group then member,
+    /// Gekisou support skills by member; one member's skills of a type keep their order.
+    fn list_key(&self) -> (i64, i64, usize) {
+        (self.skill_type, self.group, self.member)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -449,6 +481,9 @@ struct GekisouLive {
     prev_lot_ms: i32,
     /// `(range, rank, bonus, percent)` of each confirmed range.
     rank_bonus: Vec<(usize, i32, i32, i64)>,
+    rank_applications: Vec<(usize, usize)>,
+    program_rank_snapshots: Vec<(Option<score_program::ValueId>, Option<score_program::ValueId>)>,
+    rank_snapshot_queries: Vec<(Option<usize>, Option<usize>)>,
 }
 
 /// Per-state bookkeeping of the Gekisou appliers.
@@ -485,6 +520,16 @@ impl GkAppliers {
 fn approximately(a: f32, b: f32) -> bool {
     let tol = (1e-6f32 * a.abs().max(b.abs())).max(f32::from_bits(1) * 8f32);
     (b - a).abs() < tol
+}
+
+/// Whether a predicate reads the lottery (a LUCK rush or lot result) or draws a probability.
+fn is_lottery_predicate(checker: &Checker) -> bool {
+    matches!(checker, Checker::LuckRushPlaying(_) | Checker::LuckLotResult { .. } | Checker::Probability(_))
+}
+
+/// The bit of a performance position in a position mask (none outside `0..32`).
+fn position_bit(index: i32) -> u32 {
+    if (0..32).contains(&index) { 1 << index } else { 0 }
 }
 
 /// The minimum lottery result of an 11005 effect value: 2..=4 give Hit, Super Hit, Critical; else 0.
@@ -552,12 +597,30 @@ impl<'a> From<&'a GekisouSkillEffectRow> for CondRow<'a> {
     }
 }
 
+/// A lottery-dependent note score-up of a live ([`LiveModel::luck_score_rows`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LuckScoreRow {
+    /// The effect row.
+    pub row: usize,
+    pub member: usize,
+    /// The shape index in [`LuckSkills::shapes`].
+    pub shape: usize,
+    /// The note score-up.
+    pub value: f32,
+    /// Whether its formation predicates let it run.
+    pub may_hold: bool,
+}
+
 /// A live in progress.
 #[derive(Clone, Debug)]
 pub struct LiveModel {
     #[cfg(feature = "search-diagnostics")]
     rush_probes: Option<luck::RushProbes>,
-    #[cfg(feature = "search-diagnostics")]
+    /// Rush samples ([`luck_rush_samples`]): the edges `(row, time, +1 / -1)` of the condition skills' note
+    /// score-ups.
+    rush_effect_log: Option<Vec<(usize, i32, i32)>>,
+    /// LUCK weighted lives: by effect row, whether its note score-up reads the lottery and is taken from the weights.
+    luck_suppressed: Vec<bool>,
     program_has_started: bool,
     notes: FxHashMap<i32, LiveNote>,
     events: Vec<(i32, i32)>,
@@ -566,6 +629,8 @@ pub struct LiveModel {
     is_live_finished: bool,
     random: LiveRandom,
     life: LifeController,
+    /// Optional read-only life values after note damage, before each native skill phase's appliers.
+    phase_life: Option<[i32; 2]>,
     combo: combo::ComboCounter,
     score: IncrementalCalculator,
     conversion: Conversion,
@@ -595,17 +660,25 @@ pub struct LiveModel {
     raw_pending: Option<Vec<RawJudgedNote>>,
     /// The Gekisou rank confirmation taken when the current frame began.
     frame_rank_confirmation: Option<i32>,
+    rank_timeline: Vec<crate::replay::RankConfirmation>,
+    next_rank_confirmation: usize,
     scratch: FrameScratch,
+    /// Positions (bit k: performer k) whose chart skill events have fired.
+    touched_events: u32,
+    /// Positions whose condition skills have started an effect or drawn a random value.
+    touched_skills: u32,
 }
 
 fn effect_row(master: &Master, r: &CondRow) -> EffectRow {
-    let targets = r.target_ids.iter().map(|&t| master.skill_target(t).map(|x| x.judgement).ok_or(t)).collect();
+    let targets: Result<Vec<i64>, i64> =
+        r.target_ids.iter().map(|&t| master.skill_target(t).map(|x| x.judgement).ok_or(t)).collect();
     EffectRow {
         id: r.id,
         effect_type: r.effect_type,
         effect_value: r.value,
         max_effect_value: r.max_value,
         effect_limit_count: r.limit,
+        applier: applier_plan::ApplierPlan::compile(r.effect_type, targets.is_ok()),
         targets,
     }
 }
@@ -682,7 +755,8 @@ fn condition_skill(
         release_groups.push(r.release_group);
     }
     let updater = ConditionSkillUpdater::new(effects, |e| group(release_groups[e]), gate)?;
-    Ok(CondSkill { member: k, skill_type, updater })
+    let list_group = if skill_type == SKILL_TYPE_GEKISOU { gekisou_mission_group(gate.unwrap_or(0))? } else { 0 };
+    Ok(CondSkill { member: k, skill_type, group: list_group, updater })
 }
 
 impl LiveModel {
@@ -701,7 +775,7 @@ impl LiveModel {
         skill_events: &[(i32, i32)],
         params: LiveParams,
     ) -> Result<LiveModel, Error> {
-        LiveModel::build(master, deck, notes, skill_events, params, None, false, None)
+        LiveModel::build(master, deck, notes, skill_events, params, None, false, None, None)
     }
 
     /// Builds a live with Gekisou (see [`LiveModel::new`]); frame delta times drive the ranges' end delays, see
@@ -714,7 +788,7 @@ impl LiveModel {
         params: LiveParams,
         setup: &GekisouSetup,
     ) -> Result<LiveModel, Error> {
-        LiveModel::build(master, deck, notes, skill_events, params, Some(setup), false, None)
+        LiveModel::build(master, deck, notes, skill_events, params, Some(setup), false, None, None)
     }
 
     /// Dynamic controller with explicit external ranking. No native three-range network limit is imposed.
@@ -727,7 +801,7 @@ impl LiveModel {
         params: LiveParams,
         setup: &GekisouSetup,
     ) -> Result<LiveModel, Error> {
-        LiveModel::build(master, deck, notes, skill_events, params, Some(setup), true, None)
+        LiveModel::build(master, deck, notes, skill_events, params, Some(setup), true, None, None)
     }
 
     /// Counterfactual solo scoring with explicitly queued ranks and percentages. Range scores use
@@ -742,7 +816,7 @@ impl LiveModel {
         params: LiveParams,
         setup: &GekisouSetup,
     ) -> Result<LiveModel, Error> {
-        let mut model = LiveModel::build(master, deck, notes, skill_events, params, Some(setup), false, None)?;
+        let mut model = LiveModel::build(master, deck, notes, skill_events, params, Some(setup), false, None, None)?;
         let gk = model.gk.as_mut().expect("Gekisou setup supplied");
         gk.external_ranking = true;
         gk.solo_score_queries = true;
@@ -777,6 +851,30 @@ impl LiveModel {
         Ok(())
     }
 
+    /// Install immutable, frame-indexed external arrivals before play starts.
+    /// Frame-zero arrivals implement the declared rank-on-completion scenario:
+    /// the controller still applies each bonus only after its actual completion.
+    pub fn set_rank_confirmation_timeline(
+        &mut self,
+        confirmations: &[crate::replay::RankConfirmation],
+    ) -> Result<(), Error> {
+        let g = self.gk.as_ref().ok_or_else(|| Error::Input("rank timeline without Gekisou".into()))?;
+        if !g.external_ranking || self.frames_played() != 0 {
+            return Err(Error::Input("rank timeline requires an unplayed external-ranking model".into()));
+        }
+        let mut seen = std::collections::HashSet::new();
+        if confirmations
+            .iter()
+            .any(|c| c.range >= g.pending_ranks.len() || !(1..=5).contains(&c.rank) || !seen.insert(c.range))
+        {
+            return Err(Error::Input("rank timeline requires unique known ranges and group ranks 1..5".into()));
+        }
+        self.rank_timeline = confirmations.to_vec();
+        self.rank_timeline.sort_by_key(|c| (c.frame, c.range));
+        self.next_rank_confirmation = 0;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn build(
         master: &Master,
@@ -787,6 +885,7 @@ impl LiveModel {
         setup: Option<&GekisouSetup>,
         external_ranking: bool,
         luck: Option<luck::SharedScript>,
+        lottery: Option<&LuckSkills>,
     ) -> Result<LiveModel, Error> {
         if !matches!(params.skill_target_music_type, 0..=5 | 99) {
             return Err(Error::Input("unknown skill target music type".into()));
@@ -861,7 +960,7 @@ impl LiveModel {
                     state.cumulative_unit = c.unit();
                     state.cumulative_max = c.max();
                 }
-                let targets =
+                let targets: Result<Vec<i64>, i64> =
                     r.skill_target_ids.iter().map(|&t| master.skill_target(t).map(|x| x.judgement).ok_or(t)).collect();
                 rows.push(EffectRow {
                     id: r.id,
@@ -869,6 +968,7 @@ impl LiveModel {
                     effect_value: r.effect_value,
                     max_effect_value: r.max_effect_value,
                     effect_limit_count: r.effect_limit_count,
+                    applier: applier_plan::ApplierPlan::compile(r.skill_effect_type, targets.is_ok()),
                     targets,
                 });
                 effects.push(LiveEffect {
@@ -949,6 +1049,7 @@ impl LiveModel {
                         .iter()
                         .filter(|r| r.skill_id == sid && r.level == lv)
                         .filter(|r| luck.is_none() || luck::retained(r.skill_effect_type))
+                        .filter(|r| lottery.is_none_or(|l| l.related(LuckSource::Gekisou, r)))
                         .map(CondRow::from)
                         .collect();
                     cond.push(condition_skill(
@@ -977,6 +1078,7 @@ impl LiveModel {
                         .iter()
                         .filter(|r| r.skill_id == sid && r.level == lv)
                         .filter(|r| luck.is_none() || luck::retained(r.skill_effect_type))
+                        .filter(|r| lottery.is_none_or(|l| l.related(LuckSource::GekisouSupport, r)))
                         .map(CondRow::from)
                         .collect();
                     let gate = Some(row.gekisou_mission_type);
@@ -998,15 +1100,17 @@ impl LiveModel {
         Ok(LiveModel {
             #[cfg(feature = "search-diagnostics")]
             rush_probes: None,
+            rush_effect_log: None,
+            luck_suppressed: Vec::new(),
             notes: map,
             events: skill_events.to_vec(),
             fired: vec![false; skill_events.len()],
             music_length_ms: params.music_length_ms,
             is_live_finished: false,
-            #[cfg(feature = "search-diagnostics")]
             program_has_started: false,
             random: LiveRandom::new(0),
             life,
+            phase_life: None,
             combo: combo::ComboCounter::new(notes.len()),
             score: IncrementalCalculator::new(calc, score_length),
             conversion: Conversion::new(no_just),
@@ -1032,7 +1136,11 @@ impl LiveModel {
             raw_runtime: None,
             raw_pending: None,
             frame_rank_confirmation: None,
+            rank_timeline: Vec::new(),
+            next_rank_confirmation: 0,
             scratch: FrameScratch::default(),
+            touched_events: 0,
+            touched_skills: 0,
         })
     }
 
@@ -1085,6 +1193,9 @@ impl LiveModel {
             prev_lots: Vec::new(),
             prev_lot_ms: 0,
             rank_bonus: Vec::new(),
+            rank_applications: Vec::new(),
+            program_rank_snapshots: vec![(None, None); n],
+            rank_snapshot_queries: vec![(None, None); n],
         })
     }
 
@@ -1193,6 +1304,109 @@ impl LiveModel {
         self.score.score
     }
 
+    /// The lottery-dependent note score-ups of this live's Gekisou (support) skills ([`luck_skills`]).
+    pub(crate) fn luck_score_rows(&self, skills: &LuckSkills) -> Vec<LuckScoreRow> {
+        let mut out = Vec::new();
+        for c in &self.cond {
+            let source = match c.skill_type {
+                SKILL_TYPE_GEKISOU => LuckSource::Gekisou,
+                SKILL_TYPE_GEKISOU_SUPPORT => LuckSource::GekisouSupport,
+                _ => continue,
+            };
+            for e in c.updater.effects() {
+                let row = &self.rows[e.row];
+                let Some(&shape) = skills.rows.get(&(source, row.id)) else { continue };
+                let divisor = if row.effect_type == 2005 { -10000f32 } else { 10000f32 };
+                let m = note_factor_mill(row.effect_value as f32 / divisor);
+                out.push(LuckScoreRow {
+                    row: e.row,
+                    member: c.member,
+                    shape,
+                    value: if m != 0 { m as f32 / 100000f32 } else { 0f32 },
+                    may_hold: [&e.trigger, &e.condition].into_iter().flatten().all(Checker::may_hold),
+                });
+            }
+        }
+        out
+    }
+
+    /// Whether a trigger, condition, reset or release of the deck's effects reads the lottery or a probability.
+    pub(crate) fn reads_lottery(&self) -> bool {
+        let has = |x: &Option<Checker>| x.as_ref().is_some_and(|x| x.any(&is_lottery_predicate));
+        self.cond.iter().any(|s| {
+            s.updater.effects().iter().any(|ef| has(&ef.trigger) || has(&ef.condition) || has(&ef.reset))
+                || s.updater.updaters.iter().any(|u| has(&u.release))
+        }) || self.live.iter().any(|s| s.effects.iter().any(|e| has(&e.condition) || has(&e.release)))
+    }
+
+    /// Makes this Gekisou live a LUCK weighted live: it draws no lottery; every luck range runs the rush score bonus
+    /// from its start to its finish; the lottery-dependent note score-ups ([`luck_skills`]) file nothing, and a note
+    /// scores its expectation over the lottery ([`LiveScoreCalculator::score_up_and_luck`]) from the deck's score-up
+    /// per shape of `skills` and `steps`, the probabilities `(from ms, [rush, s_0, rs_0, s_1, rs_1, ...])` with
+    /// increasing times. Probability conditions may gate only luck chain effects, which do nothing without a lottery,
+    /// and lottery-dependent score-ups, so the live draws no random value. Call it before the first frame.
+    pub fn set_luck_weights(&mut self, skills: &LuckSkills, steps: Vec<(i32, Vec<f32>)>) -> Result<(), Error> {
+        let width = 1 + 2 * skills.shapes.len();
+        for (_, p) in &steps {
+            if p.len() != width {
+                return Err(Error::Input(format!("LUCK weights of width {} for {width}", p.len())));
+            }
+            if let Some(c) = p.iter().find(|c| !(0.0..=1.0).contains(*c)) {
+                return Err(Error::Input(format!("LUCK weight {c} outside [0, 1]")));
+            }
+        }
+        if steps.windows(2).any(|w| w[0].0 >= w[1].0) {
+            return Err(Error::Input("LUCK weight steps need increasing times".into()));
+        }
+        if self.score.score != 0 || self.random.draws() != 0 || self.frame_time != 0 {
+            return Err(Error::Input("LUCK weights apply before the first frame".into()));
+        }
+        let mut suppressed = vec![false; self.rows.len()];
+        let mut values = vec![0f32; skills.shapes.len()];
+        for r in self.luck_score_rows(skills) {
+            suppressed[r.row] = true;
+            if r.may_hold {
+                values[r.shape] += r.value;
+            }
+        }
+        let has = |x: &Option<Checker>| x.as_ref().is_some_and(|x| x.any(&is_lottery_predicate));
+        for s in &self.cond {
+            for ef in s.updater.effects() {
+                let row = &self.rows[ef.row];
+                let reads = has(&ef.trigger) || has(&ef.condition) || has(&ef.reset);
+                if reads && !suppressed[ef.row] && !is_luck_chain(row.effect_type) {
+                    return Err(Error::Unsupported(format!(
+                        "LUCK weights: effect row {} of type {} reads the lottery or a probability",
+                        row.id, row.effect_type
+                    )));
+                }
+            }
+            for u in &s.updater.updaters {
+                let row = s.updater.effect(u.effect).row;
+                if !suppressed[row] && has(&u.release) {
+                    return Err(Error::Unsupported(format!(
+                        "LUCK weights: effect row {} releases on the lottery or a probability",
+                        self.rows[row].id
+                    )));
+                }
+            }
+        }
+        for s in &self.live {
+            for e in &s.effects {
+                if has(&e.condition) || has(&e.release) {
+                    return Err(Error::Unsupported(
+                        "LUCK weights: a live skill reads the lottery or a probability".into(),
+                    ));
+                }
+            }
+        }
+        let gk = self.gk.as_mut().ok_or_else(|| Error::Input("LUCK weights without Gekisou".into()))?;
+        gk.ctrl.luck_weighted = true;
+        self.score.calc.luck_weight = Some(std::sync::Arc::new(LuckWeights { values, steps }));
+        self.luck_suppressed = suppressed;
+        Ok(())
+    }
+
     /// Seeds the live's random streams, as [`LiveModel::run`] does with the play's base seed. Before any value has
     /// been drawn ([`LiveModel::draws`] is 0) this equals building the live with that seed.
     pub fn set_seed(&mut self, seed: i32) {
@@ -1210,12 +1424,51 @@ impl LiveModel {
         self.random.draws()
     }
 
+    /// Replaces the live's random streams, as [`LiveModel::run_with_random`] does before the first frame.
+    pub fn set_random(&mut self, random: LiveRandom) {
+        self.random = random;
+    }
+
+    /// The number of frames played so far.
+    pub fn frames_played(&self) -> usize {
+        self.trace.len()
+    }
+
+    /// The performance positions that have acted so far (bit k: position k): those whose chart skill events have
+    /// fired, and those whose condition skills have started an effect or drawn a random value. Members of the other
+    /// positions can still move (see [`OrderedLive`]).
+    pub fn acted_positions(&self) -> (u32, u32) {
+        (self.touched_events, self.touched_skills)
+    }
+
+    /// Continues a play: plays frames `frames_played()..end` of `play`, frame `i` with delta time `delta_times[i]`.
+    /// A clone taken between frames continues exactly as the original does.
+    pub fn play_frames(&mut self, play: &LivePlay, delta_times: &[f32], end: usize) -> Result<(), Error> {
+        if delta_times.len() != play.frames.len() {
+            return Err(Error::Input("one delta time per frame".into()));
+        }
+        let start = self.frames_played();
+        if start > end || end > play.frames.len() {
+            return Err(Error::Input(format!("frames {start}..{end} outside a play of {}", play.frames.len())));
+        }
+        for i in start..end {
+            let f = &play.frames[i];
+            self.frame_timed(f.time_ms, &f.judged, delta_times[i])?;
+        }
+        Ok(())
+    }
+
     /// `(frame time, score after the frame)` of every frame played.
     pub fn trace(&self) -> &[(i32, i32)] {
         &self.trace
     }
 
-    /// The chart-time spans of the Gekisou rush score bonus commands `(added at, disabled at)`.
+    /// The chart-time spans of the live's rush score bonus commands: `(added at, disabled at)`, `i32::MAX` while
+    /// running.
+    pub fn rush_command_spans(&self) -> Vec<(i32, i32)> {
+        self.rush_spans()
+    }
+
     pub(crate) fn rush_spans(&self) -> Vec<(i32, i32)> {
         self.gk.as_ref().map(|g| g.ctrl.rush_log().to_vec()).unwrap_or_default()
     }
@@ -1241,6 +1494,11 @@ impl LiveModel {
     /// The life stored at the end of the last frame.
     pub fn current_life(&self) -> i32 {
         self.life.current_life
+    }
+
+    /// `(frame, range)` receipts for external ranking packets, after the range's snapshots are complete.
+    pub fn rank_confirmation_applications(&self) -> &[(usize, usize)] {
+        self.gk.as_ref().map_or(&[], |g| g.rank_applications.as_slice())
     }
 
     /// Live combo controller's current value, after this frame's converted results.
@@ -1411,11 +1669,17 @@ impl LiveModel {
     }
 
     fn begin_frame_internal(&mut self, t: i32, dt: f32) -> Result<(), Error> {
-        #[cfg(feature = "search-diagnostics")]
-        {
-            self.program_has_started = true;
+        while let Some(c) = self.rank_timeline.get(self.next_rank_confirmation) {
+            if c.frame > self.frames_played() {
+                break;
+            }
+            let (range, rank, percent) = (c.range, c.rank, c.percent);
+            self.queue_gekisou_rank_confirmation(range, rank, percent)?;
+            self.next_rank_confirmation += 1;
         }
+        self.program_has_started = true;
         self.frame_time = t;
+        self.score.bounds_potential_rush(t);
         self.frame_rank_confirmation = self.prev_confirmed_rank.take();
         if let Some(gk) = self.gk.as_mut() {
             gk.fever.update(t, &mut gk.fever_updates);
@@ -1423,6 +1687,22 @@ impl LiveModel {
             let mut h = Handle { sc: &mut self.scorectl, score: &mut self.score };
             let mut env = Env { random: &mut self.random, handle: &mut h };
             gk.ctrl.before_update(dt, t, &gk.fever_updates, current, &mut env)?;
+            if gk.external_ranking && !gk.solo_score_queries {
+                let expression = self.score.program_snapshot();
+                for &idx in &gk.ctrl.state_updates {
+                    if gk.ctrl.states[idx].state == gekisou::S_START {
+                        gk.program_rank_snapshots[idx].0 = expression;
+                    }
+                }
+            }
+            if gk.external_ranking && !gk.solo_score_queries {
+                let query = self.score.bounds_last_query();
+                for &idx in &gk.ctrl.state_updates {
+                    if gk.ctrl.states[idx].state == gekisou::S_START {
+                        gk.rank_snapshot_queries[idx].0 = query;
+                    }
+                }
+            }
             // PlayingState.OnBeforeUpdateGekisou dispatches each changed range before FT updates notes.
             // Just missions enable grade 6 at Start, then restore the client's force setting at End.
             if let Some(runtime) = self.raw_runtime.as_mut() {
@@ -1443,6 +1723,7 @@ impl LiveModel {
             if !self.fired[i] && ev_t <= t {
                 self.fired[i] = true;
                 self.frame_events.push((index, ev_t));
+                self.touched_events |= position_bit(index);
             }
         }
         self.judged.clear();
@@ -1531,6 +1812,10 @@ impl LiveModel {
             (std::mem::take(&mut self.scratch.listed), std::mem::take(&mut self.scratch.updated));
         for ph in PHASES {
             listed.clear();
+            if self.phase_life.is_some() {
+                let life = self.life.peek_life_at_ms(t)?;
+                self.phase_life.as_mut().expect("life trace enabled")[(ph - 1) as usize] = life;
+            }
             let gk_view =
                 self.gk.as_ref().map(|g| GkView { ctrl: &g.ctrl, prev_lots: &g.prev_lots, prev_lot_ms: g.prev_lot_ms });
             let mut ctx = CheckCtx {
@@ -1563,15 +1848,25 @@ impl LiveModel {
                     s.parent_state = aggregate_live_state(&s.effects);
                 }
                 for (ei, e) in s.effects.iter().enumerate() {
-                    if e.state.state != STAY && (ph < 1 || e.phase == ph) {
+                    if e.state.state != STAY
+                        && (ph < 1 || e.phase == ph)
+                        && self.rows[e.row].applier.observes(e.state.state)
+                    {
                         listed.push(Listed::Live { skill: si, effect: ei });
                     }
                 }
             }
             for (ui, c) in self.cond.iter_mut().enumerate() {
+                let draws = ctx.random.draws();
                 c.updater.update_into(ph, inp, &mut ctx, &mut updated)?;
+                if !updated.is_empty() || ctx.random.draws() != draws {
+                    self.touched_skills |= position_bit(c.member as i32);
+                }
                 for &x in &updated {
-                    if c.updater.updaters[x].state.state != STAY {
+                    let updater = &c.updater.updaters[x];
+                    if updater.state.state != STAY
+                        && self.rows[c.updater.effect(updater.effect).row].applier.observes(updater.state.state)
+                    {
                         listed.push(Listed::Cond { updater: ui, u: x });
                     }
                 }
@@ -1595,6 +1890,7 @@ impl LiveModel {
         }
         self.enabled_live.retain(|&si| self.live[si].parent_state != STAY);
         self.life.sync_current_life(t)?;
+        self.score.bounds_potential_skills(t);
         let info = self.gk.as_ref().map(|g| &g.ctrl as &dyn GekisouComboInfo);
         self.score.calculate(t, &self.combo, info)?;
         self.frame_score = self.score.score;
@@ -1618,6 +1914,31 @@ impl LiveModel {
             let mut env = Env { random: &mut self.random, handle: &mut h };
             gk.ctrl.update(t, &judged, &gk.fever_updates, current, &mut env)?;
         }
+        if gk.external_ranking && !gk.solo_score_queries {
+            let expression = self.score.program_snapshot();
+            for &(idx, state) in &gk.fever_updates {
+                if state == gekisou::FEVER_END {
+                    gk.program_rank_snapshots[idx].1 = expression;
+                }
+            }
+        }
+        if gk.external_ranking && !gk.solo_score_queries {
+            let query = self.score.bounds_last_query();
+            for &(idx, state) in &gk.fever_updates {
+                if state == gekisou::FEVER_END {
+                    gk.rank_snapshot_queries[idx].1 = query;
+                }
+            }
+        }
+        if self.score.bounds_trace.is_some() {
+            // A lottery may file Rush commands at any judged chart time, or at this frame's pending draw.
+            // These are possible filings, not observations of the recorder's particular lottery trajectory.
+            for &(_, _, time, _) in &judged {
+                self.score.bounds_potential_rush(time);
+            }
+            self.score.bounds_potential_rush(t);
+            self.score.bounds_probability_ready(t);
+        }
         self.scratch.gk_judged = judged;
         gk.prev_lots.clear();
         gk.prev_lots.extend_from_slice(&gk.ctrl.lot_results);
@@ -1635,7 +1956,9 @@ impl LiveModel {
                     let r = &gk.ctrl.ranges[idx];
                     let info = Some(&gk.ctrl as &dyn GekisouComboInfo);
                     let s0 = self.score.calculate(r.start_ms, &self.combo, info)?;
+                    gk.program_rank_snapshots[idx].0 = self.score.program_snapshot();
                     let s1 = self.score.calculate(r.end_ms, &self.combo, info)?;
+                    gk.program_rank_snapshots[idx].1 = self.score.program_snapshot();
                     gk.ctrl.states[idx].start_score = s0;
                     gk.ctrl.states[idx].end_score = s1;
                 }
@@ -1655,7 +1978,14 @@ impl LiveModel {
                 };
                 let bonus = ((i128::from(gk.ctrl.range_score(idx)) * i128::from(pct)) / 100) as i32;
                 self.score.add_fixed(gk.ctrl.ranges[idx].end_ms, bonus);
+                let (start, end) = gk.program_rank_snapshots[idx];
+                self.score.record_rank_bonus(start, end, pct)?;
+                if !gk.solo_score_queries {
+                    let (start, end) = gk.rank_snapshot_queries[idx];
+                    self.score.bounds_rank(idx, gk.ctrl.ranges[idx].end_ms, pct, start, end);
+                }
                 gk.rank_bonus.push((idx, rank, bonus, pct));
+                gk.rank_applications.push((self.trace.len(), idx));
                 self.prev_confirmed_rank = Some(rank);
             }
             return Ok(());
@@ -1666,17 +1996,17 @@ impl LiveModel {
         let (start, end) = (gk.ctrl.ranges[idx].start_ms, gk.ctrl.ranges[idx].end_ms);
         let info = Some(&gk.ctrl as &dyn GekisouComboInfo);
         let s0 = self.score.calculate(start, &self.combo, info)?;
-        #[cfg(feature = "search-diagnostics")]
         let program_start = self.score.program_snapshot();
+        let bounds_start = self.score.bounds_last_query();
         let s1 = self.score.calculate(end, &self.combo, info)?;
-        #[cfg(feature = "search-diagnostics")]
         let program_end = self.score.program_snapshot();
+        let bounds_end = self.score.bounds_last_query();
         gk.ctrl.states[idx].start_score = s0;
         gk.ctrl.states[idx].end_score = s1;
         if idx < gk.factors.len() {
             let (rank, bonus, pct) = gekisou::solo_rank_bonus(idx, gk.ctrl.range_score(idx), &gk.factors);
             self.score.add_fixed(end, bonus);
-            #[cfg(feature = "search-diagnostics")]
+            self.score.bounds_rank(idx, end, pct, bounds_start, bounds_end);
             self.score.record_rank_bonus(program_start, program_end, pct)?;
             gk.rank_bonus.push((idx, rank, bonus, pct));
             self.prev_confirmed_rank = Some(rank); // feed actual confirmation into the NEXT frame
@@ -1754,20 +2084,25 @@ impl LiveModel {
             2000 | 2005 => {
                 let divisor = if effect_type == 2005 { -10000f32 } else { 10000f32 };
                 let m = note_factor_mill(value as f32 / divisor);
-                if st.state == EXECUTE_FRAME {
-                    self.score.add_factor(FactorCommand {
-                        time_ms: st.execute_ms,
-                        owner_id: owner,
-                        note_mill: m,
-                        ..Default::default()
-                    });
-                } else if st.state == END_FRAME {
-                    self.score.add_factor(FactorCommand {
-                        time_ms: st.finish_ms,
-                        owner_id: owner,
-                        note_mill: m.wrapping_neg(),
-                        ..Default::default()
-                    });
+                let command = match st.state {
+                    EXECUTE_FRAME => Some((st.execute_ms, m, 1)),
+                    END_FRAME => Some((st.finish_ms, m.wrapping_neg(), -1)),
+                    _ => None,
+                };
+                if let Some((time_ms, note_mill, edge)) = command {
+                    if !self.luck_suppressed.get(ri).copied().unwrap_or(false) {
+                        self.score.add_factor(FactorCommand {
+                            time_ms,
+                            owner_id: owner,
+                            note_mill,
+                            ..Default::default()
+                        });
+                    }
+                    if matches!(item, Listed::Cond { .. })
+                        && let Some(log) = &mut self.rush_effect_log
+                    {
+                        log.push((ri, time_ms, edge));
+                    }
                 }
             }
             2001 | 2003 => self.apply_cumulative_score(ri, &st, owner, key)?,
@@ -2087,6 +2422,9 @@ impl LiveModel {
 
 #[cfg(test)]
 mod pool_regression;
+
+#[cfg(test)]
+mod life_reads_tests;
 
 #[cfg(test)]
 mod gaps_tests;

@@ -69,7 +69,7 @@ impl From<&ReplayPerformer> for Performer {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RankConfirmation {
     pub frame: usize,

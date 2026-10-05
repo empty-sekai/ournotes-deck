@@ -1,5 +1,11 @@
-//! Joint member/Snap relaxation. Bounds maximize over possible skill positions;
-//! leaf evaluation still uses the declared coupled native-root law.
+//! Joint member/Snap relaxation of the uniform member-order target (`super::uniform`).
+//!
+//! The cheap envelope bounds the score of a team in one performance order by `P * min(A0 + sum of the slots' position
+//! gains, G) * (1 + eps)`. Its expectation over the 120 orders is at most the same expression with every gain
+//! replaced by its mean over the five positions (linearity of the gain sum, Jensen for the concave `min`), so every
+//! node bound reads position-mean gains, and a cap read at [`super::uniform::MEAN_ORDERS`] bounds the sum over the
+//! orders. The per-note fine and raw caps keep their per-order structure: a complete team gets one of each per
+//! order, and their sum bounds its value.
 use super::expectation::PhysicalDeck;
 use super::{
     Objective, Pool, SearchRequest,
@@ -20,17 +26,35 @@ mod bonus;
 mod classes;
 mod composition;
 mod cutoff;
+mod lambda;
+mod point_route;
 mod prefix_character;
 mod prefix_resource;
 mod relax_tables;
 mod resource;
-mod rush_prefix;
 pub(crate) use bonus::BonusScratch;
-pub(crate) use cutoff::CutoffTable;
-pub(crate) use rush_prefix::RushCaps;
 
 /// Leader first, then the other physical slots. Performance order is never a decision.
 pub(crate) const SLOTS: [usize; 5] = [2, 0, 1, 3, 4];
+
+/// A bound module: an upper bound of the payoff numerator, over the performance-order masses `orders`, of every
+/// completion of a partial team. `p` holds the members of `SLOTS[..depth]` (the leader first) and, with
+/// `snaps_placed`, the Snaps of those slots (joint traversal); otherwise their Snaps are still free (composition
+/// traversal). A complete team (`depth == 5`) is bounded over its Snap pairings. None when the module does not apply
+/// to the node. Both traversals prune a node whose module bound is below the K-th payoff, or equal to it with a smaller
+/// power bound; the modules of a compiled `JointBounds` are listed by [`JointBounds::modules`].
+pub(crate) trait NodeBound {
+    /// The module's key in the telemetry (`joint.modules`, `composition.modules`).
+    fn name(&self) -> &'static str;
+    fn node_upper(
+        &self,
+        pool: &Pool,
+        p: &PhysicalDeck,
+        depth: usize,
+        snaps_placed: bool,
+        orders: &[([usize; 5], u128)],
+    ) -> Option<i128>;
+}
 
 #[derive(Clone)]
 struct PointBound {
@@ -39,6 +63,15 @@ struct PointBound {
     multiplier: i64,
     /// Prefix maximum reward multiplier at reachable score thresholds (solo rank rules only).
     score_tiers: Option<Vec<(i64, i64)>>,
+    /// The concave majorant of the step multiplier `score_tiers` (see `uniform::concave_majorant`).
+    hull: Option<Vec<(i64, i64)>>,
+    target: Option<ScoreTarget>,
+}
+
+#[derive(Clone, Copy)]
+enum ScoreTarget {
+    AtLeast(i32),
+    Capped(i32),
 }
 
 struct TailTables {
@@ -69,7 +102,11 @@ pub(crate) struct JointBounds {
     w: Vec<Vec<i64>>,
     lead: Vec<Vec<i64>>,
     profile: Vec<usize>,
+    /// Position-mean gains (every position of a row holds the row's mean): the gains of every node bound.
     gains: Vec<Vec<[f64; 5]>>,
+    /// The per-position gains of the pool-wide envelope, for the per-order caps of complete teams (empty in carrier
+    /// levels).
+    order_gains: Vec<Vec<[f64; 5]>>,
     a0: f64,
     global: f64,
     eps: f64,
@@ -78,12 +115,13 @@ pub(crate) struct JointBounds {
     correlation_scales: [f64; 3],
     tails: Option<TailTables>,
     composition: Option<composition::CompositionTables>,
+    /// Bound modules both traversals consult after the built-in bounds (see `NodeBound`).
+    modules: Vec<Box<dyn NodeBound>>,
     gekisou: bool,
     class_search: bool,
     class_resource_caps: bool,
     prefix_resource: Option<prefix_resource::PrefixResourceTables>,
     prefix_character: Option<prefix_character::PrefixCharacterTables>,
-    rush_prefix: std::cell::OnceCell<Option<rush_prefix::RushPrefix>>,
     /// Optional per-slot choice rules of a domain partition; see `SlotRules`.
     rules: Option<SlotRules>,
     /// Table form of the free-slot relaxation (identical values); None keeps the member/Snap scan.
@@ -110,10 +148,12 @@ struct CarrierLevels {
 }
 
 /// What a node's placed Gekisou combo carriers tell its completions (see `CarrierKeys`): their envelope's `A0` and
-/// the gains of the placed slots by slot and position. The slots to fill keep the gains of the bounds that read it.
+/// the gains of the placed slots by slot, position-mean (`placed`, for node bounds) and by position (`order_placed`,
+/// for the per-order caps of a complete team). The slots to fill keep the gains of the bounds that read it.
 pub(crate) struct Keyed {
     a0: f64,
     placed: [[f64; 5]; 5],
+    order_placed: [[f64; 5]; 5],
 }
 
 fn unavailable(message: &str) -> Error {
@@ -121,6 +161,21 @@ fn unavailable(message: &str) -> Error {
 }
 fn add_up(a: f64, b: f64) -> f64 {
     (a + b).next_up()
+}
+/// The pairs no other pair dominates in both parts (ties keep one).
+fn pareto_pairs(mut pairs: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
+    pairs.sort_unstable_by(|a, b| b.cmp(a));
+    let mut out: Vec<(i64, i64)> = Vec::new();
+    for pair in pairs {
+        if out.last().is_none_or(|last| pair.1 > last.1) {
+            out.push(pair);
+        }
+    }
+    out
+}
+/// Every gain row replaced by its rounded-up position mean (see the module documentation).
+fn mean_table(gains: &[Vec<[f64; 5]>]) -> Vec<Vec<[f64; 5]>> {
+    gains.iter().map(|rows| rows.iter().map(super::uniform::mean_row).collect()).collect()
 }
 
 impl JointBounds {
@@ -131,7 +186,6 @@ impl JointBounds {
         domain: &CandidateDomain,
         deck: &PhysicalDeck,
         positions: &[usize; 5],
-        rush: Option<&super::snaps::RushMasks>,
     ) -> serde_json::Value {
         let (upper, power) = self.upper(pool, domain, deck, 5, positions);
         let gains: Vec<_> = (0..5)
@@ -143,8 +197,8 @@ impl JointBounds {
             .collect();
         serde_json::json!({"payoffUpper":upper.to_string(),"powerUpper":power,"baseCoefficient":self.a0,
             "marginDiagnostic":self.fine.as_ref().map(|fine| fine.margin_diagnostic(power, deck.members,
-                deck.snaps.map(|s| s.map_or(0, |snap| domain.snaps().iter().position(|&v| v == snap).expect("compiled Snap") + 1)), positions, rush)),
-            "finePayoffUpper":self.fine_upper(domain,deck,power,positions,&mut JointScratch::default(),rush).map(|v|v.to_string()),"globalCoefficient":self.global,"relativeMargin":self.eps,"pairGains":gains,"positions":positions})
+                deck.snaps.map(|s| s.map_or(0, |snap| domain.snaps().iter().position(|&v| v == snap).expect("compiled Snap") + 1)), positions, None)),
+            "finePayoffUpper":self.fine_upper(domain,deck,power,positions,&mut JointScratch::default()).map(|v|v.to_string()),"globalCoefficient":self.global,"relativeMargin":self.eps,"pairGains":gains,"positions":positions})
     }
     pub(crate) fn compile(
         pool: &Pool,
@@ -158,9 +212,17 @@ impl JointBounds {
             return Err(unavailable("empty legal domain"));
         }
         if !matches!(request.objective.inner(), Objective::LiveScore { .. })
-            || !matches!(metric, Metric::Score | Metric::ClientEventPoints { .. })
+            || !matches!(
+                metric,
+                Metric::Score
+                    | Metric::ClientEventPoints { .. }
+                    | Metric::ClientChallengePoints { .. }
+                    | Metric::ScoreAtLeast { .. }
+                    | Metric::CappedScore { .. }
+                    | Metric::ScoreAndLifeAtLeast { .. }
+            )
         {
-            return Err(unavailable("joint bounds currently cover full Live score and normal-played PT"));
+            return Err(unavailable("joint bounds require a Live score, score target, or point objective"));
         }
         if simulation.music_length_ms.is_some()
             || simulation.score_music_length_ms.is_some()
@@ -198,26 +260,38 @@ impl JointBounds {
         }
         let setup = super::full_setup(pool, &request.objective)?.ok_or_else(|| unavailable("missing Live setup"))?;
         let envelope = SnapLive::new(pool, &t, &allowed, &setup)?;
-        let (a0, global, eps, gains) = envelope.joint_envelope();
+        let (a0, global, eps, order_gains) = envelope.joint_envelope();
         let levels = if setup.gk.is_some() { envelope.joint_carrier_levels() } else { None };
         let keys = levels.as_ref().and_then(|_| envelope.carrier_keys());
         if ![a0, global, eps].iter().all(|v| v.is_finite() && *v >= 0.0)
-            || gains.iter().flatten().flatten().any(|g| !g.is_finite() || *g < 0.0)
+            || order_gains.iter().flatten().flatten().any(|g| !g.is_finite() || *g < 0.0)
         {
             return Err(unavailable("nonfinite/negative score relaxation"));
         }
+        let gains = mean_table(&order_gains);
         let points = match metric {
-            Metric::ClientEventPoints { event_id } => Some(PointBound::compile(
-                pool,
-                request,
-                domain,
-                input.ok_or_else(|| unavailable("missing event input"))?,
-                *event_id,
-            )?),
+            Metric::ScoreAtLeast { threshold } | Metric::ScoreAndLifeAtLeast { threshold, .. } => Some(
+                PointBound::score_target(pool.members.len(), domain.snaps().len(), ScoreTarget::AtLeast(*threshold)),
+            ),
+            Metric::CappedScore { threshold } => Some(PointBound::score_target(
+                pool.members.len(),
+                domain.snaps().len(),
+                ScoreTarget::Capped(*threshold),
+            )),
+            Metric::ClientEventPoints { event_id } | Metric::ClientChallengePoints { event_id } => {
+                Some(PointBound::compile(
+                    pool,
+                    request,
+                    domain,
+                    input.ok_or_else(|| unavailable("missing event input"))?,
+                    *event_id,
+                    matches!(metric, Metric::ClientChallengePoints { .. }),
+                )?)
+            }
             _ => None,
         };
-        let fine = (setup.gk.is_some() || points.as_ref().is_some_and(|p| p.score_tiers.is_some()))
-            .then(|| envelope.into_joint_fine());
+        // Per-note caps of complete teams: one per performance order, and the cutoff tables of the simulations.
+        let fine = Some(envelope.into_joint_fine());
         // This estimate only orders branches. It never removes a pair or claims a native order.
         let priority = |(m, s): (usize, usize)| {
             let power =
@@ -247,6 +321,7 @@ impl JointBounds {
             lead: t.lead,
             profile: t.profile_of,
             gains,
+            order_gains,
             a0,
             global,
             eps,
@@ -255,6 +330,7 @@ impl JointBounds {
             correlation_scales,
             tails: None,
             composition: None,
+            modules: Vec::new(),
             gekisou: setup.gk.is_some(),
             class_search: false,
             class_resource_caps: false,
@@ -263,13 +339,15 @@ impl JointBounds {
             forced_tables: Default::default(),
             prefix_resource: None,
             prefix_character: None,
-            rush_prefix: std::cell::OnceCell::new(),
             choices,
             carrier_levels: None,
         };
         compiled.compile_tables(pool, domain);
         if !compiled.gekisou {
             compiled.composition = composition::CompositionTables::compile(&compiled, pool, domain);
+            if let Some(tables) = lambda::LambdaTables::compile(&compiled, pool, domain) {
+                compiled.modules.push(Box::new(tables));
+            }
         }
         if let Some((levels, carrier)) = levels {
             let at = levels
@@ -291,14 +369,16 @@ impl JointBounds {
         Ok(compiled)
     }
 
-    /// These cheap bounds with another linear envelope: the same power tables and choice order, no fine bound.
+    /// These cheap bounds with another linear envelope (per-position `gains`): the same power tables and choice order,
+    /// no fine bound.
     fn level(&self, pool: &Pool, domain: &CandidateDomain, a0: f64, global: f64, gains: Vec<Vec<[f64; 5]>>) -> Self {
         let mut b = Self {
             a: self.a.clone(),
             w: self.w.clone(),
             lead: self.lead.clone(),
             profile: self.profile.clone(),
-            gains,
+            gains: mean_table(&gains),
+            order_gains: gains,
             a0,
             global,
             eps: self.eps,
@@ -307,6 +387,7 @@ impl JointBounds {
             correlation_scales: self.correlation_scales,
             tails: None,
             composition: None,
+            modules: Vec::new(),
             gekisou: self.gekisou,
             class_search: false,
             class_resource_caps: false,
@@ -315,7 +396,6 @@ impl JointBounds {
             forced_tables: Default::default(),
             prefix_resource: None,
             prefix_character: None,
-            rush_prefix: std::cell::OnceCell::new(),
             choices: self.choices.clone(),
             carrier_levels: None,
         };
@@ -401,12 +481,13 @@ impl JointBounds {
             }
         }
         let env = keys.envelope(&ids[..n], r);
-        let mut placed = [[0f64; 5]; 5];
+        let mut order_placed = [[0f64; 5]; 5];
         for &slot in &SLOTS[..depth] {
-            placed[slot] = keys.gains(&env, p.members[slot], choices[slot]);
+            order_placed[slot] = keys.gains(&env, p.members[slot], choices[slot]);
         }
+        let placed = order_placed.map(|g| super::uniform::mean_row(&g));
         let a0 = keys.a0(&env, SLOTS[..depth].iter().map(|&slot| (p.members[slot], choices[slot])), free);
-        Some(Keyed { a0, placed })
+        Some(Keyed { a0, placed, order_placed })
     }
 
     /// The number of carrier levels compiled apart from the pool-wide bounds.
@@ -439,6 +520,38 @@ impl JointBounds {
     }
 
     pub(crate) fn is_pt(&self) -> bool {
+        self.points.as_ref().is_some_and(|pt| pt.target.is_none())
+    }
+
+    /// The per-order payoff steps of a score target or of points stepped by the local score, with this envelope's
+    /// global score cap (`payoff_cap_from` with every gain at the global coefficient); None for score payoffs, capped
+    /// scores and multiplayer rewards without score tiers.
+    pub(crate) fn score_steps(&self) -> Option<super::deck_payoff::ScoreSteps> {
+        use super::deck_payoff::Step;
+        let pt = self.points.as_ref()?;
+        let steps = match (pt.target, &pt.score_tiers) {
+            (Some(ScoreTarget::AtLeast(threshold)), _) => {
+                vec![(i128::MIN, Step::Target(false)), (i128::from(threshold), Step::Target(true))]
+            }
+            (Some(ScoreTarget::Capped(_)), _) | (None, None) => return None,
+            // `multiplier_at`: the prefix maximum of the tiers at or below a score.
+            (None, Some(tiers)) => {
+                let mut best = 0;
+                tiers
+                    .iter()
+                    .map(|&(score, multiplier)| {
+                        best = best.max(multiplier);
+                        (i128::from(score), Step::Points(best))
+                    })
+                    .collect()
+            }
+        };
+        Some(super::deck_payoff::ScoreSteps::new(self.global, self.eps, steps))
+    }
+
+    /// A bounded terminal objective may close its remaining Snap assignments once a power-ranked proposal
+    /// actually attains the whole composition's primary cap. The same proof covers PT and score targets.
+    pub(crate) fn has_terminal_payoff_cap(&self) -> bool {
         self.points.is_some()
     }
 
@@ -471,11 +584,14 @@ impl JointBounds {
         self.gekisou && self.points.is_none() && self.fine.is_some()
     }
 
-    /// Every deck containing member m earns at most this many PT in EVERY atom.
+    /// Every deck containing member m earns at most this many PT in every performance order.
     /// Distinct-character bonus maxima and distinct-Snap maxima are independent,
     /// so ignoring their pairing, leader and required-member conflicts is optimistic.
     pub(crate) fn member_pt_caps(&self, pool: &Pool, domain: &CandidateDomain) -> Option<Vec<(usize, i128)>> {
         let pt = self.points.as_ref()?;
+        if pt.target.is_some() {
+            return None;
+        }
         let mut chars = HashMap::<i64, i64>::new();
         for &m in domain.members() {
             let v = chars.entry(pool.members[m].character_id).or_default();
@@ -509,6 +625,9 @@ impl JointBounds {
         depth: usize,
     ) -> Option<i64> {
         let pt = self.points.as_ref()?;
+        if pt.target.is_some() {
+            return None;
+        }
         let mut chars = HashSet::new();
         let mut used = HashSet::new();
         let mut sum = 0;
@@ -567,9 +686,11 @@ impl JointBounds {
         Ok((keep.len() < domain.members().len()).then(|| domain.retain_proven_members(pool, &keep)))
     }
 
-    /// Optimistic (per-atom payoff, power) for every legal completion of this prefix.
+    /// Optimistic (payoff, power) for every legal completion of this prefix, read at `positions`: with the
+    /// position-mean gains, at any positions, a bound of the mean payoff over the performance orders.
     /// Remaining characters are distinct; their maxima may reuse a Snap or choose different
     /// members for power/gain/PT. Those relaxations only enlarge the completion set.
+    #[cfg(feature = "search-diagnostics")]
     pub(crate) fn upper(
         &self,
         pool: &Pool,
@@ -581,7 +702,7 @@ impl JointBounds {
         self.upper_keyed(pool, domain, p, depth, positions, None)
     }
 
-    /// The cheap bound at one native order, with the envelope of a node's placed carriers, if any.
+    /// The cheap bound, with the envelope of a node's placed carriers, if any.
     fn upper_keyed(
         &self,
         pool: &Pool,
@@ -599,10 +720,11 @@ impl JointBounds {
         self.payoff_cap_from(self.a0, power, gain, bonus)
     }
 
-    /// `payoff_cap` with the `A0` of some envelope at most this one's.
+    /// `payoff_cap` with the `A0` of some envelope at most this one's: a bound of the mean payoff over the orders when
+    /// `gain` sums position-mean gains.
     fn payoff_cap_from(&self, a0: f64, power: i64, gain: f64, bonus: i64) -> i128 {
         let score_cap = ((power as f64) * add_up(a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
-        self.points.as_ref().map_or(score_cap, |pt| ((bonus + 10000) * pt.multiplier_at(score_cap) / 10000) as i128)
+        self.points.as_ref().map_or(score_cap, |pt| pt.mean_payoff(bonus, score_cap))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1074,7 +1196,7 @@ impl JointBounds {
             })
             .min()
             .expect("three scales");
-        self.points.as_ref().map_or(score_cap, |pt| ((bonus + 10000) * pt.multiplier_at(score_cap) / 10000) as i128)
+        self.points.as_ref().map_or(score_cap, |pt| pt.mean_payoff(bonus, score_cap))
     }
 
     pub(crate) fn correlated_expected_upper(
@@ -1111,20 +1233,16 @@ impl JointBounds {
         Ok(total)
     }
 
-    /// Second stage, after the cheap bound survives. Every native-root position remains fixed.
-    pub(crate) fn rush_eligible(&self) -> bool {
-        self.fine.as_ref().is_some_and(|fine| fine.rush_eligible())
+    /// The bound modules of these bounds (see `NodeBound`).
+    pub(crate) fn modules(&self) -> &[Box<dyn NodeBound>] {
+        &self.modules
     }
 
     pub(crate) fn has_fine(&self) -> bool {
         self.fine.is_some()
     }
 
-    /// Every life a live of the compiled domain can reach, for the LUCK replay's life conditions.
-    pub(crate) fn luck_life(&self) -> Option<(i64, i64)> {
-        self.fine.as_ref().map(|fine| fine.life_range())
-    }
-
+    /// The fine payoff cap of a complete deck in the performance order with these positions.
     pub(crate) fn fine_upper(
         &self,
         domain: &CandidateDomain,
@@ -1132,18 +1250,18 @@ impl JointBounds {
         power: i64,
         positions: &[usize; 5],
         scratch: &mut JointScratch,
-        rush: Option<&super::snaps::RushMasks>,
     ) -> Option<i128> {
         let fine = self.fine.as_ref()?;
-        let choices =
-            p.snaps.map(|s| s.map_or(0, |s| domain.snaps().iter().position(|&v| v == s).expect("compiled Snap") + 1));
-        let score_cap = fine.upper(power, p.members, choices, positions, scratch, rush) as i128;
-        Some(self.points.as_ref().map_or(score_cap, |pt| {
-            let bonus: i64 = (0..5)
-                .map(|s| pt.member[p.members[s]] + if choices[s] == 0 { 0 } else { pt.snap[choices[s] - 1] })
-                .sum();
-            ((bonus + 10000) * pt.multiplier_at(score_cap) / 10000) as i128
-        }))
+        let choices = Self::prefix_choices(domain, p, 5);
+        let score_cap = fine.upper(power, p.members, choices, positions, scratch, None) as i128;
+        Some(self.points.as_ref().map_or(score_cap, |pt| pt.order_payoff(self.bonus_of(p, &choices), score_cap)))
+    }
+
+    /// The event bonus of a complete deck (0 without a PT objective).
+    fn bonus_of(&self, p: &PhysicalDeck, choices: &[usize; 5]) -> i64 {
+        self.points.as_ref().map_or(0, |pt| {
+            (0..5).map(|s| pt.member[p.members[s]] + if choices[s] == 0 { 0 } else { pt.snap[choices[s] - 1] }).sum()
+        })
     }
 
     /// Diagnostics only: the fine cap's per-entry terms at one native order.
@@ -1167,92 +1285,9 @@ impl JointBounds {
         p: &PhysicalDeck,
         power: i64,
         positions: &[usize; 5],
-        rush: Option<&super::snaps::RushMasks>,
     ) -> Option<(i64, Vec<[f64; 8]>)> {
-        let choices =
-            p.snaps.map(|s| s.map_or(0, |s| domain.snaps().iter().position(|&v| v == s).expect("compiled Snap") + 1));
-        Some(self.fine.as_ref()?.fine_trace(power, p.members, choices, positions, rush))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn fine_expected_upper(
-        &self,
-        domain: &CandidateDomain,
-        p: &PhysicalDeck,
-        power: i64,
-        orders: &[([usize; 5], u128)],
-        scratch: &mut JointScratch,
-        mut luck: Option<(&Pool, &mut super::luck::LuckOracle)>,
-    ) -> Result<Option<i128>, Error> {
-        if self.fine.is_none() {
-            return Ok(None);
-        }
-        let mut total = 0i128;
-        for (positions, weight) in orders {
-            let masks = if self.rush_eligible() {
-                match &mut luck {
-                    Some((pool, oracle)) => oracle.masks(pool, p, positions)?,
-                    None => None,
-                }
-            } else {
-                None
-            };
-            let cap = self.fine_upper(domain, p, power, positions, scratch, masks.as_ref()).expect("fine bound");
-            total = total
-                .checked_add(
-                    cap.checked_mul(i128::try_from(*weight).map_err(|_| unavailable("bound mass overflow"))?)
-                        .ok_or_else(|| unavailable("fine bound product overflow"))?,
-                )
-                .ok_or_else(|| unavailable("fine bound sum overflow"))?;
-        }
-        Ok(Some(total))
-    }
-
-    /// [`JointBounds::fine_expected_upper`] with each positions bucket's cap taken at its maximum over the
-    /// bucket's replay branches instead of their union. Every root of the bucket follows one branch, whose masks
-    /// cover its live, so the branch maximum bounds each root; a bucket without branch masks keeps its union cap.
-    /// None when no bucket has branch masks.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn fine_branch_upper(
-        &self,
-        domain: &CandidateDomain,
-        p: &PhysicalDeck,
-        power: i64,
-        orders: &[([usize; 5], u128)],
-        scratch: &mut JointScratch,
-        pool: &Pool,
-        oracle: &mut super::luck::LuckOracle,
-    ) -> Result<Option<i128>, Error> {
-        if self.fine.is_none() || !self.rush_eligible() {
-            return Ok(None);
-        }
-        let mut total = 0i128;
-        let mut refined = false;
-        for (positions, weight) in orders {
-            let cap = match oracle.branches(pool, p, positions)? {
-                Some(branches) => {
-                    refined = true;
-                    let mut cap = 0i128;
-                    for masks in branches.iter() {
-                        cap = cap.max(
-                            self.fine_upper(domain, p, power, positions, scratch, Some(masks)).expect("fine bound"),
-                        );
-                    }
-                    cap
-                }
-                None => {
-                    let masks = oracle.masks(pool, p, positions)?;
-                    self.fine_upper(domain, p, power, positions, scratch, masks.as_ref()).expect("fine bound")
-                }
-            };
-            total = total
-                .checked_add(
-                    cap.checked_mul(i128::try_from(*weight).map_err(|_| unavailable("bound mass overflow"))?)
-                        .ok_or_else(|| unavailable("fine bound product overflow"))?,
-                )
-                .ok_or_else(|| unavailable("fine bound sum overflow"))?;
-        }
-        Ok(refined.then_some(total))
+        let choices = Self::prefix_choices(domain, p, 5);
+        Some(self.fine.as_ref()?.fine_trace(power, p.members, choices, positions, None))
     }
 
     pub(crate) fn raw_upper(
@@ -1262,29 +1297,107 @@ impl JointBounds {
         power: i64,
         positions: &[usize; 5],
     ) -> Option<i128> {
-        let choices =
-            p.snaps.map(|s| s.map_or(0, |s| domain.snaps().iter().position(|&v| v == s).expect("compiled Snap") + 1));
+        let choices = Self::prefix_choices(domain, p, 5);
         let cap = self.fine.as_ref()?.raw_upper(power, p.members, choices, positions)?;
-        Some(self.points.as_ref().map_or(cap, |pt| {
-            let bonus: i64 = (0..5)
-                .map(|s| pt.member[p.members[s]] + if choices[s] == 0 { 0 } else { pt.snap[choices[s] - 1] })
-                .sum();
-            ((bonus + 10000) * pt.multiplier_at(cap) / 10000) as i128
-        }))
+        Some(self.points.as_ref().map_or(cap, |pt| pt.order_payoff(self.bonus_of(p, &choices), cap)))
     }
-    pub(crate) fn raw_expected_upper(
+
+    /// The cheap payoff cap of a complete team in each performance order (`orders` holds the positions of each), at
+    /// its exact power: the envelope of its Gekisou combo carrier level, keyed by its carriers, read at the order's
+    /// positions with the per-position gains. Their sum bounds the team's payoff numerator over the orders and is at
+    /// most [`super::uniform::ORDERS`] times its position-mean cheap bound.
+    pub(crate) fn order_cheap_caps(
         &self,
         domain: &CandidateDomain,
         p: &PhysicalDeck,
         power: i64,
-        orders: &[([usize; 5], u128)],
-    ) -> Option<i128> {
-        let mut total = 0i128;
-        for (positions, mass) in orders {
-            total = total
-                .checked_add(self.raw_upper(domain, p, power, positions)?.checked_mul(i128::try_from(*mass).ok()?)?)?;
+        orders: &[[usize; 5]],
+    ) -> Vec<i128> {
+        let choices = Self::prefix_choices(domain, p, 5);
+        let level = self.carrier_level(self.carriers_placed(p, 5, &choices));
+        let keyed = self.keyed(p, 5, &choices, 0, 0);
+        let a0 = keyed.as_ref().map_or(level.a0, |k| k.a0);
+        let bonus = self.bonus_of(p, &choices);
+        orders
+            .iter()
+            .map(|positions| {
+                let mut gain = 0.0;
+                for slot in 0..5 {
+                    let g = keyed
+                        .as_ref()
+                        .map_or(level.order_gains[p.members[slot]][choices[slot]][positions[slot]], |k| {
+                            k.order_placed[slot][positions[slot]]
+                        });
+                    gain = add_up(gain, g);
+                }
+                let score_cap =
+                    ((power as f64) * add_up(a0, gain).min(level.global) * (1.0 + level.eps)).ceil() as i128;
+                level.points.as_ref().map_or(score_cap, |pt| pt.order_payoff(bonus, score_cap))
+            })
+            .collect()
+    }
+
+    /// Lowers each per-order cap of a complete team (see [`JointBounds::order_cheap_caps`]) to its raw and fine caps
+    /// at that order, when compiled.
+    pub(crate) fn tighten_order_caps(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        power: i64,
+        orders: &[[usize; 5]],
+        caps: &mut [i128],
+        scratch: &mut JointScratch,
+    ) {
+        if self.fine.is_none() {
+            return;
         }
-        Some(total)
+        for (positions, cap) in orders.iter().zip(caps.iter_mut()) {
+            if let Some(raw) = self.raw_upper(domain, p, power, positions) {
+                *cap = (*cap).min(raw);
+            }
+            *cap = (*cap).min(self.fine_upper(domain, p, power, positions, scratch).expect("compiled fine bound"));
+        }
+    }
+
+    /// [`JointBounds::tighten_order_caps`] that stops once `below` holds for the sum of the caps, the orders done
+    /// at their lowered caps and the others at their caps so far; true when it stopped so, or when `below` holds
+    /// for the sum of all lowered caps. A cap only goes down, so the sum of the lowered caps is at most any such
+    /// partial sum and the answer is the one of the complete sum when `below` holds for every smaller sum too.
+    /// `computed` counts the orders whose raw and fine caps it computed.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn tighten_order_caps_until(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        power: i64,
+        orders: &[[usize; 5]],
+        caps: &mut [i128],
+        scratch: &mut JointScratch,
+        below: impl Fn(i128) -> bool,
+        computed: &mut u64,
+    ) -> bool {
+        let Some(mut sum) = caps.iter().try_fold(0i128, |a, &c| a.checked_add(c)) else {
+            self.tighten_order_caps(domain, p, power, orders, caps, scratch);
+            *computed += orders.len() as u64;
+            return below(caps.iter().fold(0i128, |a, &c| a.saturating_add(c)));
+        };
+        if self.fine.is_none() {
+            return below(sum);
+        }
+        for (positions, cap) in orders.iter().zip(caps.iter_mut()) {
+            let mut lowered = *cap;
+            if let Some(raw) = self.raw_upper(domain, p, power, positions) {
+                lowered = lowered.min(raw);
+            }
+            lowered = lowered.min(self.fine_upper(domain, p, power, positions, scratch).expect("compiled fine bound"));
+            *computed += 1;
+            sum -= *cap - lowered;
+            *cap = lowered;
+            if below(sum) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Sum integer per-order caps using exact masses; no floating expectation or free order selection.
@@ -1324,26 +1437,169 @@ impl JointBounds {
         }
         Ok((total, power))
     }
-}
 
-pub(crate) fn positions(root: i32) -> Result<[usize; 5], Error> {
-    let (order, _) = super::expectation::native_member_order(root)?;
-    let mut positions = [0; 5];
-    for (k, &slot) in order.iter().enumerate() {
-        positions[slot] = k;
+    /// A node bound that keeps the payoff step of each performance order (`positions`, one per order). The placed
+    /// slots read their gains at the order's positions (keyed when the node has a keyed envelope) and each slot to
+    /// fill the largest gain a remaining pair of `open` (the members and choices the open slots may take) has at its
+    /// position. Power and event bonus stay paired: a completion's pair is at most the placed one plus, per slot to
+    /// fill, the pair of some remaining member and choice (characters and Snaps may repeat), so it is dominated by a
+    /// point of the Pareto frontier of those sums, and each part is also at most its relaxed maximum of
+    /// [`JointBounds::relax`]. An order's payoff is nondecreasing in its score cap and its bonus, so the sum over the
+    /// orders of the frontier's best payoff bounds the payoff numerator of every completion without the concave
+    /// majorant that the position-mean bound needs. With no remaining pair the prefix has no completion and the
+    /// bound is `i128::MIN`. Needs the leader placed (`depth > 0`). None without a point or score-target payoff, or
+    /// on overflow.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn order_step_upper(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        positions: &[[usize; 5]],
+        keyed: Option<&Keyed>,
+        open: &[(usize, usize)],
+    ) -> Option<(i128, i64)> {
+        let pt = self.points.as_ref()?;
+        if depth == 0 {
+            return None;
+        }
+        let (power, _, bonus) = self.relax(pool, domain, p, depth, &SLOTS[depth..], &[0, 1, 2, 3, 4], keyed);
+        let profile = self.profile[p.members[2]];
+        let choices = Self::prefix_choices(domain, p, depth);
+        let characters = SLOTS.map(|slot| pool.members[p.members[slot]].character_id);
+        let characters = &characters[..depth];
+        let used = SLOTS.map(|slot| p.snaps[slot]);
+        let used = &used[..depth];
+        let (mut placed_power, mut placed_bonus) = (0i64, 0i64);
+        for &slot in &SLOTS[..depth] {
+            let (m, choice) = (p.members[slot], choices[slot]);
+            placed_power += self.a[m] + self.lead[profile][m] + if choice == 0 { 0 } else { self.w[m][choice - 1] };
+            placed_bonus += pt.member[m] + if choice == 0 { 0 } else { pt.snap[choice - 1] };
+        }
+        let mut free = [0f64; 5];
+        // The Pareto frontier of the remaining pairs in one pass while their bonuses do not increase (the candidate
+        // order sorts by bonus first), else by a sort.
+        let (mut single, mut ordered, mut any) = (Vec::new(), true, false);
+        let mut run = i64::MIN;
+        for &(m, choice) in open {
+            if characters.contains(&pool.members[m].character_id)
+                || choice > 0 && used.contains(&Some(domain.snaps()[choice - 1]))
+            {
+                continue;
+            }
+            any = true;
+            for (position, g) in free.iter_mut().enumerate() {
+                *g = g.max(self.order_gains[m][choice][position]);
+            }
+            let pair = (
+                self.a[m] + self.lead[profile][m] + if choice == 0 { 0 } else { self.w[m][choice - 1] },
+                pt.member[m] + if choice == 0 { 0 } else { pt.snap[choice - 1] },
+            );
+            if !ordered {
+                single.push(pair);
+                continue;
+            }
+            match single.last() {
+                Some(&(_, b)) if pair.1 > b => {
+                    ordered = false;
+                    single.push(pair);
+                }
+                _ if pair.0 <= run => {}
+                Some(&(_, b)) if pair.1 == b => *single.last_mut().expect("nonempty") = pair,
+                _ => single.push(pair),
+            }
+            run = run.max(pair.0);
+        }
+        if !any && depth < 5 {
+            return Some((i128::MIN, i64::MIN));
+        }
+        let single = if ordered { single } else { pareto_pairs(single) };
+        let mut sums = vec![(placed_power, placed_bonus)];
+        for _ in depth..5 {
+            sums = pareto_pairs(
+                sums.iter().flat_map(|&(a, b)| single.iter().map(move |&(c, d)| (a + c, b + d))).collect(),
+            );
+        }
+        let sums: Vec<(i64, i64)> = sums.into_iter().map(|(a, b)| (a.min(power), b.min(bonus))).collect();
+        let a0 = keyed.map_or(self.a0, |k| k.a0);
+        let mut factors: Vec<f64> = positions
+            .iter()
+            .map(|order| {
+                let mut gain = 0.0;
+                for (k, &slot) in SLOTS.iter().enumerate() {
+                    let g = if k < depth {
+                        keyed.map_or(self.order_gains[p.members[slot]][choices[slot]][order[slot]], |placed| {
+                            placed.order_placed[slot][order[slot]]
+                        })
+                    } else {
+                        free[order[slot]]
+                    };
+                    gain = add_up(gain, g);
+                }
+                add_up(a0, gain).min(self.global) * (1.0 + self.eps)
+            })
+            .collect();
+        // Orders with the same factor share their payoff.
+        factors.sort_unstable_by(f64::total_cmp);
+        let mut total = 0i128;
+        for run in factors.chunk_by(|a, b| a.to_bits() == b.to_bits()) {
+            let best = sums
+                .iter()
+                .map(|&(sum_power, sum_bonus)| pt.order_payoff(sum_bonus, ((sum_power as f64) * run[0]).ceil() as i128))
+                .max()?;
+            total = total.checked_add(best.checked_mul(run.len() as i128)?)?;
+        }
+        Some((total, power))
     }
-    Ok(positions)
-}
-
-pub(crate) fn order_law(law: &super::expectation::FiniteSeedLaw) -> Result<Vec<([usize; 5], u128)>, Error> {
-    let mut orders = std::collections::BTreeMap::<[usize; 5], u128>::new();
-    for &(root, weight) in law.atoms() {
-        *orders.entry(positions(root)?).or_default() += u128::from(weight);
-    }
-    Ok(orders.into_iter().collect())
 }
 
 impl PointBound {
+    fn score_target(members: usize, snaps: usize, target: ScoreTarget) -> Self {
+        Self {
+            member: vec![0; members],
+            snap: vec![0; snaps],
+            multiplier: match target {
+                ScoreTarget::AtLeast(_) => 1,
+                ScoreTarget::Capped(t) => i64::from(t),
+            },
+            score_tiers: None,
+            hull: None,
+            target: Some(target),
+        }
+    }
+    /// The PT of one performance order of a deck with this event bonus whose score is at most `score_cap`.
+    fn order_payoff(&self, bonus: i64, score_cap: i128) -> i128 {
+        if let Some(target) = self.target {
+            return match target {
+                ScoreTarget::AtLeast(threshold) => i128::from(score_cap >= i128::from(threshold)),
+                ScoreTarget::Capped(threshold) => score_cap.min(i128::from(threshold)),
+            };
+        }
+        ((bonus + 10000) * self.multiplier_at(score_cap) / 10000) as i128
+    }
+
+    /// A bound of the mean PT over the performance orders of a deck with this event bonus whose mean score is at most
+    /// `score_cap`. The PT of an order is `(bonus + 10000) * m(S) / 10000` with `m` the step multiplier, which is not
+    /// concave; its concave majorant `M` gives `E[m(S)] <= E[M(S)] <= M(E[S]) <= M(score_cap)` (Jensen, `M`
+    /// non-decreasing), and the rounding goes up. Without score tiers the multiplier is constant.
+    fn mean_payoff(&self, bonus: i64, score_cap: i128) -> i128 {
+        if let Some(target) = self.target {
+            return match target {
+                // A bound on E[S] alone cannot rule out S >= threshold, especially for signed network scores.
+                // Per-order caps above can still prove impossibility without exchanging expectation and cutoff.
+                ScoreTarget::AtLeast(_) => 1,
+                // min(S,t) is nondecreasing and concave on the entire signed score domain.
+                ScoreTarget::Capped(threshold) => score_cap.min(i128::from(threshold)),
+            };
+        }
+        match &self.hull {
+            None => ((bonus + 10000) * self.multiplier / 10000) as i128,
+            Some(hull) => super::uniform::concave_value_ceil(hull, score_cap, i128::from(bonus + 10000), 10000)
+                .expect("PT values in the nonwrapping domain"),
+        }
+    }
+
     fn multiplier_at(&self, score_cap: i128) -> i64 {
         self.score_tiers.as_ref().map_or(self.multiplier, |tiers| {
             tiers
@@ -1361,16 +1617,18 @@ impl PointBound {
         domain: &CandidateDomain,
         input: &EventPayoffInput,
         event_id: i64,
+        challenge_points: bool,
     ) -> Result<Self, Error> {
         use ournotes_sim::event::{self, EventCard};
         let context = request.objective.context().ok_or_else(|| unavailable("PT needs resolved context"))?;
         let q = context.event_request(pool.master, input, event_id)?;
-        if !matches!(q.route, event::EventResultRoute::NormalPlayed) || q.holding_event_ids != [event_id] {
-            return Err(unavailable("PT bound requires one held normal-played event"));
-        }
+        let route = point_route::PointRoute::compile(pool.master, &q, event_id, challenge_points)?;
         let effects = [event::event_effects(pool.master, event_id)];
         let mut member = vec![0; pool.members.len()];
         for &m in domain.members() {
+            if challenge_points {
+                continue;
+            }
             member[m] = event::total_effect_10000(
                 &effects,
                 Some(EventCard::Member(&ournotes_sim::bonus::event_member(pool.master, &pool.members[m]))),
@@ -1381,6 +1639,9 @@ impl PointBound {
             .snaps()
             .iter()
             .map(|&s| {
+                if challenge_points {
+                    return Ok(0);
+                }
                 event::total_effect_10000(
                     &effects,
                     Some(EventCard::Snap(&ournotes_sim::bonus::event_snap(&pool.snaps[s]))),
@@ -1397,27 +1658,56 @@ impl PointBound {
             .live_music(context.resolved.live_music_id)
             .ok_or_else(|| unavailable("missing music"))?
             .live_score_rank_group;
-        // Include score zero and all reachable rank thresholds. No monotonic PT table assumption.
+        let multiplayer = matches!(
+            context.scenario,
+            ournotes_sim::scenario::Scenario::Battle(_) | ournotes_sim::scenario::Scenario::Arena(_)
+        );
+        let room = if multiplayer { input.multiplayer_score_policy.as_ref() } else { None };
+        // Include score zero and every local-score preimage of a native result-rank threshold. Room totals must
+        // be calculated for each outcome; a rank at mean score is not the mean of the per-order PT payoff.
         let mut scores = vec![0];
         scores.extend(
             event::rank_rows_of_group(pool.master, group)
                 .iter()
-                .map(|r| r.required_score)
+                .map(|r| match room {
+                    Some(policy) => {
+                        let threshold =
+                            event::battle_required_score(r.battle_live_required_score, policy.players()) as i64;
+                        match *policy {
+                            ournotes_sim::scenario::MultiplayerScorePolicy::SameScore { players } => {
+                                (threshold.max(0) + players - 1) / players
+                            }
+                            ournotes_sim::scenario::MultiplayerScorePolicy::FixedOthersAverage { players, score } => {
+                                (threshold - (players - 1) * score as i64).max(0)
+                            }
+                        }
+                    }
+                    None => r.required_score,
+                })
                 .filter(|&v| (0..=i32::MAX as i64).contains(&v)),
         );
-        let ev = pool.master.event(event_id).ok_or_else(|| unavailable("missing event"))?;
         scores.sort_unstable();
         scores.dedup();
         let mut values = Vec::new();
         for &score in &scores {
-            let rank = event::score_rank(pool.master, group, score)?;
-            let value = event::music_score_event_point(pool.master, ev.live_event_point_group, rank)
-                .ok_or_else(|| unavailable("missing reachable PT rank"))?;
-            event::music_score_challenge_point(pool.master, rank)
-                .ok_or_else(|| unavailable("missing reachable challenge rank"))?;
-            values.push(value);
+            let rank = match room {
+                Some(policy) => {
+                    let total = match *policy {
+                        ournotes_sim::scenario::MultiplayerScorePolicy::SameScore { players } => score * players,
+                        ournotes_sim::scenario::MultiplayerScorePolicy::FixedOthersAverage { players, score: peer } => {
+                            score + (players - 1) * peer as i64
+                        }
+                    };
+                    event::battle_score_rank(pool.master, group, total, policy.players())
+                }
+                None => event::score_rank(pool.master, group, score)?,
+            };
+            values.push(route.value_at_rank(pool.master, rank)?);
         }
-        let rate = event::boost_bonus(pool.master, q.consumed_count as i64)?[4];
+        if multiplayer {
+            values.extend(signed_network_reward_values(pool.master, &route, group));
+        }
+        let rate = route.rate();
         if !(0..=i32::MAX as i64).contains(&rate) || values.iter().any(|v| !(0..=i32::MAX as i64).contains(v)) {
             return Err(unavailable("PT rate/value outside nonwrapping domain"));
         }
@@ -1426,17 +1716,121 @@ impl PointBound {
             .checked_mul(values.iter().copied().max().unwrap_or(0))
             .ok_or_else(|| unavailable("PT product overflow"))?;
         let base = maximum_bonus + 10000;
-        if base > i32::MAX as i64
-            || base.checked_mul(rate).is_none_or(|v| v > i32::MAX as i64)
-            || base.checked_mul(multiplier).is_none_or(|v| v > i32::MAX as i64)
+        if (challenge_points && multiplier > i32::MAX as i64)
+            || (!challenge_points
+                && (base > i32::MAX as i64
+                    || base.checked_mul(rate).is_none_or(|v| v > i32::MAX as i64)
+                    || base.checked_mul(multiplier).is_none_or(|v| v > i32::MAX as i64)))
         {
             return Err(unavailable("PT intermediate wrapping requires exhaustive fallback"));
         }
-        let score_tiers = (!matches!(
-            context.scenario,
-            ournotes_sim::scenario::Scenario::Battle(_) | ournotes_sim::scenario::Scenario::Arena(_)
-        ))
-        .then(|| scores.into_iter().zip(values).map(|(s, v)| (s, v * rate)).collect());
-        Ok(Self { member, snap, multiplier, score_tiers })
+        // A negative network rank bonus can produce a negative terminal score. A concave hull built only on
+        // nonnegative score tiers cannot bound rewards at negative scores from E[S]; such a room, and a multiplayer
+        // result without a declared room score policy, keeps the maximum defined native reward over the entire i32
+        // rank domain. Every confirmed bonus nonnegative, the terminal score is nonnegative and the declared room
+        // total is nondecreasing in it, so the local-score preimages step the reward as in a solo Live.
+        let signed = context.rank_confirmations.iter().flatten().any(|c| c.percent < 0);
+        let score_tiers: Option<Vec<(i64, i64)>> = (!multiplayer || (room.is_some() && !signed))
+            .then(|| scores.into_iter().zip(values).map(|(s, v)| (s, v * rate)).collect());
+        let hull = score_tiers.as_deref().map(super::uniform::concave_majorant);
+        Ok(Self { member, snap, multiplier, score_tiers, hull, target: None })
+    }
+}
+
+fn signed_network_reward_values(
+    master: &ournotes_sim::master::Master,
+    route: &point_route::PointRoute,
+    group: i64,
+) -> Vec<i64> {
+    use ournotes_sim::event;
+    let mut ranks = vec![event::RANK_NONE];
+    ranks.extend(
+        event::rank_rows_of_group(master, group)
+            .iter()
+            .map(|row| if row.live_score_rank == event::RANK_E { event::RANK_D } else { row.live_score_rank }),
+    );
+    ranks.sort_unstable();
+    ranks.dedup();
+    // A missing native reward row has no terminal payoff to bound: exact settlement still reports its Game error.
+    // Defined NONE rows must be included even though the first ordinary threshold is at score zero.
+    ranks.into_iter().filter_map(|rank| route.value_at_rank(master, rank).ok()).collect()
+}
+
+#[cfg(test)]
+mod network_point_tests {
+    use super::*;
+    use ournotes_sim::{event, master::Master};
+    use serde_json::json;
+
+    #[test]
+    fn score_target_caps_preserve_signed_means_and_per_order_cutoffs() {
+        for threshold in [1, 10, 100] {
+            let probability = PointBound::score_target(0, 0, ScoreTarget::AtLeast(threshold));
+            let capped = PointBound::score_target(0, 0, ScoreTarget::Capped(threshold));
+            for a in [-1000i128, -10, 0, 1, 10, 100, 1000] {
+                assert_eq!(probability.order_payoff(0, a), i128::from(a >= threshold as i128));
+                assert_eq!(capped.order_payoff(0, a), a.min(threshold as i128));
+                for b in [-1000i128, -10, 0, 1, 10, 100, 1000] {
+                    let mean_ceiling = (a + b).div_euclid(2) + i128::from((a + b).rem_euclid(2) != 0);
+                    assert!(
+                        2 * probability.mean_payoff(0, mean_ceiling)
+                            >= i128::from(a >= threshold as i128) + i128::from(b >= threshold as i128)
+                    );
+                    assert!(
+                        2 * capped.mean_payoff(0, mean_ceiling) >= a.min(threshold as i128) + b.min(threshold as i128)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pareto_pairs_keep_exactly_the_undominated_pairs() {
+        let pairs = vec![(5, 1), (3, 4), (5, 2), (1, 9), (3, 3), (2, 4), (1, 9), (0, 10)];
+        assert_eq!(pareto_pairs(pairs), vec![(5, 2), (3, 4), (1, 9), (0, 10)]);
+    }
+
+    #[test]
+    fn negative_network_score_none_reward_is_in_ep_and_cp_caps() {
+        let tables = json!({
+            "MasterEvent":[{"_id":7,"_liveEventPointGroup":1}],
+            "MasterLiveScoreRank":[{"_id":1,"_group":1,"_liveScoreRank":2,"_requiredScore":0,"_battleLiveRequiredScore":0}],
+            "MasterLiveEventPoint":[{"_id":1,"_group":1,"_scoreRank":0,"_value":100},{"_id":2,"_group":1,"_scoreRank":2,"_value":1}],
+            "MasterLiveChallengePoint":[{"_id":1,"_scoreRank":0,"_value":100},{"_id":2,"_scoreRank":2,"_value":1}],
+            "MasterLiveMusicBoostBonus":[{"_id":1,"_consumedLiveBoostCount":0,"_eventPointRate":1}]
+        });
+        let texts: Vec<_> = tables
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(name, rows)| (name.clone(), json!({"_allData":rows}).to_string()))
+            .collect();
+        let master =
+            Master::from_json_tables(|name| texts.iter().find(|(key, _)| key == name).map(|(_, text)| text.as_str()))
+                .unwrap();
+        let request = event::EventPointRequest {
+            route: event::EventResultRoute::NormalPlayed,
+            holding_event_ids: vec![7],
+            consumed_count: 0,
+            local_events: vec![event::LocalEvent { event_id: 7, points: 0, challenge_points: 0, added: Vec::new() }],
+        };
+        assert_eq!(event::battle_score_rank(&master, 1, -1, 1), event::RANK_NONE);
+        assert_eq!(event::battle_score_rank(&master, 1, 0, 1), event::RANK_D);
+        for cp in [false, true] {
+            let route = point_route::PointRoute::compile(&master, &request, 7, cp).unwrap();
+            let multiplier = signed_network_reward_values(&master, &route, 1).into_iter().max().unwrap() * route.rate();
+            let bound = PointBound {
+                member: Vec::new(),
+                snap: Vec::new(),
+                multiplier,
+                score_tiers: None,
+                hull: None,
+                target: None,
+            };
+            assert_eq!(route.value_at_rank(&master, event::RANK_NONE).unwrap(), 100);
+            assert_eq!(bound.order_payoff(0, 10), 100);
+            assert_eq!(bound.mean_payoff(0, 10), 100);
+            assert_eq!(bound.mean_payoff(0, -1), 100);
+        }
     }
 }

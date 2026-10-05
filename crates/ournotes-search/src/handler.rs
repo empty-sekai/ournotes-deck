@@ -1,6 +1,6 @@
 //! Build an immutable search problem from one dataset, roster and explicit goal.
 //! No search, candidate truncation or gameplay simulation runs during construction.
-use crate::search::expectation::{self, FiniteSeedLaw};
+use crate::search::expectation;
 use crate::search::{GekisouObjective, Objective, PlayInput, SearchRequest, SeedSet};
 use crate::types::*;
 use ournotes_sim::pool::Pool;
@@ -21,6 +21,7 @@ pub(crate) use validation::{reject_unsupported_lifecycle, validate};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SolverRoute {
+    /// The member-set route of the wire format. Formal requests do not select it.
     CanonicalPowerSkip,
     PhysicalExhaustive,
     PhysicalBranchAndBound,
@@ -30,7 +31,6 @@ pub enum SolverRoute {
 /// Frozen semantic inputs shared by search and fixed-deck evaluation.
 pub struct SearchContext {
     pub(crate) request: SearchRequest,
-    pub(crate) law: FiniteSeedLaw,
     pub(crate) context_input: ContextInput,
     pub(crate) player_goal: GoalDescription,
     pub(crate) resolved_context: serde_json::Value,
@@ -46,9 +46,6 @@ impl SearchContext {
     }
     pub fn route(&self) -> SolverRoute {
         self.route
-    }
-    pub fn seed_law(&self) -> &FiniteSeedLaw {
-        &self.law
     }
     pub fn resolved_context(&self) -> &serde_json::Value {
         &self.resolved_context
@@ -75,10 +72,14 @@ impl<'m> BuiltProblem<'m> {
 
 pub(crate) struct ExecutionPlan {
     pub(crate) joint: Option<crate::search::joint::JointBounds>,
+    pub(crate) deck_payoff: Option<crate::search::deck_payoff::DeckPayoffBounds>,
+    pub(crate) team_power: Option<crate::search::team_power::TeamPowerBounds>,
     /// When the bound compile began, and its duration (zero without branch-and-bound).
     pub(crate) bound_compile_started: crate::clock::Instant,
     pub(crate) bound_compile_ms: f64,
     pub(crate) bound_fallback: Option<String>,
+    /// Why a played solo Live's payoff steps have no deck payoff ranking.
+    pub(crate) deck_payoff_refusal: Option<String>,
     pub(crate) domain: CandidateDomain,
     pub(crate) song: Option<SongView>,
     pub(crate) event: bool,
@@ -109,9 +110,50 @@ pub(crate) fn compile_execution(
     }
     let domain = CandidateDomain::build(pool, &request.constraints)?;
     let started = crate::clock::Instant::now();
-    let (joint, bound_fallback) = if matches!(strategy, Strategy::BranchAndBound) {
+    let mut deck_payoff = None;
+    let mut deck_payoff_refusal = None;
+    let mut team_power = None;
+    let (joint, bound_fallback) = if matches!(strategy, Strategy::BranchAndBound)
+        && crate::search::team_power::applies(&request.objective, metric)
+    {
+        match crate::search::team_power::TeamPowerBounds::compile(pool, request, &domain, metric) {
+            Ok(bound) => {
+                team_power = Some(bound);
+                (None, None)
+            }
+            Err(reason) => (None, Some(reason.to_string())),
+        }
+    } else if matches!(strategy, Strategy::BranchAndBound)
+        && (matches!(metric, Metric::ConditionalClientEventItems { .. })
+            || (matches!(request.objective.inner(), Objective::SkipScore { .. })
+                && matches!(metric, Metric::ClientEventPoints { .. } | Metric::ClientChallengePoints { .. })))
+    {
+        match crate::search::deck_payoff::DeckPayoffBounds::compile(pool, request, &domain, metric, event_input, None) {
+            Ok(bound) => {
+                deck_payoff = Some(bound);
+                (None, None)
+            }
+            Err(reason) => (None, Some(reason.to_string())),
+        }
+    } else if matches!(strategy, Strategy::BranchAndBound) {
         match crate::search::joint::JointBounds::compile(pool, request, &domain, metric, event_input, simulation) {
-            Ok(bound) => (Some(bound), None),
+            Ok(bound) => {
+                // A played Live whose payoff steps with the local score is first ranked by deck under its score cap.
+                if let Some(steps) = bound.score_steps() {
+                    match crate::search::deck_payoff::DeckPayoffBounds::compile(
+                        pool,
+                        request,
+                        &domain,
+                        metric,
+                        event_input,
+                        Some(steps),
+                    ) {
+                        Ok(b) => deck_payoff = Some(b),
+                        Err(reason) => deck_payoff_refusal = Some(reason.to_string()),
+                    }
+                }
+                (Some(bound), None)
+            }
             Err(reason) => (None, Some(reason.to_string())),
         }
     } else {
@@ -121,9 +163,12 @@ pub(crate) fn compile_execution(
         if matches!(strategy, Strategy::BranchAndBound) { started.elapsed().as_secs_f64() * 1000.0 } else { 0.0 };
     Ok(ExecutionPlan {
         joint,
+        deck_payoff,
+        team_power,
         bound_compile_started: started,
         bound_compile_ms,
         bound_fallback,
+        deck_payoff_refusal,
         domain,
         song,
         event,
@@ -157,8 +202,11 @@ pub fn build_card_pool<'m>(
         event_payoff: None,
     });
     let fevers = score_id.and_then(|i| data.data_chart(i)).map(|c| c.fevers.as_slice()).unwrap_or(&[]);
-    let context =
+    let mut context =
         r.scenario.as_ref().map(|s| context_input.resolve(&data.master, s.scenario(), score_id, fevers)).transpose()?;
+    if let Some(context) = &mut context {
+        context.rank_confirmations = r.network_confirmations.clone();
+    }
     let pool = match &context {
         Some(c) => c.pool(&data.master, roster)?,
         None => {
@@ -187,6 +235,10 @@ pub fn build_card_pool<'m>(
                     &JustRule::new(&data.master, &ctx.gekisou)?,
                 )?,
                 PlayPolicy::TheoreticalBest => JudgementStream::theoretical_best(&chart),
+                PlayPolicy::Accuracy(accuracy) => {
+                    let rule = gekisou.then(|| JustRule::new(&data.master, &ctx.gekisou)).transpose()?;
+                    JudgementStream::with_accuracy(&chart, &dc.judgement_types, rule.as_ref(), *accuracy)?.0
+                }
             };
             Objective::LiveScore {
                 score_id: *score_id,
@@ -204,24 +256,12 @@ pub fn build_card_pool<'m>(
     };
     let objective = expectation::normalized_objective(&objective);
     let request = SearchRequest { objective, k: r.k, constraints: r.constraints.clone(), time_limit: None };
-    let law = match (&r.execution, &r.seed_law) {
-        (Execution::Live { .. }, Some(l)) => {
-            if l.provenance.trim().is_empty() {
-                return Err(Error::Input("seedLaw.provenance must declare its assumption/source".into()));
-            }
-            FiniteSeedLaw::new(l.atoms.clone())?
-        }
-        (Execution::Live { .. }, None) => {
-            return Err(Error::Input(
-                "live requires explicit positive-mass seedLaw; native TickCount population law is unknown".into(),
-            ));
-        }
-        (_, Some(_)) => return Err(Error::Input("seedLaw applies only to played live".into())),
-        _ => FiniteSeedLaw::new(vec![(0, 1)])?,
-    };
-    validate(r.k, &law, &r.limits, &r.strategy)?;
+    validate(r.k, &r.limits, &r.strategy)?;
+    if r.initial_decks.len() > MAX_INITIAL_DECKS {
+        return Err(Error::Capacity(format!("at most {MAX_INITIAL_DECKS} initialDecks")));
+    }
     validate_payoff(&pool, &request, &r.metric, context_input.event_payoff.as_ref())?;
-    let resolved_context = serde_json::json!({"dataProvenance":data.provenance,"scenario":context.as_ref().map(|c|format!("{:?}",c.scenario)),"baseLiveMusicId":context.as_ref().map(|c|c.resolved.live_music_id),"scoreId":score_id,"calcEventParameter":context.as_ref().map(|c|c.resolved.calc_event_parameter),"skillTargetMusicType":context.as_ref().map(|c|c.resolved.skill_target_music_type),"gekisouMissions":context.as_ref().map(|c|c.resolved.gekisou_missions),"context":context_input,"simulation":r.simulation,"networkConfirmations":r.network_confirmations,"playPolicy":match &r.execution {Execution::Live{play:PlayPolicy::TheoreticalBest,..}=>"explicit theoretical AP/Just scenario",Execution::Live{..}=>"declared judgement stream",_=>"deterministic"},"eligibility":"unlock/progression eligibility not inferred","nativeEvidence":"1.0.1-25 AArch64; selected regional master is explicit data, online patch/version parity not inferred"});
+    let resolved_context = serde_json::json!({"dataProvenance":data.provenance,"scenario":context.as_ref().map(|c|format!("{:?}",c.scenario)),"baseLiveMusicId":context.as_ref().map(|c|c.resolved.live_music_id),"scoreId":score_id,"calcEventParameter":context.as_ref().map(|c|c.resolved.calc_event_parameter),"skillTargetMusicType":context.as_ref().map(|c|c.resolved.skill_target_music_type),"gekisouMissions":context.as_ref().map(|c|c.resolved.gekisou_missions),"context":context_input,"simulation":r.simulation,"networkConfirmations":r.network_confirmations,"playPolicy":match &r.execution {Execution::Live{play:PlayPolicy::TheoreticalBest,..}=>"explicit theoretical AP/Just scenario",Execution::Live{play:PlayPolicy::Accuracy(_),..}=>"theoretical play with declared Great/Just shares",Execution::Live{..}=>"declared judgement stream",_=>"deterministic"},"eligibility":"unlock/progression eligibility not inferred","nativeEvidence":"1.0.1-25 AArch64; selected regional master is explicit data, online patch/version parity not inferred"});
     let plan = compile_execution(
         &pool,
         &request,
@@ -231,21 +271,18 @@ pub fn build_card_pool<'m>(
         &r.simulation,
         &r.strategy,
     )?;
-    let route = match (&r.execution, &r.metric) {
-        (Execution::Power { .. }, Metric::Power)
-        | (Execution::Skip { .. }, Metric::Score | Metric::ScoreAtLeast { .. } | Metric::CappedScore { .. }) => {
-            SolverRoute::CanonicalPowerSkip
-        }
-        _ if matches!(r.strategy, Strategy::Exhaustive) => SolverRoute::PhysicalExhaustive,
-        _ if matches!(r.strategy, Strategy::BranchAndBound) => SolverRoute::PhysicalBranchAndBound,
-        _ => SolverRoute::PhysicalCandidate,
+    let route = match &r.strategy {
+        Strategy::Exhaustive => SolverRoute::PhysicalExhaustive,
+        Strategy::BranchAndBound => SolverRoute::PhysicalBranchAndBound,
+        Strategy::Candidate { .. } => SolverRoute::PhysicalCandidate,
     };
-    if route == SolverRoute::CanonicalPowerSkip && matches!(r.strategy, Strategy::Candidate { .. }) {
+    if crate::search::team_power::applies(&request.objective, &r.metric)
+        && matches!(r.strategy, Strategy::Candidate { .. })
+    {
         return Err(Error::Input("power/skip score and monotone score targets use exact canonical search; candidate strategy applies to physical metrics".into()));
     }
     let context = SearchContext {
         request,
-        law,
         context_input,
         player_goal,
         resolved_context,

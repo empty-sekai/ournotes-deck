@@ -19,6 +19,7 @@ pub(crate) struct GkPlay {
     /// Delta time of each play frame, in seconds.
     pub dt: Vec<f32>,
     pub seeds: Vec<i32>,
+    pub confirmations: Option<Vec<ournotes_sim::replay::RankConfirmation>>,
 }
 
 impl FullSetup {
@@ -74,7 +75,7 @@ impl FullSetup {
 
     /// Plays the live with Gekisou on, on these frame delta times and seeds.
     pub fn set_gekisou(&mut self, setup: GekisouSetup, dt: Vec<f32>, seeds: Vec<i32>) {
-        self.gk = Some(GkPlay { setup, dt, seeds });
+        self.gk = Some(GkPlay { setup, dt, seeds, confirmations: None });
     }
 
     /// The simulated score of performers (in performance order) at a deck power, Gekisou off.
@@ -88,7 +89,15 @@ impl FullSetup {
     pub fn gekisou_model(&self, master: &Master, performers: &[Performer], power: i32) -> Result<LiveModel, Error> {
         let g = self.gk.as_ref().ok_or_else(|| Error::Game("a Gekisou live without a Gekisou setup".into()))?;
         let params = LiveParams { total_power: power, ..self.params };
-        LiveModel::new_gekisou(master, performers, &self.notes, &self.events, params, &g.setup)
+        let mut model = if g.confirmations.is_some() {
+            LiveModel::new_gekisou_external(master, performers, &self.notes, &self.events, params, &g.setup)?
+        } else {
+            LiveModel::new_gekisou(master, performers, &self.notes, &self.events, params, &g.setup)?
+        };
+        if let Some(confirmations) = &g.confirmations {
+            model.set_rank_confirmation_timeline(confirmations)?;
+        }
+        Ok(model)
     }
 
     /// With Gekisou on: the score of performers on every seed, in order, each an independent run of the whole play

@@ -83,7 +83,10 @@ pub struct FiniteSeedContext {
     pub play: LivePlay,
     pub params: LiveParams,
     pub gekisou: Option<GekisouSetup>,
+    pub rank_confirmations: Option<Vec<ournotes_sim::replay::RankConfirmation>>,
     pub delta_times: Vec<f32>,
+    /// See [`ournotes_sim::live::full::OrderedLive::lottery_free`].
+    pub lottery_free: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
 }
 
 /// Full terminal model for event-payoff, mission/rank and life inspection.
@@ -110,25 +113,44 @@ impl FiniteSeedContext {
         let (order, random) = native_member_order(root_seed)?;
         self.simulate_order(master, root_seed, order, random)
     }
-    /// [`FiniteSeedContext::simulate`] with a search cutoff: after every `every` frames `stop` sees the settled score;
-    /// `Ok(None)` when it stopped the live early (no outcome).
-    pub(crate) fn simulate_with_cutoff(
+    /// The live with the members performing in `order` (`order[k]` is the physical slot at position `k`) and the
+    /// live's random streams seeded by 0: one performance order of the uniform member-order target. A lottery-free
+    /// live draws no random value, so the seed does not matter (the outcome's model counts the draws).
+    pub fn simulate_performance_order(&self, master: &Master, order: [usize; 5]) -> Result<ConditionalOutcome, Error> {
+        self.simulate_order(master, 0, order, LiveRandom::new(0))
+    }
+    /// [`FiniteSeedContext::simulate_performance_order`] with a search cutoff: after every `every` frames `stop` sees
+    /// the settled score; `Ok(None)` when it stopped the live early (no outcome). Diagnostics only.
+    #[cfg(feature = "search-diagnostics")]
+    pub(crate) fn simulate_performance_order_with_cutoff(
         &self,
         master: &Master,
-        root_seed: i32,
+        order: [usize; 5],
         every: usize,
         stop: impl FnMut(ournotes_sim::live::full::Settled) -> bool,
     ) -> Result<Option<ConditionalOutcome>, Error> {
-        let (order, random) = native_member_order(root_seed)?;
+        let (root_seed, random) = (0, LiveRandom::new(0));
         let performers = order.map(|slot| self.performers[slot].clone());
-        let mut model = match &self.gekisou {
-            None => LiveModel::new(master, &performers, &self.notes, &self.events, self.params)?,
-            Some(g) => LiveModel::new_gekisou(master, &performers, &self.notes, &self.events, self.params, g)?,
-        };
+        let mut model = self.model(master, &performers)?;
         let Some(final_score) = model.run_with_cutoff(&self.play, &self.delta_times, random, every, stop)? else {
             return Ok(None);
         };
         Ok(Some(ConditionalOutcome { root_seed, performance_order: order, final_score, model }))
+    }
+    /// The live with its members in physical slot order: an order of it is a performance order (`order[k]` is the
+    /// physical slot at position `k`).
+    pub(crate) fn into_ordered(self) -> ournotes_sim::live::full::OrderedLive {
+        ournotes_sim::live::full::OrderedLive {
+            performers: self.performers.to_vec(),
+            notes: self.notes,
+            events: self.events,
+            params: self.params,
+            gekisou: self.gekisou,
+            rank_confirmations: self.rank_confirmations,
+            play: self.play,
+            delta_times: self.delta_times,
+            lottery_free: self.lottery_free,
+        }
     }
     fn simulate_order(
         &self,
@@ -138,12 +160,26 @@ impl FiniteSeedContext {
         random: LiveRandom,
     ) -> Result<ConditionalOutcome, Error> {
         let performers = order.map(|slot| self.performers[slot].clone());
-        let mut model = match &self.gekisou {
-            None => LiveModel::new(master, &performers, &self.notes, &self.events, self.params)?,
-            Some(g) => LiveModel::new_gekisou(master, &performers, &self.notes, &self.events, self.params, g)?,
-        };
+        let mut model = self.model(master, &performers)?;
         let final_score = model.run_with_random(&self.play, &self.delta_times, random)?;
         Ok(ConditionalOutcome { root_seed, performance_order: order, final_score, model })
+    }
+
+    pub(crate) fn model(&self, master: &Master, performers: &[Performer]) -> Result<LiveModel, Error> {
+        let mut model = match &self.gekisou {
+            None => LiveModel::new(master, performers, &self.notes, &self.events, self.params)?,
+            Some(g) if self.rank_confirmations.is_some() => {
+                LiveModel::new_gekisou_external(master, performers, &self.notes, &self.events, self.params, g)?
+            }
+            Some(g) => LiveModel::new_gekisou(master, performers, &self.notes, &self.events, self.params, g)?,
+        };
+        if let Some(confirmations) = &self.rank_confirmations {
+            model.set_rank_confirmation_timeline(confirmations)?;
+        }
+        if let Some(skills) = &self.lottery_free {
+            ournotes_sim::live::full::prepare_lottery_free(&mut model, skills)?;
+        }
+        Ok(model)
     }
 }
 
@@ -180,9 +216,9 @@ pub fn context(pool: &Pool, physical: &PhysicalDeck, objective: &Objective) -> R
     let performers = super::snaps::deck_performers(pool, &deck)?
         .try_into()
         .map_err(|_| Error::Input("exactly five physical performers required".into()))?;
-    let (gekisou, delta_times) = match setup.gk {
-        Some(g) => (Some(g.setup), g.dt),
-        None => (None, vec![0.0; setup.play.frames.len()]),
+    let (gekisou, delta_times, rank_confirmations) = match setup.gk {
+        Some(g) => (Some(g.setup), g.dt, g.confirmations),
+        None => (None, vec![0.0; setup.play.frames.len()], None),
     };
     Ok(FiniteSeedContext {
         physical: *physical,
@@ -192,7 +228,9 @@ pub fn context(pool: &Pool, physical: &PhysicalDeck, objective: &Objective) -> R
         play: setup.play,
         params: LiveParams { total_power: power, ..setup.params },
         gekisou,
+        rank_confirmations,
         delta_times,
+        lottery_free: None,
     })
 }
 pub fn evaluate_seed(

@@ -1,8 +1,9 @@
 //! Warm start and visit order of the joint member/Snap search.
 //!
 //! Nothing here removes a deck from the search. The warm start proposes legal decks of the searched domain and
-//! evaluates them with `Engine::consider_with`, the leaf evaluation of the traversal: the same simulator, root law,
-//! Top-K order with its power and public-ID ties, cutoff tables and budget. It only fills the Top-K earlier and
+//! evaluates them with `Engine::consider_with`, the leaf evaluation of the traversal: the same simulator, performance
+//! orders, Top-K order with its power and public-ID ties, cutoff tables and budget. Decks are teams: a proposal is
+//! compared and remembered in its canonical layout (`uniform::canonical`). It only fills the Top-K earlier and
 //! raises its cutoff. The traversal still visits or proves away every deck; a deck the warm start evaluated is a
 //! cache hit when the traversal reaches it, which is exact because the Top-K only improves: a deck left outside
 //! the Top-K is preceded by K decks, and every later Top-K entry precedes the earlier K-th.
@@ -12,7 +13,7 @@
 //! descending order of the bound their depth-1 node checks, so once one is strictly inferior to the cutoff, so is
 //! every later one, and the loop stops where each of them would have been pruned at depth 1. The choice order
 //! below the root is the static `JointBounds::choices`, on which the suffix-maximum tail bound relies.
-use super::{Engine, Error, PhysicalDeck, slot};
+use super::{Engine, Error, PhysicalDeck, slot, uniform};
 use crate::{
     clock::Instant,
     domain::CandidateDomain,
@@ -121,26 +122,21 @@ pub(super) fn traversal_of(d: &PhysicalDeck, converting: &[usize]) -> (usize, us
 
 /// Whether (payoff cap, power cap) is strictly inferior to a full Top-K's cutoff (the traversal's prune rule).
 pub(super) fn inferior(cap: (i128, i64), e: &Engine<'_, '_>) -> bool {
-    if e.top.len() != e.request.k {
-        return false;
-    }
-    let kth = e.top.last().expect("full Top-K");
-    let threshold = kth.evaluation.expected_payoff.numerator;
-    cap.0 < threshold || (cap.0 == threshold && cap.1 < i64::from(kth.power))
+    let Some((threshold, power)) = e.safe_cutoff() else { return false };
+    cap.0 < threshold || (cap.0 == threshold && cap.1 < i64::from(power))
 }
 
-/// Leaf bound of a full deck, the local search objective: the cheap relaxation and, when compiled, the per-note
-/// bound (without LUCK replay masks). Both are upper bounds of the deck's payoff and of its power.
+/// Leaf bound of a full deck, the local search objective: the position-mean cheap relaxation, an upper bound of the
+/// team's payoff and of its power.
 fn surrogate(w: &Warm<'_>, p: &PhysicalDeck, e: &mut Engine<'_, '_>) -> Result<(i128, i64), Error> {
     e.tel.incumbents.warm_start.leaf_bound_checks += 1;
-    let (cap, power) = w.bounds.expected_upper(e.pool, w.domain, p, 5, &w.orders)?;
-    let fine = w.bounds.fine_expected_upper(w.domain, p, power, &w.orders, &mut e.bound_scratch, None)?;
-    Ok((fine.map_or(cap, |f| f.min(cap)), power))
+    w.bounds.expected_upper(e.pool, w.domain, p, 5, &w.orders)
 }
 
-/// Legal decks one move away: another member in one slot (Snap kept), another Snap or None in one slot (member
-/// kept), one of the first `PAIR_MOVES` other pairs of the static choice order in one slot, or two slots exchanging
-/// their member/Snap pairs. Required members stay and a fixed leader stays in slot 2.
+/// Legal teams one move away: another member in one slot (Snap kept), another Snap or None in one slot (member
+/// kept), one of the first `PAIR_MOVES` other pairs of the static choice order in one slot, or the leader exchanging
+/// its member/Snap pair with another slot's (other layouts of a team are the same team). Required members stay and
+/// a fixed leader stays in slot 2.
 fn neighbours(w: &Warm<'_>, d: &PhysicalDeck, e: &Engine<'_, '_>) -> Vec<PhysicalDeck> {
     let (pool, domain) = (e.pool, w.domain);
     let fixed_leader = domain.leader().is_some();
@@ -192,17 +188,15 @@ fn neighbours(w: &Warm<'_>, d: &PhysicalDeck, e: &Engine<'_, '_>) -> Vec<Physica
             out.push(n);
         }
     }
-    for a in 0..5 {
-        for b in a + 1..5 {
-            if fixed_leader && (a == SLOTS[0] || b == SLOTS[0]) {
-                continue;
-            }
+    if !fixed_leader {
+        for other in uniform::NONLEADER {
             let mut n = *d;
-            n.members.swap(a, b);
-            n.snaps.swap(a, b);
+            n.members.swap(SLOTS[0], other);
+            n.snaps.swap(SLOTS[0], other);
             out.push(n);
         }
     }
+    out.iter_mut().for_each(|n| *n = uniform::canonical(pool, n));
     out
 }
 
@@ -272,6 +266,7 @@ fn evaluate(
     polish: bool,
     e: &mut Engine<'_, '_>,
 ) -> Result<bool, Error> {
+    let d = uniform::canonical(e.pool, &d);
     if e.seeded.contains(&d) || e.top.iter().any(|t| t.physical == d) || inferior(value, e) {
         return Ok(true);
     }
@@ -291,6 +286,10 @@ fn evaluate(
 /// Polishing rounds from the current best deck: its neighbours in descending leaf-bound order, the first `POLISH`
 /// of them evaluated exactly; another round only if the best deck changed. Ok(false) when the budget ran out.
 fn polish_rounds(w: &Warm<'_>, rounds: usize, e: &mut Engine<'_, '_>) -> Result<bool, Error> {
+    // Overlapping certified candidates have no exact best deck to polish from.
+    if e.certified.is_some() {
+        return Ok(true);
+    }
     for _ in 0..rounds {
         let Some(best) = e.top.first().map(|t| t.physical) else { return Ok(true) };
         e.tel.incumbents.warm_start.polish_rounds += 1;
@@ -339,8 +338,9 @@ pub(super) fn seed(e: &mut Engine<'_, '_>) -> Result<(), Error> {
     let result = seed_inner(&w, e);
     e.rec.clock.lap(resume);
     e.rec.end(&mut e.tel);
-    e.tel.incumbents.warm_start.kth = (e.top.len() == e.request.k)
-        .then(|| e.top.last().expect("full Top-K").evaluation.expected_payoff.numerator.to_string());
+    // This telemetry field is an exact incumbent value, not the interval route's conservative cutoff.
+    e.tel.incumbents.warm_start.kth =
+        e.safe_cutoff().filter(|_| e.certified.is_none()).map(|(threshold, _)| threshold.to_string());
     e.warm = Some(w);
     result
 }
@@ -362,7 +362,8 @@ fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>) -> Result<(), Error> {
         if e.expired() {
             return Ok(());
         }
-        let Some(mut current) = dive(w, leader, e)? else { continue };
+        let Some(current) = dive(w, leader, e)? else { continue };
+        let mut current = uniform::canonical(e.pool, &current);
         let mut value = surrogate(w, &current, e)?;
         if !evaluate(w, value, current, false, e)? {
             return Ok(());

@@ -39,7 +39,7 @@ pub(crate) const S_FINISH: u8 = 8;
 // fever states
 const FEVER_WAIT: u8 = 1;
 const FEVER_FEVER: u8 = 2;
-const FEVER_END: u8 = 3;
+pub(crate) const FEVER_END: u8 = 3;
 
 // lottery results and lot types
 const INVALID: i64 = -1;
@@ -86,6 +86,35 @@ fn is_sub_note(nt: i32) -> bool {
 
 /// One lottery item: `(weight, value)`.
 type Item = (i64, i64);
+
+fn nominal_weight_overflow() -> Error {
+    Error::Capacity("LUCK DP lottery weight overflow".into())
+}
+
+/// The nominal model requires a positive ordinary modulus. Reject native wrapping tables instead of
+/// treating wrapped totals as a normalized probability distribution.
+fn nominal_total(items: &[Item]) -> Result<i32, Error> {
+    items.iter().try_fold(0i32, |sum, &(weight, _)| {
+        let weight = i32::try_from(weight).map_err(|_| nominal_weight_overflow())?;
+        if weight < 0 {
+            return Err(Error::Unsupported("LUCK DP: negative lottery weight".into()));
+        }
+        sum.checked_add(weight).ok_or_else(nominal_weight_overflow)
+    })
+}
+
+fn nominal_probabilities(weights: Vec<(u64, u64, i64)>) -> Vec<(f64, i64)> {
+    let mut out: Vec<(f64, i64)> = Vec::new();
+    for (weight, total, result) in weights {
+        let probability = weight as f64 / total as f64;
+        if let Some(item) = out.iter_mut().find(|item| item.1 == result) {
+            item.0 += probability;
+        } else {
+            out.push((probability, result));
+        }
+    }
+    out
+}
 
 /// A weighted draw over items in order: `|r| % total`, the first item whose running weight exceeds it.
 fn lottery_table(items: &[Item], r: i32) -> Result<Option<i64>, Error> {
@@ -189,6 +218,121 @@ pub(crate) struct LotteryMachine {
 }
 
 impl LotteryMachine {
+    /// Nominal independent draw probabilities, with `|r| % total` treated as uniform. This is not a
+    /// distribution over the correlated output of every possible seeded System.Random instance.
+    pub(super) fn bonus_probabilities(
+        &self,
+        lot_type: usize,
+        buff: i32,
+        minimum: i64,
+    ) -> Result<Vec<(f64, i64)>, Error> {
+        Ok(nominal_probabilities(self.bonus_probability_weights(lot_type, buff, minimum)?))
+    }
+
+    /// Integer interval lengths over the native modulus. Repeated results remain separate, in table order,
+    /// so callers can accumulate either binary64 estimates or outward probability certificates.
+    pub(super) fn bonus_probability_weights(
+        &self,
+        lot_type: usize,
+        buff: i32,
+        minimum: i64,
+    ) -> Result<Vec<(u64, u64, i64)>, Error> {
+        let mut table = self.tables.get(lot_type).ok_or_else(|| game("lot type out of range"))?.clone();
+        table.buff = buff as f32 / 100f32;
+        if table.items.is_empty() {
+            return Err(game("no luck lottery item"));
+        }
+        if table.items.iter().any(|&(_, result)| !(0..=3).contains(&result)) {
+            return Err(Error::Unsupported("LUCK DP: lottery result outside Miss/Hit/Super Hit/Critical".into()));
+        }
+        let (mut total, mut per) = (nominal_total(&table.items)?, 0i32);
+        if minimum >= 1 {
+            let (mut included, mut excluded, mut n) = (0i32, 0i32, 0i32);
+            for &(weight, result) in &table.items {
+                let weight = buffed(table.buff, weight);
+                if weight < 0 {
+                    return Err(Error::Unsupported("LUCK DP: negative lottery weight".into()));
+                }
+                if result >= minimum {
+                    included = included.checked_add(weight).ok_or_else(nominal_weight_overflow)?;
+                    n += 1;
+                } else {
+                    excluded = excluded.checked_add(weight).ok_or_else(nominal_weight_overflow)?;
+                }
+            }
+            if n == 0 {
+                return Err(game("no luck lottery item"));
+            }
+            per = sdiv(excluded, n);
+            total = per.checked_mul(n).and_then(|v| included.checked_add(v)).ok_or_else(nominal_weight_overflow)?;
+        }
+        if total < 1 {
+            return Err(game("lottery table with a total weight below 1"));
+        }
+        let (mut out, mut lo) = (Vec::new(), 0i32);
+        for &(weight, result) in &table.items {
+            if minimum >= 1 && result < minimum {
+                continue;
+            }
+            let weight = per.checked_add(buffed(table.buff, weight)).ok_or_else(nominal_weight_overflow)?;
+            if weight < 0 {
+                return Err(Error::Unsupported("LUCK DP: negative lottery weight".into()));
+            }
+            let hi = lo.checked_add(weight).ok_or_else(|| Error::Capacity("LUCK DP lottery weight overflow".into()))?;
+            // Without a minimum the modulus remains the ORIGINAL, unbuffed total. Buffed cumulative
+            // intervals therefore truncate at that total; normalizing the buffed weights changes the game.
+            let (a, b) = (lo.clamp(0, total), hi.clamp(0, total));
+            if b > a {
+                out.push(((b - a) as u64, total as u64, result));
+            }
+            lo = hi;
+        }
+        if lo < total {
+            return Err(game("no luck lottery item"));
+        }
+        Ok(out)
+    }
+
+    /// Nominal base-point probabilities using the same note and judgement dispatch as `base_point`.
+    pub(super) fn base_point_probabilities(&self, note_type: i32, j: i32) -> Result<Vec<(f64, i64)>, Error> {
+        Ok(nominal_probabilities(self.base_point_probability_weights(note_type, j)?))
+    }
+
+    /// Exact nominal base-point masses before any division or aggregation.
+    pub(super) fn base_point_probability_weights(&self, note_type: i32, j: i32) -> Result<Vec<(u64, u64, i64)>, Error> {
+        if NON_LUCK_NOTE_TYPES.contains(&note_type) {
+            return Ok(vec![(1, 1, 0)]);
+        }
+        let u = j.wrapping_add(1) as u32;
+        if u < 9 && (0x107u32 >> (u & 31)) & 1 != 0 {
+            return Ok(vec![(1, 1, 0)]);
+        }
+        let items = if is_sub_note(note_type) {
+            &self.hold
+        } else if (j.wrapping_sub(5) as u32) < 2 {
+            self.perfect.as_ref().ok_or_else(|| game("no Perfect base point table"))?
+        } else if j == J_GREAT {
+            self.great.as_ref().ok_or_else(|| game("no Great base point table"))?
+        } else if j == J_GOOD {
+            self.good.as_ref().ok_or_else(|| game("no Good base point table"))?
+        } else {
+            return Ok(vec![(1, 1, 0)]);
+        };
+        let total = nominal_total(items)?;
+        if items.is_empty() || total < 1 {
+            return Err(game("empty base point table"));
+        }
+        let mut out = Vec::new();
+        for &(weight, point) in items {
+            let weight = i32::try_from(weight).map_err(|_| Error::Capacity("LUCK DP base weight overflow".into()))?;
+            if weight < 0 {
+                return Err(Error::Unsupported("LUCK DP: negative base-point weight".into()));
+            }
+            out.push((weight as u64, total as u64, point));
+        }
+        Ok(out)
+    }
+
     fn from_master(master: &Master) -> Result<LotteryMachine, Error> {
         let (mut good, mut great, mut perfect, mut hold) = (None, None, None, Vec::new());
         for r in master.gekisou_luck_base_points.iter().filter(|r| r.weight > 0) {
@@ -318,8 +462,8 @@ pub(crate) struct LuckScore {
     pub rush_combo: i32,
     /// Lottery results counted: Miss, Hit, Super Hit, Critical.
     pub results: [i32; 4],
-    next: i64,
-    gauge_max: i64,
+    pub(super) next: i64,
+    pub(super) gauge_max: i64,
     gauge_max_default: i64,
     gauge_max_rush: i64,
 }
@@ -341,7 +485,7 @@ impl Default for LuckScore {
 }
 
 impl LuckScore {
-    fn add_gauge(&mut self, v: i32) -> Result<(), Error> {
+    pub(super) fn add_gauge(&mut self, v: i32) -> Result<(), Error> {
         let g = self.gauge.wrapping_add(v) as i64;
         let m = self.gauge_max;
         self.gauge = if m <= g {
@@ -377,12 +521,12 @@ impl LuckScore {
         }
     }
 
-    fn current_lot_type(&self) -> usize {
+    pub(super) fn current_lot_type(&self) -> usize {
         let rc = self.rush_combo as u32;
         if rc < 4 { LOT_TYPE_BY_RUSH[rc as usize] } else { CHANCE_LOW }
     }
 
-    fn add_score(&mut self, r: i64) -> Result<(), Error> {
+    pub(super) fn add_score(&mut self, r: i64) -> Result<(), Error> {
         let i = r.wrapping_sub(1);
         if (i as u32) < 3 {
             let p = usize::try_from(i).ok().and_then(|i| BONUS_POINT_BY_RESULT.get(i));
@@ -577,6 +721,9 @@ pub(crate) struct Controller {
     rush_id: i32,
     /// The chart-time spans of the rush score bonus commands: `(added at, disabled at)`, `i32::MAX` while running.
     rush_log: Vec<(i32, i32)>,
+    /// LUCK weighted lives (see [`super::LiveModel::set_luck_weights`]): no lottery is drawn and every luck range runs
+    /// the rush from its start to its finish.
+    pub luck_weighted: bool,
     playing: Vec<usize>,
     combo_bonus_ids: FxHashMap<i32, f32>,
     just_bonus_ids: FxHashMap<i32, f32>,
@@ -589,6 +736,8 @@ pub(crate) struct Controller {
     history: Vec<Vec<(i32, i32, i32)>>,
     /// Per range: the combo after each history entry.
     snapshot: Vec<Vec<i32>>,
+    /// Bumped whenever a range's history or snapshot may change.
+    combo_versions: Vec<u64>,
     resume: Vec<Resume>,
     /// `(time, delta, judgement sequence)`.
     cb_stack: Vec<(i32, f32, i32)>,
@@ -666,6 +815,7 @@ impl Controller {
             last_note_delay_ms,
             rush_id: 0,
             rush_log: Vec::new(),
+            luck_weighted: false,
             playing: Vec::new(),
             combo_bonus_ids: FxHashMap::default(),
             just_bonus_ids: FxHashMap::default(),
@@ -676,6 +826,7 @@ impl Controller {
             seq: 0,
             history: vec![Vec::new(); n],
             snapshot: vec![Vec::new(); n],
+            combo_versions: vec![0; n],
             resume: vec![Resume::default(); n],
             cb_stack: Vec::new(),
             jb_stack: Vec::new(),
@@ -708,6 +859,18 @@ impl Controller {
     /// The last range that started and has not finished, or -1.
     fn current_playing_range_index(&self) -> i32 {
         self.playing.last().map_or(-1, |&i| i as i32)
+    }
+
+    pub(super) fn dp_playing_range_index(&self) -> i32 {
+        self.current_playing_range_index()
+    }
+
+    /// The commands installed SO FAR, accumulated in native filing order with binary32 arithmetic.
+    pub(super) fn dp_factors_at(&self, t: i32) -> (i32, f32) {
+        (
+            floor_to_i32(FactorStorage::at(&self.storage.lot_cmds, t) * 100f32),
+            FactorStorage::at(&self.storage.gauge_cmds, t),
+        )
     }
 
     pub(crate) fn add_just_count(&mut self, time_ms: i32, count: i32) {
@@ -854,6 +1017,7 @@ impl Controller {
             if self.states[idx].state >= S_DELAY || self.history[idx].is_empty() {
                 continue;
             }
+            self.combo_versions[idx] = self.combo_versions[idx].wrapping_add(1);
             let rr = self.resume[idx];
             let (mut cb, mut jb, mut i_cb, mut i_jb, mut i_pr, mut k);
             let (mut i_add_just, mut i_add_combo);
@@ -1008,6 +1172,9 @@ impl Controller {
     // --- luck -----------------------------------------------------------------------------------------------
 
     fn update_luck(&mut self, idx: usize, nt: i32, tn: i32, nid: i32, j: i32, env: &mut Env) -> Result<(), Error> {
+        if self.luck_weighted {
+            return Ok(());
+        }
         let buff = floor_to_i32(FactorStorage::at(&self.storage.lot_cmds, tn) * 100f32);
         self.machine.set_weight_buff(buff);
         let gup = FactorStorage::at(&self.storage.gauge_cmds, tn);
@@ -1058,6 +1225,9 @@ impl Controller {
     }
 
     fn pending_lots(&mut self, t: i32, env: &mut Env) -> Result<(), Error> {
+        if self.luck_weighted {
+            return Ok(());
+        }
         for pi in 0..self.playing.len() {
             let idx = self.playing[pi];
             let rs = &self.states[idx];
@@ -1079,6 +1249,7 @@ impl Controller {
             return Ok(());
         }
         self.history[idx].push((tn, j, self.seq));
+        self.combo_versions[idx] = self.combo_versions[idx].wrapping_add(1);
         self.seq = self.seq.wrapping_add(1);
         self.needs_recalc = true;
         if (j.wrapping_sub(3) as u32) < 4 {
@@ -1221,6 +1392,13 @@ impl Controller {
                 self.playing.push(idx);
                 self.state_update(idx);
                 self.current_playing_index = idx as i32;
+                if self.luck_weighted && self.ranges[idx].mission == M_LUCK {
+                    if self.rush_id != 0 {
+                        return Err(Error::Unsupported("LUCK coefficient: a luck range starts during a rush".into()));
+                    }
+                    self.rush_id = env.handle.add(t, self.rush_percent as i32);
+                    self.rush_log.push((t, i32::MAX));
+                }
             }
         }
         for idx in 0..self.states.len() {
@@ -1238,6 +1416,14 @@ impl GekisouComboInfo for Controller {
         let i =
             self.ranges.iter().position(|r| r.mission == M_COMBO && r.start_ms <= time_ms && time_ms <= r.end_ms)?;
         Some(self.timing_combo_in_range(i, time_ms))
+    }
+
+    fn combo_windows(&self, out: &mut Vec<(i32, i32, u64)>) {
+        for (r, &version) in self.ranges.iter().zip(&self.combo_versions) {
+            if r.mission == M_COMBO {
+                out.push((r.start_ms, r.end_ms, version));
+            }
+        }
     }
 }
 
@@ -1318,6 +1504,98 @@ impl Controller {
     /// The score of a range (end score minus start score).
     pub(crate) fn range_score(&self, idx: usize) -> i32 {
         self.states[idx].score()
+    }
+}
+
+#[cfg(test)]
+mod nominal_lottery_tests {
+    use super::*;
+
+    fn machine(items: Vec<Item>) -> LotteryMachine {
+        LotteryMachine {
+            good: None,
+            great: None,
+            perfect: Some(vec![(1, 25), (3, 50)]),
+            hold: vec![(1, 5)],
+            tables: vec![LuckSkillTable::new(items).unwrap()],
+            minimum: Vec::new(),
+            minimum_counter: 0,
+            last_consumed: FxHashMap::default(),
+        }
+    }
+
+    #[test]
+    fn buffed_lottery_keeps_the_unbuffed_modulus() {
+        let machine = machine(vec![(3, 0), (1, 1), (2, 2), (4, 3)]);
+        let probabilities = machine.bonus_probabilities(0, 100, 0).unwrap();
+        assert_eq!(probabilities, vec![(0.8, 3), (0.2, 2)]);
+        let mut table = machine.tables[0].clone();
+        table.buff = 1.0;
+        let mut counts = [0; 4];
+        for r in 0..table.total_weight {
+            counts[table.lottery(r).unwrap() as usize] += 1;
+        }
+        assert_eq!(counts, [0, 0, 2, 8]);
+    }
+
+    #[test]
+    fn minimum_shares_excluded_weights_with_integer_remainder_dropped() {
+        let machine = machine(vec![(5, 0), (2, 2), (4, 3)]);
+        assert_eq!(machine.bonus_probabilities(0, 0, 2).unwrap(), vec![(0.6, 3), (0.4, 2)]);
+        let table = &machine.tables[0];
+        let mut counts = [0; 4];
+        for r in 0..10 {
+            counts[table.lottery_with_minimum(r, 2).unwrap() as usize] += 1;
+        }
+        assert_eq!(counts, [0, 0, 4, 6]);
+        assert_eq!(machine.base_point_probabilities(1, 5).unwrap(), vec![(0.25, 25), (0.75, 50)]);
+        assert_eq!(machine.base_point_probabilities(21, 6).unwrap(), vec![(1.0, 5)]);
+        assert_eq!(machine.base_point_probabilities(122, 5).unwrap(), vec![(1.0, 0)]);
+    }
+
+    #[test]
+    fn unknown_lottery_results_are_refused_before_state_compression() {
+        let machine = machine(vec![(1, 4)]);
+        assert!(matches!(machine.bonus_probabilities(0, 0, 0), Err(Error::Unsupported(_))));
+    }
+
+    #[test]
+    fn integer_masses_match_every_native_modulus_position() {
+        for items in [vec![(3, 0), (1, 1), (2, 2), (4, 3)], vec![(2, 0), (3, 2), (1, 3), (4, 3)]] {
+            let machine = machine(items);
+            for buff in [0, 25, 100, 250] {
+                for minimum in 0..=3 {
+                    let weights = machine.bonus_probability_weights(0, buff, minimum).unwrap();
+                    let total = weights[0].1;
+                    assert_eq!(weights.iter().map(|w| w.0).sum::<u64>(), total);
+                    let mut expected = [0u64; 4];
+                    for &(weight, denominator, result) in &weights {
+                        assert_eq!(denominator, total);
+                        expected[result as usize] += weight;
+                    }
+                    let mut table = machine.tables[0].clone();
+                    table.buff = buff as f32 / 100.0;
+                    let mut actual = [0u64; 4];
+                    for r in 0..total as i32 {
+                        let result =
+                            if minimum == 0 { table.lottery(r) } else { table.lottery_with_minimum(r, minimum) };
+                        actual[result.unwrap() as usize] += 1;
+                    }
+                    assert_eq!(actual, expected, "buff={buff} minimum={minimum}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn integer_base_masses_preserve_duplicate_rows_and_reject_wrapped_totals() {
+        let mut machine = machine(vec![(1, 3)]);
+        machine.perfect = Some(vec![(1, 25), (3, 50), (2, 25)]);
+        assert_eq!(machine.base_point_probability_weights(1, 5).unwrap(), vec![(1, 6, 25), (3, 6, 50), (2, 6, 25)]);
+        machine.perfect = Some(vec![(i32::MAX as i64, 25), (i32::MAX as i64, 50), (3, 75)]);
+        assert!(matches!(machine.base_point_probability_weights(1, 5), Err(Error::Capacity(_))));
+        machine.tables[0].items = vec![(i32::MAX as i64, 3), (i32::MAX as i64, 2), (3, 1)];
+        assert!(matches!(machine.bonus_probability_weights(0, 0, 0), Err(Error::Capacity(_))));
     }
 }
 

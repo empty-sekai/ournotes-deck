@@ -65,8 +65,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let planned = measured(false, || auxiliary::evaluate_built(&built, deck.members, deck.snaps))?;
         let complete = reference["outcome"]["completion"] == serde_json::to_value(Completion::Complete)?
             && planned["outcome"]["completion"] == serde_json::to_value(Completion::Complete)?;
-        // Includes every physical slot, root atom, payoff, order, life/conversion
-        // observation and all non-timing counters; not merely expected score.
+        // Includes every slot, payoff, score distribution, best order and all
+        // non-timing counters; not merely expected score.
         let equal = semantic(&reference["outcome"]) == semantic(&planned["outcome"]);
         violations += usize::from(!complete || !equal);
         comparisons.push(json!({"members":deck.members,"snaps":deck.snaps,
@@ -83,7 +83,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    let report = json!({"scope":"declared physical decks and root atoms; optional deterministic search A/B",
+    let report = json!({"scope":"declared decks over their performance orders; optional deterministic search A/B",
         "comparison":"all outcome fields except keys ending in Ms (wall-clock times)",
         "timing":"one sequential reference/planned sample; diagnostic counters enabled; not a speedup claim",
         "violations":violations,"decks":comparisons,"search":search});

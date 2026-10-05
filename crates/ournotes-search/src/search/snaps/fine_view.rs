@@ -298,11 +298,12 @@ impl FineView<'_> {
                     accj[j] += scratch.judge[j][e];
                 }
             }
-            let dead = match life {
-                CandLife::NoRise => f.dead[e],
-                CandLife::ZeroFrom(t0) => t0 <= c.times[e] as i64 && t0 < f.until[e],
-                CandLife::Unknown => false,
-            };
+            let dead = !f.network_ranking
+                && match life {
+                    CandLife::NoRise => f.dead[e],
+                    CandLife::ZeroFrom(t0) => t0 <= c.times[e] as i64 && t0 < f.until[e],
+                    CandLife::Unknown => false,
+                };
             let ze = if dead { f.z_dead } else { c.z[e] };
             let zval = |m: usize| {
                 let base = 1.0 + acc_e.max(0.0) + drift;
@@ -361,6 +362,7 @@ impl FineView<'_> {
         if let Some(terms) = scratch.terms.as_mut() {
             terms.conv = conv;
             terms.ranked = !f.rank.is_empty();
+            terms.network_ranking = f.network_ranking;
             terms.ranges = f.rank_ranges.clone();
         }
         if !f.rank.is_empty() {
@@ -374,7 +376,6 @@ impl FineView<'_> {
 }
 
 pub(crate) struct JointFineBounds {
-    pub(super) rush_eligible: bool,
     pub(super) coef: Coef,
     pub(super) fine: Fine,
     pub(super) chain_extra: f64,
@@ -390,17 +391,6 @@ impl JointScratch {
     }
 }
 impl JointFineBounds {
-    /// The domain preserves LUCK judgement semantics and has a Rush score factor or refinable Rush
-    /// score windows. Avoid invoking the replay oracle for unrelated charts.
-    pub(crate) fn rush_eligible(&self) -> bool {
-        self.rush_eligible
-    }
-
-    /// Every life a live of the compiled domain can reach, at any time.
-    pub(crate) fn life_range(&self) -> (i64, i64) {
-        self.fine.life_range
-    }
-
     /// Inspect the candidate's own float margin separately from coefficient and
     /// window relaxations. The zero-margin value is diagnostic only and must never
     /// be used for pruning, objective evaluation, or an optimality certificate.
@@ -465,164 +455,6 @@ impl JointFineBounds {
             "rushMasksProvided": rush_masks.is_some(),
             "slots": slots,
         })
-    }
-
-    /// Diagnostics: the linear relaxation `a0 + sum of slot gains` of one complete candidate at one native order,
-    /// split into its terms: the base coefficient with the luck rush factor on every LUCK entry, on none, and only
-    /// where the masks allow a rush bonus; each slot's plain windows and Rush rows over their full windows and over
-    /// the replayed spans. The restricted values are not admissible bounds by themselves.
-    #[cfg(feature = "search-diagnostics")]
-    pub(crate) fn linear_profile(
-        &self,
-        members: [usize; 5],
-        choices: [usize; 5],
-        positions: &[usize; 5],
-        rush_masks: Option<&RushMasks>,
-    ) -> serde_json::Value {
-        let (c, f) = (&self.coef, &self.fine);
-        let ne = c.times.len();
-        let masks = rush_masks.filter(|_| f.rush_eligible);
-        let plain_ratio =
-            |e: usize| if f.pre_plain.is_empty() || f.pre[e] == 0.0 { 1.0 } else { f.pre_plain[e] / f.pre[e] };
-        let inside = |e: usize| masks.is_none_or(|m| m.rush_possible(c.times[e]));
-        // Prefix sums of z k jp with k reading the luck factor nowhere (0) or only inside the masks (1).
-        let mut pc = [vec![0f64; ne + 1], vec![0f64; ne + 1]];
-        let mut pj = [vec![[0f64; 4]; ne + 1], vec![[0f64; 4]; ne + 1]];
-        let (mut luck_entries, mut luck_inside) = (0usize, 0usize);
-        for e in 0..ne {
-            let r = plain_ratio(e);
-            if r != 1.0 {
-                luck_entries += 1;
-                luck_inside += usize::from(masks.is_some() && inside(e));
-            }
-            let ks = [c.k[e] * r, if inside(e) { c.k[e] } else { c.k[e] * r }];
-            for v in 0..2 {
-                pc[v][e + 1] = pc[v][e] + c.z[e] * ks[v] * c.max_jp[e];
-                for j in 0..4 {
-                    pj[v][e + 1][j] = pj[v][e][j] + c.z[e] * ks[v] * c.jp[e][j];
-                }
-            }
-        }
-        let gain = |lo: usize, hi: usize, note: f64, judge: [f64; 4], v: Option<usize>| -> f64 {
-            let mut g = match v {
-                None => note * (c.pc[hi] - c.pc[lo]),
-                Some(v) => note * (pc[v][hi] - pc[v][lo]),
-            };
-            for j in 0..4 {
-                if judge[j] != 0.0 {
-                    g += judge[j]
-                        * match v {
-                            None => c.pj[j][hi] - c.pj[j][lo],
-                            Some(v) => pj[v][hi][j] - pj[v][lo][j],
-                        };
-                }
-            }
-            g
-        };
-        let mut sums = [0f64; 6];
-        let mut slots = Vec::new();
-        for s in 0..5 {
-            let class = self.choice_class(members[s], choices[s]);
-            let part = &self.contrib[members[s]][class][positions[s]];
-            let replaced: Vec<Option<Vec<(usize, usize, f64)>>> = part
-                .rush
-                .iter()
-                .map(|row| {
-                    let spans = row.spec.spans(masks?)?;
-                    Some(
-                        spans
-                            .into_iter()
-                            .filter_map(|(a, b, mult)| {
-                                let lo = c.times.partition_point(|&t| (t as i64) < a);
-                                let hi = c.times.partition_point(|&t| (t as i64) < b);
-                                (lo < hi).then_some((lo, hi, mult))
-                            })
-                            .collect(),
-                    )
-                })
-                .collect();
-            // table gain, plain windows, Rush windows full, both with the masked luck factor, Rush windows masked
-            let mut t = [part.gain, 0.0, 0.0, 0.0, 0.0, 0.0];
-            for w in &part.windows {
-                let (lo, hi) = (w.lo as usize, w.hi as usize);
-                if w.rush == 0 {
-                    t[1] += gain(lo, hi, w.note, w.judge, None);
-                    t[3] += gain(lo, hi, w.note, w.judge, Some(1));
-                } else {
-                    t[2] += gain(lo, hi, w.note, w.judge, None);
-                    t[4] += gain(lo, hi, w.note, w.judge, Some(1));
-                    if replaced[w.rush as usize - 1].is_none() {
-                        t[5] += gain(lo, hi, w.note, w.judge, Some(1));
-                    }
-                }
-            }
-            for (row, windows) in part.rush.iter().zip(&replaced) {
-                for &(lo, hi, mult) in windows.iter().flatten() {
-                    t[5] += gain(lo, hi, row.note * mult, row.judge.map(|x| x * mult), Some(1));
-                }
-            }
-            for i in 0..6 {
-                sums[i] += t[i];
-            }
-            slots.push(serde_json::json!({
-                "memberIndex": members[s], "choiceIndex": choices[s], "nativePosition": positions[s],
-                "gain": t[0], "plainWindows": t[1], "rushWindowsFull": t[2], "plainWindowsMaskedLuck": t[3],
-                "rushWindowsFullMaskedLuck": t[4], "rushWindowsMasked": t[5], "rushRows": part.rush.len(),
-                "rushRowsReplaced": replaced.iter().filter(|r| r.is_some()).count(),
-            }));
-        }
-        serde_json::json!({
-            "entries": ne, "luckEntries": luck_entries, "luckEntriesInMasks": luck_inside,
-            "a0": c.pc[ne], "a0NoLuck": pc[0][ne], "a0MaskedLuck": pc[1][ne],
-            "gainSum": sums[0], "plainWindows": sums[1], "rushWindowsFull": sums[2],
-            "plainWindowsMaskedLuck": sums[3], "rushWindowsFullMaskedLuck": sums[4], "rushWindowsMasked": sums[5],
-            "linearFull": c.pc[ne] + sums[0], "linearMasked": pc[1][ne] + sums[3] + sums[5],
-            "rushMasksProvided": masks.is_some(), "slots": slots,
-        })
-    }
-
-    /// Diagnostics: the per-position maxima the pool-wide drift reads (command counts, executions, and the sum of a
-    /// performer's span factors as a stand-in for its factor total), with the performer that attains each count.
-    #[cfg(feature = "search-diagnostics")]
-    pub(crate) fn pool_margin_profile(&self) -> serde_json::Value {
-        let mut positions = Vec::new();
-        let (mut commands, mut plain, mut factors) = (0f64, 0f64, 0f64);
-        for k in 0..5 {
-            let mut best = (0f64, usize::MAX, usize::MAX);
-            let (mut best_plain, mut best_ops, mut best_fac) = (0f64, 0f64, 0f64);
-            for (m, classes) in self.contrib.iter().enumerate() {
-                for (class, arr) in classes.iter().enumerate() {
-                    let p = &arr[k];
-                    if p.cmds > best.0 {
-                        best = (p.cmds, m, class);
-                    }
-                    best_plain = best_plain.max(p.cmds_plain);
-                    best_ops = best_ops.max(p.ops);
-                    best_fac = best_fac.max(p.spans.iter().map(|s| s.2).sum::<f64>());
-                }
-            }
-            commands += best.0;
-            plain += best_plain;
-            factors += best_fac;
-            let argmax = (best.1 != usize::MAX).then(|| {
-                let p = &self.contrib[best.1][best.2][k];
-                serde_json::json!({"memberIndex": best.1, "classIndex": best.2, "commands": p.cmds,
-                    "plainCommands": p.cmds_plain, "spanCount": p.spans.len(),
-                    "rushRows": p.rush.iter().map(|r| serde_json::json!({"commands": r.cmds,
-                        "commandsPerRun": r.cmds_per_run, "maxRuns": r.max_runs, "runCap": r.run_cap}))
-                        .collect::<Vec<_>>()})
-            });
-            positions.push(serde_json::json!({"position": k, "maxCommands": best.0, "maxPlainCommands": best_plain,
-                "maxExecutions": best_ops, "maxSpanFactorSum": best_fac, "argmax": argmax}));
-        }
-        let e_max = self.fine.exec_profile.iter().copied().max().unwrap_or(0) as f64;
-        // The pool drift formula with the span-factor stand-in (an over-estimate of the factor total).
-        let ops = (3.0 * e_max + 2.0) * commands;
-        let ops_plain = (3.0 * e_max + 2.0) * plain;
-        let drift = |ops: f64| ops * 2f64.powi(-24) * (1.0 + factors) / (1.0 - ops * 2f64.powi(-24)).max(1e-9);
-        serde_json::json!({"executionMax": e_max, "commands": commands, "plainCommands": plain,
-            "spanFactorTotal": factors, "operations": ops, "approxDrift": drift(ops),
-            "approxDriftPlainOnly": drift(ops_plain), "positions": positions})
     }
 
     /// The per-entry terms of the candidate cap, for slack attribution against a simulation. Not a bound by itself.
@@ -731,6 +563,7 @@ pub(crate) struct CapTerms {
     pub(crate) entries: Vec<(i32, f64, f64)>,
     pub(crate) conv: f64,
     pub(crate) ranked: bool,
+    pub(crate) network_ranking: bool,
     /// Per conversion budget row: (most conversions, `(entry, rank-weighted gain)` of the entries it can convert).
     pub(crate) rows: Vec<(f64, Vec<(u32, f64)>)>,
     /// Per completing range with a rank bonus: (range end time, percent / 100, its entries).

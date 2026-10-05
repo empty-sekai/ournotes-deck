@@ -157,3 +157,25 @@ pub fn recommend_snapshot(
     }
     answer
 }
+
+pub use crate::recommendation::{Answer, AnswerProgress};
+
+/// Recommend for an account (`ournotes.account/1`) and a request (`ournotes-deck.recommendation-request/2`), both
+/// given as their original JSON text. The account must name this deck data by its SHA-256 and is resolved for the
+/// facts the request's goal reads; unknown facts are reported in `missing` and invalid input in `errors`, each with
+/// its JSON path, and nothing unknown is replaced by a default. `progress`, when given, receives complete answers
+/// with `final: false` at most once per interval while the search runs. See `docs/recommendation.md`.
+pub fn recommend_account(
+    data: &DeckData,
+    account_json: &str,
+    request_json: &str,
+    progress: Option<AnswerProgress<'_>>,
+) -> Answer {
+    crate::recommendation::recommend(data, account_json, request_json, progress)
+}
+
+/// What [`recommend_account`] computes: goals, metrics per goal, accuracy, ranks and the goals whose power reads the
+/// held events.
+pub fn capabilities() -> serde_json::Value {
+    crate::recommendation::capabilities()
+}

@@ -57,8 +57,14 @@ fn run() -> Result<()> {
             let out = auxiliary::evaluate_built(&built, members, snaps)?;
             let deck = out.results.first().ok_or("fixed evaluator incomplete")?;
             if i128::from(deck.power) != row["power"].as_i64().ok_or("power")? as i128
-                || deck.expected_payoff.numerator.parse::<i128>()?
-                    != cap * deck.expected_payoff.denominator.parse::<i128>()?
+                || deck.expected_payoff.as_ref().expect("exact deterministic fixture").numerator.parse::<i128>()?
+                    != cap
+                        * deck
+                            .expected_payoff
+                            .as_ref()
+                            .expect("exact deterministic fixture")
+                            .denominator
+                            .parse::<i128>()?
             {
                 return Err("power-leading assignment does not attain global PT cap".into());
             }

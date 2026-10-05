@@ -136,16 +136,6 @@ impl JointBounds {
                 )
             });
             let mut cap = self.payoff_cap(power, gain, 0);
-            if complete_classes {
-                cap = cap.min(self.fine.as_ref().expect("fine classes").upper(
-                    power,
-                    p.members,
-                    representatives,
-                    positions,
-                    scratch,
-                    None,
-                ) as i128);
-            }
             if self.class_resource_caps {
                 let rows = std::array::from_fn(|slot| {
                     let m = p.members[slot];
@@ -177,6 +167,15 @@ impl JointBounds {
                         .ok_or_else(|| unavailable("class product overflow"))?,
                 )
                 .ok_or_else(|| unavailable("class sum overflow"))?;
+        }
+        if complete_classes {
+            // The fine cap is per performance order: its sum over the 120 orders bounds the payoff numerator.
+            let fine = self.fine.as_ref().expect("fine classes");
+            let mut sum = 0i128;
+            for (positions, _) in super::super::uniform::order_positions() {
+                sum += fine.upper(power, p.members, representatives, &positions, scratch, None) as i128;
+            }
+            total = total.min(sum);
         }
         Ok(Some(ClassBound { payoff: total, power, proposal, resource_checks, resource_tightened }))
     }

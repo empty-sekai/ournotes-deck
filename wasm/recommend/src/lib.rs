@@ -1,66 +1,93 @@
-//! Browser Worker transport for owned-snapshot recommendations; no scoring copy.
-//!
-//! A solver owns one deck data generation. Snapshot and request cross the boundary as their original JSON text,
-//! which preserves large integers and decimal tokens, and every answer returns as JSON text.
+//! Browser Worker transport for account recommendations; no scoring copy.
 use ournotes_search::{
-    engine::{Progress, recommend_snapshot},
+    engine::{Answer, AnswerProgress, Progress, recommend_account, recommend_snapshot},
     types::RecommendationOutcome,
 };
 use ournotes_sim::data::DeckData;
 use std::time::Duration;
 use wasm_bindgen::prelude::*;
 
-/// Default milliseconds between two progress reports.
 const PROGRESS_INTERVAL_MS: u32 = 250;
 
 #[wasm_bindgen]
 extern "C" {
-    /// A JavaScript function that receives one progress report as JSON text.
     #[wasm_bindgen(typescript_type = "(resultJson: string) => void")]
     pub type ProgressCallback;
     #[wasm_bindgen(method, catch, js_name = call)]
     fn call(this: &ProgressCallback, receiver: &JsValue, result_json: &str) -> Result<JsValue, JsValue>;
 }
 
+/// One immutable deck data generation reused across recommendations.
 #[wasm_bindgen]
 pub struct DeckSolver {
     data: DeckData,
 }
 
+/// Identifies only the legacy input envelope, without parsing or exposing account fields.
+fn legacy_snapshot(input: &str) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Format {
+        format: String,
+    }
+    serde_json::from_str::<Format>(input).is_ok_and(|v| v.format == "ournotes.owned-snapshot/1")
+}
+
 #[wasm_bindgen]
 impl DeckSolver {
-    /// Parse one deck data document (`nnnotes.deck-data/1`); throws an Error with the reason when it is invalid.
+    /// Original UTF-8 deck-data bytes (`Uint8Array`), or original text for legacy callers.
+    /// Invalid UTF-8 is rejected; no replacement decoding or integer parsing changes the dataset hash.
     #[wasm_bindgen(constructor)]
-    pub fn new(deck_data_json: &str) -> Result<DeckSolver, JsError> {
-        DeckData::from_json(deck_data_json).map(|data| Self { data }).map_err(|error| JsError::new(&error.to_string()))
+    pub fn new(deck_data: JsValue) -> Result<DeckSolver, JsError> {
+        let text = if let Some(text) = deck_data.as_string() {
+            text
+        } else if let Some(bytes) = deck_data.dyn_ref::<js_sys::Uint8Array>() {
+            String::from_utf8(bytes.to_vec()).map_err(|_| JsError::new("deck data must be valid UTF-8"))?
+        } else {
+            return Err(JsError::new("deck data must be a Uint8Array or original JSON text"));
+        };
+        DeckData::from_json(&text).map(|data| Self { data }).map_err(|error| JsError::new(&error.to_string()))
     }
 
-    /// Lowercase hexadecimal SHA-256 of the deck data text: the `datasetId` a snapshot must name.
+    /// SHA-256 of the original deck-data bytes, including any UTF-8 BOM.
     #[wasm_bindgen(getter, js_name = datasetId)]
     pub fn dataset_id(&self) -> String {
         self.data.sha256.clone().expect("deck data read from text")
     }
 
-    /// Recommend for one owned snapshot and one request, both as their original JSON text. Returns the
-    /// `ournotes-deck.snapshot-recommendation/1` answer as JSON text: input problems are listed in it, not thrown.
-    /// `onProgress`, when given, receives progress reports (result JSON text) at most once per
-    /// `progressIntervalMs` (default 250); exceptions it throws are ignored. The call is synchronous: run it in a
-    /// dedicated Worker and terminate the Worker to cancel.
+    /// Formats, supported goals/metrics and explicit limitations of this build, as JSON text.
+    pub fn capabilities(&self) -> String {
+        serde_json::to_string(&ournotes_search::engine::capabilities()).expect("capabilities JSON")
+    }
+
+    /// `ournotes.account/1` + `ournotes-deck.recommendation-request/2` -> account-recommendation/1.
+    /// Every progress callback receives a whole answer with `final:false`; terminate the Worker to cancel.
+    /// Legacy owned-snapshot inputs retain their former request and result formats for existing harness callers.
     pub fn recommend(
         &self,
-        snapshot_json: &str,
+        account_json: &str,
         request_json: &str,
         on_progress: Option<ProgressCallback>,
         progress_interval_ms: Option<u32>,
     ) -> String {
-        let mut report = |out: &RecommendationOutcome| {
-            if let Some(callback) = &on_progress {
-                let _ = callback.call(&JsValue::NULL, &serde_json::to_string(out).expect("result JSON"));
-            }
-        };
         let interval = Duration::from_millis(progress_interval_ms.unwrap_or(PROGRESS_INTERVAL_MS).into());
-        let progress = on_progress.is_some().then_some(Progress { interval, report: &mut report });
-        serde_json::to_string(&recommend_snapshot(&self.data, snapshot_json, request_json, progress))
-            .expect("answer JSON")
+        if legacy_snapshot(account_json) {
+            let mut report = |out: &RecommendationOutcome| {
+                if let Some(callback) = &on_progress {
+                    let _ = callback.call(&JsValue::NULL, &serde_json::to_string(out).expect("result JSON"));
+                }
+            };
+            let progress = on_progress.is_some().then_some(Progress { interval, report: &mut report });
+            serde_json::to_string(&recommend_snapshot(&self.data, account_json, request_json, progress))
+                .expect("answer JSON")
+        } else {
+            let mut report = |answer: &Answer| {
+                if let Some(callback) = &on_progress {
+                    let _ = callback.call(&JsValue::NULL, &serde_json::to_string(answer).expect("answer JSON"));
+                }
+            };
+            let progress = on_progress.is_some().then_some(AnswerProgress { interval, report: &mut report });
+            serde_json::to_string(&recommend_account(&self.data, account_json, request_json, progress))
+                .expect("answer JSON")
+        }
     }
 }

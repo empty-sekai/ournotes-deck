@@ -1,5 +1,10 @@
-//! Pair a fixed deck's per-entry fine-cap terms with its actual per-note scores for every declared root.
-use ournotes_search::{handler, search::diagnostics, types::RecommendationRequest};
+//! Pair a fixed deck's per-entry fine-cap terms with its actual per-note scores at the audited performance orders.
+use ournotes_search::{
+    handler,
+    owned_snapshot::{GoalDependencies, OwnedSnapshot},
+    search::diagnostics,
+    types::RecommendationRequest,
+};
 use ournotes_sim::{cards::Roster, data::DeckData};
 use serde::Deserialize;
 use std::{env, fs};
@@ -13,11 +18,11 @@ struct Deck {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args().skip(1).collect();
     if args.len() != 5 {
-        return Err("slack_profile DATA ROSTER REQUEST DECKS OUTPUT".into());
+        return Err("slack_profile DATA ROSTER|SNAPSHOT REQUEST DECKS OUTPUT".into());
     }
     let data = DeckData::from_path(&args[0])?;
-    let roster = Roster::from_json(&fs::read_to_string(&args[1])?)?;
     let request: RecommendationRequest = serde_json::from_str(&fs::read_to_string(&args[2])?)?;
+    let roster = roster_of(&data, &fs::read_to_string(&args[1])?, &request)?;
     let built = handler::build_card_pool(&data, &roster, &request)?;
     let decks: Vec<Deck> = serde_json::from_str(&fs::read_to_string(&args[3])?)?;
     let mut values = Vec::new();
@@ -28,7 +33,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(
         &args[4],
         serde_json::to_vec(&serde_json::json!({
-            "scope":"Fine-cap terms beside one simulation per root; attribution only, the terms are not caps.",
+            "scope":"Fine-cap terms beside one simulation per audited order; attribution only, the terms are not caps.",
             "decks":values
         }))?,
     )?;
@@ -39,4 +44,21 @@ fn main() {
         eprintln!("{e}");
         std::process::exit(1);
     }
+}
+
+/// A roster file as is, or the goal-scoped projection of an owned snapshot.
+fn roster_of(
+    data: &DeckData,
+    text: &str,
+    request: &RecommendationRequest,
+) -> Result<Roster, Box<dyn std::error::Error>> {
+    let Ok(snapshot) = OwnedSnapshot::from_json(text) else {
+        return Ok(Roster::from_json(text)?);
+    };
+    let goal = GoalDependencies::of(&request.execution);
+    let resolution = snapshot.resolve_data(data, data.sha256.as_deref().unwrap_or_default(), goal);
+    let resolved = resolution
+        .resolved
+        .ok_or_else(|| format!("snapshot unresolved: {:?} {:?}", resolution.missing, resolution.errors))?;
+    Ok(resolved.diagnostic_projection().clone())
 }

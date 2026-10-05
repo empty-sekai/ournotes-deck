@@ -9,6 +9,7 @@
 //! node already read the clock for its deadline), and leaf activities (bounds, simulations) are timed once each.
 use crate::clock::Instant;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 pub const TELEMETRY_FORMAT: &str = "ournotes-deck.telemetry/1";
 /// Joint search depths: members placed, leader first.
@@ -35,8 +36,8 @@ pub struct Telemetry {
     pub joint: Joint,
     pub composition: Composition,
     pub candidate: CandidateStrategy,
-    pub luck_replay: LuckReplay,
     pub caches: Caches,
+    pub memory: Memory,
 }
 
 impl Default for Telemetry {
@@ -59,8 +60,8 @@ impl Default for Telemetry {
             joint: Joint::default(),
             composition: Composition::default(),
             candidate: CandidateStrategy::default(),
-            luck_replay: LuckReplay::default(),
             caches: Caches::default(),
+            memory: Memory::default(),
         }
     }
 }
@@ -77,7 +78,7 @@ pub enum Traversal {
     Fixed,
     /// Joint member/Snap branch-and-bound (Gekisou objectives).
     Joint,
-    /// Leader, member compositions, layouts and Snaps (Live without Gekisou, class schedules).
+    /// Leader, member compositions and Snap pairings (Live without Gekisou, class schedules).
     Composition,
     /// Every physical deck, no bounds.
     Exhaustive,
@@ -106,7 +107,7 @@ pub struct Environment {
     pub time_limit_ms: Option<u64>,
     pub max_candidates: Option<u64>,
     pub cache_entries: usize,
-    pub law: Option<Law>,
+    pub target: Option<Target>,
     pub domain: Option<Domain>,
     pub bounds: BoundSetup,
 }
@@ -131,7 +132,7 @@ impl Default for Environment {
             time_limit_ms: None,
             max_candidates: None,
             cache_entries: 0,
-            law: None,
+            target: None,
             domain: None,
             bounds: BoundSetup::default(),
         }
@@ -162,14 +163,14 @@ impl DataIdentity {
     }
 }
 
+/// The value of a deck: the mean of its payoff over `orders` performance orders (120 for played lives, 1 for power
+/// and skip).
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Law {
-    pub atoms: usize,
-    /// Distinct native performance orders among the atoms.
+pub struct Target {
     pub orders: usize,
     /// Denominator of every payoff numerator in this document.
-    pub total_weight: String,
+    pub denominator: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -195,12 +196,26 @@ pub struct BoundSetup {
     pub correlated: bool,
     pub resource: bool,
     pub fine: bool,
-    /// LUCK Rush refinement applies, and the replay oracle was admitted.
-    pub rush: bool,
-    pub luck_oracle: bool,
     pub class_search: bool,
     pub pt_regime: Option<PtRegime>,
     pub conversion: Option<Conversion>,
+    /// The deck payoff ranking (`deckPayoff` search) of the plan, or why a played Live has none.
+    pub deck_payoff: Option<DeckPayoffSetup>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeckPayoffSetup {
+    /// Played Lives: the score cap of the strongest legal team, from which the payoff steps are read.
+    pub score_cap: Option<String>,
+    /// Why a played Live's payoff steps are not ranked by deck.
+    pub refusal: Option<String>,
+    /// Rankings run; each later one ranks again after evaluated decks paid less than their bound.
+    pub rounds: usize,
+    /// Evaluated decks that paid less than their bound.
+    pub shortfalls: usize,
+    /// The joint traversal took the search over.
+    pub handed_over: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -237,7 +252,7 @@ pub struct Proof {
     /// Top-level branches (depth-0 choices, or leaders) decided in the current part, of the total.
     pub top_level_done: Option<u64>,
     pub top_level_total: Option<u64>,
-    /// Payoff numerators over `environment.law.totalWeight`.
+    /// Payoff numerators over `environment.target.denominator`.
     pub best: Option<String>,
     pub kth: Option<String>,
     pub upper_bound: Option<String>,
@@ -246,6 +261,10 @@ pub struct Proof {
     pub kth_gap: Option<f64>,
     /// Time spent computing `upperBound` after the stop (not part of the search deadline).
     pub bound_ms: f64,
+    /// Upper bound of the best payoff over the whole domain: the larger of the best payoff and the bounds of the
+    /// branches still open; it only decreases during the search and equals `best` once complete. Null while no bound
+    /// is known (a traversal that does not track it, or a stop in a search part other than the last).
+    pub global_upper_bound: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -294,6 +313,8 @@ pub struct IncumbentPoint {
     /// The K-th payoff once the Top-K is full.
     pub kth: Option<String>,
     pub fraction: Option<f64>,
+    /// The global upper bound at the update (`proof.globalUpperBound`).
+    pub upper: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -310,19 +331,19 @@ pub struct Phase {
 }
 
 /// Exclusive wall time of the search loop by activity. The activities partition the time from the first search
-/// phase to the end of the last one; `luckReplay.replayMs` is nested inside fine bounds, cutoff tables and Rush caps.
+/// phase to the end of the last one.
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimeBreakdown {
     /// Joint node work at each depth: bounds, choice loops and bookkeeping, excluding the activities below.
     pub depth_ms: [f64; DEPTHS],
     pub composition_ms: f64,
+    /// Per-order raw and fine caps of complete teams.
     pub fine_bound_ms: f64,
     pub cutoff_table_ms: f64,
     pub simulation_ms: f64,
     /// Simulations stopped early by the cutoff.
     pub stopped_simulation_ms: f64,
-    pub rush_prefix_ms: f64,
     /// Warm start and polishing, outside the simulations and cutoff tables they run.
     pub warm_start_ms: f64,
     pub other_ms: f64,
@@ -334,33 +355,63 @@ pub struct Leaves {
     /// Candidate decks handed to evaluation (cache hits in `caches.candidates`), and the new decks among them.
     pub proposed: u64,
     pub visited: u64,
-    /// Decks evaluated completely (every atom).
+    /// Decks evaluated completely (every performance order).
     pub evaluated: u64,
     /// A stop interrupted their evaluation.
     pub partial: u64,
-    /// Atoms reusing an earlier atom of the same root.
-    pub duplicate_atoms: u64,
-    /// Decks dropped after some atoms: their exact atoms plus the metric's cap stay below the K-th.
-    pub atom_bound_pruned: u64,
-    /// Whole-live simulations run to the end.
+    /// Played-live teams dropped before any simulation because the sum of their per-order cheap caps, or of their
+    /// raw and fine caps, stays below the K-th.
+    pub cheap_pruned: u64,
+    pub fine_pruned: u64,
+    /// Performance orders whose raw and fine caps were computed; the computation of a team's caps stops once
+    /// they prove it below the K-th.
+    pub fine_orders: u64,
+    /// Played-live teams whose performance orders started to run.
+    pub started: u64,
+    /// Teams dropped after some orders: their exact payoffs plus the caps of the other orders stay below the K-th.
+    pub order_bound_pruned: u64,
+    /// Whole-live simulations (one performance order each) run to the end.
     pub simulations: u64,
     pub cutoff: Cutoff,
+    pub order_tree: OrderTree,
     pub peak_retained: usize,
+}
+
+/// The performance orders of a team played as one tree (frames the orders share are played once).
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderTree {
+    /// Frames played, every replay included, and the frames a separate simulation of each order plays.
+    pub frames: u64,
+    pub separate_frames: u64,
+    pub branches: u64,
+    pub replayed: u64,
+    pub clones: u64,
+    /// Calls of the payoff bound of a node.
+    pub bounds: u64,
+}
+
+impl OrderTree {
+    pub(crate) fn add(&mut self, s: &ournotes_sim::live::full::OrderSharing) {
+        self.frames += s.frames;
+        self.separate_frames += s.separate_frames;
+        self.branches += s.branches;
+        self.replayed += s.replayed;
+        self.clones += s.clones;
+        self.bounds += s.bounds;
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Cutoff {
-    /// Candidates simulated with a cutoff table, and those whose every order lacked a finite table.
+    /// Performance orders simulated with a cutoff table, and those without a finite table.
     pub tables: u64,
     pub unavailable: u64,
     /// Simulations stopped early (their candidate cannot reach the Top-K), and the chart progress (played frames)
     /// at the stop in tenths: `stoppedAt[i]` counts stops in `[i/10, (i+1)/10)`.
     pub stopped: u64,
     pub stopped_at: [u64; STOP_BUCKETS],
-    /// Cutoff tables (one per performance order) whose exact power is below the relaxed power the leaf fine bound
-    /// read; the relaxed power is never below the exact one (checked).
-    pub relaxed_power_above: u64,
 }
 
 /// Bound checks and prunes by the depth of the node checked (tail and pair: the parent's depth).
@@ -393,19 +444,18 @@ pub struct Joint {
     pub resource: Checks,
     pub bonus: Checks,
     pub bonus_unavailable: [u64; DEPTHS],
-    pub raw: Checks,
-    pub fine: Checks,
     pub tail: Checks,
     pub tail_choices_skipped: [u64; DEPTHS],
     pub pair: Checks,
     pub root_order: RootOrder,
     pub carriers: Carriers,
-    /// Node bounds (branch, bonus, fine) and pair bounds equal to the K-th payoff, surviving on power.
+    /// Node bounds (branch, bonus) and pair bounds equal to the K-th payoff, surviving on power.
     pub node_ties: [u64; DEPTHS],
     pub pair_ties: [u64; DEPTHS],
     /// PT warm start: prefixes outside the maximum-bonus regime.
     pub seed_bonus_skipped: [u64; DEPTHS],
-    pub rush_prefix: RushPrefix,
+    /// Bound modules by name.
+    pub modules: BTreeMap<&'static str, Count>,
 }
 
 /// Gekisou score with a combo range: the cheap bounds of decks with at most `n` combo carriers (a member and Snap
@@ -430,16 +480,6 @@ pub struct RootOrder {
     pub traversals_pruned: u64,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RushPrefix {
-    pub checks: u64,
-    pub pruned: u64,
-    pub unavailable: u64,
-    pub variants: u64,
-    pub choices_pruned: u64,
-}
-
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Count {
@@ -458,8 +498,10 @@ pub struct Composition {
     /// Member sets reached.
     pub compositions: u64,
     pub composition: Count,
-    pub layout: Count,
-    pub fine: Count,
+    /// Bound modules by name (`memberAdditive`: score of Lives without Gekisou).
+    pub modules: BTreeMap<&'static str, Count>,
+    /// Bounds of a whole composition and of its partial Snap pairings.
+    pub team: Count,
     pub class: Count,
     pub class_binding: Count,
     pub class_infeasible: u64,
@@ -469,12 +511,12 @@ pub struct Composition {
     pub power_frontier_closed: u64,
 }
 
-/// Seed decks evaluated before their layout's search.
+/// Seed decks evaluated before their composition's Snap search.
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Seeds {
     pub preseed: u64,
-    pub layout: u64,
+    pub team: u64,
     pub weighted: u64,
     pub class: u64,
     pub power_frontier: u64,
@@ -486,60 +528,6 @@ pub struct CandidateStrategy {
     pub warmup_member_sets: usize,
     pub warmup_proposals: u64,
     pub exploration_proposals: u64,
-}
-
-#[derive(Clone, Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LuckReplay {
-    pub enabled: bool,
-    pub queries: u64,
-    pub cache_hits: u64,
-    /// Root replays run (each within the bounded branch budget).
-    pub runs: u64,
-    pub replay_ms: f64,
-    pub unavailable: Unavailable,
-    pub sites: Sites,
-    /// Leaves past the fine bound whose positions buckets have several replay branches: the fine bound taken at its
-    /// maximum over each bucket's branches instead of their union, and the leaves it pruned.
-    pub branch_bound: Count,
-    /// Diagnostics builds only: queries by site and outcome, leaf mask coverage, declined replays and a sample of
-    /// the leaves that survived the fine bound.
-    #[cfg(feature = "search-diagnostics")]
-    pub diagnostics: Option<serde_json::Value>,
-}
-
-/// Queries answered without masks, by reason.
-#[derive(Clone, Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Unavailable {
-    pub total: u64,
-    /// A member/Snap pair of the deck has no LUCK signature.
-    pub no_variant: u64,
-    /// The law has no root at these positions.
-    pub no_roots: u64,
-    /// A root replay declined (branch budget or unsupported formation).
-    pub declined: u64,
-    /// Root replays disagree in shape and cannot be united.
-    pub root_shape: u64,
-    /// Cache hits of an earlier unavailable answer.
-    pub cached: u64,
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Site {
-    pub queries: u64,
-    pub unavailable: u64,
-}
-
-/// Replay queries by caller: leaf fine bounds, cutoff tables, Rush prefix caps, per-branch leaf fine bounds.
-#[derive(Clone, Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Sites {
-    pub fine: Site,
-    pub cutoff: Site,
-    pub prefix: Site,
-    pub branch: Site,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize)]
@@ -555,16 +543,64 @@ pub struct CacheUse {
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Caches {
-    /// Physical decks already evaluated or pruned.
+    /// Decks (teams in their canonical layout for played lives) already evaluated or pruned.
     pub candidates: CacheUse,
-    pub luck_replay: CacheUse,
-    /// LUCK replay branch lists, kept apart from the unions.
-    pub luck_branches: CacheUse,
+    /// Complete 120-order score laws reused across leaders with the same member/Snap pairs and exact power.
+    pub team_scores: CacheUse,
+    /// Native programs reused across powers for identical member and Performer classes.
+    pub programs: CacheUse,
+    /// Complete-identity encounters after leaf bounds, at native order-tree starts. A hit admits recording.
+    pub program_admissions: CacheUse,
+    pub program_recordings: u64,
+    /// Unique exported node/byte totals, including exports later evicted or refused by the resident budget.
+    pub program_recorded_nodes: u64,
+    pub program_recorded_bytes: u64,
+    /// Cached exact program evaluation only (not key lookup or the fresh native simulation).
+    pub program_evaluation_ms: f64,
+    /// Entire native order-tree work with recording enabled, including its original native simulation.
+    /// This is not an estimate of the recording overhead; use controlled A/B runs for that comparison.
+    pub program_recording_ms: f64,
+    pub program_orders_reused: u64,
+    pub program_bytes: usize,
     /// PT bonus cap rows by prefix state; `bonusRowsRefused` lookups found the table full.
     pub bonus_rows: CacheUse,
     pub bonus_rows_refused: u64,
     /// Rush entry windows by (spec, masks).
     pub rush_windows: CacheUse,
+}
+
+/// Memory of the running program when the document was written.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Memory {
+    /// The most memory the program has held so far: on WebAssembly the size of its linear memory
+    /// (`memory.buffer.byteLength`, which never shrinks); on Linux the peak resident set size of the process; null
+    /// elsewhere.
+    pub peak_bytes: Option<u64>,
+}
+
+impl Memory {
+    pub(crate) fn now() -> Self {
+        Self { peak_bytes: peak_bytes() }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn peak_bytes() -> Option<u64> {
+    Some(core::arch::wasm32::memory_size::<0>() as u64 * 65_536)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+fn peak_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
+    let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kib * 1024)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
+fn peak_bytes() -> Option<u64> {
+    None
 }
 
 /// Exclusive-time activities of the search loop.
@@ -574,8 +610,7 @@ pub(crate) mod slot {
     pub(crate) const CUTOFF_TABLE: usize = FINE + 1;
     pub(crate) const SIMULATION: usize = CUTOFF_TABLE + 1;
     pub(crate) const STOPPED: usize = SIMULATION + 1;
-    pub(crate) const RUSH_PREFIX: usize = STOPPED + 1;
-    pub(crate) const WARM: usize = RUSH_PREFIX + 1;
+    pub(crate) const WARM: usize = STOPPED + 1;
     pub(crate) const OTHER: usize = WARM + 1;
     pub(crate) const COUNT: usize = OTHER + 1;
 }
@@ -632,7 +667,6 @@ fn add_nanos(nanos: &[u64; slot::COUNT], time: &mut TimeBreakdown) {
     time.cutoff_table_ms += ms(nanos[slot::CUTOFF_TABLE]);
     time.simulation_ms += ms(nanos[slot::SIMULATION]);
     time.stopped_simulation_ms += ms(nanos[slot::STOPPED]);
-    time.rush_prefix_ms += ms(nanos[slot::RUSH_PREFIX]);
     time.warm_start_ms += ms(nanos[slot::WARM]);
     time.other_ms += ms(nanos[slot::OTHER]);
 }
@@ -686,6 +720,8 @@ pub(crate) struct Recorder {
     /// Whether the running traversal bounds what a stop leaves unexplored, and that bound (None: nothing left).
     pub(crate) bounded: bool,
     pub(crate) unexplored: Option<i128>,
+    /// The global upper bound so far (`Proof::global_upper_bound`).
+    pub(crate) upper: Option<i128>,
 }
 
 impl Recorder {
@@ -700,7 +736,13 @@ impl Recorder {
             tracked: false,
             bounded: false,
             unexplored: None,
+            upper: None,
         }
+    }
+
+    /// Offer a global upper bound; the recorded one is the smallest offered.
+    pub(crate) fn offer_upper(&mut self, upper: i128) {
+        self.upper = Some(self.upper.map_or(upper, |u| u.min(upper)));
     }
 
     /// Position-based progress over all parts.
@@ -806,6 +848,7 @@ impl Recorder {
             best: best.to_string(),
             kth: kth.map(|v| v.to_string()),
             fraction,
+            upper: self.upper.map(|v| v.to_string()),
         }
     }
 }

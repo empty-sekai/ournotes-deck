@@ -155,7 +155,7 @@ impl Env<'_> {
                 let yes = self.gk.as_ref().is_some_and(|g| g.has(MISSION_LUCK));
                 Out { yes, no: true, impure: false }
             }
-            t @ (7005 | 7010 | 7013 | 7020 | 7021) => {
+            t @ (7005 | 7010 | 7012 | 7013 | 7020 | 7021) => {
                 let Some(g) = &self.gk else {
                     return Err(Error::Unsupported(format!(
                         "condition type {t} reads the Gekisou state of a live without Gekisou"
@@ -173,6 +173,7 @@ impl Env<'_> {
                         }
                         g.any_of(&ms)
                     }
+                    7012 => g.completes && v0.unwrap_or(1) >= 1,
                     7013 => g.completes,
                     _ => g.has(MISSION_LUCK),
                 };

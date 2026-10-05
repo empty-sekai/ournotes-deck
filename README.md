@@ -30,7 +30,7 @@ BanG Dream! Our Notes 的综合力、跳过分数与演出分数计算，以及�
 | `types` | 请求、目标、随机条件、完成状态与结果类型 |
 | `handler` | 解析场景、培养与目标，校验执行条件，构建只读 `BuiltProblem` / `SearchContext` |
 | `domain` | 合法成员／Snap 索引、必须成员、队长和资源唯一性约束 |
-| `search` | 消费已建问题，分派 Power/Skip 或物理编成求解器，维护预算与 Top-K |
+| `search` | 消费已建问题，分派 Power/Skip 或队伍求解器，维护预算与 Top-K |
 | `auxiliary` | `evaluate_fixed` / `evaluate_built` / `rank_fixed_songs`，复用同一求值链 |
 
 CLI、WASM 和 harness 使用这些入口。
@@ -39,14 +39,18 @@ CLI、WASM 和 harness 使用这些入口。
 结果的 `telemetry`（`ournotes-deck.telemetry/1`，字段见 [埋点说明](docs/telemetry.md)）按阶段记录建池、上界编译与搜索；对已建问题执行时没有建池阶段。
 
 当前统一入口包括含 Snap 技能的 Free Live、声明条件下的 Mission 撃奏、分数与客户端 PT。
-Power/Skip 使用专用规范成员集合搜索；完整 Live/PT 的结果身份为物理编成，保留成员槽位、队长和 Snap 配对。
-Live 的原生技能顺序来自显式随机根，不能作为玩家自由优化的决策。
-默认 `branchAndBound` 在普通 Live 中先搜索成员集合，再展开物理站位和 Snap 分配；撃奏保留联合成员／Snap 遍历。
-两者都按声明随机根决定的技能位置计算分数上界，按非溢出范围内的奖金上界裁剪 PT 分支。
+Power/Skip 使用专用规范成员集合搜索。实打 Live/PT 以队伍（队长、另外四名成员及各自配对的 Snap）为单位，
+按 120 种等概率出场顺序的平均收益排序；除队长外的站位只是排列，不是决策。每支队伍按规范站位给出，
+并附 120 种顺序的分数分布和其中最好的顺序。撃奏关闭时，技能的概率判定按不支持拒绝；撃奏中没有 LUCK 区间时，
+概率判定控制不了任何能发生的效果，每种顺序仍只有一个确定分数；有 LUCK 区间时，按原生抽签概率给出带证明的收益区间排序，
+区间重叠而无法分出名次时返回 `RefinementRequired`。
+默认 `branchAndBound` 在普通 Live 中先搜索成员组合，再搜索 Snap 配对；撃奏保留联合成员／Snap 遍历。
+两者都用按位置平均的技能增益给平均分数上界，按非溢出范围内的奖金上界裁剪 PT 分支。
 默认预算为 3 秒，候选数不限；调用方可显式设置时间和候选预算，只有完成证明才返回 `Complete`。
 无法建立可靠上界时回退完整枚举，原因见 `telemetry.environment.bounds.fallback`。`branchAndBound` 与 `exhaustive` 完成时都证明所给模型和有限随机条件下的 Top-K；`candidate` 仍是启发式结果。
-上界的检查与剪枝按深度记在 `telemetry.joint`；逐前缀上界的证明与适用域见 [联合搜索说明](docs/search.md#joint-physical-deck-search-under-a-finite-native-root-law)。
-成员集合、站位及综合力分配的统计在 `telemetry.composition`；[分层搜索证明](docs/search.md#member-compositions-physical-layouts-and-power-frontiers)说明了完整变体恢复和 PT 分配提前结束的条件。
+上界的检查与剪枝按深度记在 `telemetry.joint`；逐前缀上界的证明与适用域见 [搜索说明](docs/search.md#uniform-member-order-search)。
+成员组合与 Snap 配对的统计在 `telemetry.composition`；[分层搜索证明](docs/search.md#member-compositions-snap-pairings-and-power-frontiers)说明了 Snap 搜索和 PT 分配提前结束的条件。
+搜索过程中 `telemetry.proof.globalUpperBound` 给出全域最佳值的上界。
 可复现的正确性实验（有限域穷举对拍、各类上界审计、截断审计）及复现方法见[搜索验证](docs/search.md#validation)。
 下文的底层 `search` 接口另有契约：每组成员卡只保留一个结果，并选择演出顺序，不同于统一入口的有限随机根目标。
 

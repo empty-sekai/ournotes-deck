@@ -1,11 +1,13 @@
 //! Fixed physical-deck evaluation and fixed-deck song ranking, sharing the search model.
 use crate::clock::Instant;
 use crate::handler::reject_unsupported_lifecycle;
-use crate::search::{Completion, physical::arithmetic};
+use crate::search::Completion;
 use crate::types::*;
 use ournotes_sim::{Error, cards::Roster, data::DeckData};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, time::Duration};
+
+mod song_rank;
 
 /// Evaluate a physical deck using an already built problem, without rebuilding the pool.
 /// Alternative decks are never substituted; constraints and deadlines still apply.
@@ -18,7 +20,7 @@ pub fn evaluate_built(
 }
 
 /// Evaluate exactly these physical slots and paired Snaps through the same
-/// context, arithmetic, root law and payoff path used by physical deck search.
+/// context, arithmetic, performance orders and payoff path used by deck search.
 /// This API does not infer missing account facts or certify the model.
 /// Constraints still apply; alternative decks are never substituted.
 pub fn evaluate_fixed(
@@ -59,15 +61,20 @@ pub struct FixedSongRanking {
     pub completion: Completion,
     /// Populated by the strict snapshot facade, including for empty results.
     pub owned_snapshot_scope: Option<serde_json::Value>,
-    /// Ranked complete rows only. A partially evaluated root law is excluded.
+    /// Account scope when called through BoundAccount.
+    pub account_scope: Option<serde_json::Value>,
+    /// Proved ordering among the completed evaluations. Unevaluated songs can still outrank this prefix.
     pub results: Vec<FixedSongResult>,
+    /// Completed evaluations whose mutual ordering still needs narrower certificates, in request order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unranked_results: Vec<FixedSongResult>,
     /// In original request order; no result is implied for these charts.
     pub remaining_score_ids: Vec<i64>,
     pub elapsed_ms: f64,
 }
 
 /// Rank one unchanged physical deck on explicitly selected songs, using the
-/// same fixed evaluator and declared root law. Every song resolves power and
+/// same fixed evaluator and performance orders. Every song resolves power and
 /// conditions afresh. Tie order is expected utility, power, then score ID.
 /// The shared budget includes all songs; only complete evaluations enter rank.
 /// A song-specific stream or duration requires separate evaluate_fixed calls.
@@ -89,14 +96,6 @@ pub fn rank_fixed_songs(
     }
     if matches!(request.execution, Execution::Power { .. }) {
         return Err(Error::Input("song ranking requires Skip or Live execution".into()));
-    }
-    let atom_count = if matches!(request.execution, Execution::Live { .. }) {
-        request.seed_law.as_ref().map_or(0, |law| law.atoms.len())
-    } else {
-        1
-    };
-    if targets.len().saturating_mul(atom_count) > MAX_RESULT_ATOMS {
-        return Err(Error::Capacity("song ranking exceeds bounded total atom capacity".into()));
     }
     if matches!(request.execution, Execution::Live { play: PlayPolicy::Stream { .. }, .. })
         || request.simulation.music_length_ms.is_some()
@@ -127,7 +126,9 @@ pub fn rank_fixed_songs(
     preflight.limits.time_limit_ms = Some(0);
     preflight.limits.max_candidates = Some(0);
     evaluate_fixed(data, roster, &preflight, members, snaps)?;
-    let mut ranked = Vec::new();
+    let mut evaluated = Vec::new();
+    let mut values = Vec::new();
+    let mut interrupted = Completion::TimedOut;
     let mut consumed = 0u64;
     for target in targets {
         if request.limits.time_limit_ms.is_some_and(|ms| start.elapsed() >= Duration::from_millis(ms))
@@ -143,27 +144,36 @@ pub fn rank_fixed_songs(
         r.limits.max_candidates = request.limits.max_candidates.map(|n| n.saturating_sub(consumed));
         let evaluation = evaluate_fixed(data, roster, &r, members, snaps)?;
         consumed = consumed.saturating_add(evaluation.telemetry.leaves.visited);
-        if evaluation.completion != Completion::Complete || evaluation.results.len() != 1 {
+        if evaluation.completion != Completion::Complete {
+            interrupted = evaluation.completion;
             break;
         }
-        let deck = &evaluation.results[0];
-        let numerator = deck.expected_payoff.numerator.parse::<i128>().map_err(|_| arithmetic())?;
-        let denominator = deck.expected_payoff.denominator.parse::<u128>().map_err(|_| arithmetic())?;
-        ranked.push((numerator, denominator, deck.power, FixedSongResult { score_id: target.score_id, evaluation }));
+        if evaluation.results.len() != 1 {
+            return Err(Error::Domain("complete fixed song evaluation must return exactly one deck".into()));
+        }
+        values.push(song_rank::SongValue::from_deck(target.score_id, &evaluation.results[0])?);
+        evaluated.push(Some(FixedSongResult { score_id: target.score_id, evaluation }));
     }
-    // The template has one metric and one root law, so all complete rows have
-    // the same denominator. Compare integers directly without cross products.
-    if let Some(first) = ranked.first()
-        && ranked.iter().any(|row| row.1 != first.1)
-    {
-        return Err(Error::Domain("song ranking changed the declared probability mass".into()));
+    let completed = evaluated.len();
+    let prefix = song_rank::ranked_prefix(&values)?;
+    let mut results = Vec::with_capacity(prefix.len());
+    for index in prefix {
+        results.push(evaluated[index].take().expect("each ranked song appears once"));
     }
-    let completed = ranked.len();
-    ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.2.cmp(&a.2)).then_with(|| a.3.score_id.cmp(&b.3.score_id)));
+    let unranked_results: Vec<_> = evaluated.into_iter().flatten().collect();
+    let completion = if completed < targets.len() {
+        interrupted
+    } else if unranked_results.is_empty() {
+        Completion::Complete
+    } else {
+        Completion::RefinementRequired
+    };
     Ok(FixedSongRanking {
-        completion: if completed == targets.len() { Completion::Complete } else { Completion::TimedOut },
+        completion,
         owned_snapshot_scope: None,
-        results: ranked.into_iter().map(|row| row.3).collect(),
+        account_scope: None,
+        results,
+        unranked_results,
         remaining_score_ids: targets[completed..].iter().map(|target| target.score_id).collect(),
         elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
     })

@@ -9,7 +9,7 @@
 //! the score at once; when that frame is undone and executed again, it is also counted as rank bonus score.
 
 use super::combo::ComboCounter;
-#[cfg(feature = "search-diagnostics")]
+use super::luck_score_bounds::{BoundsEvent, BoundsTrace};
 use super::score_program::{Kernel, Recorder, ScoreProgram, ValueId};
 use crate::error::Error;
 use crate::live::score::{GekisouComboInfo, LiveScoreCalculator, ScoreFactorState, get_frame};
@@ -103,7 +103,7 @@ impl NoteCommand {
 
 #[derive(Clone, Debug)]
 pub(crate) struct IncrementalCalculator {
-    #[cfg(feature = "search-diagnostics")]
+    pub(super) bounds_trace: Option<BoundsTrace>,
     program: Option<Recorder>,
     pub calc: LiveScoreCalculator,
     max_frame: i32,
@@ -135,7 +135,7 @@ impl IncrementalCalculator {
         let max_frame = get_frame(music_length_ms) + EXTRA_FRAMES;
         let n = max_frame as usize;
         IncrementalCalculator {
-            #[cfg(feature = "search-diagnostics")]
+            bounds_trace: None,
             program: None,
             calc,
             max_frame,
@@ -195,8 +195,11 @@ impl IncrementalCalculator {
 
     pub(crate) fn add_note(&mut self, cmd: NoteCommand) {
         let f = self.file(cmd.time_ms);
+        if let Some(trace) = &mut self.bounds_trace {
+            trace.events.push(BoundsEvent::Note { frame: f, index: self.notes[f].len(), note: cmd });
+            trace.combo.filed(f);
+        }
         self.notes[f].push(cmd);
-        #[cfg(feature = "search-diagnostics")]
         if let Some(program) = &mut self.program {
             program.add_note(f);
         }
@@ -204,19 +207,76 @@ impl IncrementalCalculator {
 
     pub(crate) fn add_factor(&mut self, cmd: FactorCommand) {
         let f = self.file(cmd.time_ms);
+        if let Some(trace) = &mut self.bounds_trace {
+            trace.events.push(BoundsEvent::Factor { frame: f, command: cmd });
+        }
         self.factors[f].push(cmd);
+    }
+
+    pub(super) fn begin_bounds(&mut self, optional_note_factors: Vec<f32>, has_luck: bool) {
+        self.bounds_trace = Some(BoundsTrace {
+            events: Vec::new(),
+            queries: 0,
+            frames: self.notes.len(),
+            optional_note_factors,
+            combo: Default::default(),
+            has_luck,
+        });
+    }
+
+    pub(super) fn bounds_potential_rush(&mut self, time_ms: i32) {
+        if self.bounds_trace.as_ref().is_none_or(|trace| !trace.has_luck) {
+            return;
+        }
+        let frame = get_frame(time_ms).min(self.max_frame - 1) as usize;
+        if let Some(trace) = &mut self.bounds_trace {
+            trace.events.push(BoundsEvent::Potential { frame, note_abs: 0.0 });
+        }
+    }
+
+    pub(super) fn bounds_potential_skills(&mut self, time_ms: i32) {
+        if self.bounds_trace.is_none() {
+            return;
+        }
+        let frame = get_frame(time_ms).min(self.max_frame - 1) as usize;
+        if let Some(trace) = &mut self.bounds_trace {
+            for &value in &trace.optional_note_factors {
+                trace.events.push(BoundsEvent::Potential { frame, note_abs: f64::from(value.abs()) });
+            }
+        }
+    }
+
+    pub(super) fn bounds_last_query(&self) -> Option<usize> {
+        self.bounds_trace.as_ref().and_then(|trace| trace.queries.checked_sub(1))
+    }
+
+    pub(super) fn bounds_probability_ready(&mut self, time_ms: i32) {
+        if let Some(trace) = &mut self.bounds_trace {
+            trace.events.push(BoundsEvent::ProbabilityReady(time_ms));
+        }
+    }
+
+    pub(super) fn bounds_rank(
+        &mut self,
+        range: usize,
+        time_ms: i32,
+        percent: i64,
+        start: Option<usize>,
+        end: Option<usize>,
+    ) {
+        if let Some(trace) = &mut self.bounds_trace {
+            trace.events.push(BoundsEvent::Rank { range, time_ms, percent, start, end });
+        }
     }
 
     /// Sets the fixed score filed by the next calculation (only the last one set counts).
     pub(crate) fn add_fixed(&mut self, time_ms: i32, score: i32) {
         self.pending_fixed = Some((time_ms, score));
-        #[cfg(feature = "search-diagnostics")]
         if let Some(program) = &mut self.program {
             program.pending_literal(score);
         }
     }
 
-    #[cfg(feature = "search-diagnostics")]
     pub(crate) fn begin_program(&mut self) -> Result<(), Error> {
         if self.program.is_some()
             || self.prev != -1
@@ -232,17 +292,18 @@ impl IncrementalCalculator {
         Ok(())
     }
 
-    #[cfg(feature = "search-diagnostics")]
     pub(crate) fn finish_program(&mut self) -> Result<ScoreProgram, Error> {
         self.program.take().ok_or_else(|| Error::Input("score program was not started".into()))?.finish(self.score)
     }
 
-    #[cfg(feature = "search-diagnostics")]
+    pub(crate) fn export_program(&self) -> Result<Option<std::sync::Arc<ScoreProgram>>, Error> {
+        self.program.as_ref().map(|program| program.export(self.score)).transpose()
+    }
+
     pub(crate) fn program_snapshot(&self) -> Option<ValueId> {
         self.program.as_ref().map(Recorder::snapshot)
     }
 
-    #[cfg(feature = "search-diagnostics")]
     pub(crate) fn record_rank_bonus(
         &mut self,
         start: Option<ValueId>,
@@ -297,13 +358,38 @@ impl IncrementalCalculator {
             }
             self.fixed.push((ff, fs));
             self.score = self.score.wrapping_add(fs);
-            #[cfg(feature = "search-diagnostics")]
             if let Some(program) = &mut self.program {
                 program.file_fixed(ff)?;
             }
         }
         self.prev = to;
         self.added = -1;
+        if let Some(trace) = &mut self.bounds_trace {
+            // Observe every currently addressable note, including notes this recorder did not reexecute.
+            // The support evaluator uses these values on every possible native rewind path. Notes outside the
+            // stale frames have unchanged combo inputs, so observing them again would emit nothing.
+            let frames = ((to + 1).max(0) as usize).min(self.notes.len());
+            let last = self.max_frame - 1;
+            let stale = trace.combo.begin(frames, combo, gekisou, |t| get_frame(t).min(last).max(0) as usize);
+            for frame in stale.iter().flat_map(|&(from, until)| from..until) {
+                for (index, note) in self.notes[frame].iter().enumerate() {
+                    let (ordinary, gk) = combo_inputs(&self.calc, combo, gekisou, note.time_ms)?;
+                    if trace.combo.changed(frame, index, (ordinary.to_bits(), gk.to_bits())) {
+                        trace.events.push(BoundsEvent::Combo { frame, index, ordinary, gekisou: gk });
+                    }
+                }
+            }
+            trace.combo.end(stale);
+            #[cfg(test)]
+            for (frame, notes) in self.notes.iter().enumerate().take(frames) {
+                for (index, note) in notes.iter().enumerate() {
+                    let (ordinary, gk) = combo_inputs(&self.calc, combo, gekisou, note.time_ms)?;
+                    assert_eq!(trace.combo.seen(frame, index), Some((ordinary.to_bits(), gk.to_bits())));
+                }
+            }
+            trace.events.push(BoundsEvent::Query { time_ms: t, to });
+            trace.queries += 1;
+        }
         Ok(self.score)
     }
 
@@ -312,7 +398,6 @@ impl IncrementalCalculator {
         if f < self.settled_frame {
             self.settled_violations += 1;
         }
-        #[cfg(feature = "search-diagnostics")]
         if let Some(program) = &mut self.program {
             program.undo(f);
         }
@@ -346,7 +431,6 @@ impl IncrementalCalculator {
                 let n = &mut nl[self.order_n[b]];
                 let c = combo.timing_combo(n.time_ms)?;
                 let s = self.calc.note_score(c, n.life, n.time_ms, n.note_type, n.score_type, gekisou)?;
-                #[cfg(feature = "search-diagnostics")]
                 if let Some(program) = &mut self.program {
                     let kernel = Kernel::capture(
                         &self.calc,
@@ -378,7 +462,6 @@ impl IncrementalCalculator {
             }
         }
         if let Some(v) = self.fixed_at(f as i32) {
-            #[cfg(feature = "search-diagnostics")]
             if let Some(program) = &mut self.program {
                 program.execute_fixed(f as i32);
             }
@@ -387,4 +470,25 @@ impl IncrementalCalculator {
         }
         Ok(())
     }
+}
+
+/// The (ordinary, Gekisou) combo factors the score reads for a note at `time_ms`.
+fn combo_inputs(
+    calc: &LiveScoreCalculator,
+    combo: &ComboCounter,
+    gekisou: Option<&dyn GekisouComboInfo>,
+    time_ms: i32,
+) -> Result<(f32, f32), Error> {
+    let count = combo.timing_combo(time_ms)?;
+    let ordinary = calc
+        .combo_table
+        .as_ref()
+        .map_or(Ok(0.0), |table| table.get_cumulative_factor(crate::live::score::COMBO, count))?
+        .min(1.0)
+        + 1.0;
+    let gk = calc.gekisou_combo_bonus_factor(gekisou, time_ms)?;
+    if !ordinary.is_finite() || !gk.is_finite() {
+        return Err(Error::Unsupported("score bounds encountered nonfinite combo inputs".into()));
+    }
+    Ok((ordinary, gk))
 }

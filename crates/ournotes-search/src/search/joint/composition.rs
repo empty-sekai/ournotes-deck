@@ -277,10 +277,7 @@ impl JointBounds {
                 ((((w * w).next_up() / (4.0 * r)).next_up() * (1.0 + self.eps).next_up()).next_up().ceil()) as i128,
             );
         }
-        (
-            self.points.as_ref().map_or(score, |pt| ((10000 + total.bonus) * pt.multiplier_at(score) / 10000) as i128),
-            power,
-        )
+        (self.points.as_ref().map_or(score, |pt| pt.mean_payoff(total.bonus, score)), power)
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -93,6 +93,8 @@ pub const THEORETICAL_TAIL_MS: i32 = 2000;
 /// Frame delta time in seconds of the default plays, and of a judgement stream without `deltaTimes`.
 pub const THEORETICAL_DT: f32 = 1.0 / 60.0;
 
+/// Judgement of the Great result.
+const SIMULATE_GREAT: i32 = 4;
 /// Judgement of the Just result.
 const SIMULATE_JUST: i32 = 6;
 /// The Gekisou mission that counts Just judgements.
@@ -186,6 +188,53 @@ impl JustRule {
     }
 }
 
+/// The accuracy of a play: the share of the judged notes hit Great, and the share of the notes that can still be
+/// judged Just that are hit Just. The default (0, 1) is the theoretical best play.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Accuracy {
+    pub great_fraction: f64,
+    pub just_fraction: f64,
+}
+
+impl Default for Accuracy {
+    fn default() -> Self {
+        Accuracy { great_fraction: 0.0, just_fraction: 1.0 }
+    }
+}
+
+/// The judgement counts of an accuracy play ([`JudgementStream::with_accuracy`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccuracyCounts {
+    /// Judged notes.
+    pub total: usize,
+    pub great: usize,
+    /// The notes not hit Great that can be judged Just.
+    pub just_eligible: usize,
+    pub just: usize,
+    pub perfect: usize,
+}
+
+/// Selects `count` of `n` positions spread evenly: walking the positions in order, a running remainder grows by
+/// `count` and selects a position (dropping by `n`) whenever it reaches `n`. Every prefix of length `p` holds
+/// `floor(p * count / n)` selected positions.
+fn choose_evenly(n: usize, count: usize, mut select: impl FnMut(usize)) {
+    let mut remainder = 0usize;
+    for i in 0..n {
+        remainder += count;
+        if remainder >= n {
+            remainder -= n;
+            select(i);
+        }
+    }
+}
+
+/// `round(n * fraction)` with halves rounded up, for a fraction in `[0, 1]`.
+fn rounded_share(n: usize, fraction: f64) -> usize {
+    (n as f64 * fraction).round() as usize
+}
+
 fn in_windows(windows: &[(usize, usize)], frame: usize) -> bool {
     windows.iter().any(|&(first, last)| first <= frame && frame < last)
 }
@@ -261,6 +310,53 @@ impl JudgementStream {
             })
             .collect();
         Ok(JudgementStream { frames, judged: rows, base_seed: 0, assist: false, delta_times: None })
+    }
+
+    /// The play of a stated accuracy, built from the theoretical best play (Gekisou off: [`Self::theoretical_best`],
+    /// on: [`Self::theoretical_best_gekisou`] with `rule`). Only judgements change; frames, notes and their order stay.
+    /// Of the `n` judged notes, in stream order, `round(n * greatFraction)` are judged Great, spread evenly over the
+    /// order (see `choose_evenly`). Of the remaining notes, the ones the theoretical best play judges Just (their
+    /// judgement type allows Just and the Just judgement is enabled in their frame) can be judged Just:
+    /// `round(m * justFraction)` of these `m` notes, spread evenly over their order, are judged Just and every other
+    /// note Perfect. Rounding takes halves up. The play is one deterministic plan, not an expectation over plans.
+    /// An Input error when a fraction is not in `[0, 1]`, or when Gekisou is off and `justFraction` is not 0
+    /// (the Just judgement is never enabled).
+    pub fn with_accuracy(
+        chart: &Chart,
+        judgement_types: &[i32],
+        rule: Option<&JustRule>,
+        accuracy: Accuracy,
+    ) -> Result<(JudgementStream, AccuracyCounts), Error> {
+        let Accuracy { great_fraction, just_fraction } = accuracy;
+        for (name, value) in [("greatFraction", great_fraction), ("justFraction", just_fraction)] {
+            if !(0.0..=1.0).contains(&value) {
+                return Err(Error::Input(format!("accuracy {name} {value} is not in [0, 1]")));
+            }
+        }
+        let mut stream = match rule {
+            Some(rule) => Self::theoretical_best_gekisou(chart, judgement_types, rule)?,
+            None if just_fraction != 0.0 => {
+                return Err(Error::Input("accuracy justFraction must be 0 with Gekisou off".into()));
+            }
+            None => {
+                check_types(chart, judgement_types)?;
+                Self::theoretical_best(chart)
+            }
+        };
+        let total = stream.judged.len();
+        let great = rounded_share(total, great_fraction);
+        let mut grade = vec![SIMULATE_PERFECT as i32; total];
+        choose_evenly(total, great, |i| grade[i] = SIMULATE_GREAT);
+        let eligible: Vec<usize> =
+            (0..total).filter(|&i| grade[i] != SIMULATE_GREAT && stream.judged[i][2] == SIMULATE_JUST).collect();
+        let just = rounded_share(eligible.len(), just_fraction);
+        choose_evenly(eligible.len(), just, |k| grade[eligible[k]] = SIMULATE_JUST);
+        for (row, g) in stream.judged.iter_mut().zip(grade) {
+            row[2] = g;
+        }
+        let counts =
+            AccuracyCounts { total, great, just_eligible: eligible.len(), just, perfect: total - great - just };
+        Ok((stream, counts))
     }
 
     /// The delta time in seconds of every frame: `deltaTimes`, or [`THEORETICAL_DT`] for every frame without it. An

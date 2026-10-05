@@ -418,11 +418,30 @@ fn document_lists_kinds_and_charts() {
     assert_eq!(v["format"], chartstats::FORMAT);
     assert_eq!(v["source"]["region"], "test");
     assert_eq!(v["model"]["power"], POWER);
+    let mut keys: Vec<&str> = v["model"].as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "checkPower",
+            "engine",
+            "gekisouAptitude",
+            "off",
+            "perfect",
+            "play",
+            "power",
+            "ranks",
+            "score",
+            "seeds",
+            "unitValue"
+        ]
+    );
     assert_eq!(v["kinds"].as_array().unwrap().len(), 4);
     for key in ["ranks", "perfect", "off"] {
         assert!(v["model"][key].as_str().is_some_and(|s| !s.contains("  ")), "{key}");
     }
     let c = &v["charts"][0];
+    assert!(c.get("luck").is_none(), "ordinary chart statistics must not export an experimental LUCK table");
     assert_eq!(c["scoreId"], 1004);
     assert_eq!(c["events"].as_array().unwrap().len(), 5);
     assert_eq!(c["ranges"][0]["rankBonusPercents"].as_array().unwrap().len(), 5);

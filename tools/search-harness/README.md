@@ -30,25 +30,25 @@ The first harness build generates its standalone lockfile; subsequent builds use
 
 ## Domain and result contract
 
-Each case supplies immutable dataset, roster and recommendation-request JSON paths, `oracleMaxCandidates`, experiments and optional dominance proposals. Paths resolve relative to the case file. Requests use the existing `ournotes-deck.recommendation-request/1` contract. They must explicitly declare the scene, play, finite root law and metric. Snap skills are included in the shared full simulation.
+Each case supplies immutable dataset, roster and search-request JSON paths, `oracleMaxCandidates`, experiments and optional dominance proposals. Paths resolve relative to the case file. Requests use the `ournotes-deck.search-request/1` contract. They must explicitly declare the scene, play and metric. Snap skills are included in the shared full simulation.
 
-The independent domain enumerates five physical slots with different characters, leader slot 2, optional unique Snaps, and explicit includes/excludes. It does not use production allowed-pool resolution, member enumeration, assignment, bounds, cache or Top-K. Every candidate is evaluated by `evaluate_fixed` with all its root atoms. The harness ranks exact integer payoff numerators, then power, physical member IDs and Snap IDs (None first), matching the current adapter contract. It does not optimize a controllable skill order. Duplicate/signed roots and their integer masses remain intact.
+The independent domain enumerates every team once: five different characters, the leader in slot 2, the other members in slots 0, 1, 3 and 4 in ascending card ID order (the canonical layout), optional unique Snaps, and explicit includes/excludes. It does not use production allowed-pool resolution, member enumeration, assignment, bounds, cache or Top-K. Every team is evaluated by `evaluate_fixed` over its 120 performance orders. The harness ranks exact integer payoff numerators, then power, member IDs and Snap IDs (None first) of the canonical layout, matching the adapter contract.
 
 The configured cap is checked before simulation. A domain exceeding it fails without emitting a complete oracle. The harness uses bounded correctness cases sized for exhaustive enumeration.
 
-Every prefix cap the search can use is checked against every oracle completion and root: joint prefixes, Rush prefixes and leaves, character and resource prefixes, raw-judgement leaves, classes and class bindings, compositions and layouts, bonus and expected-bonus prefixes, per-member PT caps, suffixes and next pairs. An inadmissible cap fails the run. Composition and fixed-layout Snap prefixes are audited separately from joint pair prefixes. Every retained physical variant still participates in the oracle. The power-only assignment DP has its own exhaustive binding test, including empty choices, negative increments and ties; PT integration also tests fewer legal bindings than K and nonmonotone reward tiers.
+Every prefix cap the search can use is checked against the exact value of every oracle team: joint prefixes, per-order leaf caps (each against that order's exact payoff), character and resource prefixes, classes and class bindings, compositions and teams, bound modules, bonus and expected-bonus prefixes, per-member PT caps, suffixes and next pairs. An inadmissible cap fails the run. Composition and Snap-pairing prefixes are audited separately from joint pair prefixes. The power-only assignment DP has its own exhaustive binding test, including empty choices, negative increments and ties; PT integration also tests fewer legal bindings than K and nonmonotone reward tiers.
 
 Gekisou score experiments may set `"schedule":"classes"` or
 `"schedule":"classesWithResource"` beside `name`, `patch` and `repeats`.
 The default is `production`. These diagnostic schedules enumerate bound-effect
-classes and then every surviving physical Snap binding; they do not merge native
-simulations or assume score monotonicity in power. The latter schedule also retains
+classes and then every surviving Snap binding; they do not merge simulations or
+assume score monotonicity in power. The latter schedule also retains
 unique Snap resources in a rounded `P + r*A` assignment upper bound. All other
 request semantics, oracle comparison and deadlines remain shared. Unsupported
 objectives fail explicitly. The recommendation request has no schedule switch.
 
 Class-prefix and within-class binding-prefix caps are checked against every
-oracle deck and root, with repeated caps cached only inside one immutable problem.
+oracle team, with repeated caps cached only inside one immutable problem.
 Cache capacity limits repeated computation, never which witnesses are checked.
 Reports identify each schedule, its exact returned values and work counters;
 same-policy binary comparisons reject a changed schedule.
@@ -59,8 +59,8 @@ For full-domain runs without an exhaustive oracle:
 search_variant classesWithResource DATA ROSTER REQUEST OUTPUT
 ```
 
-This diagnostic binary writes the schedule, ordinary outcome and per-root bound
-explanations for returned decks. `TimedOut` remains an unproved incumbent, even if
+This diagnostic binary writes the schedule, ordinary outcome and bound explanations
+of the best order of every returned deck. `TimedOut` remains an unproved incumbent, even if
 it beats another schedule's incumbent.
 
 `evaluate_fixed DATA ROSTER REQUEST DECKS OUTPUT` scores a JSON array of
@@ -68,18 +68,17 @@ it beats another schedule's incumbent.
 It is useful for checking a score-search incumbent under a PT request. It performs
 no search and grants no global optimality certificate; inspect each completion.
 
-Experiments can change `strategy`, `limits`, or add member/Snap exclusions. They cannot change the scorer, root law, metric, scene, play or K. Reports keep original-domain identity even for reduced-pool trials. `Complete` from a reduced experiment certifies only its reduced domain; the harness separately checks whether its results equal the original full-domain Top-K. Heuristic/timeout results must still match fixed-evaluator values. A full-domain wrong `Complete` or incorrectly evaluated returned deck fails the run.
+Experiments can change `strategy`, `limits`, or add member/Snap exclusions. They cannot change the scorer, metric, scene, play or K. Reports keep original-domain identity even for reduced-pool trials. `Complete` from a reduced experiment certifies only its reduced domain; the harness separately checks whether its results equal the original full-domain Top-K. Heuristic/timeout results must still match fixed-evaluator values. A full-domain wrong `Complete` or incorrectly evaluated returned deck fails the run.
 
-Reports retain complete returned atoms, oracle Top-K, candidate/simulation/cache/bound counters, exact Top-1 gap, input hashes, binary identity and source manifest.
+Reports retain complete returned results with their best orders, oracle Top-K, candidate/simulation/cache/bound counters, exact Top-1 gap, input hashes, binary identity and source manifest.
 
 ## Fixed-deck audits
 
 The following binaries take a `DECKS` JSON array of `{"members":[...],"snaps":[...]}`, write their report, and exit nonzero on any violation. They need no exhaustive oracle, so they apply to full-size rosters; the decks are typically the returned results of a search.
 
-- `cutoff_audit DATA ROSTER REQUEST DECKS OUTPUT` settles after every frame of a complete simulation for each deck and distinct root and checks that no settled score frame is undone later, that every settled total equals the final scores of its frames, and that every cutoff cap is at least the final score. Roots without a finite cutoff table are counted as unavailable, which is partial coverage rather than a pass.
-- `slack_profile DATA ROSTER REQUEST DECKS OUTPUT` pairs each root's fine cap with the actual simulated score and per-note scores. The per-entry terms are attribution, not bounds; the cap itself must not be below the score.
-- `rush_audit DATA ROSTER REQUEST DECKS OUTPUT` compares full-engine Rush probes, plain full simulation and reduced replay. Inspect unsupported roots and admission criteria separately from zero violations. A same-signature check is an ordered program check; it does not authorize sorting skills or merging random roots.
-- `idle_audit DATA ROSTER REQUEST DECKS OUTPUT [--search]` evaluates each deck with and without the deterministic idle trigger plan and requires identical outcomes, including every root atom, order, life/conversion observation and non-timing counter. `--search` repeats the comparison for a whole search, which needs `timeLimitMs:null`.
+- `cutoff_audit DATA ROSTER REQUEST DECKS OUTPUT` settles after every frame of a complete simulation for each deck at ten audited performance orders (the five cyclic shifts of the slot order and their reverses) and checks that no settled score frame is undone later, that every settled total equals the final scores of its frames, and that every cutoff cap is at least the final score. Orders without a finite cutoff table are counted as unavailable, which is partial coverage rather than a pass.
+- `slack_profile DATA ROSTER REQUEST DECKS OUTPUT` pairs each audited order's fine cap with the actual simulated score and per-note scores. The per-entry terms are attribution, not bounds; the cap itself must not be below the score.
+- `idle_audit DATA ROSTER REQUEST DECKS OUTPUT [--search]` evaluates each deck with and without the deterministic idle trigger plan and requires identical outcomes, including the score distribution, best order and non-timing counters. `--search` repeats the comparison for a whole search, which needs `timeLimitMs:null`.
 - `explain_fixed DATA ROSTER REQUEST DECKS OUTPUT` separates a fixed deck's candidate-specific floating margin from coefficient/window slack. Its `diagnosticScoreWithZeroMargin` is explicitly not an admissible bound and must never authorize pruning.
 - `score_program DATA ROSTER REQUEST DECKS POWERS OUTPUT` records exact score programs for the declared roots, then compares evaluations at every supplied power with fresh complete simulations. `POWERS` is an array of i32 values. The audit also attempts an explicit nondecreasing-score certificate on power 0 through 2,000,000, reported separately from sampled replay equality. These diagnostics do not search, merge decks or certify PT. See [score programs](../../docs/score-programs.md).
 
@@ -147,21 +146,21 @@ populations.
 
 ## Dominance is an experiment with proof obligations
 
-Propose `{kind: "member" | "snap", from: id, to: id}`. Member replacement must preserve character. For every original candidate, the audit substitutes the proposed replacement in the same physical slot and consults the exhaustive oracle. It counts canonical regressions, per-atom payoff losses, unavailable replacements and Snap-occupancy conflicts, retaining the first counterexample with both complete scored candidates.
+Propose `{kind: "member" | "snap", from: id, to: id}`. Member replacement must preserve character. For every original team, the audit substitutes the proposed replacement for the same member (or Snap) and consults the exhaustive oracle with the canonical layout of the result. It counts canonical regressions, unavailable replacements and Snap-occupancy conflicts, retaining the first counterexample with both complete scored candidates.
 
 Even an audit with zero counterexamples authorizes no production pruning. Its scope is the configured finite domain and metric. A general rule needs a completion-safe argument covering:
 
 - leader/slot, attributes/tags, event bonuses and conditional skills;
-- effect timing/order, life, judgement conversion, Gekisou missions and RNG consumption;
+- effect timing/order, life, judgement conversion and Gekisou missions;
 - unique Snap resources and occupied replacements;
 - canonical ties, cultivation identity and restoration of distinct Top-K alternatives;
-- event-grade/PT steps after each atom, rather than applying a reward formula to an average score.
+- event-grade/PT steps after each performance order, rather than applying a reward formula to an average score.
 
 Use the exclusion experiment to expose the actual loss from an unproved removal. Preserve counterexamples as regression cases. A bound needs per-pruned-node witnesses and an independent exhaustive completion check before entering a fast path.
 
 ## Synthetic suite
 
-The generator reuses existing synthetic effect tables: six members across five characters, two different Snap programs, a short synthetic chart, signed roots with duplicate masses, normal Free and Gekisou Mission scenes. Both scenes test final score and client event PT. Each case compares exhaustive search, bounded candidate proposals, and an intentionally unproved Snap removal, plus member/Snap substitution audits. Each of the four cases enumerates 7,440 physical decks: two legal five-member sets, all physical orders, and all optional unique assignments of two Snaps. `BDON_HARNESS_STRESS=1` exports a larger 326,400-deck variant. `check-errors.py BINARY CORPUS OUTPUT` checks that an oracle cap below the domain size is refused before scoring and leaves no report.
+The generator reuses existing synthetic effect tables: six members across five characters, two different Snap programs, a short synthetic chart, normal Free and lottery-free Gekisou Mission scenes. Both scenes test final score and client event PT. Each case compares exhaustive search, bounded candidate proposals, and an intentionally unproved Snap removal, plus member/Snap substitution audits. Each of the four cases enumerates 310 teams: two legal five-member sets, five leaders each, and all 31 optional unique assignments of two Snaps, each team over its 120 performance orders. `BDON_HARNESS_STRESS=1` exports a larger 13,600-team variant. `check-errors.py BINARY CORPUS OUTPUT` checks that an oracle cap below the domain size is refused before scoring and leaves no report.
 
 The suite exercises represented Snap and Gekisou behavior; it does not claim every skill family, realistic whole-chart behavior, latest patch parity, human input prediction or server settlement. Real-data cases use a deck data file written by `nnnotes deck-data`, rosters from `mock_rosters.py` and explicit requests, with their own input identities.
 

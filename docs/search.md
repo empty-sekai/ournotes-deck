@@ -1,12 +1,13 @@
 # Exact deck search
 
-The played Live/PT recommendation facade searches physical member/Snap assignments under a declared finite
-native-root law. Its result order and proof contract are specified in
-[joint physical search](#joint-physical-deck-search-under-a-finite-native-root-law); the bounds it uses are
-described after it, and [validation](#validation) lists the reproducible correctness experiments.
-The opening sections describe the canonical member-set solvers and the power/score components that the physical
+The played Live/PT recommendation facade searches teams (a leader, four other members and the Snap paired with
+each member) under the uniform member-order target: the five members perform in a uniformly random order, and a
+team's value is its mean payoff over the 120 performance orders. Its result order and proof contract are specified
+in [uniform member-order search](#uniform-member-order-search); the bounds it uses are described after it, and
+[validation](#validation) lists the reproducible correctness experiments.
+The opening sections describe the canonical member-set solvers and the power/score components that the team
 solver reuses. Each route declares its result identity explicitly. Live with Gekisou off uses the
-[composition/layout/resource decomposition](#member-compositions-physical-layouts-and-power-frontiers);
+[composition/Snap decomposition](#member-compositions-snap-pairings-and-power-frontiers);
 Gekisou keeps joint member/Snap traversal. Compiled envelopes are derived in
 [compiled search envelopes](search-envelope-programs.md).
 
@@ -411,12 +412,61 @@ simulations grows with K. Streams with many missed or late notes make the bound 
 life are bounded, not simulated), so many more candidates are simulated; a time limit (`TimedOut`) keeps such requests
 bounded.
 
-## Joint physical-deck search under a finite native-root law
+## Uniform member-order search
 
-The `branchAndBound` strategy in the recommendation facade retains physical-deck identity. It assigns
-one `(member, optional Snap)` pair at a time in physical slot order `[2, 0, 1, 3, 4]`, fixing the leader
-first. Every legal member/Snap pairing remains present. There is no per-card quality cutoff, Snap
-dominance deletion, representative-only class matching, or selectable performance order in this solver.
+### Target
+
+A team is a leader in slot 2, four other members and the Snap (or none) paired with each member. In a performance
+order the five members act at the five skill positions; the paired Snaps follow their members. The target value of a
+team is the mean of its payoff over the 120 performance orders, each equally likely:
+
+    U(team) = (1/120) * sum over the 120 orders of payoff(team, order)
+
+Each order is simulated once from the start of the live with the declared judgement stream. The payoff is the final
+score (or capped score), or the client event points of that order's final score, rank and life. Power and the
+positions of the four non-leader members do not change the value: their slots are a layout, not a decision.
+
+A skill probability check draws a random number. With Gekisou off such a draw ends the request with `Unsupported`.
+In a Gekisou live without a LUCK range the probability gates nothing that can run, and each order keeps one exact
+score (`"lottery":"noLuckRange"`, below). A LUCK range decides its lottery with random numbers; those decks are
+ranked by certified intervals over the native lottery probabilities ([LUCK](#luck)).
+
+### Result identity and shape
+
+`resultIdentity` is `team` (`fixedTeam` for a fixed-deck evaluation). A team is reported in its canonical layout: the
+leader in slot 2 and the other (member, Snap) pairs in slots 0, 1, 3 and 4 in ascending member card ID order. Every
+layout of the same pairs is the same team, and a fixed deck given in any layout evaluates and reports as that team.
+Results are ordered by
+
+1. `expectedPayoff.numerator`, descending (every played-live result has denominator 120);
+2. power, descending;
+3. member card IDs of the canonical layout, ascending;
+4. Snap IDs of the canonical layout, ascending, with "no Snap" before every ID.
+
+Each result carries `expectedScore` and `expectedPayoff` as exact fractions over 120, `scoreSummary` (minimum,
+maximum, lower quantiles and the probability of reaching a score target, over the 120 equally likely orders) and
+`bestOrder`: the first performance order, in lexicographic order of slot permutations, with the highest payoff and
+then the highest score. `bestOrder.performanceOrder` lists the result's slots in performance order,
+`bestOrder.members` the member card IDs in that order, with that order's `score` and `payoff`. It reproduces one play;
+it is not a decision of the search. `probabilityLaw` is `{"kind":"uniformMemberOrder","orders":120,"lottery":"none"}`.
+In a Gekisou live without a LUCK range, a deck whose skills read a probability reports `"lottery":"noLuckRange"`:
+without a LUCK range the controller consumes no lottery, the probability gates only lottery chains and
+lottery-dependent score-ups, and each order still has one exact score.
+
+`Complete` certifies that the results are the first K teams of this order over every team of the legal domain.
+`TimedOut` results are teams with exact values; a better team may be missing, and `telemetry.proof` bounds what the
+stop left unexplored.
+
+### Traversals
+
+The joint traversal assigns one `(member, optional Snap)` pair at a time in slot order `[2, 0, 1, 3, 4]`, the leader
+first. After the first non-leader slot, each slot takes a pair later in a fixed choice order than the previous slot's
+pair, so every team is visited once, in one layout. The composition traversal (Live with Gekisou off) branches on the
+leader and an unordered set of four other members, then on the Snap pairings of that composition. Leaves evaluate
+the canonical layout. Neither traversal removes a legal pairing: there is no per-card quality cutoff, Snap dominance
+deletion or representative-only class matching.
+
+### Node bounds
 
 For an assigned leader, the existing `Tables` decomposition bounds each slot's power by
 `a[m] + lead[profile][m] + w[m][s]`. Preparation checks nonnegative slot lower bounds and a nonwrapping
@@ -424,43 +474,84 @@ whole-deck power domain. Selected pairs contribute their terms. For remaining sl
 per character and then the largest required number of character values. Different remaining slots
 may reuse a Snap in the relaxation; this enlarges the feasible domain rather than deleting a resource.
 
-The existing Snap Live bound compiler supplies `A0`, `global`, `eps` and each physical pair's five
-position gains. Its supported-domain checks cover nonnegative score factors, conversion/recovery,
-frame re-execution drift, Gekisou combo/luck/rank bonuses, and the score overflow ceiling. Class
-classification is used only to read these upper bounds: physical Snap identities remain in search.
+The existing Snap Live bound compiler supplies `A0`, `global`, `eps` and each pair's five position gains. Its
+supported-domain checks cover nonnegative score factors, conversion/recovery, frame re-execution drift, Gekisou
+combo and rank bonuses, and the score overflow ceiling. Class classification is used only to read these upper
+bounds: Snap identities remain in search.
 
-For each declared root, `native_member_order(root)` fixes the map from physical slot to skill position.
-It is computed before any deck-dependent Skill/Luck execution. Equal permutations can share an upper
-bound; their integer masses are added without changing the root law used by the leaf evaluator.
-Assigned pairs use their actual position gain. An unassigned member's relaxed gain takes the maximum
-over still unfilled positions and available Snap choices; per-character maxima may use different
-cards for gain and power. Both operations enlarge the completion set. Gain sums round upward.
-The per-root cap is `ceil(P_upper * min(A0 + G_upper, global) * (1 + eps))`. The search sums integer
-caps times exact integer masses, with checked arithmetic. It never ranks by a rounded mean or by
-the maximum of sampled scores. The bound does not assume independent skill/luck draws.
+In one performance order the score of a team is at most `P * min(A0 + sum of the slots' position gains, global) *
+(1 + eps)`. Power `P` does not depend on the order, and under the uniform order every member is at every position
+with probability 1/5, so the mean of the gain sum is the sum of each pair's mean gain over the five positions. The
+function `x -> min(x, global)` is concave, so by Jensen's inequality the mean score is at most
+`P * min(A0 + sum of mean gains, global) * (1 + eps)`. Every node bound therefore reads position-mean gains (rounded
+up) and is multiplied by 120 to bound the payoff numerator. Unassigned members take per-character maxima of power
+and mean gain, which may come from different cards; this only enlarges the completion set.
 
-For normal-played PT with exactly one held target event, member and Snap bonuses are additive.
-Preparation requires nonnegative resolved per-card bonuses, rate and reachable rank values. It
-checks `bonus + 10000`, its product with rate, and the complete point product against `i32::MAX`.
-The maximum point value is taken over all reachable rank thresholds, without assuming rank values
-increase with score. Thus `(bonus_upper + 10000) * rate * max_rank_value / 10000` bounds every atom.
-The inherited Live domain checks ensure nonnegative, nonwrapping terminal scores for these thresholds.
-The leaf still computes each atom's actual score rank and points before aggregation.
+For normal-played PT with exactly one held target event, member and Snap bonuses are additive. Preparation requires
+nonnegative resolved per-card bonuses, rate and reachable rank values. It checks `bonus + 10000`, its product with
+rate, and the complete point product against `i32::MAX`. The reward of one order is a step function of its score,
+not necessarily increasing. Its prefix maximum over reachable thresholds is at least the reward, and the concave
+majorant of that prefix maximum (the upper concave hull of its corners, flat after the last one) is a concave,
+nondecreasing function above it. The mean reward over the orders is then at most the majorant at the mean score
+cap, again by Jensen's inequality; the majorant is evaluated with rounding up, then the event bonus applies. At a
+complete team the per-order caps apply the step reward to each order's own score cap.
 
-A branch is removed only when its numerator cap is strictly below the full Top-K threshold, or the
-numerators tie and its power cap is strictly lower. Equality of both retains the branch, preserving
-member-ID/Snap-ID tie order. Traversal visits each legal physical assignment once. Exhausting the
-frontier therefore certifies the same conditional physical Top-K as exhaustive enumeration.
+A branch is removed only when its numerator cap is strictly below the full Top-K threshold, or the numerators tie
+and its power cap is strictly lower. Equality of both retains the branch, preserving member-ID/Snap-ID tie order.
+Exhausting the traversal therefore certifies the same Top-K as exhaustive enumeration of every team.
 
-Unsupported bound domains, explicit duration/delta-clock overrides, negative bonuses and possible
-PT wrapping select exhaustive fallback and report `telemetry.environment.bounds.fallback`. Preparation errors are not
-converted into optimistic bounds. Regular request/model validation and exact leaf errors still apply.
-`telemetry.joint` (checks and prunes of every bound by depth) and `telemetry.environment.bounds.compileMs` expose
-the actual proof work; `telemetry.proof` bounds what a stopped search leaves ([telemetry](telemetry.en.md)).
+Unsupported bound domains, explicit duration/delta-clock overrides, negative bonuses and possible PT wrapping
+select exhaustive fallback and report `telemetry.environment.bounds.fallback`. Preparation errors are not converted
+into optimistic bounds. `telemetry.joint` and `telemetry.composition` (checks and prunes of every bound),
+`telemetry.environment.bounds.compileMs` and `telemetry.proof` expose the proof work ([telemetry](telemetry.en.md)).
 
-With `search-diagnostics`, `search::diagnostics::prefix_upper` exposes a per-root prefix cap. The
-harness independently enumerates complete physical decks and checks every prefix against its actual
-per-atom payoff and power, then compares the entire ordered Top-K (see [validation](#validation)).
+### Bound modules
+
+Further bounds of partial teams are modules behind one interface (`joint::NodeBound`): given the members of the
+first `depth` search slots (and, in the joint traversal, their Snaps), a module returns an upper bound of the payoff
+numerator of every completion, or nothing. Both traversals consult every module after the built-in bounds, with the
+same strict pruning rule, and count checks and prunes per module name (`telemetry.joint.modules`,
+`telemetry.composition.modules`).
+
+The member-additive module (`memberAdditive`, score of Lives without Gekisou) keeps each pair's power and gain
+together. With `T = A0 + sum of the pairs' mean gains`, the mean score is at most `P * T * (1 + eps)`, and for every
+`lambda > 0`, `P * T <= (P + lambda * T)^2 / (4 * lambda)` because `(P - lambda * T)^2 >= 0`. The sum
+`P + lambda * T = lambda * A0 + sum over pairs of (power + lambda * mean gain)` is additive: a placed member
+contributes the largest term over its Pareto-optimal (mean gain, power) Snap choices, and each slot still to fill
+the largest term of one character not yet in the team, a distinct character per slot. Snap uniqueness and required
+members are relaxed. A golden-section search over `ln(sqrt(lambda))` picks the scale; every scale gives a valid bound,
+so the search only tightens it. Arithmetic rounds outward.
+
+### Leaf evaluation
+
+A complete team in its canonical layout is evaluated order by order (`search/leaf.rs`). Once the Top-K is full, the
+team first gets one cap per performance order: the cheap envelope with that order's position gains, then the raw and
+fine per-note caps of that order. If the sum of the caps is below the K-th payoff numerator (or equal with a smaller
+power), the team is dropped without simulation. Otherwise the orders run in descending cap order; each simulation
+checks the [simulation cutoff](#simulation-cutoff) against the exact payoffs of the orders already run plus the caps
+of the orders still to run, and after each order the same total decides whether the remaining orders are needed. A
+team that is not dropped is evaluated exactly over all 120 orders.
+
+### Global upper bound
+
+`telemetry.proof.globalUpperBound` bounds the best payoff numerator over the whole domain: the larger of the best
+payoff found and the bounds of the branches still open. The composition traversal bounds every leader's subtree
+before the search and drops a leader's bound when its subtree is done; the joint traversal in descending root-bound
+order reads the bound of its remaining root children. The recorded value only decreases. It equals the best payoff
+once the search is complete; after a stop it is at most the larger of the best payoff and `upperBound`. Every point
+of the incumbent timeline carries the value at that time (`upper`). With several sequential search parts (Gekisou
+conversion parts) it is reported only once the search completes.
+
+### Initial decks
+
+`initialDecks` lists up to 100 legal decks of the domain that the search evaluates exactly before its traversal, for
+example the best decks of a fast heuristic. They only fill the Top-K earlier, which lets the bounds prune sooner;
+each is visited once as a team, and the result and its proof do not depend on them.
+
+With `search-diagnostics`, `search::diagnostics::prefix_upper`, `module_prefix_uppers` and `audit_order_caps` expose
+the node bounds, the module bounds and the per-order caps of a team. The harness independently enumerates every team
+and checks every prefix against its exact value and power, then compares the entire ordered Top-K (see
+[validation](#validation)).
 
 ## Prefix bounds
 
@@ -469,13 +560,12 @@ sound envelope it uses there and the condition that keeps the envelope sound.
 
 | Relaxation point | Sound envelope | Necessary boundary |
 |---|---|---|
-| Skill windows and weighted notes | Compile weighted interval sums per actual native-root position; intersect an own-event trigger with its mission gate. | A probability condition may be assumed successful, but cannot invent extra trigger events or move its window. |
+| Skill windows and weighted notes | Compile weighted interval sums per performance position; node bounds read the mean over the five positions; intersect an own-event trigger with its mission gate. | A trigger cannot invent extra trigger events or move its window. |
 | Member/Snap power and skill tradeoff | Bound a weighted sum of power and coefficient for the same pair, then apply `P A <= (P + r A)^2 / (4r)`, taking the minimum over positive `r`. | Preserve leader context and distinct-character maxima; optional reuse of remaining Snaps only enlarges the domain. Round outward. |
 | Unique Snap capacity | Bound member-only contributions plus at most one positive increment per available Snap; intersect with the character-wise bound. | Snap increments must be bounded over every possible remaining member and position, including negative pair differences. |
 | Mission ranges | Charge JUST, COMBO, LUCK and rank bonuses only to the notes/ranges that can receive them. | Confirmation replay and boundary frames follow the scorer; a display Fever ratio is insufficient. |
 | COMBO saturation | Bound reachable counts using selected combo windows and take the maximum table value over those counts. | Never sum individually measured aptitude deltas: saturation and conversion interactions matter. |
-| LUCK/Rush reachability | Restrict the Rush envelope by mission and reachable state, using a root-conditioned replay where dependencies permit. | RNG consumption changes with conversions/skills. Independent marginal expectations are not the native joint law. |
-| PT tiers | Turn a score cap into the maximum reward among reachable tiers, then bound event bonus. | Apply per atom; allow nonmonotone reward tables; retain multiplayer total-score rules separately. |
+| PT tiers | Turn a score cap into the maximum reward among reachable tiers, then bound event bonus. | Apply per order at a complete team and through the concave majorant at nodes; allow nonmonotone reward tables; retain multiplayer total-score rules separately. |
 | Exclusive final judgement | Take the maximum of each reachable judgement times its own active judgement-specific bonus, not a sum of Perfect and JUST bonuses on the same note. | Keep conversion reach and budgets conservative; one note can realize only one final judgement. |
 | Judgement conversion and life | Candidate conversion masks/budgets and provable life ceilings refine per-note bounds. | Do not infer temporal judgement allocation from a whole-chart Great rate. |
 | Conditional dominance | Compare complete effect/context vectors within the same legality class, preserving canonical ties and Top-K alternatives. | Song-level efficiency dominance is not universal card or song dominance. |
@@ -485,23 +575,23 @@ bounds and never prune the integer scorer.
 
 The bounds in use:
 
-- Own-event Gekisou factor windows use the actual performer's event frames and mission gate; random conditions
-  are relaxed to success.
+- Own-event Gekisou factor windows use the performer's event frames and mission gate.
 - Cheap prefix bounds intersect distinct-character maxima with unique-Snap capacity bounds for power, gain and
   event bonus.
 - Optional correlated envelopes retain the power/skill tradeoff of each pair.
 - At surviving leaves, per-note envelopes use the candidate's conversion reach, budgets and combo windows, and
   take the maximum over exclusive judgements.
-- PT transforms both cheap and fine per-atom score caps through all reachable solo reward tiers. It does not
-  assume that a higher grade pays more. Multiplayer keeps the unrestricted tier cap.
+- PT transforms the per-order cheap and fine score caps of a complete team through all reachable solo reward tiers,
+  and node bounds through the concave majorant of the tiers. It does not assume that a higher grade pays more.
+  Multiplayer keeps the unrestricted tier cap.
 
 Correlation preparation probes at most 16 leader/pair prefixes, independently of traversal order. Unless the
 correlated bound tightens the cheap expected upper bound there by more than 3%, the solver skips that optional
 bound and keeps the ordinary complete traversal. The probe is a cost policy, not a proof, and never removes
 candidates; diagnostics still audit the correlated bound when the policy skips it.
 
-The coefficient, correlated and fine bound checks never choose a controllable skill order. They are evaluated
-under each native-root position map, summed with checked exact integer masses, and compared to the canonical
+The coefficient, correlated and node bound checks read position-mean gains; the per-order caps of a complete team
+read each order's own positions and are summed with checked integer arithmetic. All are compared to the canonical
 K-th incumbent with strict payoff/power rejection. Equality of both keys retains possible ID ties.
 
 **Judgement-frame triggers.** Judgement-match and count conditions (1000/1010/1020/1030/1040) require a
@@ -537,15 +627,15 @@ member/Snap scan, so the relaxation returns identical numbers.
 
 ### Membership regimes
 
-PT under joint traversal first evaluates legal physical seeds from the maximum-event-bonus regime under the
-exact declared law, stopping after K results. This is only an incumbent search: if that regime contains fewer
+PT under joint traversal first evaluates legal teams from the maximum-event-bonus regime exactly, stopping after
+K results. This is only an incumbent search: if that regime contains fewer
 than K decks, the original domain still receives a full search and no membership exclusion is made.
 
-For each member, a uniform per-atom cap combines that member's event bonus, the four largest other-character
-bonus maxima, the five largest unique Snap bonuses, and the largest reachable reward multiplier. Pairing,
-score-tier feasibility, required-card and leader restrictions are relaxed, so the cap can only be too high. A
-member is removed from a private search view only when `cap * totalMass` is strictly below the already
-evaluated K-th payoff numerator. Equality is retained regardless of power or IDs. Every excluded completion is
+For each member, a per-order cap combines that member's event bonus, the four largest other-character bonus
+maxima, the five largest unique Snap bonuses, and the largest reachable reward multiplier. Pairing, score-tier
+feasibility, required-card and leader restrictions are relaxed, so the cap can only be too high. A member is
+removed from a private search view only when `cap * 120` is strictly below the already evaluated K-th payoff
+numerator. Equality is retained regardless of power or IDs. Every excluded completion is
 thereby certified below the incumbent in the original domain. Recompiling score/resource bounds for that view
 also removes inactive programs from the pool-wide envelopes. The original built problem and reported proof
 domain are unchanged. If compilation of the optional view fails, the original complete traversal remains
@@ -570,90 +660,86 @@ bonuses. Every DP cell therefore refers to one exact bonus sum. Its component ma
 completions within that cell, which only enlarges the upper bound; a high-bonus cell cannot borrow the power or
 skill of a lower-bonus completion.
 
-Remaining Snap reuse, required-card obligations and remaining skill positions are relaxed. The assigned prefix
-retains its exact pairs and native-root skill positions. In each final cell intersect the product envelope with
-the three weighted-sum envelopes, then apply the maximum reward among reachable score tiers to that cell's event
-bonus. The declared integer root masses combine caps within each bonus cell before maximizing over cells: a
-physical deck must use the same bonus across all roots.
+Remaining Snap reuse and required-card obligations are relaxed. The assigned prefix retains its exact pairs; gains
+are position means. In each final cell intersect the product envelope with the three weighted-sum envelopes, then
+apply the concave majorant of the reachable reward tiers to that cell's event bonus. A team has one event bonus in
+every performance order, so the mean cap is taken within each bonus cell before maximizing over cells.
 
 The same cells also cap power for ties. Every completion with an exact event bonus has at most that cell's
 expected payoff and residual power, so a completion whose payoff reaches the overall cap lies in a cell whose
 total is the cap. A branch whose payoff cap equals the K-th payoff numerator survives only when the largest power
 among those cells reaches the K-th result's power.
 
-Residual tables depend on leader profile, excluded characters and the set of remaining skill positions. They are
+Residual tables depend on leader profile and excluded characters. They are
 reused only within one compiled bound/domain; used Snaps need not enter the key because residual Snap reuse is
 explicit. Limits on states, convolution work and retained cells disable this optional bound rather than dropping
 DP states. All numeric equality cases retain the original canonical ranking rules. This layer supplements the
 unique-resource and suffix bounds; it does not replace the exact leaf evaluator.
 
-## Member compositions, physical layouts and power frontiers
+## Member compositions, Snap pairings and power frontiers
 
-For Live with Gekisou off, branch on the leader and an unordered set of four nonleaders. Increasing indexes in a
-fixed heuristic order enumerate each set exactly once; that order never removes a member. The composition
-envelope fixes the leader's native-root skill position, allows each nonleader any nonleader position, and allows
-remaining Snap reuse. It combines distinct-character power, gain, bonus and weighted-sum maxima. These statistics
-are compiled by leader profile and leader skill position, with a direct calculation fallback when the optional
-table exceeds its capacity.
+For Live with Gekisou off, branch on the leader and an unordered set of four other members. Increasing indexes in a
+fixed heuristic order enumerate each set exactly once; that order never removes a member. The composition envelope
+allows every member any Snap and reads position-mean gains, so it does not depend on the layout. It combines
+distinct-character power, gain, bonus and weighted-sum maxima. These statistics are compiled by leader profile and
+leader position, with
+a direct calculation fallback when the optional table exceeds its capacity.
 
-Every surviving member set expands all 24 physical nonleader permutations. This is an enumeration grouping, not a
-claim that those permutations score equally. Every root still chooses the actual native performance order. A
-fixed-layout Snap search enforces resource uniqueness and bounds remaining power with bipartite assignment.
-Numeric ties also use a canonical lower key: the fixed member IDs and None in each unassigned Snap slot. This key
-is no greater than any legal completion because None is always allowed and sorts before every Snap ID in the
-physical-result contract.
+Every surviving composition is searched once, in one layout: the value of a team does not depend on the layout of
+its non-leader pairs, and the leaf evaluates the canonical layout. A Snap search over that layout enforces resource
+uniqueness and bounds remaining power with bipartite assignment. Numeric ties also use a canonical lower key: the
+canonical layout of the composition with the Snaps assigned so far and None in each unassigned Snap slot. This key
+is no greater than any legal completion because None is always allowed and sorts before every Snap ID.
 
 When at most two Snap slots remain, the numeric assignment is solved directly. At most one real Snap can conflict
 with the other slot, so each row's two best choices, including optional None, contain an optimal assignment. Zero
 remaining slots need no assignment call. The general matcher remains the value reference; the fast residual tie
-convention is not used as a physical Top-K certificate.
+convention is not used as a Top-K certificate.
 
-For PT, when the best-power proposal attains the layout's primary-payoff cap, a small resource DP separately
-solves the **power-only** Top-K bindings of a fixed member layout. After scanning a Snap, future resources depend
+For PT, when the best-power proposal attains the composition's primary-payoff cap, a small resource DP separately
+solves the **power-only** Top-K bindings of the composition's layout. After scanning a Snap, future resources depend
 only on the occupied-slot mask. Keeping K partial bindings per mask is therefore exact for power and None-first
 identity ordering. The Snap increments in the validated power table are exact; all member/leader-only terms are
 constant across bindings, including a complex leader's fixed-member contribution. The actual power of the last
 proposal is read through the ordinary evaluator's power path before using it as the remaining-power cap.
 
-Every proposed binding is scored under the complete root law. All unexamined bindings rank after the last power
-proposal. The layout may close only when its uniform primary-payoff cap, the remaining-power cap and canonical
-lower key cannot beat the updated global K-th result. An equal physical cutoff key is already evaluated. If fewer
-than K legal bindings exist, the DP returned all of them and the layout is exhausted. Otherwise a failed closure
+Every proposed binding is evaluated exactly over the 120 performance orders. All unexamined bindings rank after the
+last power proposal. The composition may close only when its primary-payoff cap, the remaining-power cap and canonical
+lower key cannot beat the updated global K-th result. An equal cutoff key is already evaluated. If fewer than K legal
+bindings exist, the DP returned all of them and the composition is exhausted. Otherwise a failed closure
 proof resumes the complete Snap traversal, excluding only the identities already evaluated in this layout. Higher
 power is **not** assumed to imply higher PT, and a nonmonotone reward table does not justify representative-only
 pruning. The cap-attainment condition is a cost policy only: skipping the frontier leaves complete Snap traversal
-intact. No-Snap layouts have one binding and close immediately after its exact evaluation.
+intact. Compositions without Snaps have one binding and close immediately after its exact evaluation.
 
 Live obtains its incumbents from this integrated assignment stage. Gekisou keeps joint member/Snap traversal with
-the PT membership regime above. Both schedules optimize the same complete physical domain and share the fixed
-evaluator.
+the PT membership regime above. Both schedules optimize over the same teams and share the fixed evaluator.
 
 ## Class and resource envelopes as explicit harness schedules
 
-Two diagnostic schedules separate two independent decisions: an upper-bound effect class in each physical slot,
-then the unique physical Snap assignment inside those classes. A class is an identity in `JointFineBounds`
-metadata only. Every allowed physical completion remains represented. A constrained assignment proves
-infeasibility or maximum power; at a complete class vector the per-note fine bound applies to every binding
-because its inputs are exactly members, classes, native-root positions and an upper bound on power
-(`JointFineBounds::upper` projects each choice through `class_of`). Surviving bindings still receive the full
-native-order simulation. There is no representative-only score reuse and no assumption that actual score is
+Two diagnostic schedules separate two independent decisions: an upper-bound effect class in each slot, then the
+unique Snap assignment inside those classes. A class is an identity in `JointFineBounds` metadata only. Every
+allowed completion remains represented. A constrained assignment proves infeasibility or maximum power; at a
+complete class vector the per-note fine bound, summed over the 120 performance orders, applies to every binding
+because its inputs are exactly members, classes, positions and an upper bound on power (`JointFineBounds::upper`
+projects each choice through `class_of`). Surviving bindings still receive the full evaluation over the orders. There is no representative-only score reuse and no assumption that actual score is
 monotone in power.
 
-The resource-correlated cap addresses a different relaxation. For a fixed member layout and one root, write the
-score envelope as `P*A`, where `A = a0 + sum(gain)`. For every positive `r`, `P*A <= (P+r*A)^2/(4*r)`. Each pair's
+The resource-correlated cap addresses a different relaxation. For a fixed member composition, write the mean score
+envelope as `P*A`, where `A = a0 + sum(mean gain)`. For every positive `r`, `P*A <= (P+r*A)^2/(4*r)`. Each pair's
 `P+r*gain` is rounded up to an integer before subtracting a row shift. An exact constrained assignment then
 maximizes the sum with each Snap used at most once; None remains independently available only in allowed slots.
 Restoring the row shifts and constant `r*a0` gives an upper bound on `P+r*A`. Floating operations round outward
 and retain the scorer margin. The minimum over three positive scales intersects the other caps; unavailable
 numeric/resource limits skip this optional cap entirely.
 
-Incumbent preparation evaluates maximum-power and weighted power/gain assignments for all 24 layouts of a
-completed member composition before deep traversal. These rounded surrogate objectives only propose legal
-candidates. Their real values come from the fixed evaluator and never justify exclusion. Local physical identity
-sets prevent repeat evaluations even when the global cache is disabled.
+Incumbent preparation evaluates maximum-power and weighted power/gain assignments of a completed member
+composition before deep traversal. These rounded surrogate objectives only propose legal
+candidates. Their real values come from the fixed evaluator and never justify exclusion. Local identity sets prevent
+repeat evaluations even when the global cache is disabled.
 
 The harness exposes `production`, `classes` and `classesWithResource` schedules, audits every class-prefix and
-within-class binding-prefix against each oracle completion/root, and compares the full ordered Top-K. Player
+within-class binding-prefix against each oracle team, and compares the full ordered Top-K. Player
 requests always use the production schedule.
 
 Bound invariance across a class does not prove that native score or PT is monotone in power, and a power
@@ -683,8 +769,8 @@ The reach depends on which converting Snaps a deck may hold, so Gekisou score pa
 - two or more: split by the first two slots in search order that hold converting Snaps; both must take converting
   Snaps and the other earlier slots exclude them.
 
-The parts are disjoint and cover the domain; they share one Top-K, so canonical order and tie handling are
-unchanged. A forced slot is charged in the cheap relaxation only with its allowed choices; excluded masks filter
+The parts are disjoint and cover the domain (a team's converting Snaps do not depend on its layout); they share one
+Top-K, so canonical order and tie handling are unchanged. A forced slot is charged in the cheap relaxation only with its allowed choices; excluded masks filter
 enumeration only. All other bounds remain valid unforced relaxations. A failed part compile falls back to one
 pool-wide search.
 
@@ -712,43 +798,18 @@ Unsafe controller effects and compound trigger groups keep the broad bound.
 
 ### LUCK
 
-The optional LUCK replay bounds Rush timing per candidate and root; its admission conditions and the window
-construction are in [LUCK Rush timing refinement](search-envelope-programs.md#luck-rush-timing-refinement).
-
-**Replayed Rush spans.** The replay also records, for every completed branch, the half-open chart-time span
-`[added, disabled)` of each Rush score bonus command; spans of all branches, and of all roots sharing a
-performance order, are merged. A score frame executes a factor command before its notes at the same or a later
-time, so a note reads a command's bonus exactly inside its span, and the net bonus at a time is positive only
-inside some span (a pair disabled before its addition only lowers it). In the candidate cap an entry outside
-every span uses its coefficient without the Rush factor. Unknown spans (an unsupported or failed replay) keep the
-factor everywhere.
-
-**Future LUCK programs in prefix bounds.** The last-slot Rush bound holds each future ordered reduced-LUCK
-program fixed through all declared root weights. Each physical pair contributes a positive coefficient
-decomposition `H + alpha · C(mask)`; no term is subtracted from a previous upper bound. Buckets share exact alpha
-bits, retain maxima of power, base gain and nine `power + scale * base` envelopes, and intersect the resulting
-AM-GM bounds with an independent product cap. The last variant is maximized only after root weighting. PT
-conversion still occurs separately for each root. Buckets bound physical choices; no representative is
-substituted in scoring and representatives are used only for reduced replay.
-
-Before replay, the actual last-slot domain is scanned to skip variants with no legal pair after required members,
-used characters, used Snaps and slot rules. The numeric buckets themselves still relax these resources. An
-unavailable feasible variant prevents a whole-prefix certificate. Pruning uses strict primary improvement, or a
-strictly inferior power tie; equal canonical alternatives are retained.
-
-**Command drift.** The command-drift packet of these bounds uses outward positive arithmetic, summed fixed-part
-packets and componentwise future maxima. It preserves lifetime operation counts (`3E + 2N`), finite feedback
-amplification and multiplicative cross terms. Interval sums subtract lower start prefixes from upper end
-prefixes. The pool-wide epsilon can be very loose on LUCK charts and does not stand in for this packet. Nonzero
-conversion budgets, unsupported replay, expired budgets or uncertifiable arithmetic disable only the optional
-cap; candidates remain.
+A LUCK mission decides its lottery with random numbers, so a LUCK chart's outcome is a distribution over draws
+rather than one play per performance order. Each deck of such a live gets certified lower and upper bounds of its
+expected payoff over the native lottery probabilities (`"lottery":"certifiedNativeLotteryIntervals"`). A rank is
+proved only by separated bounds or a verified equal-program certificate; an overlapping frontier ends
+`RefinementRequired`, unproven (see [account recommendation](recommendation.md)).
 
 ## Simulation work
 
 ### Simulation cutoff
 
-A candidate whose expected payoff cannot reach the Top-K cutoff stops simulating as soon as the part of its
-score that is already final shows it.
+A team whose value cannot reach the Top-K cutoff stops simulating as soon as the part of its score that is already
+final shows it.
 
 **Settled frames.** After a play frame, a later command lands at a time no earlier than the least of: the frame's
 time (skill execution, finish and re-application times; live skill events not yet fired); the earliest chart time
@@ -758,7 +819,7 @@ from the playing range's judged notes, the solo ranking rewind to the range star
 Commands file at the score frame of their time and a rewind keeps the frames up to its own, so no score frame
 below that horizon is undone or executed again. Those frames are settled: their note and fixed scores are final.
 
-**Cutoff tables.** For one candidate and native order the fine cap is split by score frame. Each entry's term
+**Cutoff tables.** For one team and performance order the fine cap is split by score frame. Each entry's term
 bounds its note's final score whatever happens later, plus a conversion gain when a budget row converts it; an
 entry in a settled frame already counts with its final score. A rank bonus is a percentage of its range's entries,
 filed at the range end: once that frame is settled it is part of the settled total; before, an unsettled entry
@@ -767,11 +828,10 @@ conversion gain). Each budget row converts at most its count among the unsettled
 settled ones, a bound on its conversions among all of them. The cap after a frame is the settled total plus this
 remainder, rounded outward; PT applies the candidate's bonus and reachable reward tiers to it.
 
-**Test.** Every few frames the search adds the running root's cap to the exact payoffs of roots already simulated
-and the whole caps of roots still to come (later atoms of the same root share its cap), weighted by their integer
-masses. The simulation stops only when that total is strictly below the K-th payoff numerator, or equal with a
-lower power than the K-th result; otherwise it runs to the end and the candidate is scored exactly. A stopped
-candidate cannot enter the Top-K. Orders without a finite cap simulate normally.
+**Test.** Every few frames the search adds the running order's cap to the exact payoffs of the orders already
+simulated and the per-order caps of the orders still to run. The simulation stops only when that total is strictly
+below the K-th payoff numerator, or equal with a lower power than the K-th result; otherwise it runs to the end and
+the order is scored exactly. A stopped team cannot enter the Top-K. Orders without a finite table simulate normally.
 
 ### Deterministic idle trigger plan
 
@@ -787,10 +847,9 @@ without the plan for the idle audit below.
 ## Validation
 
 Every experiment below compares the search, or one of its bounds, with an independent computation under the same
-shared scorer. Agreement establishes search correctness for the declared model, inputs and finite root law;
-agreement of the model with the game is established separately ([native validation](native-validation.md)).
-Counts of audited prefixes include repeated prefixes and duplicate root atoms; they are checks, not independent
-samples.
+shared scorer. Agreement establishes search correctness for the declared model, inputs and target; agreement of the
+model with the game is established separately ([native validation](native-validation.md)). Counts of audited
+prefixes include repeated prefixes; they are checks, not independent samples.
 
 ### Tests without game data
 
@@ -808,20 +867,25 @@ samples.
   synthetic pools whose snaps extend live skills, add score factors, recover life, guard, convert judgements, count
   judgements and draw random numbers, under the default stream and random streams with late frames, lost life and
   life that runs out.
-- The recommendation facade compares `branchAndBound` with `exhaustive` on synthetic physical domains: full ordered
+- The recommendation facade compares `branchAndBound` with `exhaustive` on synthetic team domains: full ordered
   Top-K with resource constraints, nonmonotone PT tiers, composition frontiers with K above the binding count, the
-  PT membership regime with strict ties, and the fallback for wrapping PT and explicit clocks
+  PT membership regime with strict ties, supplied initial decks, and the fallback for wrapping PT and explicit
+  clocks. Fixed decks in all 24 layouts of their non-leader pairs give the same canonical result; node bounds, bound
+  modules and per-order caps cover the exact value of every team of an exhaustive ranking; LUCK intervals keep the
+  leaders and prove equal-program ties, and probability decks without a LUCK range match the exhaustive ranking
   (`crates/ournotes-search/tests/adapter_fixture_export.rs`).
+- Unit tests check the uniform order enumeration, the concave majorant of reward steps, and the member-additive
+  bound against brute-force enumeration of completions.
 
-### Physical-domain oracle
+### Team-domain oracle
 
-The search harness ([tools/search-harness](../tools/search-harness/README.md)) enumerates a bounded physical
+The search harness ([tools/search-harness](../tools/search-harness/README.md)) enumerates every team of a bounded
 domain independently of the production pool resolution, enumeration, assignment, bounds, cache and Top-K, and
-evaluates every candidate with the fixed evaluator under every root atom. A case passes when the ordered Top-K of
-every experiment equals the oracle's, every returned deck agrees with the fixed evaluator, and every audited cap
-is at least the actual per-atom payoff (and power) of every oracle completion it covers: joint prefixes, Rush
-prefixes and leaves, character and resource prefixes, raw-judgement leaves, classes and class bindings,
-compositions and layouts, bonus and expected-bonus prefixes, per-member PT caps, suffixes and next pairs. Any
+evaluates every team with the fixed evaluator over its 120 performance orders. A case passes when the ordered Top-K
+of every experiment equals the oracle's, every returned deck agrees with the fixed evaluator, and every audited cap
+is at least the exact value (and power) of every oracle team it covers: joint prefixes, per-order leaf caps,
+character and resource prefixes, classes and class bindings, compositions and teams, bound modules, bonus and
+expected-bonus prefixes, per-member PT caps, suffixes and next pairs. Any
 inadmissible cap fails the run. The synthetic suite needs no game data:
 
 ```sh
@@ -841,17 +905,15 @@ These binaries take `DATA ROSTER REQUEST DECKS OUTPUT`, where `DECKS` is a JSON 
 `{"members":[...],"snaps":[...]}`, and exit nonzero on any violation after saving the report. Without an
 exhaustive oracle they apply to full-size rosters; the decks are typically the returned results of a search.
 
-- `cutoff_audit` settles after every frame of a complete simulation for each deck and distinct root, and checks
-  that no settled score frame is undone later, that every settled total equals the final scores of its frames, and
-  that every cutoff cap is at least the final score. Roots without a finite table are reported as unavailable.
-- `slack_profile` reports, per root, the candidate's fine cap beside its actual simulated score and per-note
+- `cutoff_audit` settles after every frame of a complete simulation for each deck at ten audited performance orders
+  (the five cyclic shifts of the slot order and their reverses), and checks that no settled score frame is undone
+  later, that every settled total equals the final scores of its frames, and that every cutoff cap is at least the
+  final score. Orders without a finite table are reported as unavailable.
+- `slack_profile` reports, per audited order, the team's fine cap beside its actual simulated score and per-note
   scores; the cap must not be lower than the score. The per-entry terms are attribution, not bounds.
-- `rush_audit` compares full-engine Rush probes, plain full simulation and reduced replay: the replay masks must
-  include every Rush state the full engine observes, and replays with the same ordered signature must agree.
-  Unsupported roots and admission criteria are reported separately from violations.
 - `idle_audit` evaluates each deck with and without the idle trigger plan and requires identical outcomes,
-  including every root atom, order, life/conversion observation and non-timing counter; `--search` repeats this
-  for a whole deterministic search.
+  including the score distribution, best order and non-timing counters; `--search` repeats this for a whole
+  deterministic search.
 - `score_program` compares recorded score programs with fresh complete simulations at a list of powers
   ([score programs](score-programs.md)).
 
@@ -859,10 +921,10 @@ exhaustive oracle they apply to full-size rosters; the decks are typically the r
 
 When the global PT ceiling is already attained by K incumbents, `pt_power_certificate` exports model bonus values
 and complete per-slot power matrices, and `pt_certificate.py` independently resolves the PT ceiling and runs a
-Top-K DP over the five-slot subset mask while scanning each Snap exactly once. It enumerates every allowed physical
-member layout and preserves None-first ties, without production pruning or Hungarian assignment; the
-power-leading assignments are replayed under the original root law and their serialized results compared with
-the production Top-K. The certificate applies only when exactly five members remain eligible under the
+Top-K DP over the five-slot subset mask while scanning each Snap exactly once. It enumerates every allowed member
+layout and preserves None-first ties, without production pruning or Hungarian assignment; the power-leading
+assignments are evaluated over the performance orders and their serialized results compared with the production
+Top-K. The certificate applies only when exactly five members remain eligible under the
 independent member caps and those assignments attain the ceiling; other inputs are reported as inapplicable.
 
 ### Native and WebAssembly outcomes

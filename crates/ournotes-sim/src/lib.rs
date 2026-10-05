@@ -17,6 +17,7 @@
 //!
 //! The exact Top-K deck search is the crate `ournotes-search`, built on this one.
 
+pub mod account;
 pub mod bonus;
 pub mod calc;
 pub mod cards;

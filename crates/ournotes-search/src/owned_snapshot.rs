@@ -301,6 +301,12 @@ impl ResolvedOwnedSnapshot<'_> {
         })
     }
 
+    /// Diagnostics only: the goal-scoped projection, for the fixed-deck audit tools.
+    #[cfg(feature = "search-diagnostics")]
+    pub fn diagnostic_projection(&self) -> &Roster {
+        &self.projection
+    }
+
     fn attach_scope(&self, outcome: &mut RecommendationOutcome) {
         outcome.resolved_context["ownedSnapshot"] = self.snapshot_scope();
     }
@@ -633,7 +639,7 @@ impl OwnedSnapshot {
                         "unlocked memory cards must be present in owned facts, even when excluded from eligibility",
                     );
                 }
-                Some(MemoryState { music_ranks, unlocked_members, unlocked_supports })
+                Some(MemoryState { music_ranks, unlocked_members, unlocked_supports, ..MemoryState::default() })
             }
         };
         let mut members = Vec::new();

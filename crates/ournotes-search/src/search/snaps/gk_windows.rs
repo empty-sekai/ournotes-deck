@@ -280,6 +280,9 @@ impl GkFrames {
                     }
                 }
             }
+            // Rank is latched into the next frame and may arrive after Complete. Dropping its one-shot latch
+            // and packet timing only widens the trigger envelope; never substitute RangeComplete (7013).
+            7012 => out.fill(c.condition_values.first().copied().unwrap_or(1) >= 1),
             7013 => out.clone_from(&self.complete),
             7005 => {
                 let threshold = *c.condition_values.first()?;
@@ -320,6 +323,101 @@ impl GkFrames {
             _ => return None,
         }
         Some(out)
+    }
+
+    /// The most hits of a trigger group each of whose sets holds a positive judgement count condition (1030, 1040),
+    /// `None` otherwise. A counter hits each time it has counted `n` target judgements and then counts from 0, so a
+    /// set hits at most the judgements its counter can count over `n`. It counts only the judgements of frames in
+    /// which the gate lets the triggers be checked, each at most as often as a reachable final judgement is listed
+    /// among its targets; resets, consecutiveness and AND short-circuiting only drop counts.
+    pub(super) fn count_trigger_hits(&self, env: &Env, gid: i64, gate: i64) -> Option<i64> {
+        let sets = env.sets.get(&gid)?;
+        if self.ent.iter().any(|&(_, j)| !(0..8).contains(&j)) {
+            return None;
+        }
+        // A lone set led by a range-playing condition restarts its counters whenever that condition fails.
+        let resets = if sets.len() == 1 { self.playing_resets(env, sets[0], gate) } else { None };
+        let mut total = 0i64;
+        for s in sets {
+            let mut set_hits: Option<i64> = None;
+            for &cid in s.iter() {
+                let c = env.master.skill_condition(cid)?;
+                if !c.is_positive || !matches!(c.condition_type, 1030 | 1040) {
+                    continue;
+                }
+                let n = *c.condition_values.first()?;
+                if n < 1 {
+                    continue;
+                }
+                let targets: Vec<_> = c
+                    .condition_target_ids
+                    .iter()
+                    .map(|&id| env.master.skill_target(id).map(|t| t.judgement))
+                    .collect::<Option<Vec<_>>>()?;
+                let mut per_frame = vec![0i64; self.times.len()];
+                for (i, &(f, raw)) in self.ent.iter().enumerate() {
+                    let reach = env.reach_of(i, raw);
+                    let most = (0..8)
+                        .filter(|&j| reach & (1u8 << j) != 0)
+                        .map(|j| targets.iter().filter(|&&t| t == j).count() as i64)
+                        .max()
+                        .unwrap_or(0);
+                    per_frame[f] = per_frame[f].saturating_add(most);
+                }
+                // the counts of the frames in which the triggers are checked, split where the counter restarts
+                let (mut hits, mut count) = (0i64, 0i64);
+                for (f, &c) in per_frame.iter().enumerate() {
+                    if resets.as_ref().is_some_and(|r| r[f]) {
+                        hits = hits.saturating_add(count / n);
+                        count = 0;
+                    } else if self.gate_open(gate, f) {
+                        count = count.saturating_add(c);
+                    }
+                }
+                hits = hits.saturating_add(count / n);
+                set_hits = Some(set_hits.map_or(hits, |h| h.min(hits)));
+            }
+            total = total.saturating_add(set_hits?);
+        }
+        Some(total)
+    }
+
+    /// The frames in which a set whose first condition is a positive range-playing condition (7020) restarts its
+    /// count conditions (`None` for another set): the triggers are checked (the gate is open) and that condition
+    /// fails, so the AND resets its count conditions before they read the frame's judgements. The checker holds a
+    /// range from a checked frame in which it sees the range start or play until a checked frame in which it sees
+    /// the range complete or finish; as the first condition it sees every checked frame. So it fails in a checked
+    /// frame when every range of its missions has not started yet or completed or finished in a checked frame by
+    /// then.
+    fn playing_resets(&self, env: &Env, set: &[i64], gate: i64) -> Option<Vec<bool>> {
+        let c = env.master.skill_condition(*set.first()?)?;
+        if c.condition_type != 7020 || !c.is_positive {
+            return None;
+        }
+        let ms: Vec<i64> = c
+            .condition_target_ids
+            .iter()
+            .filter_map(|&t| env.master.skill_target(t))
+            .filter(|t| t.skill_target_type == 5 && t.gekisou_mission_type != 0)
+            .map(|t| t.gekisou_mission_type)
+            .collect();
+        let any_mission = ms.is_empty() || ms.contains(&MISSION_ALL);
+        let nf = self.times.len();
+        let first = |r: usize, s: u8| (0..nf).find(|&f| self.states[f].get(r).is_some_and(|&v| v >= s));
+        let mut held = Vec::new();
+        for (r, rf) in self.ranges.iter().enumerate() {
+            if !any_mission && !ms.contains(&rf.mission) {
+                continue;
+            }
+            let Some(start) = first(r, RS_START) else { continue };
+            let released = [first(r, RS_COMPLETE), first(r, RS_FINISH)]
+                .into_iter()
+                .flatten()
+                .find(|&f| self.gate_open(gate, f))
+                .unwrap_or(usize::MAX);
+            held.push((start, released));
+        }
+        Some((0..nf).map(|f| self.gate_open(gate, f) && held.iter().all(|&(s, r)| f < s || r <= f)).collect())
     }
 
     /// The frames in which a condition group can hold (`None`: any frame): the union over its sets of the
@@ -624,6 +722,9 @@ pub(super) fn gk_budget_uncached(env: &Env, r: &Row, w: &GkRowWin) -> Option<f64
         };
         execs = execs.min(r.execute_limit as f64 * periods as f64);
     }
+    if let Some(hits) = g.count_trigger_hits(env, r.trigger, r.gate) {
+        execs = execs.min(hits as f64);
+    }
     let n = r.limit as f64 * execs;
     let to = convert_to(r.effect_type, r.value);
     let seen = g
@@ -771,5 +872,155 @@ mod cumulative_churn_tests {
         assert_eq!(stable_cumulative_churn(100, 45), None);
         assert_eq!(stable_cumulative_churn(100, 750), Some(9.0));
         assert_eq!(stable_cumulative_churn(1, i64::MAX), None);
+    }
+}
+
+#[cfg(test)]
+mod count_hit_tests {
+    use super::*;
+
+    fn master() -> Master {
+        Master::from_json_tables(|name| match name {
+            "MasterSkillTarget" => Some(
+                r#"{"_allData":[{"_id":41,"_skillTargetType":4,"_judgement":5},
+                {"_id":57,"_skillTargetType":5,"_gekisouMissionType":1}]}"#,
+            ),
+            "MasterSkillCondition" => Some(
+                r#"{"_allData":[
+                {"_id":1,"_conditionType":1030,"_conditionValues":[2],"_isPositive":true,"_conditionTargetIDs":[41]},
+                {"_id":2,"_conditionType":1030,"_conditionValues":[3],"_isPositive":true,"_conditionTargetIDs":[41,41]},
+                {"_id":3,"_conditionType":5000,"_isPositive":true},
+                {"_id":4,"_conditionType":1030,"_conditionValues":[2],"_isPositive":false,"_conditionTargetIDs":[41]},
+                {"_id":5,"_conditionType":7020,"_isPositive":true,"_conditionTargetIDs":[57]}]}"#,
+            ),
+            "MasterSkillConditionSet" => Some(
+                r#"{"_allData":[
+                {"_id":1,"_group":1,"_conditionIds":[1,3]},
+                {"_id":2,"_group":2,"_conditionIds":[1]},
+                {"_id":3,"_group":2,"_conditionIds":[2]},
+                {"_id":4,"_group":3,"_conditionIds":[1,2]},
+                {"_id":5,"_group":4,"_conditionIds":[3]},
+                {"_id":6,"_group":5,"_conditionIds":[4]},
+                {"_id":7,"_group":6,"_conditionIds":[5,1]},
+                {"_id":8,"_group":7,"_conditionIds":[1,5]}]}"#,
+            ),
+            _ => None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn hits_are_the_countable_target_judgements_over_the_threshold() {
+        let master = master();
+        let frames = [0, 40, 80, 120, 160, 200];
+        let schedule = Schedule {
+            states: vec![
+                vec![RS_START],
+                vec![RS_PLAYING],
+                vec![RS_PLAYING],
+                vec![RS_PLAYING],
+                vec![RS_PLAYING],
+                vec![RS_PLAYING],
+            ],
+            ranges: vec![RangeFacts {
+                start: 0,
+                end: 300,
+                mission: MISSION_COMBO,
+                pct: 0,
+                f_start: Some(0),
+                f_complete: None,
+                f_finish: None,
+            }],
+        };
+        let note = |id: i32, t: i32| LiveNote { note_id: id, time_ms: t, note_operate_type: 1, judgement_type: 1 };
+        // five Perfects and one Great
+        let entries = [
+            (1, note(0, 41), 5),
+            (2, note(1, 81), 5),
+            (2, note(2, 82), 4),
+            (3, note(3, 121), 5),
+            (4, note(4, 161), 5),
+            (5, note(5, 201), 5),
+        ];
+        let g = GkFrames::new(&schedule, &frames, &entries);
+        let mut env = env(&master);
+        // one counter of two Perfects beside a fixed condition
+        assert_eq!(g.count_trigger_hits(&env, 1, MISSION_ALL), Some(2));
+        // the sets of a group add; a target listed twice counts a judgement twice
+        assert_eq!(g.count_trigger_hits(&env, 2, MISSION_ALL), Some(2 + 10 / 3));
+        // the counters of one set bound it each
+        assert_eq!(g.count_trigger_hits(&env, 3, MISSION_ALL), Some(2));
+        // without a counter in every set, or with a negated one, there is no bound
+        assert_eq!(g.count_trigger_hits(&env, 4, MISSION_ALL), None);
+        assert_eq!(g.count_trigger_hits(&env, 5, MISSION_ALL), None);
+        assert_eq!(g.count_trigger_hits(&env, 9, MISSION_ALL), None);
+        // a closed gate counts nothing
+        assert_eq!(g.count_trigger_hits(&env, 1, 2), Some(0));
+        // a judgement that can be converted to a target counts
+        env.count_reach[4] |= 1 << 5;
+        assert_eq!(g.count_trigger_hits(&env, 1, MISSION_ALL), Some(3));
+    }
+
+    fn env(master: &Master) -> Env<'_> {
+        let mut env = Env {
+            master,
+            events: &[],
+            sets: HashMap::new(),
+            life_lo: 0,
+            life_hi: 1000,
+            life_rigid: false,
+            raw: vec![4, 5],
+            count_reach: std::array::from_fn(|j| 1u8 << j),
+            entry_reach: Vec::new(),
+            gk: None,
+            gkf: None,
+            rush_cache: RefCell::new(HashMap::new()),
+            gk_cache: RefCell::new(HashMap::new()),
+            budget_cache: RefCell::new(HashMap::new()),
+            ramp_cache: RefCell::new(HashMap::new()),
+        };
+        for s in &master.skill_condition_sets {
+            env.sets.entry(s.group).or_default().push(&s.condition_ids);
+        }
+        env
+    }
+
+    #[test]
+    fn a_leading_range_playing_condition_restarts_the_count_between_ranges() {
+        let master = master();
+        let frames = [0, 40, 80, 120, 160, 200];
+        // range 0 starts in frame 0 and completes in frame 2; range 1 starts in frame 4
+        let schedule = Schedule {
+            states: vec![
+                vec![RS_START, 0],
+                vec![RS_PLAYING, 0],
+                vec![RS_COMPLETE, 0],
+                vec![RS_FINISH, 0],
+                vec![RS_FINISH, RS_START],
+                vec![RS_FINISH, RS_PLAYING],
+            ],
+            ranges: [(0, 90, 0, 2, 3), (150, 300, 4, 6, 7)]
+                .map(|(start, end, s, c, f)| RangeFacts {
+                    start,
+                    end,
+                    mission: MISSION_COMBO,
+                    pct: 0,
+                    f_start: Some(s),
+                    f_complete: (c < 6).then_some(c),
+                    f_finish: (f < 6).then_some(f),
+                })
+                .into(),
+        };
+        let note = |id: i32, t: i32| LiveNote { note_id: id, time_ms: t, note_operate_type: 1, judgement_type: 1 };
+        // a Perfect judged in each of frames 1 to 5
+        let entries: Vec<_> = (1..6).map(|f| (f, note(f as i32, 40 * f as i32 - 1), 5)).collect();
+        let g = GkFrames::new(&schedule, &frames, &entries);
+        let env = env(&master);
+        // frames 1 to 5 are checked: five Perfects make two hits of two
+        assert_eq!(g.count_trigger_hits(&env, 1, MISSION_COMBO), Some(2));
+        // led by the range condition: one Perfect in range 0, the frames 2 and 3 restart, two Perfects in range 1
+        assert_eq!(g.count_trigger_hits(&env, 6, MISSION_COMBO), Some(1));
+        // the range condition after the counter does not restart it in the frames the counter fails
+        assert_eq!(g.count_trigger_hits(&env, 7, MISSION_COMBO), Some(2));
     }
 }

@@ -3,7 +3,7 @@
 use ournotes_sim::Error;
 use ournotes_sim::cards::{OwnedSnap, SnapView};
 use ournotes_sim::live::full::GekisouSetup;
-use ournotes_sim::live::model::{JudgementStream, JustRule, THEORETICAL_DT};
+use ournotes_sim::live::model::{Accuracy, AccuracyCounts, JudgementStream, JustRule, THEORETICAL_DT};
 use ournotes_sim::live::random::{LiveRandom, NetRandom};
 use ournotes_sim::live::seeds::{published_seeds, seed_candidate, seed_key, seeds_from};
 use ournotes_sim::live::skip::{Chart, ChartNote, SkillEvent};
@@ -174,6 +174,58 @@ fn gekisou_default_play_judges_just_by_frame() {
     let s = JudgementStream::theoretical_best_gekisou(&tail, &tail_types, &rule).unwrap();
     assert_eq!(*s.frames.last().unwrap(), 11000);
     assert!(s.judged.iter().all(|r| r[1] != 99));
+}
+
+fn accuracy(great_fraction: f64, just_fraction: f64) -> Accuracy {
+    Accuracy { great_fraction, just_fraction }
+}
+
+#[test]
+fn accuracy_plays_spread_great_then_just_evenly() {
+    let m = timing_master();
+    let c = chart(&[(1, 500), (2, 1000), (3, 995), (4, 1500), (5, 1990), (6, 1983), (7, 3000)], &[700]);
+    let types = [1, 1, 1, 2, 1, 1, 1];
+    let rule = JustRule::new(&m, &setup(&[(1000, 2000)], &[3, 1, 2])).unwrap();
+    let best = JudgementStream::theoretical_best_gekisou(&c, &types, &rule).unwrap();
+    let play = |a| JudgementStream::with_accuracy(&c, &types, Some(&rule), a).unwrap();
+
+    // the default accuracy is the theoretical best play
+    let (s, counts) = play(Accuracy::default());
+    assert_eq!(s, best);
+    assert_eq!(counts, AccuracyCounts { total: 7, great: 0, just_eligible: 3, just: 3, perfect: 4 });
+
+    // 7 notes: round(2.1) = 2 Great at the 4th and 7th note; of the 3 Just-capable notes left, round(1.5) = 2 Just at
+    // the 2nd and 3rd
+    let (s, counts) = play(accuracy(0.3, 0.5));
+    let got: Vec<(i32, i32)> = s.judged.iter().map(|r| (r[1], r[2])).collect();
+    assert_eq!(got, [(1, 5), (3, 5), (2, 6), (4, 4), (6, 6), (5, 5), (7, 4)]);
+    assert_eq!(counts, AccuracyCounts { total: 7, great: 2, just_eligible: 3, just: 2, perfect: 3 });
+    // only judgements change
+    assert_eq!(s.frames, best.frames);
+    assert!(s.judged.iter().zip(&best.judged).all(|(a, b)| (a[0], a[1], a[3]) == (b[0], b[1], b[3])));
+    s.check_just(&c, &types, &rule).unwrap();
+
+    // halves round up: round(3.5) = 4 Great; a Great note is never Just
+    let (s, counts) = play(accuracy(0.5, 1.0));
+    let got: Vec<i32> = s.judged.iter().map(|r| r[2]).collect();
+    assert_eq!(got, [5, 4, 6, 4, 6, 4, 4]);
+    assert_eq!(counts, AccuracyCounts { total: 7, great: 4, just_eligible: 2, just: 2, perfect: 1 });
+    let (_, counts) = play(accuracy(1.0, 1.0));
+    assert_eq!(counts, AccuracyCounts { total: 7, great: 7, just_eligible: 0, just: 0, perfect: 0 });
+
+    // Gekisou off: no Just, so justFraction must be 0
+    let (s, counts) = JudgementStream::with_accuracy(&c, &types, None, accuracy(0.3, 0.0)).unwrap();
+    let got: Vec<i32> = s.judged.iter().map(|r| r[2]).collect();
+    assert_eq!(got, [5, 5, 5, 4, 5, 5, 4]);
+    assert_eq!(s.frames, JudgementStream::theoretical_best(&c).frames);
+    assert_eq!(counts, AccuracyCounts { total: 7, great: 2, just_eligible: 0, just: 0, perfect: 5 });
+    for bad in [accuracy(0.0, 1.0), accuracy(0.0, 0.5)] {
+        assert!(matches!(JudgementStream::with_accuracy(&c, &types, None, bad), Err(Error::Input(_))));
+    }
+    for bad in [accuracy(-0.1, 1.0), accuracy(1.5, 1.0), accuracy(0.0, f64::NAN), accuracy(f64::INFINITY, 0.0)] {
+        assert!(matches!(JudgementStream::with_accuracy(&c, &types, Some(&rule), bad), Err(Error::Input(_))));
+    }
+    assert!(matches!(JudgementStream::with_accuracy(&c, &types[..3], None, accuracy(0.0, 0.0)), Err(Error::Input(_))));
 }
 
 #[test]

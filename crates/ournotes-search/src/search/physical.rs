@@ -1,9 +1,10 @@
-//! Physical-deck search: deterministic power/skip search and bounded finite-law native
-//! physical-deck optimization. Candidate proposals are heuristic; every returned value is
-//! evaluated exactly under the declared model. Only exhaustion/proven pruning certifies K.
+//! Deck search: deterministic power/skip search and the exact search of played lives under the uniform member-order
+//! target (`super::uniform`). Candidate proposals are heuristic; every returned value is evaluated exactly under the
+//! declared model. Only exhaustion/proven pruning certifies K.
 
-use super::expectation::{self, FiniteEvaluation, FiniteSeedContext, FiniteSeedLaw, PhysicalDeck, SeedOutcome};
+use super::expectation::{self, FiniteEvaluation, FiniteSeedContext, PhysicalDeck, SeedOutcome};
 use super::telemetry::{self, Recorder, Telemetry, Traversal, slot};
+use super::uniform::{self, ORDERS};
 use super::{Completion, Objective, Pool, SearchRequest};
 use crate::clock::Instant;
 use crate::handler::{BuiltProblem, build_card_pool, reject_unsupported_lifecycle, validate};
@@ -18,10 +19,24 @@ use std::time::Duration;
 
 #[path = "composition.rs"]
 mod composition;
+#[path = "leaf.rs"]
+mod leaf;
+use leaf::Leaf;
+#[path = "certified_engine.rs"]
+mod certified_engine;
+use certified_engine::CertifiedState;
+#[path = "deck_payoff_search.rs"]
+mod deck_payoff_search;
+#[path = "program_cache.rs"]
+mod program_cache;
 #[path = "progress.rs"]
 mod progress;
 #[path = "session.rs"]
 mod session;
+#[path = "team_power_search.rs"]
+mod team_power_search;
+#[path = "team_scores.rs"]
+mod team_scores;
 #[path = "warm.rs"]
 mod warm;
 pub(crate) use progress::ProgressHook;
@@ -41,8 +56,6 @@ struct Entry {
     snaps: [Option<i64>; 5],
     power: i32,
     evaluation: FiniteEvaluation,
-    network_applications: BTreeMap<i32, Vec<(usize, usize)>>,
-    terminal_details: BTreeMap<i32, (i32, u64)>,
 }
 fn compare(a: &Entry, b: &Entry) -> Ordering {
     b.evaluation
@@ -61,56 +74,59 @@ impl Entry {
                 snaps: self.snaps,
                 power: self.power,
                 expected_score: None,
-                expected_payoff: self.evaluation.expected_payoff.into(),
+                expected_payoff: Some(self.evaluation.expected_payoff.into()),
+                score_interval: None,
+                payoff_interval: None,
+                rank_certified: None,
                 score_summary: None,
-                atoms: Vec::new(),
+                best_order: None,
+                order_outcomes: Vec::new(),
             });
         }
-        let applications = self.network_applications;
-        let details = self.terminal_details;
         let score_summary = score_summary(&self.evaluation.score_mass, metric.target())?;
+        // The first order with the highest payoff, then the highest score (orders in lexicographic order).
+        let best_order = (self.evaluation.outcomes.len() == ORDERS)
+            .then(|| {
+                self.evaluation.outcomes.iter().reduce(|best, o| {
+                    if (o.terminal_payoff, o.final_score) > (best.terminal_payoff, best.final_score) { o } else { best }
+                })
+            })
+            .flatten()
+            .map(|o| OrderResult {
+                performance_order: o.performance_order,
+                members: o.performance_order.map(|slot| self.members[slot]),
+                score: o.final_score,
+                payoff: o.terminal_payoff.to_string(),
+            });
         Ok(RecommendedDeck {
             members: self.members,
             snaps: self.snaps,
             power: self.power,
             expected_score: Some(self.evaluation.expected_score.into()),
-            expected_payoff: self.evaluation.expected_payoff.into(),
+            expected_payoff: Some(self.evaluation.expected_payoff.into()),
+            score_interval: None,
+            payoff_interval: None,
+            rank_certified: None,
             score_summary: Some(score_summary),
-            atoms: self
-                .evaluation
-                .outcomes
-                .into_iter()
-                .map(|o| AtomResult {
-                    root_seed: o.root_seed,
-                    weight: o.weight.to_string(),
-                    performance_order: o.performance_order,
-                    score: o.final_score,
-                    payoff: o.terminal_payoff.to_string(),
-                    network_applications: applications.get(&o.root_seed).cloned().unwrap_or_default(),
-                    final_life: details.get(&o.root_seed).map(|d| d.0),
-                    converted_judgements: details.get(&o.root_seed).map(|d| d.1),
-                })
-                .collect(),
+            best_order,
+            order_outcomes: if self.evaluation.outcomes.len() == ORDERS {
+                self.evaluation
+                    .outcomes
+                    .iter()
+                    .map(|o| (o.performance_order, o.final_score, o.terminal_payoff))
+                    .collect()
+            } else {
+                Vec::new()
+            },
         })
     }
 }
 
-/// Simulation cutoff tables of one candidate: one per distinct native order, and each atom's table index.
-struct CutoffPlan {
-    tables: Vec<Option<super::joint::CutoffTable>>,
-    index: Vec<usize>,
-}
-
-/// Frames between two cutoff checks of a running simulation.
-const CUTOFF_EVERY: usize = 30;
-
 struct Engine<'a, 'm> {
     pool: &'a Pool<'m>,
     request: &'a SearchRequest,
-    law: &'a FiniteSeedLaw,
     metric: &'a Metric,
     event_input: Option<&'a EventPayoffInput>,
-    network: Option<&'a [RankConfirmation]>,
     simulation: &'a SimulationInput,
     limits: &'a Limits,
     budget: super::budget::SearchBudget,
@@ -121,15 +137,23 @@ struct Engine<'a, 'm> {
     correlated: bool,
     resource: bool,
     bound_scratch: super::snaps::JointScratch,
-    luck: Option<super::luck::LuckOracle>,
     bonus_scratch: super::joint::BonusScratch,
     top: Vec<Entry>,
+    certified: Option<CertifiedState>,
+    /// The master's lottery-related skills when the decks play lottery-free ([`certified_engine::LotteryMode::Free`]).
+    lottery_free: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
     seen: HashSet<PhysicalDeck>,
     fifo: VecDeque<PhysicalDeck>,
-    input: Option<FiniteSeedContext>,
+    team_scores: team_scores::TeamScores,
+    programs: program_cache::ProgramCache,
     song: Option<&'a ournotes_sim::cards::SongView>,
     event: bool,
     skip: Option<&'a ournotes_sim::live::skip::SkipEvaluator>,
+    /// Played lives: decks are teams in their canonical layout (`uniform::canonical`).
+    live: bool,
+    /// The performance orders in [`uniform::all_orders`] order, and the positions of the slots in each.
+    orders: Vec<[usize; 5]>,
+    positions: Vec<[usize; 5]>,
     /// Decks the warm start evaluated; the traversal treats them as considered (see `warm.rs`).
     seeded: HashSet<PhysicalDeck>,
     /// Visit order of the next root loop of `joint_rec`; None keeps the static choice order.
@@ -138,8 +162,38 @@ struct Engine<'a, 'm> {
     warm: Option<warm::Warm<'a>>,
     /// Optional progress reports (`progress.rs`).
     progress: Option<progress::Reporter<'a>>,
+    /// What the last `consider` evaluated (None: it evaluated nothing).
+    offered: Option<Offered>,
+}
+
+/// An evaluated deck: its mean payoff (numerator, denominator; None when a certified interval does not settle it),
+/// power, and highest order score (exact evaluations).
+#[derive(Clone, Copy, Debug)]
+struct Offered {
+    payoff: Option<(i128, u128)>,
+    power: i32,
+    score: Option<i32>,
 }
 impl Engine<'_, '_> {
+    /// Formal deterministic objectives also retain the leader and four unordered member/Snap pairs.
+    /// The explicit v1 session cursor and fixed deterministic evaluation keep their physical-deck contracts.
+    fn team_identity(&self) -> bool {
+        self.team_identity_in(self.tel.environment.traversal)
+    }
+    /// [`Engine::team_identity`] of a search that ran `traversal`.
+    fn team_identity_in(&self, traversal: Traversal) -> bool {
+        self.live
+            || (self.skip.is_some()
+                && matches!(
+                    self.metric,
+                    Metric::ClientEventPoints { .. }
+                        | Metric::ClientChallengePoints { .. }
+                        | Metric::ConditionalClientEventItems { .. }
+                ))
+            || (!matches!(traversal, Traversal::Session | Traversal::Fixed)
+                && super::team_power::applies(&self.request.objective, self.metric))
+    }
+
     fn expired(&mut self) -> bool {
         if self.stop.is_some() {
             return true;
@@ -178,123 +232,31 @@ impl Engine<'_, '_> {
         cache.peak_entries = cache.peak_entries.max(self.seen.len());
     }
     fn payoff(&self, p: &PhysicalDeck, score: i32, power: i32, final_life: Option<i32>) -> Result<i128, Error> {
-        match *self.metric {
-            Metric::Power => Ok(power as i128),
-            Metric::Score => Ok(score as i128),
-            Metric::ScoreAtLeast { threshold } => Ok(i128::from(score >= threshold)),
-            Metric::CappedScore { threshold } => Ok(score.min(threshold) as i128),
-            Metric::ScoreAndLifeAtLeast { threshold, min_final_life } => Ok(i128::from(
-                score >= threshold
-                    && final_life.ok_or_else(|| Error::Input("terminal life requires played Live".into()))?
-                        >= min_final_life,
-            )),
-            Metric::ClientEventPoints { event_id } => Ok(self
-                .request
-                .objective
-                .context()
-                .expect("validated context")
-                .preview_event_points(
-                    self.pool,
-                    &p.as_deck(),
-                    self.event_input.expect("validated event input"),
-                    event_id,
-                    score,
-                )?
-                .points_for(event_id) as i128),
-            Metric::ConditionalClientEventItems { event_id, resource_type, resource_id } => {
-                let items = self.request.objective.context().expect("validated context").preview_event_items(
-                    self.pool,
-                    &p.as_deck(),
-                    self.event_input.expect("validated event input"),
-                    event_id,
-                    score,
-                )?;
-                ournotes_sim::scenario::item_payoff(&items, event_id, resource_type, resource_id)
-            }
-        }
+        payoff_of(self.pool, self.request, self.metric, self.event_input, p, score, power, final_life)
     }
     fn consider(&mut self, physical: PhysicalDeck) -> Result<bool, Error> {
         self.consider_with(physical, None)
     }
 
-    /// The simulation cutoff tables of a candidate (None for an order without a finite cap), when the Top-K is full
-    /// and the payoff is the score or the bounded event points.
-    fn cutoff_tables(
-        &mut self,
-        bounds: &super::joint::JointBounds,
-        domain: &crate::domain::CandidateDomain,
-        physical: &PhysicalDeck,
-        power: i32,
-    ) -> Result<Option<CutoffPlan>, Error> {
-        let payoff_bounded = match self.metric {
-            Metric::Score => !bounds.is_pt(),
-            Metric::ClientEventPoints { .. } => bounds.is_pt(),
-            _ => false,
-        };
-        if !payoff_bounded
-            || self.top.len() != self.request.k
-            || self.network.is_some()
-            || self.simulation.live_finished_from_frame.is_some()
-        {
-            return Ok(None);
-        }
-        let mut by_order: Vec<([usize; 5], Option<super::joint::CutoffTable>)> = Vec::new();
-        let mut index = Vec::with_capacity(self.law.atoms().len());
-        for &(root, _) in self.law.atoms() {
-            let positions = super::joint::positions(root)?;
-            let i = match by_order.iter().position(|(p, _)| *p == positions) {
-                Some(i) => i,
-                None => {
-                    // The leaf fine bound of this candidate read the relaxed power; its soundness needs it to cover
-                    // the exact power that the simulation and these tables use.
-                    let (_, relaxed) = bounds.upper(self.pool, domain, physical, 5, &positions);
-                    if relaxed < i64::from(power) {
-                        return Err(Error::Domain(format!("relaxed power {relaxed} below exact power {power}")));
-                    }
-                    self.tel.leaves.cutoff.relaxed_power_above += u64::from(relaxed > i64::from(power));
-                    let masks = match (&mut self.luck, bounds.rush_eligible()) {
-                        (Some(oracle), true) => {
-                            oracle.site = super::luck::Site::Cutoff;
-                            oracle.masks(self.pool, physical, &positions)?
-                        }
-                        _ => None,
-                    };
-                    let table = bounds.cutoff_table(
-                        domain,
-                        physical,
-                        i64::from(power),
-                        &positions,
-                        &mut self.bound_scratch,
-                        masks.as_ref(),
-                    );
-                    by_order.push((positions, table));
-                    by_order.len() - 1
-                }
-            };
-            index.push(i);
-        }
-        let tables: Vec<_> = by_order.into_iter().map(|(_, t)| t).collect();
-        if tables.iter().all(Option::is_none) {
-            self.tel.leaves.cutoff.unavailable += 1;
-            return Ok(None);
-        }
-        self.tel.leaves.cutoff.tables += 1;
-        Ok(Some(CutoffPlan { tables, index }))
-    }
-
+    /// Evaluate a candidate deck (a team in its canonical layout for played lives) and offer it to the Top-K. `cut`
+    /// supplies the bounds whose per-order caps stop evaluating a team that cannot reach the Top-K. Ok(false) when
+    /// the budget or the candidate limit ran out.
     fn consider_with(
         &mut self,
         physical: PhysicalDeck,
         cut: Option<(&super::joint::JointBounds, &crate::domain::CandidateDomain)>,
     ) -> Result<bool, Error> {
         self.tel.leaves.proposed += 1;
+        self.offered = None;
         if self.expired() {
             return Ok(false);
         }
+        let physical = if self.team_identity() { uniform::canonical(self.pool, &physical) } else { physical };
         self.tel.caches.candidates.lookups += 1;
         if self.seen.contains(&physical)
             || self.seeded.contains(&physical)
             || self.top.iter().any(|e| e.physical == physical)
+            || self.certified.as_ref().is_some_and(|s| s.contains(&physical))
         {
             self.tel.caches.candidates.hits += 1;
             return Ok(true);
@@ -305,141 +267,22 @@ impl Engine<'_, '_> {
         }
         self.tel.leaves.visited += 1;
         let power = self.pool.deck_power(&physical.as_deck(), self.song, self.event)?.power();
-        let mut applications = BTreeMap::new();
-        let mut terminal_details = BTreeMap::new();
-        let evaluation = if matches!(self.request.objective.inner(), Objective::LiveScore { .. }) {
-            // Current CoreAPI: fresh context for this exact physical candidate.
-            // Reuse no gameplay/random state between candidates or atoms.
-            self.input = Some(expectation::context(self.pool, &physical, &self.request.objective)?);
-            let input = self.input.as_mut().expect("context");
-            if let Some(v) = self.simulation.music_length_ms {
-                input.params.music_length_ms = v;
-            }
-            if let Some(v) = self.simulation.score_music_length_ms {
-                input.params.score_music_length_ms = Some(v);
-            }
-            let plan = match cut {
-                Some((bounds, domain)) => {
-                    let (_, resume) = self.rec.clock.lap(slot::CUTOFF_TABLE);
-                    let plan = self.cutoff_tables(bounds, domain, &physical, power)?;
-                    self.rec.clock.lap(resume);
-                    plan
+        let evaluation = if self.live {
+            match self.evaluate_orders(&physical, power, cut)? {
+                Leaf::Evaluated(evaluation) => evaluation,
+                Leaf::Certified(evaluation, program, payoff) => {
+                    self.offer_certified(physical, power, evaluation, program, payoff)?;
+                    return Ok(true);
                 }
-                None => None,
-            };
-            let mut outcomes = Vec::with_capacity(self.law.atoms().len());
-            let mut duplicates = BTreeMap::<i32, SeedOutcome>::new();
-            let (mut partial, mut consumed) = (0i128, 0u128);
-            for (a, &(root, weight)) in self.law.atoms().iter().enumerate() {
-                if self.expired() {
+                Leaf::Pruned => {
+                    self.remember(physical);
+                    return Ok(true);
+                }
+                Leaf::Stopped => {
                     self.tel.leaves.partial += 1;
                     return Ok(false);
                 }
-                let atom = if let Some(atom) = duplicates.get(&root) {
-                    self.tel.leaves.duplicate_atoms += 1;
-                    let mut a = atom.clone();
-                    a.weight = weight;
-                    a
-                } else {
-                    // The payoff of the other atoms: simulated roots exactly, later roots by their whole cap, and the
-                    // later atoms of this root share its cap.
-                    let cutoff = plan.as_ref().zip(cut).and_then(|(plan, (bounds, _))| {
-                        let table = plan.tables[plan.index[a]].as_ref()?;
-                        let (mut fixed, mut same) = (partial, weight as i128);
-                        for (b, &(rb, wb)) in self.law.atoms().iter().enumerate().skip(a + 1) {
-                            if rb == root {
-                                same = same.checked_add(wb as i128)?;
-                                continue;
-                            }
-                            let payoff = match duplicates.get(&rb) {
-                                Some(d) => d.terminal_payoff,
-                                None => plan.tables[plan.index[b]].as_ref()?.full,
-                            };
-                            fixed = fixed.checked_add(payoff.checked_mul(wb as i128)?)?;
-                        }
-                        let kth = self.top.last()?;
-                        Some((bounds, table, fixed, same, kth.evaluation.expected_payoff.numerator, kth.power))
-                    });
-                    let terminal = match cutoff {
-                        Some((bounds, table, fixed, same, threshold, kth_power)) => {
-                            let input = self.input.as_ref().expect("context");
-                            let frames = input.play.frames.len();
-                            let mut checks = 0usize;
-                            let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
-                            let outcome = input.simulate_with_cutoff(self.pool.master, root, CUTOFF_EVERY, |s| {
-                                checks += 1;
-                                // Strict inequality preserves every possible power/ID tie.
-                                table
-                                    .payoff_cap(bounds, s)
-                                    .and_then(|cap| cap.checked_mul(same)?.checked_add(fixed))
-                                    .is_some_and(|total| total < threshold || (total == threshold && power < kth_power))
-                            })?;
-                            let Some(terminal) = outcome else {
-                                self.rec.clock.lap_as(slot::STOPPED, resume);
-                                telemetry::record_stop(&mut self.tel.leaves.cutoff, checks * CUTOFF_EVERY, frames);
-                                self.remember(physical);
-                                return Ok(true);
-                            };
-                            self.rec.clock.lap(resume);
-                            CurrentDeclaredOutcome { terminal, network_applications: Vec::new() }
-                        }
-                        None => {
-                            let budget = self.budget;
-                            let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
-                            let terminal = simulate_current(
-                                self.input.as_ref().expect("context"),
-                                self.pool.master,
-                                root,
-                                self.network,
-                                self.simulation.live_finished_from_frame,
-                                || budget.expired(),
-                            )?;
-                            self.rec.clock.lap(resume);
-                            let Some(terminal) = terminal else {
-                                self.stop = Some(ExitReason::TimeLimit);
-                                self.tel.leaves.partial += 1;
-                                return Ok(false);
-                            };
-                            terminal
-                        }
-                    };
-                    applications.insert(root, terminal.network_applications);
-                    let terminal = terminal.terminal;
-                    let final_life = terminal.model.current_life();
-                    terminal_details.insert(root, (final_life, terminal.model.converted_judgements()));
-                    self.tel.leaves.simulations += 1;
-                    let atom = SeedOutcome {
-                        root_seed: root,
-                        weight,
-                        performance_order: terminal.performance_order,
-                        final_score: terminal.final_score,
-                        terminal_payoff: self.payoff(&physical, terminal.final_score, power, Some(final_life))?,
-                    };
-                    duplicates.insert(root, atom.clone());
-                    atom
-                };
-                partial = partial
-                    .checked_add(atom.terminal_payoff.checked_mul(weight as i128).ok_or_else(arithmetic)?)
-                    .ok_or_else(arithmetic)?;
-                consumed = consumed.checked_add(weight as u128).ok_or_else(arithmetic)?;
-                outcomes.push(atom);
-                if self.top.len() == self.request.k
-                    && consumed < self.law.total_weight()
-                    && let Some(upper) = self.metric.upper()
-                {
-                    let remaining = i128::try_from(self.law.total_weight() - consumed).map_err(|_| arithmetic())?;
-                    let bound = partial
-                        .checked_add(remaining.checked_mul(upper).ok_or_else(arithmetic)?)
-                        .ok_or_else(arithmetic)?;
-                    // Strict inequality preserves every possible power/ID tie.
-                    if bound < self.top.last().expect("top k").evaluation.expected_payoff.numerator {
-                        self.tel.leaves.atom_bound_pruned += 1;
-                        self.remember(physical);
-                        return Ok(true);
-                    }
-                }
             }
-            expectation::aggregate(outcomes)?
         } else {
             let score = match &self.skip {
                 Some(skip) => skip.score(power).0,
@@ -456,14 +299,17 @@ impl Engine<'_, '_> {
         };
         self.tel.leaves.evaluated += 1;
         self.remember(physical);
+        self.offered = Some(Offered {
+            payoff: Some((evaluation.expected_payoff.numerator, evaluation.expected_payoff.denominator)),
+            power,
+            score: evaluation.score_mass.last_key_value().map(|(&score, _)| score),
+        });
         let entry = Entry {
             physical,
             members: physical.members.map(|i| self.pool.members[i].id),
             snaps: physical.snaps.map(|i| i.map(|i| self.pool.snaps[i].id)),
             power,
             evaluation,
-            network_applications: applications,
-            terminal_details,
         };
         let pos = self.top.iter().position(|e| compare(&entry, e) == Ordering::Less).unwrap_or(self.top.len());
         // A strictly higher best payoff (not a power or ID tie-break) starts a polish round below.
@@ -483,6 +329,19 @@ impl Engine<'_, '_> {
         }
         self.tel.leaves.peak_retained = self.tel.leaves.peak_retained.max(self.top.len());
         Ok(true)
+    }
+
+    /// The evaluation of a deck the Top-K (or the certified frontier) still holds.
+    fn recorded(&self, p: &PhysicalDeck) -> Option<Offered> {
+        if let Some(state) = &self.certified {
+            let (payoff, power) = state.evaluated(p)?;
+            return Some(Offered { payoff: payoff.map(|x| (x.numerator, x.denominator)), power, score: None });
+        }
+        self.top.iter().find(|t| t.physical == *p).map(|t| Offered {
+            payoff: Some((t.evaluation.expected_payoff.numerator, t.evaluation.expected_payoff.denominator)),
+            power: t.power,
+            score: t.evaluation.score_mass.last_key_value().map(|(&score, _)| score),
+        })
     }
 
     /// Best and K-th payoff numerators, and the decks held.
@@ -551,6 +410,18 @@ impl Engine<'_, '_> {
         self.rec.clock.lap(slot::OTHER)
     }
 
+    /// The branches still open are bounded by `open` (None: no branch open): offer the larger of it and the best
+    /// payoff as the global upper bound. Only a traversal of the whole remaining domain (one search part) offers it.
+    fn note_open(&mut self, open: Option<i128>) {
+        if self.rec.parts != 1 {
+            return;
+        }
+        let best = self.top.first().map(|e| e.evaluation.expected_payoff.numerator);
+        if let Some(upper) = best.max(open) {
+            self.rec.offer_upper(upper);
+        }
+    }
+
     fn fold_unexplored(&mut self, upper: Option<i128>, (started, resume): (Instant, usize)) {
         if let Some(upper) = upper {
             self.rec.unexplored(upper);
@@ -564,6 +435,12 @@ impl Engine<'_, '_> {
     fn finish_telemetry(&mut self, standing: (i128, Option<i128>, usize)) {
         self.rec.end_open(&mut self.tel);
         self.rec.clock.add_to(&mut self.tel.time);
+        let complete = self.stop.is_none();
+        if complete || self.rec.bounded {
+            // Complete: nothing is open. Stopped: the unexplored bound covers everything left.
+            let open = if complete { None } else { self.rec.unexplored };
+            self.note_open(open);
+        }
         let mut tel = std::mem::take(&mut self.tel);
         self.close_telemetry(&mut tel, standing, true);
         self.tel = tel;
@@ -572,15 +449,6 @@ impl Engine<'_, '_> {
     /// The counters kept outside the document, the last incumbent and the proof. `stopped` is true when the search
     /// has ended (completed or stopped, with what a stop leaves unexplored bounded); a progress report is neither.
     fn close_telemetry(&self, tel: &mut Telemetry, standing: (i128, Option<i128>, usize), stopped: bool) {
-        if let Some(oracle) = &self.luck {
-            tel.luck_replay = oracle.stats.clone();
-            tel.caches.luck_replay = oracle.cache_use;
-            tel.caches.luck_branches = oracle.branch_cache_use;
-            #[cfg(feature = "search-diagnostics")]
-            {
-                tel.luck_replay.diagnostics = Some(oracle.diag.report(oracle.variant_count(), oracle.distinct_masks()));
-            }
-        }
         (tel.caches.bonus_rows, tel.caches.bonus_rows_refused) = self.bonus_scratch.cache_use();
         tel.caches.rush_windows = self.bound_scratch.rush_windows();
         let (best, kth, filled) = standing;
@@ -601,6 +469,8 @@ impl Engine<'_, '_> {
             proof.best = Some(best.to_string());
         }
         proof.kth = kth.map(|v| v.to_string());
+        tel.memory = telemetry::Memory::now();
+        proof.global_upper_bound = self.rec.upper.map(|v| v.to_string());
         if stopped && !complete && self.rec.bounded {
             proof.upper_bound = self.rec.unexplored.map(|v| v.to_string());
             let gap = |x: i128| match self.rec.unexplored {
@@ -609,6 +479,16 @@ impl Engine<'_, '_> {
             };
             proof.best_gap = (filled > 0).then(|| gap(best)).flatten();
             proof.kth_gap = kth.and_then(gap);
+        }
+        if self.certified.is_some() {
+            // Scalar incumbent fields are exact numerators, not interval endpoints. The result carries bounds.
+            proof.best = None;
+            proof.kth = None;
+            proof.best_gap = None;
+            proof.kth_gap = None;
+            if self.stop == Some(ExitReason::RefinementRequired) {
+                proof.fraction = None;
+            }
         }
     }
 
@@ -638,23 +518,41 @@ impl Engine<'_, '_> {
         } else {
             Optimality::Unproven
         };
-        let (request, law) = (self.request, self.law);
-        let probability_law = if matches!(request.objective.inner(), Objective::LiveScore { .. }) {
-            serde_json::json!({"kind":"explicitFiniteNativeRoots","atoms":law.atoms().iter().map(|(r,w)|serde_json::json!([r,w.to_string()])).collect::<Vec<_>>(),"totalWeight":law.total_weight().to_string(),"populationLaw":"unknown; no TickCount population law inferred"})
+        let live = matches!(self.request.objective.inner(), Objective::LiveScore { .. });
+        let probability_law = if live {
+            let lottery = if self.certified.is_some() {
+                "certifiedNativeLotteryIntervals"
+            } else if self.lottery_free.is_some() {
+                "noLuckRange"
+            } else {
+                "none"
+            };
+            serde_json::json!({"kind":"uniformMemberOrder","orders":ORDERS,"lottery":lottery})
         } else {
             serde_json::json!({"kind":"deterministic"})
         };
         RecommendationOutcome {
             format: RESULT_FORMAT,
-            completion: if proven { Completion::Complete } else { Completion::TimedOut },
+            completion: if proven {
+                Completion::Complete
+            } else if exit_reason == ExitReason::RefinementRequired {
+                Completion::RefinementRequired
+            } else {
+                Completion::TimedOut
+            },
             optimality,
             exit_reason,
-            result_identity: if fixed { "fixedPhysicalDeck" } else { "physicalDeck" },
+            result_identity: match (fixed, self.team_identity_in(telemetry.environment.traversal)) {
+                (true, true) => "fixedTeam",
+                (true, false) => "fixedPhysicalDeck",
+                (false, true) => "team",
+                (false, false) => "physicalDeck",
+            },
             metric: self.metric.clone(),
             player_goal: None,
             strategy: strategy.clone(),
             probability_law,
-            proof_scope: "conditional on declared master, roster, complete judgement/clock inputs, finite native-root law and optional external confirmations; client counters are not server reward authority",
+            proof_scope: "conditional on declared master, roster and complete judgement/clock inputs, with the five members performing in a uniformly random order; client counters are not server reward authority",
             resolved_context: serde_json::Value::Null,
             results,
             telemetry,
@@ -676,7 +574,11 @@ impl Engine<'_, '_> {
         self.rec.peek_open(&mut tel, now);
         self.rec.clock.peek_into(now, &mut tel.time);
         self.close_telemetry(&mut tel, self.standing(), false);
-        let results = self.top.iter().cloned().map(|e| e.wire(self.metric)).collect::<Result<Vec<_>, _>>()?;
+        let results = if self.certified.is_some() {
+            self.certified_results(false)?.0
+        } else {
+            self.top.iter().cloned().map(|e| e.wire(self.metric)).collect::<Result<Vec<_>, _>>()?
+        };
         let elapsed = now.saturating_duration_since(start);
         Ok(self.outcome(strategy, ExitReason::TimeLimit, false, results, tel, elapsed))
     }
@@ -733,6 +635,53 @@ fn node_upper(
         keyed.as_ref(),
     )
 }
+/// The payoff of one outcome of a deck under the metric.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn payoff_of(
+    pool: &Pool,
+    request: &SearchRequest,
+    metric: &Metric,
+    event_input: Option<&EventPayoffInput>,
+    p: &PhysicalDeck,
+    score: i32,
+    power: i32,
+    final_life: Option<i32>,
+) -> Result<i128, Error> {
+    match *metric {
+        Metric::Power => Ok(power as i128),
+        Metric::Score => Ok(score as i128),
+        Metric::ScoreAtLeast { threshold } => Ok(i128::from(score >= threshold)),
+        Metric::CappedScore { threshold } => Ok(score.min(threshold) as i128),
+        Metric::ScoreAndLifeAtLeast { threshold, min_final_life } => Ok(i128::from(
+            score >= threshold
+                && final_life.ok_or_else(|| Error::Input("terminal life requires played Live".into()))?
+                    >= min_final_life,
+        )),
+        Metric::ClientEventPoints { event_id } => Ok(request
+            .objective
+            .context()
+            .expect("validated context")
+            .preview_event_points(pool, &p.as_deck(), event_input.expect("validated event input"), event_id, score)?
+            .points_for(event_id) as i128),
+        Metric::ClientChallengePoints { event_id } => Ok(request
+            .objective
+            .context()
+            .expect("validated context")
+            .preview_event_points(pool, &p.as_deck(), event_input.expect("validated event input"), event_id, score)?
+            .challenge_points_for(event_id) as i128),
+        Metric::ConditionalClientEventItems { event_id, resource_type, resource_id } => {
+            let items = request.objective.context().expect("validated context").preview_event_items(
+                pool,
+                &p.as_deck(),
+                event_input.expect("validated event input"),
+                event_id,
+                score,
+            )?;
+            ournotes_sim::scenario::item_payoff(&items, event_id, resource_type, resource_id)
+        }
+    }
+}
+
 pub(crate) fn arithmetic() -> Error {
     Error::Domain("finite-law checked exact arithmetic overflow".into())
 }
@@ -795,8 +744,8 @@ pub fn score_summary(mass: &BTreeMap<i32, u128>, target: Option<i32>) -> Result<
 }
 
 /// Fixed-deck evaluator over the shared core, exposed for independent checks.
-/// Context identity must match. Network arrivals and explicit finished lifecycle are
-/// Unsupported at entry; this build does not model their new settlement semantics.
+/// Context identity must match. Network arrivals use controller frame snapshots and explicit aggregate ranks.
+/// Explicit finished lifecycle remains unsupported.
 /// No wall clock is used by this unbounded numeric evaluator.
 pub fn evaluate_declared_context(
     master: &ournotes_sim::master::Master,
@@ -831,6 +780,9 @@ pub fn evaluate_declared_context(
     }
     if let Some(cs) = network {
         let g = input.gekisou.as_ref().ok_or_else(|| Error::Input("network confirmations require Gekisou".into()))?;
+        if g.fevers.len() > 3 {
+            return Err(Error::Input("at most three native Gekisou ranges supported".into()));
+        }
         let missions: [i64; 3] =
             g.missions.clone().try_into().map_err(|_| Error::Input("three native missions required".into()))?;
         let factors = ournotes_sim::live::full::gekisou_rank_factors(master, &missions)?;
@@ -857,13 +809,12 @@ pub fn evaluate_declared_context(
 }
 
 /// Low-level exact-model search; request.time_limit is respected in addition to Limits.
-/// Played input is COMPLETE declared judgement/clock data. Built-in pure metrics permit
-/// request-local duplicate-root reuse. It does not inherit generic payoff callback state.
+/// Played input is COMPLETE declared judgement/clock data; a played live is valued by its mean payoff over the
+/// 120 performance orders (`super::uniform`).
 #[allow(clippy::too_many_arguments)] // The audit inputs stay separately borrowed; JSON callers use RecommendationRequest.
 pub fn solve_physical(
     pool: &Pool,
     request: &SearchRequest,
-    law: &FiniteSeedLaw,
     metric: &Metric,
     event_input: Option<&EventPayoffInput>,
     limits: &Limits,
@@ -875,7 +826,6 @@ pub fn solve_physical(
     solve_physical_impl(
         pool,
         request,
-        law,
         metric,
         event_input,
         limits,
@@ -883,6 +833,7 @@ pub fn solve_physical(
         network,
         simulation,
         None,
+        &[],
         None,
         origin,
         None,
@@ -895,7 +846,6 @@ pub fn solve_physical(
 pub(crate) fn solve_physical_impl(
     pool: &Pool,
     request: &SearchRequest,
-    law: &FiniteSeedLaw,
     metric: &Metric,
     event_input: Option<&EventPayoffInput>,
     limits: &Limits,
@@ -903,6 +853,7 @@ pub(crate) fn solve_physical_impl(
     network: Option<&[RankConfirmation]>,
     simulation: &SimulationInput,
     fixed: Option<PhysicalDeck>,
+    initial: &[PhysicalDeck],
     compiled: Option<&crate::handler::ExecutionPlan>,
     origin: Instant,
     progress: Option<ProgressHook<'_>>,
@@ -914,11 +865,17 @@ pub(crate) fn solve_physical_impl(
         let ms = d.as_millis().min(u64::MAX as u128) as u64;
         limits.time_limit_ms = Some(limits.time_limit_ms.map_or(ms, |m| m.min(ms)));
     }
-    validate(request.k, law, &limits, strategy)?;
-    let normalized;
+    validate(request.k, &limits, strategy)?;
+    let mut normalized;
     let request = if compiled.is_none() {
         normalized =
             SearchRequest { objective: expectation::normalized_objective(&request.objective), ..request.clone() };
+        if let Some(confirmations) = network {
+            let Objective::InScenario { context, .. } = &mut normalized.objective else {
+                return Err(Error::Input("network ranking requires a resolved scenario".into()));
+            };
+            context.rank_confirmations = Some(confirmations.to_vec());
+        }
         &normalized
     } else {
         request
@@ -936,8 +893,8 @@ pub(crate) fn solve_physical_impl(
     let required = plan.domain.required();
     let snaps = plan.domain.snaps();
     let leader = plan.domain.leader();
-    if let Some(p) = fixed {
-        plan.domain.check_fixed(pool, &p)?;
+    for p in fixed.iter().chain(initial) {
+        plan.domain.check_fixed(pool, p)?;
     }
     let feasible = plan.domain.is_feasible();
     let song = &plan.song;
@@ -949,33 +906,44 @@ pub(crate) fn solve_physical_impl(
     env.time_limit_ms = limits.time_limit_ms;
     env.max_candidates = limits.max_candidates;
     env.cache_entries = limits.cache_entries;
-    env.law = Some(telemetry::Law {
-        atoms: law.atoms().len(),
-        orders: super::joint::order_law(law)?.len(),
-        total_weight: law.total_weight().to_string(),
-    });
+    let live = matches!(request.objective.inner(), Objective::LiveScore { .. });
+    let orders = if live { ORDERS } else { 1 };
+    env.target = Some(telemetry::Target { orders, denominator: orders.to_string() });
     env.domain = Some(telemetry::Domain {
         members: candidates.len(),
         snaps: snaps.len(),
         required: required.len(),
         leader_fixed: leader.is_some(),
     });
-    env.bounds.compiled = plan.joint.is_some();
+    env.bounds.compiled = plan.joint.is_some() || plan.deck_payoff.is_some() || plan.team_power.is_some();
     env.bounds.fallback = plan.bound_fallback.clone();
     env.bounds.compile_ms = plan.bound_compile_ms;
     if let Some(b) = &plan.joint {
         env.bounds.choices = b.choices.len();
         env.bounds.fine = b.has_fine();
-        env.bounds.rush = b.rush_eligible();
         env.bounds.class_search = b.uses_class_search();
     }
+    if let Some(b) = &plan.deck_payoff {
+        if plan.joint.is_none() {
+            env.bounds.choices = b.members.len();
+        }
+        env.bounds.deck_payoff = Some(telemetry::DeckPayoffSetup {
+            score_cap: b.power_cap(pool, &plan.domain).and_then(|power| b.score_cap(power)).map(|v| v.to_string()),
+            ..Default::default()
+        });
+    } else if let Some(refusal) = &plan.deck_payoff_refusal {
+        env.bounds.deck_payoff =
+            Some(telemetry::DeckPayoffSetup { refusal: Some(refusal.clone()), ..Default::default() });
+    }
+    if let Some(b) = &plan.team_power {
+        env.bounds.choices = b.members.len();
+    }
+    let lottery = certified_engine::lottery_mode(pool, request, &plan.domain)?;
     let mut engine = Engine {
         pool,
         request,
-        law,
         metric,
         event_input,
-        network,
         simulation,
         limits: &limits,
         budget: super::budget::SearchBudget::new(start, limits.time_limit_ms.map(Duration::from_millis))?,
@@ -985,19 +953,37 @@ pub(crate) fn solve_physical_impl(
         correlated: false,
         resource: false,
         bound_scratch: super::snaps::JointScratch::default(),
-        luck: None,
         bonus_scratch: super::joint::BonusScratch::default(),
         top: Vec::new(),
+        certified: if lottery == certified_engine::LotteryMode::Certified {
+            Some(CertifiedState::new(request.k)?)
+        } else {
+            None
+        },
+        lottery_free: if lottery == certified_engine::LotteryMode::Free {
+            Some(std::sync::Arc::new(ournotes_sim::live::full::luck_skills(pool.master)?))
+        } else {
+            None
+        },
         seen: HashSet::new(),
         fifo: VecDeque::new(),
-        input: None,
+        team_scores: team_scores::TeamScores::new(limits.cache_entries),
+        programs: program_cache::ProgramCache::new(if limits.cache_entries == 0 {
+            0
+        } else {
+            program_cache::DEFAULT_PROGRAM_CACHE_BYTES
+        }),
         song: song.as_ref(),
         event,
         skip: skip.as_ref(),
+        live,
+        orders: uniform::all_orders(),
+        positions: uniform::order_positions().into_iter().map(|(p, _)| p).collect(),
         seeded: HashSet::new(),
         root_order: None,
         warm: None,
         progress: progress.map(|hook| progress::Reporter::new(hook.interval, hook.report, strategy, start)),
+        offered: None,
     };
     if let Some(p) = fixed {
         engine.tel.environment.traversal = Traversal::Fixed;
@@ -1005,14 +991,47 @@ pub(crate) fn solve_physical_impl(
         engine.consider(p)?;
         engine.rec.end(&mut engine.tel);
     } else if feasible {
+        if !initial.is_empty() {
+            // Supplied incumbents, evaluated like warm-start decks: the traversal treats them as considered.
+            engine.rec.begin(&mut engine.tel, "initial", None);
+            for p in initial {
+                let cut = plan.joint.as_ref().map(|b| (b, &plan.domain));
+                if !engine.consider_with(*p, cut)? {
+                    break;
+                }
+                let p = if engine.team_identity() { uniform::canonical(pool, p) } else { *p };
+                engine.seeded.insert(p);
+            }
+            engine.rec.end(&mut engine.tel);
+        }
         match strategy {
             Strategy::Exhaustive | Strategy::BranchAndBound => {
                 let mut physical = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
-                if let Some(bounds) = &plan.joint {
+                // The deck payoff ranking either settles the Top-K or hands the search to the joint traversal.
+                let mut joint_next = true;
+                if let Some(bounds) = &plan.team_power {
+                    engine.tel.environment.traversal = Traversal::Joint;
+                    engine.rec.begin(&mut engine.tel, "search", Some("teamPower".into()));
+                    team_power_search::solve(&plan.domain, bounds, &mut engine)?;
+                    engine.rec.end(&mut engine.tel);
+                    joint_next = false;
+                } else if let Some(bounds) = plan
+                    .deck_payoff
+                    .as_ref()
+                    .filter(|_| plan.joint.is_none() || !super::snaps::ablated(super::ablate::NO_DECK_PAYOFF))
+                {
+                    engine.tel.environment.traversal = Traversal::Joint;
+                    engine.rec.begin(&mut engine.tel, "search", Some("deckPayoff".into()));
+                    joint_next = !deck_payoff_search::solve(&plan.domain, bounds, &mut engine, plan.joint.is_some())?;
+                    engine.rec.end(&mut engine.tel);
+                    if joint_next {
+                        engine.rec.frontier.clear();
+                    }
+                }
+                if joint_next && let Some(bounds) = &plan.joint {
                     engine.rec.begin(&mut engine.tel, "setup", None);
-                    let orders = super::joint::order_law(law)?;
-                    engine.luck = super::luck::LuckOracle::new(pool, request, &plan.domain, law, bounds.luck_life())?;
-                    engine.tel.environment.bounds.luck_oracle = engine.luck.is_some();
+                    // Node bounds read position-mean gains: one pseudo-order carrying the mass of all of them.
+                    let orders = uniform::MEAN_ORDERS.to_vec();
                     engine.correlated = bounds.correlation_worthwhile(pool, &plan.domain, &orders)?;
                     engine.resource = !bounds.prefers_compositions()
                         && bounds.resource_worthwhile(pool, &plan.domain, &orders, engine.correlated)?;
@@ -1022,17 +1041,15 @@ pub(crate) fn solve_physical_impl(
                         engine.tel.environment.traversal = Traversal::Joint;
                         engine.rec.begin(&mut engine.tel, "ptWarmStart", None);
                         let seed_bonus = bounds.bonus_upper(pool, &plan.domain, &physical, 0);
-                        joint_rec(0, &mut physical, &plan.domain, bounds, &orders, &mut engine, seed_bonus)?;
+                        joint_rec(0, 0, &mut physical, &plan.domain, bounds, &orders, &mut engine, seed_bonus)?;
                         engine.rec.end(&mut engine.tel);
                         // After the maximum-bonus warmup, whose full Top-K ends it.
                         warm::seed(&mut engine)?;
                         let mut searched = false;
                         if !engine.expired() {
                             engine.rec.begin(&mut engine.tel, "ptRegimeCompile", None);
-                            let restricted = if engine.top.len() == request.k {
-                                let numerator =
-                                    engine.top.last().expect("K incumbents").evaluation.expected_payoff.numerator;
-                                bounds.qualifying_pt_domain(pool, &plan.domain, numerator, law.total_weight())?
+                            let restricted = if let Some((numerator, _)) = engine.safe_cutoff() {
+                                bounds.qualifying_pt_domain(pool, &plan.domain, numerator, ORDERS as u128)?
                             } else {
                                 None
                             };
@@ -1096,11 +1113,11 @@ pub(crate) fn solve_physical_impl(
                     }
                     engine.tel.environment.bounds.correlated = engine.correlated;
                     engine.tel.environment.bounds.resource = engine.resource;
-                } else {
+                } else if joint_next {
                     engine.tel.environment.traversal = Traversal::Exhaustive;
                     engine.rec.begin(&mut engine.tel, "search", None);
                     engine.rec.tracked = true;
-                    members_rec(0, &mut physical, candidates, required, leader, snaps, &mut engine)?;
+                    members_rec(0, 0, &mut physical, candidates, required, leader, snaps, &mut engine)?;
                     engine.rec.end(&mut engine.tel);
                 }
             }
@@ -1210,10 +1227,18 @@ pub(crate) fn solve_physical_impl(
         }
     }
     engine.tel.incumbents.warm_start.final_top_k = engine.seeded_in_top();
-    let exit_reason = engine.stop.unwrap_or(ExitReason::Exhausted);
     let standing = engine.standing();
     engine.rec.begin(&mut engine.tel, "finish", None);
-    let results = std::mem::take(&mut engine.top).into_iter().map(|e| e.wire(metric)).collect::<Result<Vec<_>, _>>()?;
+    let results = if engine.certified.is_some() {
+        let (results, proof) = engine.certified_results(engine.stop.is_none())?;
+        if engine.stop.is_none() && !proof.complete {
+            engine.stop = Some(ExitReason::RefinementRequired);
+        }
+        results
+    } else {
+        std::mem::take(&mut engine.top).into_iter().map(|e| e.wire(metric)).collect::<Result<Vec<_>, _>>()?
+    };
+    let exit_reason = engine.stop.unwrap_or(ExitReason::Exhausted);
     engine.rec.end(&mut engine.tel);
     engine.finish_telemetry(standing);
     let telemetry = std::mem::take(&mut engine.tel);
@@ -1367,30 +1392,16 @@ fn ordered_root(
         e.rec.clock.lap(0);
         e.root_order = Some(warm::RootOrder::new(domain, bounds, orders, e)?);
     }
-    joint_rec(0, p, domain, bounds, orders, e, None)
+    joint_rec(0, 0, p, domain, bounds, orders, e, None)
 }
 
-/// Diagnostics only: the LUCK mask coverage of one leaf fine check and whether it pruned.
-#[cfg(feature = "search-diagnostics")]
-fn note_leaf(e: &mut Engine<'_, '_>, before: Option<(u64, u64)>, pruned: bool) {
-    if let (Some(o), Some((queries, unavailable))) = (e.luck.as_mut(), before) {
-        let (q, u) = (o.stats.queries - queries, o.stats.unavailable.total - unavailable);
-        let cover = if q == 0 {
-            "skipped"
-        } else if u == 0 {
-            "all"
-        } else if u == q {
-            "none"
-        } else {
-            "some"
-        };
-        *o.diag.leaves.entry((cover, pruned)).or_default() += 1;
-    }
-}
-
+/// One node of the joint member/Snap traversal: the leader pair at depth 0, then the other slots in `SLOTS` order.
+/// The pairs of the other slots take ascending indices of the choice order (`start` is the first index left to the
+/// next one), so every team is visited once, in one layout; its canonical layout is the one evaluated.
 #[allow(clippy::too_many_arguments)]
 fn joint_rec(
     depth: usize,
+    start: usize,
     p: &mut PhysicalDeck,
     domain: &crate::domain::CandidateDomain,
     bounds: &super::joint::JointBounds,
@@ -1433,25 +1444,47 @@ fn joint_rec(
     let level = (placed + 5 - depth).min(5);
     let node_bounds = bounds.carrier_level(level);
     let keyed = if depth > 0 { bounds.keyed(p, depth, &choices, 5 - depth, 5 - depth) } else { None };
-    if depth > 0 && e.top.len() == e.request.k {
+    if depth > 0
+        && let Some((threshold, cutoff_power)) = e.safe_cutoff()
+    {
+        // i32::MIN marks a certified cutoff without a proved power tie-break.
+        let exact_ties = cutoff_power > i32::MIN;
         let joint = &mut e.tel.joint;
         joint.branch.check(depth);
         joint.carriers.nodes[level] += 1;
         let (numerator, power) = node_bounds.expected_upper_keyed(e.pool, domain, p, depth, orders, keyed.as_ref())?;
-        let cutoff = e.top.last().expect("full Top-K");
-        let threshold = cutoff.evaluation.expected_payoff.numerator;
-        if numerator < threshold || (numerator == threshold && power < i64::from(cutoff.power)) {
+        if numerator < threshold || (exact_ties && numerator == threshold && power < i64::from(cutoff_power)) {
             joint.branch.prune(depth);
             return Ok(true);
         }
         if numerator == threshold {
             joint.node_ties[depth] += 1;
         }
-        if numerator == threshold
+        // The open slots take ascending candidate indices from `start` on.
+        if depth < 5
+            && let Some((steps, steps_power)) = node_bounds.order_step_upper(
+                e.pool,
+                domain,
+                p,
+                depth,
+                &e.positions,
+                keyed.as_ref(),
+                &bounds.choices[start..],
+            )
+        {
+            let module = joint.modules.entry("orderSteps").or_default();
+            module.checks += 1;
+            if steps < threshold || (exact_ties && steps == threshold && steps_power < i64::from(cutoff_power)) {
+                module.pruned += 1;
+                return Ok(true);
+            }
+        }
+        if exact_ties
+            && numerator == threshold
             && let Some(assigned_power) = bounds.assignment_power_upper(e.pool, domain, p, depth)
         {
             joint.assignment.check(depth);
-            if assigned_power < i64::from(cutoff.power) {
+            if assigned_power < i64::from(cutoff_power) {
                 joint.assignment.prune(depth);
                 return Ok(true);
             }
@@ -1460,7 +1493,7 @@ fn joint_rec(
             joint.correlated.check(depth);
             let correlated =
                 node_bounds.correlated_expected_upper_keyed(e.pool, domain, p, depth, orders, keyed.as_ref())?;
-            if correlated < threshold || (correlated == threshold && power < i64::from(cutoff.power)) {
+            if correlated < threshold || (exact_ties && correlated == threshold && power < i64::from(cutoff_power)) {
                 joint.correlated.prune(depth);
                 return Ok(true);
             }
@@ -1468,10 +1501,20 @@ fn joint_rec(
         if depth < 5 && e.resource {
             joint.resource.check(depth);
             if let Some(cap) = node_bounds.resource_expected_upper(e.pool, domain, p, depth, orders)
-                && (cap < threshold || (cap == threshold && power < i64::from(cutoff.power)))
+                && (cap < threshold || (exact_ties && cap == threshold && power < i64::from(cutoff_power)))
             {
                 joint.resource.prune(depth);
                 return Ok(true);
+            }
+        }
+        if depth < 5 {
+            for module in bounds.modules() {
+                let Some(cap) = module.node_upper(e.pool, p, depth, true, orders) else { continue };
+                joint.modules.entry(module.name()).or_default().checks += 1;
+                if cap < threshold || (exact_ties && cap == threshold && power < i64::from(cutoff_power)) {
+                    joint.modules.entry(module.name()).or_default().pruned += 1;
+                    return Ok(true);
+                }
             }
         }
         if seed_bonus.is_none() && depth < 5 && bounds.is_pt() {
@@ -1479,7 +1522,8 @@ fn joint_rec(
             if let Some((cap, cap_power)) =
                 node_bounds.bonus_expected_upper_with_power(e.pool, domain, p, depth, orders, &mut e.bonus_scratch)?
             {
-                if cap < threshold || (cap == threshold && power.min(cap_power) < i64::from(cutoff.power)) {
+                if cap < threshold || (exact_ties && cap == threshold && power.min(cap_power) < i64::from(cutoff_power))
+                {
                     joint.bonus.prune(depth);
                     return Ok(true);
                 }
@@ -1490,116 +1534,15 @@ fn joint_rec(
                 joint.bonus_unavailable[depth] += 1;
             }
         }
-        if depth == 5
-            && let Some(cap) = bounds.raw_expected_upper(domain, p, power, orders)
-        {
-            joint.raw.check(depth);
-            if cap < threshold || (cap == threshold && power < i64::from(cutoff.power)) {
-                joint.raw.prune(depth);
-                return Ok(true);
-            }
-        }
-        // Without fine bounds there is nothing to time (the call would return None).
-        if depth == 5 && bounds.has_fine() {
-            let kth_power = i64::from(cutoff.power);
-            #[cfg(feature = "search-diagnostics")]
-            let luck_before = e.luck.as_ref().map(|o| (o.stats.queries, o.stats.unavailable.total));
-            if let Some(oracle) = e.luck.as_mut() {
-                oracle.site = super::luck::Site::Fine;
-            }
-            e.rec.clock.lap(slot::FINE);
-            let fine = bounds.fine_expected_upper(
-                domain,
-                p,
-                power,
-                orders,
-                &mut e.bound_scratch,
-                e.luck.as_mut().map(|oracle| (e.pool, oracle)),
-            )?;
-            e.rec.clock.lap(depth);
-            if let Some(fine) = fine {
-                e.tel.joint.fine.check(depth);
-                if fine < threshold || (fine == threshold && power < kth_power) {
-                    e.tel.joint.fine.prune(depth);
-                    #[cfg(feature = "search-diagnostics")]
-                    note_leaf(e, luck_before, true);
-                    return Ok(true);
-                }
-                #[cfg(feature = "search-diagnostics")]
-                note_leaf(e, luck_before, false);
-                // Only a survivor pays for the per-branch caps.
-                if let Some(oracle) = e.luck.as_mut() {
-                    oracle.site = super::luck::Site::Branch;
-                    e.rec.clock.lap(slot::FINE);
-                    let refined =
-                        bounds.fine_branch_upper(domain, p, power, orders, &mut e.bound_scratch, e.pool, oracle)?;
-                    e.rec.clock.lap(depth);
-                    if let Some(refined) = refined {
-                        oracle.stats.branch_bound.checks += 1;
-                        if refined < threshold || (refined == threshold && power < kth_power) {
-                            oracle.stats.branch_bound.pruned += 1;
-                            return Ok(true);
-                        }
-                    }
-                }
-                if fine == threshold {
-                    e.tel.joint.node_ties[depth] += 1;
-                }
-                #[cfg(feature = "search-diagnostics")]
-                if let Some(o) = e.luck.as_mut() {
-                    let diag = &mut o.diag;
-                    if diag.survivors_seen % 64 == 0 && diag.survivors.len() < 256 {
-                        diag.survivors.push(serde_json::json!({
-                            "members": p.members.map(|m| e.pool.members[m].id),
-                            "snaps": p.snaps.map(|s| s.map(|s| e.pool.snaps[s].id)),
-                            "fine": fine.to_string(), "threshold": threshold.to_string(),
-                        }));
-                    }
-                    diag.survivors_seen += 1;
-                }
-            }
-        }
     }
     if depth == 5 {
         let more = e.consider_with(*p, Some((bounds, domain)))?;
         if !more {
             e.unexplored_node(p, depth, domain, bounds, orders)?;
         }
-        return Ok(more && !(seed_bonus.is_some() && e.top.len() == e.request.k));
+        return Ok(more && !(seed_bonus.is_some() && e.safe_cutoff().is_some()));
     }
     let slot = SLOTS[depth];
-    let rush_caps: Option<super::joint::RushCaps> = if depth == 4 && e.top.len() == e.request.k {
-        if let Some(oracle) = &mut e.luck {
-            e.tel.joint.rush_prefix.checks += 1;
-            oracle.site = super::luck::Site::Prefix;
-            e.rec.clock.lap(slot::RUSH_PREFIX);
-            let caps = bounds.rush_prefix_caps(e.pool, domain, p, orders, oracle, e.budget)?;
-            e.rec.clock.lap(depth);
-            let rush = &mut e.tel.joint.rush_prefix;
-            if let Some(caps) = &caps {
-                rush.variants += caps.variants.iter().filter(|v| v.is_some()).count() as u64;
-                if let Some((cap, power)) = caps.whole {
-                    let kth = e.top.last().expect("full Top-K");
-                    let threshold = kth.evaluation.expected_payoff.numerator;
-                    if cap < threshold || (cap == threshold && power < i64::from(kth.power)) {
-                        rush.pruned += 1;
-                        return Ok(true);
-                    }
-                }
-            } else {
-                rush.unavailable += 1;
-            }
-            caps
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    if depth == 4 && e.luck.is_some() && e.expired() {
-        e.unexplored_node(p, depth, domain, bounds, orders)?;
-        return Ok(false);
-    }
     // A child that is not a carrier leaves at most `placed + 4 - depth` carriers to its completions, a carrier one
     // more; the tail check covers both kinds of children. Each reads the keyed envelope of as many carriers to come
     // (the child's own commands are not known yet).
@@ -1622,7 +1565,13 @@ fn joint_rec(
     if root.as_ref().and_then(|r| r.best()).is_some_and(|cap| warm::inferior(cap, e)) {
         e.tel.joint.root_order.traversals_pruned += 1;
     }
-    for (offset, &(m, choice)) in children.iter().enumerate() {
+    for (offset, &(m, choice)) in children.iter().enumerate().skip(start) {
+        if let Some(r) = &root
+            && seed_bonus.is_none()
+        {
+            // Ordered root children: each cap covers its child and every later one.
+            e.note_open(Some(r.caps[offset].0));
+        }
         if let Some(r) = &root
             && warm::inferior(r.caps[offset], e)
         {
@@ -1630,15 +1579,38 @@ fn joint_rec(
             break;
         }
         if offset % 16 == 0
-            && e.top.len() == e.request.k
+            && let Some((threshold, cutoff_power)) = e.safe_cutoff()
             && let Some(state) = tail_high.as_ref().or(tail.as_ref())
         {
             e.tel.joint.tail.check(depth);
             let (upper, power) = high.tail_upper(state, offset)?;
-            let kth = e.top.last().expect("full Top-K");
-            let threshold = kth.evaluation.expected_payoff.numerator;
-            if upper < threshold || (upper == threshold && power < i64::from(kth.power)) {
+            if upper < threshold || (upper == threshold && power < i64::from(cutoff_power)) {
                 e.tel.joint.tail.prune(depth);
+                e.tel.joint.tail_choices_skipped[depth] += (width - offset) as u64;
+                break;
+            }
+        }
+        // Below the leader every child and its completions take candidates from `offset` on: their order steps bound
+        // all the children left (the node's own check covered `start`).
+        if depth > 0
+            && offset > start
+            && offset % if depth < 4 { 4 } else { 16 } == 0
+            && let Some((threshold, cutoff_power)) = e.safe_cutoff()
+            && let Some((steps, steps_power)) = node_bounds.order_step_upper(
+                e.pool,
+                domain,
+                p,
+                depth,
+                &e.positions,
+                keyed.as_ref(),
+                &bounds.choices[offset..],
+            )
+        {
+            let exact_ties = cutoff_power > i32::MIN;
+            let module = e.tel.joint.modules.entry("orderStepsTail").or_default();
+            module.checks += 1;
+            if steps < threshold || (exact_ties && steps == threshold && steps_power < i64::from(cutoff_power)) {
+                module.pruned += 1;
                 e.tel.joint.tail_choices_skipped[depth] += (width - offset) as u64;
                 break;
             }
@@ -1664,29 +1636,16 @@ fn joint_rec(
         if !bounds.allows(slot, choice) {
             continue;
         }
-        if let Some(caps) = &rush_caps
-            && let Some(v) = e.luck.as_ref().and_then(|oracle| oracle.variant(m, snap))
-            && let Some((cap, power)) = caps.variants[v as usize]
-        {
-            let kth = e.top.last().expect("full Top-K");
-            let threshold = kth.evaluation.expected_payoff.numerator;
-            if cap < threshold || (cap == threshold && power < i64::from(kth.power)) {
-                e.tel.joint.rush_prefix.choices_pruned += 1;
-                continue;
-            }
-        }
         let (pair_bounds, pair_tail) = match &tail_high {
             Some(state) if bounds.is_carrier(m, choice) => (high, Some(state)),
             _ => (low, tail.as_ref()),
         };
-        if e.top.len() == e.request.k
+        if let Some((threshold, cutoff_power)) = e.safe_cutoff()
             && let Some(state) = pair_tail
         {
             e.tel.joint.pair.check(depth);
             let (upper, power) = pair_bounds.pair_upper(state, m, choice)?;
-            let kth = e.top.last().expect("full Top-K");
-            let threshold = kth.evaluation.expected_payoff.numerator;
-            if upper < threshold || (upper == threshold && power < i64::from(kth.power)) {
+            if upper < threshold || (upper == threshold && power < i64::from(cutoff_power)) {
                 e.tel.joint.pair.prune(depth);
                 continue;
             }
@@ -1697,7 +1656,9 @@ fn joint_rec(
         p.members[slot] = m;
         p.snaps[slot] = snap;
         e.rec.frontier.set(depth, offset, width);
-        let more = joint_rec(depth + 1, p, domain, bounds, orders, e, seed_bonus)?;
+        // The leader's children start the ascending run of the other slots.
+        let next = if depth == 0 { 0 } else { offset + 1 };
+        let more = joint_rec(depth + 1, next, p, domain, bounds, orders, e, seed_bonus)?;
         e.rec.clock.lap(depth);
         if !more {
             e.unexplored_choices(p, depth, offset + 1, tail_check, root.as_ref(), domain, bounds, orders)?;
@@ -1707,8 +1668,12 @@ fn joint_rec(
     Ok(true)
 }
 
+/// Every deck of the domain, slot by slot. For played lives the non-leader slots 0, 1, 3, 4 take ascending candidate
+/// indices (`start` is the first index left to the next one), one layout per team.
+#[allow(clippy::too_many_arguments)]
 fn members_rec(
     slot: usize,
+    start: usize,
     p: &mut PhysicalDeck,
     candidates: &[usize],
     required: &[usize],
@@ -1726,7 +1691,8 @@ fn members_rec(
     if slot == 5 {
         return snaps_rec(0, p, snaps, e);
     }
-    for (index, &m) in candidates.iter().enumerate() {
+    let first = if e.team_identity() && slot != 2 { start } else { 0 };
+    for (index, &m) in candidates.iter().enumerate().skip(first) {
         if slot == 2 && leader.is_some_and(|l| l != m) {
             continue;
         }
@@ -1739,7 +1705,8 @@ fn members_rec(
         }
         p.members[slot] = m;
         e.rec.frontier.set(slot, index, candidates.len());
-        if !members_rec(slot + 1, p, candidates, required, leader, snaps, e)? {
+        let next = if slot == 2 { start } else { index + 1 };
+        if !members_rec(slot + 1, next, p, candidates, required, leader, snaps, e)? {
             return Ok(false);
         }
     }
@@ -1834,15 +1801,20 @@ fn simulate_current<F: FnMut() -> bool>(
     finished_from_frame: Option<usize>,
     mut cancelled: F,
 ) -> Result<Option<CurrentDeclaredOutcome>, Error> {
-    if confirmations.is_some() || finished_from_frame.is_some() {
-        return Err(Error::Unsupported("network/finished lifecycle is unsupported".into()));
+    if finished_from_frame.is_some() {
+        return Err(Error::Unsupported("finished lifecycle is unsupported".into()));
     }
     if cancelled() {
         return Ok(None);
+    }
+    let mut input = input.clone();
+    if let Some(confirmations) = confirmations {
+        input.rank_confirmations = Some(confirmations.to_vec());
     }
     let terminal = input.simulate(master, root_seed)?;
     if cancelled() {
         return Ok(None);
     }
-    Ok(Some(CurrentDeclaredOutcome { terminal, network_applications: Vec::new() }))
+    let network_applications = terminal.model.rank_confirmation_applications().to_vec();
+    Ok(Some(CurrentDeclaredOutcome { terminal, network_applications }))
 }

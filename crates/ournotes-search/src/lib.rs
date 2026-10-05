@@ -12,12 +12,14 @@
 //! - [`skip_event`]: the exhaustive skip event-point oracle;
 //! - [`owned_snapshot`]: strict, goal-scoped owned facts for the recommendation.
 
+pub mod account;
 pub mod auxiliary;
 mod clock;
 pub mod domain;
 pub mod engine;
 pub mod handler;
 pub mod owned_snapshot;
+pub mod recommendation;
 pub mod search;
 pub mod skip_event;
 pub mod types;

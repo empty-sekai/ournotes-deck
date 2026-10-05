@@ -46,7 +46,8 @@ const FLUSH: usize = 64;
 /// Validation switches of the live objective with Gekisou on. The first seven bits each replace one part of the
 /// bound or of the seed loop by an inadmissible variant, so that the search must disagree with exhaustive
 /// enumeration or report bound violations; `NO_EARLY_STOP` and `NO_PREFIX` switch off an exact shortcut, and
-/// `NO_WARM_START` and `STATIC_ORDER` the joint search's incumbents and visit order.
+/// `NO_WARM_START` and `STATIC_ORDER` the joint search's incumbents and visit order, and `NO_DECK_PAYOFF` the deck
+/// payoff ranking before it.
 pub mod ablate {
     /// No rank bonus factor.
     pub const RANK_BONUS: u32 = 1;
@@ -70,6 +71,8 @@ pub mod ablate {
     pub const NO_WARM_START: u32 = 512;
     /// Static visit order of the root children and of the Gekisou conversion parts.
     pub const STATIC_ORDER: u32 = 1024;
+    /// The joint search alone, without the deck payoff ranking that may settle the Top-K before it.
+    pub const NO_DECK_PAYOFF: u32 = 2048;
 }
 
 thread_local! {
@@ -102,7 +105,6 @@ mod gk_windows;
 mod leaf_search;
 mod rows;
 mod rush;
-pub(crate) mod rush_linear;
 mod score_windows;
 mod setup;
 mod snap_live;

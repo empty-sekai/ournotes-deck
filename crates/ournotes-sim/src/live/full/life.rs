@@ -124,7 +124,12 @@ impl LifeController {
         }
         list.insert(i, cmd);
         if f <= self.cached_complete_frame {
-            self.cached_complete_frame = f - 1;
+            // Native AddCommand and InvalidateCache reset the entire 16-byte cache
+            // at offsets 0x64..0x73: complete frame, life, guard, and reduction.
+            self.cached_complete_frame = -1;
+            self.cached_life = 0;
+            self.cached_guard = 0;
+            self.cached_reduction = 0;
         }
         Ok(())
     }
@@ -265,9 +270,8 @@ impl LifeController {
         (life, guard, reduction)
     }
 
-    /// Life at a music time. The frame cache is invalidated only by lowering its complete frame when a command lands
-    /// at or before it; the cached state is kept, so a later query above the lowered frame folds the frames in between
-    /// again from that state (the game's behaviour).
+    /// Life at a music time. Adding a command in a completed frame invalidates the
+    /// entire cache, so the next query folds the log again from initial life.
     pub(crate) fn get_life_at_ms(&mut self, ms: i32) -> Result<i32, Error> {
         let f = self.frame_of(ms);
         let c = self.cached_complete_frame;
@@ -304,6 +308,15 @@ impl LifeController {
         Ok(life)
     }
 
+    /// Observe the same value as a cloned controller without changing its native
+    /// cache. `get_life_at_ms` writes only these four fields, including on errors.
+    pub(crate) fn peek_life_at_ms(&mut self, ms: i32) -> Result<i32, Error> {
+        let saved = (self.cached_complete_frame, self.cached_life, self.cached_guard, self.cached_reduction);
+        let result = self.get_life_at_ms(ms);
+        (self.cached_complete_frame, self.cached_life, self.cached_guard, self.cached_reduction) = saved;
+        result
+    }
+
     /// Stores the life at the frame time as the current life.
     pub(crate) fn sync_current_life(&mut self, t: i32) -> Result<i32, Error> {
         let life = self.get_life_at_ms(t)?;
@@ -329,6 +342,61 @@ mod tests {
 
     fn controller() -> LifeController {
         LifeController::new(1000, FxHashMap::from_iter([(1, 100)]), 1000).unwrap()
+    }
+
+    #[test]
+    fn backdated_command_invalidates_all_four_native_cache_fields() {
+        let mut c = controller();
+        c.damage(0, 100, false).unwrap();
+        let guard = c.enable_guard(40).unwrap();
+        c.enable_damage_reduction(80, 2000).unwrap();
+        assert_eq!(c.get_life_at_ms(200).unwrap(), 900);
+        assert_eq!((c.cached_complete_frame, c.cached_life, c.cached_guard, c.cached_reduction), (4, 900, 1, 2000));
+
+        c.recovery(120, 50, false).unwrap();
+        assert_eq!((c.cached_complete_frame, c.cached_life, c.cached_guard, c.cached_reduction), (-1, 0, 0, 0));
+        assert_eq!(c.get_life_at_ms(200).unwrap(), 950);
+        c.disable_guard(220, guard).unwrap();
+        c.damage(240, 100, false).unwrap();
+        assert_eq!(c.get_life_at_ms(240).unwrap(), 870);
+    }
+
+    #[test]
+    fn life_peek_matches_clone_and_preserves_every_controller_field() {
+        let mut c = controller();
+        c.damage(0, 100, false).unwrap();
+        let guard = c.enable_guard(40).unwrap();
+        c.enable_damage_reduction(80, 2000).unwrap();
+        c.recovery(120, 50, false).unwrap();
+        c.disable_guard(220, guard).unwrap();
+        c.damage(240, 100, false).unwrap();
+        for native_query in [-1, 0, 40, 200, 120, 240, 1000, 0] {
+            c.get_life_at_ms(native_query).unwrap();
+            for peek_query in [-100, 0, 39, 40, 121, 200, 239, 240, 1000, 5000] {
+                let before = format!("{c:?}");
+                let expected = c.clone().get_life_at_ms(peek_query).unwrap();
+                assert_eq!(c.peek_life_at_ms(peek_query).unwrap(), expected);
+                assert_eq!(format!("{c:?}"), before);
+            }
+        }
+        c.commands.clear();
+        let before = format!("{c:?}");
+        assert!(c.peek_life_at_ms(240).is_err());
+        assert_eq!(format!("{c:?}"), before, "restore cache even when a query fails");
+    }
+
+    #[test]
+    fn native_max_life_update_does_not_invalidate_cached_recovery() {
+        let mut unobserved = controller();
+        unobserved.recovery(40, 50, false).unwrap();
+        let mut observed = unobserved.clone();
+        assert_eq!(observed.get_life_at_ms(200).unwrap(), 1000);
+        unobserved.add_life_limit(100).unwrap();
+        observed.add_life_limit(100).unwrap();
+        // Native UpdateLifeMax changes the cap directly. Unlike AddCommand it
+        // does not invalidate the cache: replayed recovery uses the current cap.
+        assert_eq!(unobserved.get_life_at_ms(240).unwrap(), 1050);
+        assert_eq!(observed.get_life_at_ms(240).unwrap(), 1000);
     }
 
     #[test]

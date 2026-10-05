@@ -1,4 +1,4 @@
-//! Diagnostic exact score programs, parameterized only by initial total power.
+//! Exact score programs, parameterized only by initial total power.
 //!
 //! A program belongs to one complete model construction and one declared run. The skill interpreter cannot read
 //! total power or score: power initializes the score calculator; score reaches only Gekisou range snapshots and
@@ -14,8 +14,11 @@
 use super::{LiveModel, LivePlay};
 use crate::error::Error;
 use crate::live::random::LiveRandom;
-use crate::live::score::{COMBO, GekisouComboInfo, LiveScoreCalculator, get_luck_factor_percent};
+use crate::live::score::{COMBO, GekisouComboInfo, LiveScoreCalculator};
 use crate::num::{floor_to_i32, min_ignoring_nan, trunc_to_i32};
+use std::cell::{OnceCell, RefCell};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 pub(super) type ValueId = usize;
 
@@ -34,6 +37,12 @@ impl ScoreProgram {
     /// Evaluate with native binary32 grouping, conversions and wrapping integer arithmetic.
     pub fn evaluate(&self, total_power: i32) -> i32 {
         let mut values = Vec::<i32>::with_capacity(self.nodes.len());
+        self.evaluate_into(total_power, &mut values)
+    }
+
+    /// Exact evaluation with reusable scratch storage; a cache can evaluate all orders without 120 allocations.
+    pub fn evaluate_into(&self, total_power: i32, values: &mut Vec<i32>) -> i32 {
+        values.clear();
         for node in &self.nodes {
             let value = match *node {
                 Node::Literal(v) => v,
@@ -56,6 +65,48 @@ impl ScoreProgram {
     /// Number of live dataflow nodes after removing unreachable intermediate scores.
     pub fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Resident owned bytes, including the actual allocated Node capacity (Node contains no heap pointers).
+    pub fn allocated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.nodes.capacity() * std::mem::size_of::<Node>()
+    }
+
+    /// Exact normalization in the ring of native wrapping i32 sums. Each rank-percent input is normalized
+    /// separately, then kept as an opaque atom: no integer sum crosses a signed division/truncation boundary.
+    /// Note invocations are merged only when every integer field and every binary32 bit pattern agrees.
+    /// Coefficients are implemented with wrapping Add/Sub and doubling, never floating multiplication.
+    pub fn normalized_additive(&self) -> Self {
+        let mut scratch = vec![0u32; self.nodes.len()];
+        let final_expression = LinearExpression::read(&self.nodes, self.result, &mut scratch);
+        let mut pending = final_expression.ranks(&self.nodes);
+        let mut ranks = BTreeMap::new();
+        while let Some(rank) = pending.pop() {
+            if ranks.contains_key(&rank) {
+                continue;
+            }
+            let Node::RankPercent(input, _) = self.nodes[rank] else { unreachable!("rank atom") };
+            let expression = LinearExpression::read(&self.nodes, input, &mut scratch);
+            pending.extend(expression.ranks(&self.nodes));
+            ranks.insert(rank, expression);
+        }
+        let mut output = NormalizedBuilder {
+            source: &self.nodes,
+            nodes: Vec::new(),
+            notes: HashMap::new(),
+            ranks: HashMap::new(),
+            literals: HashMap::new(),
+        };
+        // Original IDs are topological, so every referenced rank has already been emitted.
+        for (old, expression) in ranks {
+            let input = output.expression(expression);
+            let Node::RankPercent(_, percent) = self.nodes[old] else { unreachable!("rank atom") };
+            let value = output.push(Node::RankPercent(input, percent));
+            output.ranks.insert(old, value);
+        }
+        let result = output.expression(final_expression);
+        output.nodes.shrink_to_fit();
+        Self { nodes: output.nodes, result, origin_power: self.origin_power, origin_score: self.origin_score }
     }
 
     /// Prove that this exact program's terminal score is nondecreasing at every integer power in `lo..=hi`.
@@ -136,20 +187,141 @@ impl ScoreProgram {
     }
 }
 
+struct LinearExpression {
+    constant: i32,
+    atoms: Vec<(ValueId, u32)>,
+}
+
+impl LinearExpression {
+    fn read(nodes: &[Node], root: ValueId, coefficients: &mut [u32]) -> Self {
+        coefficients.fill(0);
+        coefficients[root] = 1;
+        let mut expression = Self { constant: 0, atoms: Vec::new() };
+        for id in (0..=root).rev() {
+            let coefficient = coefficients[id];
+            if coefficient == 0 {
+                continue;
+            }
+            match nodes[id] {
+                Node::Add(a, b) => {
+                    coefficients[a] = coefficients[a].wrapping_add(coefficient);
+                    coefficients[b] = coefficients[b].wrapping_add(coefficient);
+                }
+                Node::Sub(a, b) => {
+                    coefficients[a] = coefficients[a].wrapping_add(coefficient);
+                    coefficients[b] = coefficients[b].wrapping_sub(coefficient);
+                }
+                Node::Literal(value) => {
+                    expression.constant = expression.constant.wrapping_add(value.wrapping_mul(coefficient as i32));
+                }
+                Node::Note(_) | Node::RankPercent(_, _) => expression.atoms.push((id, coefficient)),
+            }
+        }
+        expression
+    }
+
+    fn ranks(&self, nodes: &[Node]) -> Vec<ValueId> {
+        self.atoms.iter().filter_map(|&(id, _)| matches!(nodes[id], Node::RankPercent(_, _)).then_some(id)).collect()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum AtomKey {
+    Note([u32; 12]),
+    Rank(ValueId),
+}
+
+struct NormalizedBuilder<'a> {
+    source: &'a [Node],
+    nodes: Vec<Node>,
+    notes: HashMap<[u32; 12], ValueId>,
+    ranks: HashMap<ValueId, ValueId>,
+    literals: HashMap<i32, ValueId>,
+}
+
+impl NormalizedBuilder<'_> {
+    fn push(&mut self, node: Node) -> ValueId {
+        let id = self.nodes.len();
+        self.nodes.push(node);
+        id
+    }
+
+    fn literal(&mut self, value: i32) -> ValueId {
+        if let Some(&id) = self.literals.get(&value) {
+            return id;
+        }
+        let id = self.push(Node::Literal(value));
+        self.literals.insert(value, id);
+        id
+    }
+
+    fn weighted(&mut self, atom: ValueId, mut coefficient: u32) -> ValueId {
+        debug_assert_ne!(coefficient, 0);
+        let mut multiple = atom;
+        let mut sum = None;
+        loop {
+            if coefficient & 1 != 0 {
+                sum = Some(match sum {
+                    None => multiple,
+                    Some(sum) => self.push(Node::Add(sum, multiple)),
+                });
+            }
+            coefficient >>= 1;
+            if coefficient == 0 {
+                return sum.expect("positive coefficient");
+            }
+            multiple = self.push(Node::Add(multiple, multiple));
+        }
+    }
+
+    fn expression(&mut self, expression: LinearExpression) -> ValueId {
+        // Combine equal note bit patterns before emitting anything, so canceled duplicate notes disappear too.
+        let mut coefficients = BTreeMap::<AtomKey, (u32, ValueId)>::new();
+        for (id, coefficient) in expression.atoms {
+            let key = match &self.source[id] {
+                Node::Note(kernel) => AtomKey::Note(kernel.bits()),
+                Node::RankPercent(_, _) => AtomKey::Rank(id),
+                _ => unreachable!("linear atom"),
+            };
+            let value = coefficients.entry(key).or_insert((0, id));
+            value.0 = value.0.wrapping_add(coefficient);
+        }
+        let mut sum = (expression.constant != 0).then(|| self.literal(expression.constant));
+        for (key, (coefficient, original)) in coefficients {
+            if coefficient == 0 {
+                continue;
+            }
+            let atom = match key {
+                AtomKey::Rank(id) => *self.ranks.get(&id).expect("earlier rank atom"),
+                AtomKey::Note(bits) => {
+                    if let Some(&id) = self.notes.get(&bits) {
+                        id
+                    } else {
+                        let id = self.push(self.source[original].clone());
+                        self.notes.insert(bits, id);
+                        id
+                    }
+                }
+            };
+            let signed = coefficient as i32;
+            let term = self.weighted(atom, signed.unsigned_abs());
+            sum = Some(match (sum, signed > 0) {
+                (None, true) => term,
+                (Some(sum), true) => self.push(Node::Add(sum, term)),
+                (sum, false) => {
+                    let sum = sum.unwrap_or_else(|| self.literal(0));
+                    self.push(Node::Sub(sum, term))
+                }
+            });
+        }
+        sum.unwrap_or_else(|| self.literal(0))
+    }
+}
+
 impl LiveModel {
-    /// Record one complete declared run of a fresh model and return its exact power-parameterized score program
-    /// and the normally executed terminal model. `random` is the complete post-shuffle state, exactly as in
-    /// [`LiveModel::run_with_random`]; roots with the same member order can still have different skill/luck draws.
-    ///
-    /// Recording accepts judged-stream ordinary Live and native solo Gekisou. External ranking,
-    /// raw callbacks and externally supplied lifecycle/rank state are rejected. The returned model is the origin
-    /// execution only; its score snapshots must not be treated as belonging to another evaluated power.
-    pub fn compile_score_program(
-        mut self,
-        play: &LivePlay,
-        delta_times: &[f32],
-        random: LiveRandom,
-    ) -> Result<(ScoreProgram, Self), Error> {
+    /// Start an exact power-parameterized recording on a fresh native model. Clones share immutable recorded
+    /// prefixes; only completed OrderedLive visits may be inserted into a complete-order cache.
+    pub fn begin_score_program_recording(&mut self) -> Result<(), Error> {
         if self.program_has_started {
             return Err(Error::Input("score program requires a fresh LiveModel".into()));
         }
@@ -158,13 +330,34 @@ impl LiveModel {
             || self.is_live_finished
             || self.prev_confirmed_rank.is_some()
             || self.frame_rank_confirmation.is_some()
-            || self.gk.as_ref().is_some_and(|g| g.external_ranking)
         {
             return Err(Error::Unsupported(
-                "score program requires a declared judged-stream solo run without external controls".into(),
+                "score program requires a declared judged-stream run without raw controls".into(),
             ));
         }
-        self.score.begin_program()?;
+        self.score.begin_program()
+    }
+
+    /// Export the current exact recorded score expression. This preserves the original model and memoizes the
+    /// compact program, so completed equivalent orders share one allocation. None means recording was disabled.
+    pub fn recorded_score_program(&self) -> Result<Option<Arc<ScoreProgram>>, Error> {
+        self.score.export_program()
+    }
+
+    /// Record one complete declared run of a fresh model and return its exact power-parameterized score program
+    /// and the normally executed terminal model. `random` is the complete post-shuffle state, exactly as in
+    /// [`LiveModel::run_with_random`]; roots with the same member order can still have different skill/luck draws.
+    ///
+    /// Recording accepts judged-stream ordinary Live, native solo Gekisou and declared external rank timelines.
+    /// Raw callbacks and already-started lifecycle state are rejected. The returned model is the origin
+    /// execution only; its score snapshots must not be treated as belonging to another evaluated power.
+    pub fn compile_score_program(
+        mut self,
+        play: &LivePlay,
+        delta_times: &[f32],
+        random: LiveRandom,
+    ) -> Result<(ScoreProgram, Self), Error> {
+        self.begin_score_program_recording()?;
         self.run_with_random(play, delta_times, random)?;
         let program = self.score.finish_program()?;
         Ok((program, self))
@@ -191,7 +384,7 @@ pub(super) struct Kernel {
     judge_pct: i32,
     combo: f32,
     score_up: f32,
-    luck_pct: i32,
+    luck: f32,
     count: i32,
     assist: f32,
     life: f32,
@@ -199,6 +392,37 @@ pub(super) struct Kernel {
 }
 
 impl Kernel {
+    fn bits(&self) -> [u32; 12] {
+        // Exhaustive destructuring makes a newly added kernel field a compile error until its identity is added.
+        let Self {
+            power_delta,
+            adjustment,
+            difficulty,
+            note_pct,
+            judge_pct,
+            combo,
+            score_up,
+            luck,
+            count,
+            assist,
+            life,
+            event,
+        } = self;
+        [
+            *power_delta as u32,
+            adjustment.to_bits(),
+            difficulty.to_bits(),
+            *note_pct as u32,
+            *judge_pct as u32,
+            combo.to_bits(),
+            score_up.to_bits(),
+            luck.to_bits(),
+            *count as u32,
+            assist.to_bits(),
+            life.to_bits(),
+            event.to_bits(),
+        ]
+    }
     #[allow(clippy::too_many_arguments)]
     pub(super) fn capture(
         calc: &LiveScoreCalculator,
@@ -215,6 +439,7 @@ impl Kernel {
             None => 0.0,
         };
         let gk = calc.gekisou_combo_bonus_factor(gekisou, time_ms)?;
+        let (score_up, luck) = calc.score_up_and_luck(score_type, time_ms);
         Ok(Self {
             power_delta: calc.state.band_total_power.wrapping_sub(origin_power),
             adjustment: calc.score_adjustment_factor,
@@ -228,8 +453,8 @@ impl Kernel {
                 .get(&score_type)
                 .ok_or_else(|| Error::Game(format!("score type {score_type} has no score percent")))?,
             combo: gk * (calc.state.combo_score_up + (min_ignoring_nan(cum, 1f32) + 1f32)),
-            score_up: calc.state.note_score_up + calc.state.judgement_factor(score_type),
-            luck_pct: get_luck_factor_percent(calc.state.added_luck_bonus),
+            score_up,
+            luck,
             count: calc.converted_note_count,
             assist: calc.assist_factor,
             life: if current_life > 0 { 1f32 } else { calc.life_onus_factor },
@@ -243,7 +468,7 @@ impl Kernel {
         let a = (self.note_pct as f32 / 100f32) * t;
         let b = (self.judge_pct as f32 / 100f32) * a;
         let c = (b * self.combo) * self.score_up;
-        let d = (self.luck_pct as f32 / 100f32) * c;
+        let d = self.luck * c;
         let x = d / self.count as f32;
         let f = x.floor();
         let y = if f == f32::INFINITY { -2147483648f32 } else { trunc_to_i32(f) as f32 };
@@ -255,10 +480,18 @@ impl Kernel {
         if self.count <= 0
             || self.note_pct < 0
             || self.judge_pct < 0
-            || self.luck_pct < 0
-            || [self.adjustment, self.difficulty, self.combo, self.score_up, self.assist, self.life, self.event]
-                .iter()
-                .any(|v| !v.is_finite() || *v < 0.0)
+            || [
+                self.adjustment,
+                self.difficulty,
+                self.combo,
+                self.score_up,
+                self.luck,
+                self.assist,
+                self.life,
+                self.event,
+            ]
+            .iter()
+            .any(|v| !v.is_finite() || *v < 0.0)
         {
             return None;
         }
@@ -277,7 +510,7 @@ impl Kernel {
             let b = (self.judge_pct as f32 / 100f32) * a;
             let c0 = b * self.combo;
             let c = c0 * self.score_up;
-            let d = (self.luck_pct as f32 / 100f32) * c;
+            let d = self.luck * c;
             let x = d / self.count as f32;
             // x is required finite; consequently floor_as_float's special +infinity branch is unreachable.
             let y = trunc_to_i32(x.floor()) as f32;
@@ -298,24 +531,85 @@ impl Kernel {
 }
 
 #[derive(Clone, Debug)]
+struct NodeChunk {
+    previous: Option<Arc<NodeChunk>>,
+    nodes: Box<[Node]>,
+}
+
+#[derive(Debug, Default)]
+struct NodeStorage {
+    head: Option<Arc<NodeChunk>>,
+    tail: Vec<Node>,
+    len: usize,
+}
+
+/// Model clones seal only their current tail and share immutable prefix chunks. Subsequent branches append
+/// to their own tails, avoiding a full history copy on the first write after each OrderedLive prefix clone.
+#[derive(Debug, Default)]
+struct NodeLog(RefCell<NodeStorage>);
+
+impl Clone for NodeLog {
+    fn clone(&self) -> Self {
+        let mut storage = self.0.borrow_mut();
+        if !storage.tail.is_empty() {
+            storage.head = Some(Arc::new(NodeChunk {
+                previous: storage.head.take(),
+                nodes: std::mem::take(&mut storage.tail).into_boxed_slice(),
+            }));
+        }
+        Self(RefCell::new(NodeStorage { head: storage.head.clone(), tail: Vec::new(), len: storage.len }))
+    }
+}
+
+impl NodeLog {
+    fn push(&mut self, node: Node) -> ValueId {
+        let storage = self.0.get_mut();
+        let id = storage.len;
+        storage.tail.push(node);
+        storage.len += 1;
+        id
+    }
+
+    fn into_nodes(self) -> Vec<Node> {
+        let storage = self.0.into_inner();
+        let mut chunks = Vec::new();
+        let mut head = storage.head;
+        while let Some(chunk) = head {
+            head = chunk.previous.clone();
+            chunks.push(chunk);
+        }
+        let mut nodes = Vec::with_capacity(storage.len);
+        for chunk in chunks.into_iter().rev() {
+            nodes.extend(chunk.nodes.iter().cloned());
+        }
+        nodes.extend(storage.tail);
+        nodes
+    }
+}
+
+#[derive(Clone, Debug)]
 pub(super) struct Recorder {
-    nodes: Vec<Node>,
+    nodes: NodeLog,
     score: ValueId,
     origin_power: i32,
     notes: Vec<Vec<Option<ValueId>>>,
     fixed: Vec<(i32, ValueId)>,
     pending: Option<ValueId>,
+    finished: OnceCell<Arc<ScoreProgram>>,
 }
 
 impl Recorder {
     pub(super) fn new(origin_power: i32, frames: usize) -> Self {
+        let mut nodes = NodeLog::default();
+        nodes.push(Node::Literal(0));
         Self {
-            nodes: vec![Node::Literal(0)],
+            nodes,
             score: 0,
             origin_power,
             notes: vec![Vec::new(); frames],
             fixed: Vec::new(),
             pending: None,
+            finished: OnceCell::new(),
         }
     }
     pub(super) fn origin_power(&self) -> i32 {
@@ -325,9 +619,8 @@ impl Recorder {
         self.score
     }
     fn push(&mut self, node: Node) -> ValueId {
-        let id = self.nodes.len();
-        self.nodes.push(node);
-        id
+        self.finished.take();
+        self.nodes.push(node)
     }
     pub(super) fn add_note(&mut self, frame: usize) {
         self.notes[frame].push(None);
@@ -373,40 +666,27 @@ impl Recorder {
         }
     }
     pub(super) fn finish(self, origin_score: i32) -> Result<ScoreProgram, Error> {
-        // Iterative reachability avoids recursion through long score chains. IDs are already topological.
-        let mut live = vec![false; self.nodes.len()];
-        live[self.score] = true;
-        for i in (0..self.nodes.len()).rev() {
-            if !live[i] {
-                continue;
-            }
-            match self.nodes[i] {
-                Node::Add(a, b) | Node::Sub(a, b) => {
-                    live[a] = true;
-                    live[b] = true;
-                }
-                Node::RankPercent(a, _) => live[a] = true,
-                _ => {}
-            }
-        }
-        let mut ids = vec![0; self.nodes.len()];
-        let mut nodes = Vec::new();
-        for (i, node) in self.nodes.into_iter().enumerate() {
-            if !live[i] {
-                continue;
-            }
-            ids[i] = nodes.len();
-            nodes.push(match node {
-                Node::Add(a, b) => Node::Add(ids[a], ids[b]),
-                Node::Sub(a, b) => Node::Sub(ids[a], ids[b]),
-                Node::RankPercent(a, pct) => Node::RankPercent(ids[a], pct),
-                other => other,
-            });
-        }
-        let program = ScoreProgram { nodes, result: ids[self.score], origin_power: self.origin_power, origin_score };
+        // The modular normalizer removes both unreachable nodes and replay contributions that are reachable
+        // but cancel exactly. Work on the original log directly; no intermediate full-size compact clone.
+        let source = ScoreProgram {
+            nodes: self.nodes.into_nodes(),
+            result: self.score,
+            origin_power: self.origin_power,
+            origin_score,
+        };
+        let program = source.normalized_additive();
         if program.evaluate(self.origin_power) != origin_score {
             return Err(Error::Game("score program differs from its recorded execution".into()));
         }
+        Ok(program)
+    }
+
+    pub(super) fn export(&self, origin_score: i32) -> Result<Arc<ScoreProgram>, Error> {
+        if let Some(program) = self.finished.get() {
+            return Ok(program.clone());
+        }
+        let program = Arc::new(self.clone().finish(origin_score)?);
+        let _ = self.finished.set(program.clone());
         Ok(program)
     }
 }
@@ -481,11 +761,69 @@ mod tests {
     fn replayed_notes_and_fixed_bonuses_retain_their_original_expressions() {
         let (origin, Some(program)) = replay(123_457, true) else { panic!("recorded program") };
         assert_eq!(program.origin_score(), origin);
-        assert!(program.nodes.iter().any(|n| matches!(n, Node::Sub(_, _))));
         assert!(program.nodes.iter().any(|n| matches!(n, Node::RankPercent(_, 77))));
         for power in [i32::MIN, -123_456, -1, 0, 1, 99_999, 123_457, 16_777_217, i32::MAX] {
             assert_eq!(program.evaluate(power), replay(power, false).0, "power {power}");
+            assert_eq!(
+                program.normalized_additive().evaluate(power),
+                replay(power, false).0,
+                "normalized power {power}"
+            );
         }
+    }
+
+    #[test]
+    fn normalization_cancels_replay_and_keeps_signed_rank_boundaries() {
+        let mut nodes = vec![Node::Note(identity_kernel()), Node::Literal(i32::MAX)];
+        let mut score = 0;
+        // Native replay histories can contain an arbitrarily long chain of canceled old note contributions.
+        for _ in 0..4000 {
+            nodes.push(Node::Add(score, 0));
+            nodes.push(Node::Sub(nodes.len() - 1, 0));
+            score = nodes.len() - 1;
+        }
+        nodes.push(Node::Add(score, 1));
+        let input = nodes.len() - 1;
+        nodes.push(Node::RankPercent(input, -77));
+        nodes.push(Node::Sub(input, nodes.len() - 1));
+        let program = test_program(nodes);
+        let normalized = program.normalized_additive();
+        assert!(normalized.node_count() < 10, "{}", normalized.node_count());
+        for power in [i32::MIN, i32::MIN + 1, -100_003, -1, 0, 1, 317, 16_777_217, i32::MAX] {
+            assert_eq!(normalized.evaluate(power), program.evaluate(power), "power {power}");
+        }
+        // Flattening through the opaque rank node would evaluate a different signed input after wrap.
+        assert!(normalized.nodes.iter().any(|node| matches!(node, Node::RankPercent(_, -77))));
+    }
+
+    #[test]
+    fn normalization_uses_wrapping_coefficients_and_exact_kernel_bits() {
+        let mut nodes = vec![Node::Note(identity_kernel())];
+        for _ in 0..31 {
+            let last = nodes.len() - 1;
+            nodes.push(Node::Add(last, last));
+        }
+        let min_coefficient = test_program(nodes.clone());
+        let last = nodes.len() - 1;
+        nodes.push(Node::Add(last, last)); // 2^32 copies cancel modulo 2^32.
+        let zero = test_program(nodes).normalized_additive();
+        assert_eq!(zero.node_count(), 1);
+        for power in [i32::MIN, -17, -1, 0, 1, 319, i32::MAX] {
+            assert_eq!(min_coefficient.normalized_additive().evaluate(power), min_coefficient.evaluate(power));
+            assert_eq!(zero.evaluate(power), 0);
+        }
+        let mut positive_zero = identity_kernel();
+        positive_zero.score_up = 0.0;
+        let mut negative_zero = positive_zero.clone();
+        negative_zero.score_up = -0.0;
+        assert_ne!(positive_zero.bits(), negative_zero.bits());
+        let duplicate =
+            test_program(vec![Node::Note(identity_kernel()), Node::Note(identity_kernel()), Node::Sub(0, 1)])
+                .normalized_additive();
+        assert_eq!(duplicate.node_count(), 1);
+        let distinct = test_program(vec![Node::Note(positive_zero), Node::Note(negative_zero), Node::Add(0, 1)])
+            .normalized_additive();
+        assert_eq!(distinct.nodes.iter().filter(|node| matches!(node, Node::Note(_))).count(), 2);
     }
 
     #[test]
@@ -511,7 +849,7 @@ mod tests {
             judge_pct: 100,
             combo: 1.0,
             score_up: 1.0,
-            luck_pct: 100,
+            luck: 1.0,
             count: 1,
             assist: 1.0,
             life: 1.0,
@@ -748,7 +1086,7 @@ mod tests {
             if mission == 2 {
                 assert!(terminal.gekisou_ranges()[0].lot_results.iter().sum::<i32>() > 0);
             }
-            for power in [0, 1, 123_457, 200_000, 1_000_003, 16_777_217, i32::MAX] {
+            for power in [i32::MIN, -123_457, -1, 0, 1, 123_457, 200_000, 1_000_003, 16_777_217, i32::MAX] {
                 let (mut model, play, dt) = declared_model(power, mission, false);
                 assert_eq!(
                     program.evaluate(power),
@@ -756,20 +1094,59 @@ mod tests {
                     "mission={mission} power={power}"
                 );
                 assert_eq!(terminal.current_life(), model.current_life());
+                assert_eq!(program.normalized_additive().evaluate(power), model.score());
                 assert_eq!(terminal.converted_judgements(), model.converted_judgements());
             }
         }
     }
 
     #[test]
-    fn recording_rejects_started_models_and_external_controls() {
+    fn recording_rejects_started_models_and_finished_controls() {
         let (mut model, play, dt) = declared_model(100, 0, false);
         model.frame(0, &[]).unwrap();
         assert!(matches!(model.compile_score_program(&play, &dt, LiveRandom::new(0)), Err(Error::Input(_))));
-        let (model, play, dt) = declared_model(100, 3, true);
-        assert!(matches!(model.compile_score_program(&play, &dt, LiveRandom::new(0)), Err(Error::Unsupported(_))));
         let (mut model, play, dt) = declared_model(100, 0, false);
         model.set_live_finished(true);
         assert!(matches!(model.compile_score_program(&play, &dt, LiveRandom::new(0)), Err(Error::Unsupported(_))));
+    }
+
+    #[test]
+    fn prefix_logs_share_chunks_but_keep_independent_branch_scores() {
+        let mut root = Recorder::new(100, 2);
+        root.pending_literal(5);
+        root.file_fixed(0).unwrap();
+        let mut left = root.clone();
+        let mut right = root.clone();
+        assert!(Arc::ptr_eq(
+            root.nodes.0.borrow().head.as_ref().unwrap(),
+            left.nodes.0.borrow().head.as_ref().unwrap()
+        ));
+        left.pending_literal(7);
+        left.file_fixed(1).unwrap();
+        right.pending_literal(11);
+        right.file_fixed(1).unwrap();
+        let first = left.export(12).unwrap();
+        let second = left.export(12).unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(first.evaluate(1000), 12);
+        assert_eq!(right.finish(16).unwrap().evaluate(-17), 16);
+        assert_eq!(root.finish(5).unwrap().evaluate(0), 5);
+        assert!(first.allocated_bytes() >= first.node_count() * std::mem::size_of::<Node>());
+    }
+
+    #[test]
+    fn external_rank_program_records_actual_frame_snapshots_at_other_powers() {
+        let confirmations = [crate::replay::RankConfirmation { frame: 0, range: 0, rank: 1, percent: 77 }];
+        let (mut origin, play, delta) = declared_model(200_000, 3, true);
+        origin.set_rank_confirmation_timeline(&confirmations).unwrap();
+        let (program, terminal) = origin.compile_score_program(&play, &delta, LiveRandom::new(7)).unwrap();
+        assert!(program.nodes.iter().any(|node| matches!(node, Node::RankPercent(_, 77))));
+        for power in [i32::MIN, -123_457, -1, 0, 17, 200_000, 1_000_003, i32::MAX] {
+            let (mut fresh, play, delta) = declared_model(power, 3, true);
+            fresh.set_rank_confirmation_timeline(&confirmations).unwrap();
+            assert_eq!(program.evaluate(power), fresh.run_with_random(&play, &delta, LiveRandom::new(7)).unwrap());
+            assert_eq!(program.normalized_additive().evaluate(power), fresh.score());
+            assert_eq!(terminal.current_life(), fresh.current_life());
+        }
     }
 }

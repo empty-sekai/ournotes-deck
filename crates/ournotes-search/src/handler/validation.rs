@@ -4,12 +4,9 @@ use ournotes_sim::live::skip::is_judgement_note;
 use ournotes_sim::scenario::Scenario;
 use std::collections::HashSet;
 
-pub(crate) fn validate(k: usize, law: &FiniteSeedLaw, limits: &Limits, strategy: &Strategy) -> Result<(), Error> {
+pub(crate) fn validate(k: usize, limits: &Limits, strategy: &Strategy) -> Result<(), Error> {
     if !(1..=MAX_K).contains(&k) {
         return Err(Error::Input(format!("k must be in 1..={MAX_K}")));
-    }
-    if law.atoms().len() > MAX_ATOMS || k.saturating_mul(law.atoms().len()) > MAX_RESULT_ATOMS {
-        return Err(Error::Capacity("law/results exceed bounded atom capacity".into()));
     }
     if limits.cache_entries > 100_000 {
         return Err(Error::Capacity("cacheEntries exceeds 100000".into()));
@@ -46,6 +43,11 @@ pub(crate) fn validate_payoff(
             .ok_or_else(|| Error::Input("event metrics require resolved scenario".into()))?;
         let input = input.ok_or_else(|| Error::Input("event metrics require context.eventPayoff".into()))?;
         ctx.event_request(pool.master, input, id)?;
+        if matches!(metric, Metric::ClientChallengePoints { .. }) && matches!(ctx.scenario, Scenario::Challenge(_)) {
+            return Err(Error::Input(
+                "challenge-point earnings require an ordinary played/skip result; challenge Live spends points".into(),
+            ));
+        }
         if matches!(metric, Metric::ConditionalClientEventItems { .. }) && input.selected_rewards.is_none() {
             return Err(Error::Unsupported(
                 "UnknownServerAuthority: selectedRewards are required for conditional items".into(),
@@ -61,6 +63,7 @@ pub(crate) fn validate_payoff(
             | Metric::CappedScore { .. }
             | Metric::ScoreAndLifeAtLeast { .. }
             | Metric::ClientEventPoints { .. }
+            | Metric::ClientChallengePoints { .. }
             | Metric::ConditionalClientEventItems { .. },
         ) => Ok(()),
         _ => Err(Error::Input("metric does not match execution".into())),
@@ -70,7 +73,12 @@ pub(crate) fn validate_payoff(
 pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescription, Error> {
     let inferred = match (&r.execution, &r.metric) {
         (Execution::Power { .. }, _) => PlayerGoal::Power,
-        (_, Metric::ClientEventPoints { .. } | Metric::ConditionalClientEventItems { .. }) => PlayerGoal::EventFarming,
+        (
+            _,
+            Metric::ClientEventPoints { .. }
+            | Metric::ClientChallengePoints { .. }
+            | Metric::ConditionalClientEventItems { .. },
+        ) => PlayerGoal::EventFarming,
         (_, Metric::ScoreAtLeast { .. } | Metric::CappedScore { .. } | Metric::ScoreAndLifeAtLeast { .. }) => {
             PlayerGoal::StableTarget
         }
@@ -110,13 +118,18 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
     };
     let payoff_meaning = match r.metric {
         Metric::Power => "maximize current-progression deck power",
-        Metric::Score => "maximize expected final score under the declared play and root law",
-        Metric::ScoreAtLeast { .. } => "maximize probability of reaching the score target under the declared law",
+        Metric::Score => "maximize the expected final score over the random performance order under the declared play",
+        Metric::ScoreAtLeast { .. } => {
+            "maximize the probability of reaching the score target over the random performance order"
+        }
         Metric::CappedScore { .. } => "maximize E(min(final score, target)); score above target adds no utility",
         Metric::ScoreAndLifeAtLeast { .. } => {
             "maximize probability of score >= target AND terminal life >= minFinalLife; not native clear/failure probability"
         }
         Metric::ClientEventPoints { .. } => "maximize expected client event-point preview per declared consumption",
+        Metric::ClientChallengePoints { .. } => {
+            "maximize expected newly earned client challenge points per declared Live Boost consumption; no deck event-point bonus"
+        }
         Metric::ConditionalClientEventItems { .. } => {
             "maximize expected selected resource quantity conditional on explicitly supplied server rewards"
         }
@@ -125,19 +138,22 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
     if let Execution::Live { play, .. } = &r.execution {
         assumptions.push(match play {
             PlayPolicy::TheoreticalBest => "chosen theoretical AP/Just play; not predicted player performance",
+            PlayPolicy::Accuracy(_) => "chosen theoretical play with declared Great/Just shares spread evenly; not predicted player performance",
             PlayPolicy::Stream { .. } => {
                 "complete declared judgement stream; touch timing and human error distribution not inferred"
             }
         });
-        assumptions.push("explicit finite native-root law; real population distribution unknown");
-        assumptions.push("native skill order is random; paired snaps follow their members");
+        assumptions.push("the five members perform in a uniformly random order; paired snaps follow their members");
+        assumptions.push(
+            "native lottery probability law; certified intervals remain explicit until sufficient to prove ranking",
+        );
     }
     if r.metric.event().is_some() {
         assumptions
             .push("client counters under explicit clocks, consumption and peer inputs; no server award authority");
     }
     if r.network_confirmations.is_some() {
-        assumptions.push("conditional immutable peer rank arrival timeline; no opponent placement prediction");
+        assumptions.push("conditional immutable peer rank arrival timeline with native network score snapshots; frame-zero arrivals apply on range completion, not opponent placement prediction");
     }
     if matches!(r.metric, Metric::ScoreAndLifeAtLeast { .. }) {
         assumptions
@@ -205,6 +221,9 @@ pub(crate) fn validate_play(
     }
     if let Some(cs) = network {
         let g = setup.gk.as_ref().ok_or_else(|| Error::Input("confirmations require Gekisou".into()))?;
+        if g.setup.fevers.len() > 3 {
+            return Err(Error::Game("native network ranking has at most three Gekisou ranges".into()));
+        }
         let missions: [i64; 3] =
             g.setup.missions.clone().try_into().map_err(|_| Error::Input("three missions required".into()))?;
         let factors = ournotes_sim::live::full::gekisou_rank_factors(pool.master, &missions)?;
@@ -233,16 +252,15 @@ pub(crate) fn validate_play(
     Ok(())
 }
 
-// Cancellation occurs at complete-atom boundaries;
+// Cancellation occurs at complete performance-order boundaries;
 // synchronous Worker termination is the hard cancellation mechanism.
 pub(crate) fn reject_unsupported_lifecycle(
-    network: Option<&[RankConfirmation]>,
+    _network: Option<&[RankConfirmation]>,
     finished: Option<usize>,
 ) -> Result<(), Error> {
-    if network.is_some() || finished.is_some() {
+    if finished.is_some() {
         return Err(Error::Unsupported(
-            "networkConfirmations and explicit liveFinishedFromFrame require separately verified lifecycle semantics"
-                .into(),
+            "explicit liveFinishedFromFrame requires separately verified lifecycle semantics".into(),
         ));
     }
     Ok(())

@@ -46,18 +46,34 @@ struct Experiment {
 }
 type Key = ([i64; 5], [Option<i64>; 5]);
 
-// Explicit physical-deck identity and public None-first tie convention.
+// Explicit team identity (canonical layout) and public None-first tie convention.
 fn compare(a: &RecommendedDeck, b: &RecommendedDeck) -> Ordering {
-    assert_eq!(a.expected_payoff.denominator, b.expected_payoff.denominator);
-    let na = a.expected_payoff.numerator.parse::<i128>().expect("i128 core payoff");
-    let nb = b.expected_payoff.numerator.parse::<i128>().expect("i128 core payoff");
+    assert_eq!(
+        a.expected_payoff.as_ref().expect("exact deterministic fixture").denominator,
+        b.expected_payoff.as_ref().expect("exact deterministic fixture").denominator
+    );
+    let na = a
+        .expected_payoff
+        .as_ref()
+        .expect("exact deterministic fixture")
+        .numerator
+        .parse::<i128>()
+        .expect("i128 core payoff");
+    let nb = b
+        .expected_payoff
+        .as_ref()
+        .expect("exact deterministic fixture")
+        .numerator
+        .parse::<i128>()
+        .expect("i128 core payoff");
     nb.cmp(&na)
         .then_with(|| b.power.cmp(&a.power))
         .then_with(|| a.members.cmp(&b.members))
         .then_with(|| a.snaps.cmp(&b.snaps))
 }
 
-// No production resolver, enumeration, bounds, matching, cache or Top-K code.
+// No production resolver, enumeration, bounds, matching, cache or Top-K code. A team is enumerated once, in its
+// canonical layout: the leader in slot 2, the other members in ascending card ID order.
 fn domain(pool: &Pool<'_>, req: &RecommendationRequest, cap: usize) -> Result<Vec<Key>> {
     if cap == 0 {
         return Err("oracleMaxCandidates must be positive".into());
@@ -109,6 +125,13 @@ fn domain(pool: &Pool<'_>, req: &RecommendationRequest, cap: usize) -> Result<Ve
         cap: usize,
     ) -> Result<()> {
         let pos = chars.len();
+        // Non-leader slots 0, 1, 3, 4 hold ascending member IDs.
+        let previous = match pos {
+            1 => Some(row[0]),
+            3 => Some(row[1]),
+            4 => Some(row[3]),
+            _ => None,
+        };
         if pos == 5 {
             if req.constraints.include_members.iter().all(|id| row.contains(id)) {
                 snaps(out, *row, sids, &mut [None; 5], 0, req.constraints.no_snaps, cap)?;
@@ -116,7 +139,10 @@ fn domain(pool: &Pool<'_>, req: &RecommendationRequest, cap: usize) -> Result<Ve
             return Ok(());
         }
         for &(id, ch) in mids {
-            if chars.contains(&ch) || (pos == 2 && req.constraints.leader.is_some_and(|l| l != id)) {
+            if chars.contains(&ch)
+                || (pos == 2 && req.constraints.leader.is_some_and(|l| l != id))
+                || previous.is_some_and(|p| id <= p)
+            {
                 continue;
             }
             row[pos] = id;
@@ -142,6 +168,17 @@ fn merge(target: &mut Value, patch: &Value) {
     }
 }
 
+/// The canonical layout of a team key: non-leader (member, Snap) pairs in ascending member ID order.
+fn canonical((members, snaps): Key) -> Key {
+    let mut pairs: Vec<_> = [0, 1, 3, 4].iter().map(|&s| (members[s], snaps[s])).collect();
+    pairs.sort_unstable();
+    let (mut m, mut s) = (members, snaps);
+    for (&slot, &(id, snap)) in [0, 1, 3, 4].iter().zip(&pairs) {
+        (m[slot], s[slot]) = (id, snap);
+    }
+    (m, s)
+}
+
 fn dominance(rows: &[RecommendedDeck], pool: &Pool<'_>, rule: &Substitution) -> Result<Value> {
     if rule.from == rule.to {
         return Err("dominance endpoints must differ".into());
@@ -162,7 +199,7 @@ fn dominance(rows: &[RecommendedDeck], pool: &Pool<'_>, rule: &Substitution) -> 
         _ => return Err("dominance kind must be member or snap".into()),
     }
     let index: BTreeMap<Key, _> = rows.iter().map(|r| ((r.members, r.snaps), r)).collect();
-    let (mut compared, mut occupied, mut outside, mut worse, mut atom_losses) = (0u64, 0u64, 0u64, 0u64, 0u64);
+    let (mut compared, mut occupied, mut outside, mut worse) = (0u64, 0u64, 0u64, 0u64);
     let mut witness = None;
     for a in rows {
         let pos = if rule.kind == "member" {
@@ -183,33 +220,23 @@ fn dominance(rows: &[RecommendedDeck], pool: &Pool<'_>, rule: &Substitution) -> 
         } else {
             key.1[pos] = Some(rule.to);
         }
+        let key = canonical(key);
         let Some(b) = index.get(&key) else {
             outside += 1;
             continue;
         };
         compared += 1;
-        let lower_atoms: Vec<_> = a
-            .atoms
-            .iter()
-            .zip(&b.atoms)
-            .enumerate()
-            .filter_map(|(i, (x, y))| {
-                assert_eq!((x.root_seed, &x.weight), (y.root_seed, &y.weight));
-                (y.payoff.parse::<i128>().unwrap() < x.payoff.parse::<i128>().unwrap()).then_some(i)
-            })
-            .collect();
-        atom_losses += lower_atoms.len() as u64;
         if compare(b, a) == Ordering::Greater {
             worse += 1;
             if witness.is_none() {
-                witness = Some(json!({"original":a,"replacement":b,"lowerAtoms":lower_atoms}));
+                witness = Some(json!({"original":a,"replacement":b}));
             }
         }
     }
     Ok(json!({"rule":rule,"compared":compared,"occupiedReplacement":occupied,
-        "outsideDomain":outside,"worseCanonicalResults":worse,"lowerAtomPayoffs":atom_losses,
+        "outsideDomain":outside,"worseCanonicalResults":worse,
         "allSubstitutionsNonWorse":compared>0 && occupied==0 && outside==0 && worse==0,
-        "scope":"exhaustive configured physical domain and declared finite law only",
+        "scope":"exhaustive configured team domain over the 120 performance orders only",
         "authorizesPruning":false,"warning":"Top-K recovery and resource occupancy need separate proof",
         "firstCounterexample":witness}))
 }
@@ -264,53 +291,68 @@ fn run(path: &Path) -> Result<Value> {
     let mut prefix_scratch = ournotes_search::search::diagnostics::PrefixAuditScratch::default();
     let mut expected_bonus_checks = 0u64;
     let mut composition_checks = 0u64;
-    let mut layout_checks = 0u64;
+    let mut team_checks = 0u64;
+    let mut module_checks = 0u64;
+    let mut order_cap_checks = 0u64;
     let mut class_checks = 0u64;
     let mut class_binding_checks = 0u64;
     for row in &rows {
-        for atom in &row.atoms {
-            for bindings in [false, true] {
-                for depth in 0..=5 {
-                    if let Some((cap, power)) = ournotes_search::search::diagnostics::class_prefix_upper(
-                        &bounded,
-                        row.members,
-                        row.snaps,
-                        depth,
-                        atom.root_seed,
-                        bindings,
-                        &mut prefix_scratch,
-                    )? {
-                        if cap < atom.payoff.parse::<i128>()? || power < i64::from(row.power) {
-                            return Err(format!("inadmissible class bound: bindings={bindings} depth={depth}").into());
-                        }
-                        if bindings {
-                            class_binding_checks += 1;
-                        } else {
-                            class_checks += 1;
-                        }
+        // Every bound is a payoff numerator over the 120 performance orders.
+        let numerator = row.expected_payoff.as_ref().expect("exact deterministic fixture").numerator.parse::<i128>()?;
+        for bindings in [false, true] {
+            for depth in 0..=5 {
+                if let Some((cap, power)) = ournotes_search::search::diagnostics::class_prefix_upper(
+                    &bounded,
+                    row.members,
+                    row.snaps,
+                    depth,
+                    bindings,
+                    &mut prefix_scratch,
+                )? {
+                    if cap < numerator || power < i64::from(row.power) {
+                        return Err(format!("inadmissible class bound: bindings={bindings} depth={depth}").into());
+                    }
+                    if bindings {
+                        class_binding_checks += 1;
+                    } else {
+                        class_checks += 1;
                     }
                 }
             }
-            for layout in [false, true] {
-                for depth in usize::from(!layout)..=5 {
-                    if let Some((cap, power)) = ournotes_search::search::diagnostics::split_prefix_upper(
-                        &bounded,
-                        row.members,
-                        row.snaps,
-                        depth,
-                        atom.root_seed,
-                        layout,
-                    )? {
-                        if cap < atom.payoff.parse::<i128>()? || power < i64::from(row.power) {
-                            return Err(format!("inadmissible split bound: layout={layout} depth={depth}").into());
-                        }
-                        if layout {
-                            layout_checks += 1;
-                        } else {
-                            composition_checks += 1;
-                        }
+        }
+        for team in [false, true] {
+            for depth in usize::from(!team)..=5 {
+                if let Some((cap, power)) = ournotes_search::search::diagnostics::split_prefix_upper(
+                    &bounded,
+                    row.members,
+                    row.snaps,
+                    depth,
+                    team,
+                )? {
+                    if cap < numerator || power < i64::from(row.power) {
+                        return Err(format!("inadmissible split bound: team={team} depth={depth}").into());
+                    }
+                    if team {
+                        team_checks += 1;
+                    } else {
+                        composition_checks += 1;
                     }
                 }
+            }
+        }
+        for depth in 1..=5 {
+            for module in
+                ournotes_search::search::diagnostics::module_prefix_uppers(&bounded, row.members, row.snaps, depth)?
+            {
+                let Some(cap) = module.upper else { continue };
+                if cap < numerator {
+                    return Err(format!(
+                        "inadmissible {} bound: depth={depth} snapsPlaced={} deck={:?}",
+                        module.name, module.snaps_placed, row.members
+                    )
+                    .into());
+                }
+                module_checks += 1;
             }
         }
         for depth in 1..5 {
@@ -321,69 +363,67 @@ fn run(path: &Path) -> Result<Value> {
                 depth,
                 &mut prefix_scratch,
             )? {
-                if row.expected_payoff.numerator.parse::<i128>()? > cap {
+                if numerator > cap {
                     return Err("inadmissible expected bonus cap".into());
                 }
                 expected_bonus_checks += 1;
             }
         }
         if let Some(caps) = &member_caps {
+            let best = row.best_order.as_ref().ok_or("played result without a best order")?.payoff.parse::<i128>()?;
             for member in row.members {
                 let cap = caps.iter().find(|(m, _)| *m == member).expect("original member").1;
-                for atom in &row.atoms {
-                    if atom.payoff.parse::<i128>().unwrap() > cap {
-                        return Err("inadmissible per-member PT cap".into());
-                    }
-                    member_cap_checks += 1;
+                if best > cap {
+                    return Err("inadmissible per-member PT cap".into());
                 }
+                member_cap_checks += 1;
             }
         }
+        let orders = ournotes_search::search::diagnostics::audit_order_caps(&bounded, row.members, row.snaps)?;
+        if orders["violations"].as_u64().unwrap_or(0) != 0 {
+            return Err(format!("inadmissible per-order cap: deck={:?} {}", row.members, orders["first"]).into());
+        }
+        order_cap_checks += orders["orders"].as_u64().unwrap_or(0);
         for depth in 1..=5 {
-            for atom in &row.atoms {
-                if depth < 5 {
-                    if let Some(caps) = ournotes_search::search::diagnostics::next_choice_bounds(
-                        &bounded,
-                        row.members,
-                        row.snaps,
-                        depth,
-                        atom.root_seed,
-                    )? {
-                        for (kind, (payoff, power)) in [("suffix", caps.suffix), ("pair", caps.pair)] {
-                            if power < i64::from(row.power) || atom.payoff.parse::<i128>().unwrap() > payoff {
-                                return Err(
-                                    format!("inadmissible {kind} bound: depth={depth} deck={:?}", row.members).into()
-                                );
-                            }
+            if depth < 5 {
+                if let Some(caps) =
+                    ournotes_search::search::diagnostics::next_choice_bounds(&bounded, row.members, row.snaps, depth)?
+                {
+                    for (kind, (payoff, power)) in [("suffix", caps.suffix), ("pair", caps.pair)] {
+                        if power < i64::from(row.power) || numerator > payoff {
+                            return Err(
+                                format!("inadmissible {kind} bound: depth={depth} deck={:?}", row.members).into()
+                            );
                         }
-                        suffix_checks += 1;
-                    } else {
-                        unavailable_suffixes += 1;
                     }
-                }
-                if let Some((payoff, power)) = ournotes_search::search::diagnostics::prefix_upper(
-                    &bounded,
-                    row.members,
-                    row.snaps,
-                    depth,
-                    atom.root_seed,
-                    &mut prefix_scratch,
-                )? {
-                    if power < i64::from(row.power) || atom.payoff.parse::<i128>().unwrap() > payoff {
-                        return Err(format!("inadmissible joint bound: depth={depth} deck={:?}", row.members).into());
-                    }
-                    bound_checks += 1;
+                    suffix_checks += 1;
                 } else {
-                    unavailable_bounds += 1;
+                    unavailable_suffixes += 1;
                 }
+            }
+            if let Some((payoff, power)) = ournotes_search::search::diagnostics::prefix_upper(
+                &bounded,
+                row.members,
+                row.snaps,
+                depth,
+                &mut prefix_scratch,
+            )? {
+                if power < i64::from(row.power) || numerator > payoff {
+                    return Err(format!("inadmissible joint bound: depth={depth} deck={:?}", row.members).into());
+                }
+                bound_checks += 1;
+            } else {
+                unavailable_bounds += 1;
             }
         }
     }
     let reference: Vec<_> = rows.iter().take(exact.k).cloned().collect();
     let mut bound_explanations = Vec::new();
     for deck in &reference {
-        for atom in &deck.atoms {
-            bound_explanations.push(json!({"root":atom.root_seed,"actualScore":atom.score,"actualPayoff":atom.payoff,
-                "bound":ournotes_search::search::diagnostics::describe_bound(&bounded,deck.members,deck.snaps,atom.root_seed)?}));
+        if let Some(best) = &deck.best_order {
+            bound_explanations.push(json!({"order":best.performance_order,"actualScore":best.score,
+                "actualPayoff":best.payoff,"bound":ournotes_search::search::diagnostics::describe_bound(
+                    &bounded,deck.members,deck.snaps,best.performance_order)?}));
         }
     }
     let audits: Vec<_> = case.dominance.iter().map(|r| dominance(&rows, &pool, r)).collect::<Result<_>>()?;
@@ -435,21 +475,26 @@ fn run(path: &Path) -> Result<Value> {
             let matches_top_k = result.results == reference;
             let wrong_complete = !is_reduced && result.completion == Completion::Complete && !matches_top_k;
             let gap = reference.first().zip(result.results.first()).map(|(a, b)| {
-                (a.expected_payoff.numerator.parse::<i128>().unwrap()
-                    - b.expected_payoff.numerator.parse::<i128>().unwrap())
+                (a.expected_payoff.as_ref().expect("exact deterministic fixture").numerator.parse::<i128>().unwrap()
+                    - b.expected_payoff
+                        .as_ref()
+                        .expect("exact deterministic fixture")
+                        .numerator
+                        .parse::<i128>()
+                        .unwrap())
                 .to_string()
             });
             samples.push(json!({"wallMs":wall_ms,"outcome":result,"returnedValuesVerified":returned_verified,
                 "matchesFullDomainTopK":matches_top_k,"wrongComplete":wrong_complete,
-                "top1GapNumerator":gap,"gapDenominator":reference.first().map(|r|&r.expected_payoff.denominator)}));
+                "top1GapNumerator":gap,"gapDenominator":reference.first().map(|r|&r.expected_payoff.as_ref().expect("exact deterministic fixture").denominator)}));
         }
         experiments.push(json!({"name":experiment.name,"patch":experiment.patch,"schedule":experiment.schedule,
             "reducedDomain":is_reduced,"samples":samples}));
     }
     Ok(json!({"format":"ournotes-deck.search-harness/1","case":case.id,
-        "oracle":{"completion":"complete","identity":"physicalDeck","candidates":rows.len(),
+        "oracle":{"completion":"complete","identity":"team","candidates":rows.len(),
             "simulations":oracle_simulations,"wallMs":oracle_ms,"topK":reference},
-        "jointBoundAudit":{"checkedRushPrefixes":prefix_scratch.checked_rush_prefixes,"checkedRushLeaves":prefix_scratch.checked_rush_leaves,"checkedCharacterPrefixes":prefix_scratch.checked_character_prefixes,"checkedRawLeaves":prefix_scratch.checked_raw_leaves,"checkedResourcePrefixes":prefix_scratch.checked_resource_prefixes,"classBoundComputations":prefix_scratch.class_bound_computations,"classBoundCacheHits":prefix_scratch.class_bound_cache_hits,"checkedClasses":class_checks,"checkedClassBindings":class_binding_checks,"checkedCompositions":composition_checks,"checkedLayouts":layout_checks,"checkedExpectedBonusPrefixes":expected_bonus_checks,"checkedBonusPrefixes":prefix_scratch.checked_bonus_prefixes,"checkedMemberPtCaps":member_cap_checks,"checkedPrefixes":bound_checks,"unavailablePrefixes":unavailable_bounds,"checkedSuffixes":suffix_checks,"checkedNextPairs":suffix_checks,"unavailableSuffixes":unavailable_suffixes},
+        "jointBoundAudit":{"checkedCharacterPrefixes":prefix_scratch.checked_character_prefixes,"checkedOrderLeaves":prefix_scratch.checked_order_leaves,"checkedOrderCaps":order_cap_checks,"checkedBoundModules":module_checks,"checkedResourcePrefixes":prefix_scratch.checked_resource_prefixes,"classBoundComputations":prefix_scratch.class_bound_computations,"classBoundCacheHits":prefix_scratch.class_bound_cache_hits,"checkedClasses":class_checks,"checkedClassBindings":class_binding_checks,"checkedCompositions":composition_checks,"checkedTeams":team_checks,"checkedExpectedBonusPrefixes":expected_bonus_checks,"checkedBonusPrefixes":prefix_scratch.checked_bonus_prefixes,"checkedMemberPtCaps":member_cap_checks,"checkedPrefixes":bound_checks,"unavailablePrefixes":unavailable_bounds,"checkedSuffixes":suffix_checks,"checkedNextPairs":suffix_checks,"unavailableSuffixes":unavailable_suffixes},
         "topKBoundExplanations":bound_explanations,
         "dominanceAudits":audits,"experiments":experiments,
         "evidenceScope":"search equivalence under shared model; not native-game validation",
@@ -491,9 +536,13 @@ mod tests {
             snaps: [s, None, None, None, None],
             power: 100,
             expected_score: None,
-            expected_payoff: types::Fraction { numerator: n.into(), denominator: "9007199254740997".into() },
+            expected_payoff: Some(types::Fraction { numerator: n.into(), denominator: "9007199254740997".into() }),
+            score_interval: None,
+            payoff_interval: None,
+            rank_certified: None,
             score_summary: None,
-            atoms: Vec::new(),
+            best_order: None,
+            order_outcomes: Vec::new(),
         }
     }
     #[test]

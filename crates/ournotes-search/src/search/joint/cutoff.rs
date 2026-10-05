@@ -1,4 +1,4 @@
-//! Simulation cutoff tables. For one candidate and native order, the fine cap is split by score frame: the entries of
+//! Simulation cutoff tables. For one candidate and performance order, the fine cap is split by score frame: the entries of
 //! frames a running live has not settled keep their whole term, the settled ones are replaced by their final scores,
 //! and the rank bonuses and conversion gains shrink with them. A live's final score is then at most its settled score
 //! plus that remainder, so a candidate whose expected payoff cannot reach the Top-K cutoff stops simulating as soon as
@@ -7,12 +7,14 @@
 use super::JointBounds;
 use crate::domain::CandidateDomain;
 use crate::search::expectation::PhysicalDeck;
-use crate::search::snaps::{JointScratch, RushMasks};
+use crate::search::snaps::JointScratch;
 use ournotes_sim::live::full::Settled;
 use ournotes_sim::live::score::get_frame;
 
-/// The cap of one candidate at one native order, by settled score frame.
+/// The cap of one candidate at one performance order, by settled score frame.
 pub(crate) struct CutoffTable {
+    /// Historical network snapshots keep their candidate/order cap after notes have settled.
+    constant: Option<i128>,
     /// Score frames of the cap's entries, ascending, and their floored bounds and rank factors.
     frames: Vec<i32>,
     z: Vec<f64>,
@@ -24,8 +26,6 @@ pub(crate) struct CutoffTable {
     rows: Vec<Row>,
     /// The candidate's PT bonus when the payoff is event points.
     points_bonus: Option<i64>,
-    /// The whole fine cap of this order, as a payoff.
-    pub(crate) full: i128,
 }
 
 /// One conversion budget row: at most `count` conversions, each entry's rank-weighted gain (0 where it cannot
@@ -58,6 +58,9 @@ impl CutoffTable {
     /// `z * percent` (and that share of its conversion gain). Each row converts at most its count among the
     /// unsettled entries and as many among the settled ones, a bound on its conversions among all of them.
     pub(crate) fn score_cap(&self, s: Settled) -> Option<i128> {
+        if let Some(cap) = self.constant {
+            return Some(cap);
+        }
         let i = self.frames.partition_point(|&f| f < s.frame);
         let mut rest = self.suffix[i];
         let mut live: Vec<(u32, f64)> = Vec::new();
@@ -110,7 +113,6 @@ impl CutoffTable {
         ranges: &[(i32, f64, Vec<u32>)],
         rows: &[(f64, Vec<(u32, f64)>)],
         points_bonus: Option<i64>,
-        full: i128,
     ) -> Option<CutoffTable> {
         if entries.iter().any(|&(_, z, rk)| !z.is_finite() || !rk.is_finite() || z < 0.0 || rk < 1.0) {
             return None;
@@ -164,7 +166,7 @@ impl CutoffTable {
             }
             cut_rows.push(Row { count, gain, tail });
         }
-        Some(CutoffTable { frames, z, rk, suffix, ranges: cut_ranges, rows: cut_rows, points_bonus, full })
+        Some(CutoffTable { constant: None, frames, z, rk, suffix, ranges: cut_ranges, rows: cut_rows, points_bonus })
     }
 }
 
@@ -176,7 +178,7 @@ impl JointBounds {
         }
     }
 
-    /// The cutoff table of one candidate at one native order (None without a finite fine cap).
+    /// The cutoff table of one candidate at one performance order (None without a finite fine cap).
     pub(crate) fn cutoff_table(
         &self,
         domain: &CandidateDomain,
@@ -184,23 +186,23 @@ impl JointBounds {
         power: i64,
         positions: &[usize; 5],
         scratch: &mut JointScratch,
-        rush: Option<&RushMasks>,
     ) -> Option<CutoffTable> {
         let fine = self.fine.as_ref()?;
-        let choices =
-            p.snaps.map(|s| s.map_or(0, |s| domain.snaps().iter().position(|&v| v == s).expect("compiled Snap") + 1));
-        let (total, terms) = fine.cap_terms(power, p.members, choices, positions, scratch, rush);
+        let choices = Self::prefix_choices(domain, p, 5);
+        let (total, terms) = fine.cap_terms(power, p.members, choices, positions, scratch, None);
         if total == i64::MAX || !terms.conv.is_finite() {
             return None;
         }
-        let points_bonus = self.points.as_ref().map(|pt| {
-            (0..5).map(|s| pt.member[p.members[s]] + if choices[s] == 0 { 0 } else { pt.snap[choices[s] - 1] }).sum()
-        });
-        let full = self.payoff_of(points_bonus, i128::from(total));
+        let points_bonus = self.points.as_ref().map(|_| self.bonus_of(p, &choices));
+        if terms.network_ranking {
+            let mut table = CutoffTable::new(&[], &[], &[], points_bonus)?;
+            table.constant = Some(total as i128);
+            return Some(table);
+        }
         let entries: Vec<(i32, f64, f64)> =
             terms.entries.iter().map(|&(t, z, rk)| (t, z, if terms.ranked { rk } else { 1.0 })).collect();
         let ranges: &[(i32, f64, Vec<u32>)] = if terms.ranked { &terms.ranges } else { &[] };
-        CutoffTable::new(&entries, ranges, &terms.rows, points_bonus, full)
+        CutoffTable::new(&entries, ranges, &terms.rows, points_bonus)
     }
 }
 
@@ -215,7 +217,7 @@ mod tests {
     fn unsettled_entries_keep_their_terms_and_gains() {
         let entries: Vec<_> = TIMES.iter().zip([100.0, 50.0, 30.0, 20.0]).map(|(&t, z)| (t, z, 1.0)).collect();
         // one conversion among entries 0 (gain 7) and 3 (gain 5)
-        let t = CutoffTable::new(&entries, &[], &[(1.0, vec![(0, 7.0), (3, 5.0)])], None, 0).unwrap();
+        let t = CutoffTable::new(&entries, &[], &[(1.0, vec![(0, 7.0), (3, 5.0)])], None).unwrap();
         // 200 + 7, and the relative float margin rounds an exact integer up by one
         assert_eq!(t.score_cap(Settled { frame: 0, total: 0, fixed: 0 }), Some(208));
         // frames 1 and 2 settled at 170 points: the frame-5 entry and its gain remain
@@ -231,7 +233,7 @@ mod tests {
         let entries: Vec<_> =
             TIMES.iter().zip([100.0, 50.0, 30.0, 20.0]).zip(rk).map(|((&t, z), r)| (t, z, r)).collect();
         let ranges = [(80, 0.1, vec![0, 1, 2])];
-        let t = CutoffTable::new(&entries, &ranges, &[(1.0, vec![(1, 11.0), (0, 2.2)])], None, 0).unwrap();
+        let t = CutoffTable::new(&entries, &ranges, &[(1.0, vec![(1, 11.0), (0, 2.2)])], None).unwrap();
         // 218 + 11, rounded up past the margin
         assert_eq!(t.score_cap(Settled { frame: 0, total: 0, fixed: 0 }), Some(230));
         // frame 1 settled at 100: entry 0 adds its share 10, and its share 0.2 of a conversion besides entry 1's 11

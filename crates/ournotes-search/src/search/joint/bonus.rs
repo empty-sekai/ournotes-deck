@@ -171,7 +171,7 @@ impl JointBounds {
                     (((w * w).next_up() / (4.0 * r)).next_up() * (1.0 + self.eps).next_up()).next_up().ceil() as i128;
                 score = score.min(cap);
             }
-            caps.push((bonus + extra, ((10000 + bonus + extra) * pt.multiplier_at(score) / 10000) as i128, row.power));
+            caps.push((bonus + extra, pt.mean_payoff(bonus + extra, score), row.power));
         }
         Some(caps)
     }

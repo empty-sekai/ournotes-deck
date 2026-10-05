@@ -296,14 +296,16 @@ impl RushProbes {
 impl LiveModel {
     /// LUCK-only frame. The range state machine, trigger phase order, effect pools and applier state are native.
     /// Retained effects do not read score/life/combo and cannot change Rush before the final controller update.
-    fn luck_frame(&mut self, t: i32, judged: &[GkNote], dt: f32, probes: &mut RushProbes) -> Result<(), Error> {
+    fn luck_frame(&mut self, t: i32, judged: &[GkNote], dt: f32, probes: Option<&mut RushProbes>) -> Result<(), Error> {
         self.frame_time = t;
         let gk = self.gk.as_mut().ok_or_else(|| Error::Unsupported("LUCK replay requires Gekisou".into()))?;
         gk.fever.update(t, &mut gk.fever_updates);
         let mut handle = Handle { sc: &mut self.scorectl, score: &mut self.score };
         let mut env = Env { random: &mut self.random, handle: &mut handle };
         gk.ctrl.before_update(dt, t, &gk.fever_updates, 0, &mut env)?;
-        probes.observe(self)?;
+        if let Some(probes) = probes {
+            probes.observe(self)?;
+        }
         let input = FrameInput { time_ms: t, music_length_ms: self.music_length_ms, is_live_finished: false };
         for condition in &mut self.cond {
             condition.updater.begin_frame();
@@ -449,27 +451,13 @@ pub fn rush_branches_why(
             p
         })
         .collect();
-    let fresh = match LiveModel::build(master, &reduced, notes, &[], params, Some(setup), false, Some(script.clone())) {
-        Ok(model) => model,
-        Err(Error::Unsupported(why)) => return Ok(Err(RushDecline::Build(why))),
-        Err(error) => return Err(error),
-    };
-    let note_map: HashMap<_, _> = notes.iter().map(|n| (n.note_id, n)).collect();
-    let frames = play
-        .frames
-        .iter()
-        .map(|frame| {
-            frame
-                .judged
-                .iter()
-                .map(|j| {
-                    let note =
-                        note_map.get(&j.note_id).ok_or_else(|| Error::Input(format!("unknown note {}", j.note_id)))?;
-                    Ok((note.note_id, note.note_operate_type, note.time_ms, j.judgement))
-                })
-                .collect::<Result<Vec<GkNote>, Error>>()
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
+    let fresh =
+        match LiveModel::build(master, &reduced, notes, &[], params, Some(setup), false, Some(script.clone()), None) {
+            Ok(model) => model,
+            Err(Error::Unsupported(why)) => return Ok(Err(RushDecline::Build(why))),
+            Err(error) => return Err(error),
+        };
+    let frames = judged_frames(notes, play)?;
     let mut branches: Vec<RushMasks> = Vec::new();
     let mut pending = vec![Vec::new()];
     let mut runs = 0;
@@ -488,7 +476,7 @@ pub fn rush_branches_why(
             .iter()
             .zip(&frames)
             .zip(delta_times)
-            .try_for_each(|((frame, judged), &dt)| model.luck_frame(frame.time_ms, judged, dt, &mut probes));
+            .try_for_each(|((frame, judged), &dt)| model.luck_frame(frame.time_ms, judged, dt, Some(&mut probes)));
         if script.borrow().overflow {
             let mut no = prefix.clone();
             no.push(false);
@@ -515,6 +503,140 @@ pub fn rush_branches_why(
         }
     }
     Ok(Ok(branches))
+}
+
+/// The judged notes of every frame of a play, as the Gekisou controller reads them.
+fn judged_frames(notes: &[LiveNote], play: &LivePlay) -> Result<Vec<Vec<GkNote>>, Error> {
+    let note_map: HashMap<_, _> = notes.iter().map(|n| (n.note_id, n)).collect();
+    play.frames
+        .iter()
+        .map(|frame| {
+            frame
+                .judged
+                .iter()
+                .map(|j| {
+                    let note =
+                        note_map.get(&j.note_id).ok_or_else(|| Error::Input(format!("unknown note {}", j.note_id)))?;
+                    Ok((note.note_id, note.note_operate_type, note.time_ms, j.judgement))
+                })
+                .collect::<Result<Vec<GkNote>, Error>>()
+        })
+        .collect()
+}
+
+/// Rush samples of a deck: the probabilities, at every judged note time of `play`, that the rush runs and, per
+/// lottery-dependent score-up shape `j` of `skills`, that the probe's score-up of that shape runs and that it and the
+/// rush do, as steps `(time, [rush, s_0, rs_0, s_1, rs_1, ...])` with equal neighbours merged, over one live per base
+/// seed of `seeds` (the weights of [`LiveModel::set_luck_weights`]).
+///
+/// Each live plays the LUCK-only frames of the conservative replay ([`rush_branches_why`]) without a script: the
+/// range state machine, lottery, trigger phases, effect pools and appliers are native, probability and life
+/// conditions read the live's own random streams and life, and the live and support skills are dropped (a deck with a
+/// luck chain effect among them is refused). Nothing the replay drops reaches the rush: the retained effects read no
+/// score, life or combo. `deck` is in PERFORMANCE order. The rush runs at time `t` when a rush command added at or
+/// before `t` is not yet disabled; a score-up runs when its execute edge is at or before `t` and its finish edge is
+/// after. Only the lottery-related rows of the Gekisou (support) skills are built ([`LuckSkills::related`]): the
+/// others neither feed the lottery nor read it, and the probability draws they leave out are independent of the
+/// lottery's. `probes` gives per shape the position whose score-up rows of that shape (with formation predicates that
+/// hold) are the probe; `None` picks the first such position of the deck. A shape without a probe never runs.
+#[allow(clippy::too_many_arguments)]
+pub fn luck_rush_samples(
+    master: &Master,
+    skills: &LuckSkills,
+    notes: &[LiveNote],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    deck: &[Performer],
+    probes: Option<&[Option<usize>]>,
+    seeds: &[i32],
+) -> Result<Vec<(i32, Vec<f32>)>, Error> {
+    if delta_times.len() != play.frames.len() {
+        return Err(Error::Input("rush samples need one delta time per frame".into()));
+    }
+    if seeds.is_empty() {
+        return Err(Error::Input("rush samples need a seed".into()));
+    }
+    let n_shapes = skills.shapes.len();
+    if probes.is_some_and(|p| p.len() != n_shapes) {
+        return Err(Error::Input(format!("rush samples need one probe per shape ({n_shapes})")));
+    }
+    for performer in deck {
+        if luck_signature(master, performer)?.is_none() {
+            return Err(Error::Unsupported("rush samples: a live or support skill with a luck chain effect".into()));
+        }
+    }
+    let reduced: Vec<_> = deck
+        .iter()
+        .cloned()
+        .map(|mut p| {
+            p.live_skill = None;
+            p.support_skills.clear();
+            p
+        })
+        .collect();
+    let mut fresh = LiveModel::build(master, &reduced, notes, &[], params, Some(setup), false, None, Some(skills))?;
+    fresh.rush_effect_log = Some(Vec::new());
+    let rows = fresh.luck_score_rows(skills);
+    // The probe rows: the effect row index -> shape.
+    let mut probe_rows: FxHashMap<usize, usize> = FxHashMap::default();
+    for j in 0..n_shapes {
+        let held = |r: &&super::LuckScoreRow| r.shape == j && r.may_hold;
+        let member = match probes {
+            Some(p) => p[j],
+            None => rows.iter().find(held).map(|r| r.member),
+        };
+        let Some(member) = member else { continue };
+        let mine: Vec<_> = rows.iter().filter(held).filter(|r| r.member == member).collect();
+        if mine.is_empty() {
+            return Err(Error::Input(format!("rush samples: position {member} holds no score-up of shape {j}")));
+        }
+        probe_rows.extend(mine.iter().map(|r| (r.row, j)));
+    }
+    let frames = judged_frames(notes, play)?;
+    let mut times: Vec<i32> = frames.iter().flatten().map(|n| n.2).collect();
+    times.sort_unstable();
+    times.dedup();
+    let width = 1 + 2 * n_shapes;
+    let mut counts = vec![0u32; times.len() * width];
+    for &seed in seeds {
+        let mut model = fresh.clone();
+        model.random = LiveRandom::new(seed);
+        for ((frame, judged), &dt) in play.frames.iter().zip(&frames).zip(delta_times) {
+            model.luck_frame(frame.time_ms, judged, dt, None)?;
+        }
+        let spans = model.rush_spans();
+        let log = model.rush_effect_log.take().unwrap_or_default();
+        let mut edges: Vec<(i32, usize, i32)> =
+            log.iter().filter_map(|e| probe_rows.get(&e.0).map(|&j| (e.1, j, e.2))).collect();
+        edges.sort_by_key(|e| e.0);
+        let mut next = 0;
+        let mut running = vec![0i32; n_shapes];
+        for (i, &t) in times.iter().enumerate() {
+            while next < edges.len() && edges[next].0 <= t {
+                running[edges[next].1] += edges[next].2;
+                next += 1;
+            }
+            let rush = spans.iter().any(|&(a, b)| a <= t && t < b);
+            let c = &mut counts[i * width..(i + 1) * width];
+            c[0] += u32::from(rush);
+            for (j, &r) in running.iter().enumerate() {
+                let up = r > 0;
+                c[1 + 2 * j] += u32::from(up);
+                c[2 + 2 * j] += u32::from(rush && up);
+            }
+        }
+    }
+    let n = seeds.len() as f32;
+    let mut out: Vec<(i32, Vec<f32>)> = Vec::new();
+    for (i, &t) in times.iter().enumerate() {
+        let p: Vec<f32> = counts[i * width..(i + 1) * width].iter().map(|&x| x as f32 / n).collect();
+        if out.last().is_none_or(|last| last.1 != p) {
+            out.push((t, p));
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

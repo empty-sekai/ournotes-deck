@@ -196,7 +196,7 @@ pub(crate) struct EffectUpdater {
     pub effect: usize,
     pub index: usize,
     pub state: EffectState,
-    release: Option<Checker>,
+    pub(super) release: Option<Checker>,
     phase: i64,
     cumulative: Option<Cumulative>,
 }
@@ -289,6 +289,9 @@ pub(crate) struct ConditionSkillUpdater {
     gate: Option<i64>,
     idle_plan: Option<IdleTriggerPlan>,
     idle_frame: bool,
+    /// The gate keeps this frame's triggers closed (or the live finished) and no one-shot instance executes: every
+    /// phase of the frame then only clears the trigger cache.
+    gated_frame: bool,
 }
 
 impl ConditionSkillUpdater {
@@ -364,6 +367,7 @@ impl ConditionSkillUpdater {
             gate,
             idle_plan,
             idle_frame: false,
+            gated_frame: false,
         })
     }
 
@@ -375,6 +379,12 @@ impl ConditionSkillUpdater {
     pub(crate) fn begin_frame(&mut self) {
         self.trigger_checked = false;
         self.idle_frame = false;
+        self.gated_frame = false;
+    }
+
+    /// The effects of the skill (read only).
+    pub(super) fn effects(&self) -> &[CondEffect] {
+        &self.effects
     }
 
     /// Effect metadata stays private so a compiled idle plan cannot be invalidated
@@ -386,6 +396,31 @@ impl ConditionSkillUpdater {
     #[cfg(test)]
     pub(crate) fn gate_mission(&self) -> Option<i64> {
         self.gate
+    }
+
+    /// Moves the skill from performance position `from` to `map[from]`: effect ids (whose last digit is the position),
+    /// the position checks of every checker and the idle plan's members.
+    pub(crate) fn move_position(&mut self, map: &[usize], from: usize) {
+        let shift = map[from] as i64 - from as i64;
+        for ef in &mut self.effects {
+            ef.effect_id = ef.effect_id.wrapping_add(shift);
+            for c in [ef.trigger.as_mut(), ef.condition.as_mut(), ef.reset.as_mut()].into_iter().flatten() {
+                c.move_positions(map);
+            }
+        }
+        for u in &mut self.updaters {
+            if let Some(c) = u.release.as_mut() {
+                c.move_positions(map);
+            }
+        }
+        if let Some(plan) = self.idle_plan.as_mut() {
+            for m in &mut plan.members {
+                if let Some(&to) = usize::try_from(*m).ok().and_then(|i| map.get(i)) {
+                    *m = to as i32;
+                }
+            }
+        }
+        self.execute_count = self.execute_count.drain().map(|(id, n)| (id.wrapping_add(shift), n)).collect();
     }
 
     fn update_one(
@@ -432,10 +467,28 @@ impl ConditionSkillUpdater {
                 self.cache.fill(Some(TriggerResult { is_trigger: false, time_ms: inp.time_ms }));
             }
             self.idle_frame = true;
+        } else if !self.trigger_checked && self.executing.is_empty() {
+            let closed = inp.is_live_finished
+                || match self.gate_open(ctx) {
+                    Ok(open) => !open,
+                    Err(e) => {
+                        // The active path marks the frame checked and clears the cache before the gate fails.
+                        self.trigger_checked = true;
+                        self.cache.fill(None);
+                        return Err(e);
+                    }
+                };
+            if closed {
+                // The active path would clear the cache and check nothing: no reset, trigger or sustained effect
+                // runs with an empty cache, and no one-shot instance can start in a later phase of this frame.
+                self.trigger_checked = true;
+                self.cache.fill(None);
+                self.gated_frame = true;
+            }
         }
         #[cfg(any(test, feature = "search-diagnostics"))]
         super::idle_plan::update(self.idle_frame, first_idle);
-        if self.idle_frame {
+        if self.idle_frame || self.gated_frame {
             return Ok(());
         }
         self.update_active(phase, inp, ctx, updated)

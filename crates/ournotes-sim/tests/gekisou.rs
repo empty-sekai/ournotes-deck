@@ -174,6 +174,11 @@ impl<F: Fn(i32) -> Option<i32>> GekisouComboInfo for Combo<F> {
     fn gekisou_combo(&self, time_ms: i32) -> Option<i32> {
         (self.0)(time_ms)
     }
+
+    // The reads are a fixed function of time.
+    fn combo_windows(&self, out: &mut Vec<(i32, i32, u64)>) {
+        out.push((i32::MIN, i32::MAX, 0));
+    }
 }
 
 fn prev_end(t: i32) -> i32 {

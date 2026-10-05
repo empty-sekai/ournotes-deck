@@ -217,8 +217,73 @@ fn event_preview_has_no_cross_sample_mutations() {
     let b = preview_client_event_points(&m, &request, &[], Some(&[]), RANK_D).unwrap();
     assert_eq!(a.points, b.points);
     assert_eq!(a.points_for(1), 20);
+    assert_eq!(a.challenge_points_for(1), 0);
     assert_eq!(a.local_events[0].challenge_points, 100);
     assert_eq!(request.local_events[0].challenge_points, 300);
+}
+
+#[test]
+fn challenge_point_preview_is_earned_delta_and_ignores_deck_event_bonus() {
+    let mut m = counter_master();
+    // A native Int32 balance can wrap; the reward remains the three points earned in this result.
+    let mut request = EventPointRequest {
+        route: EventResultRoute::NormalPlayed,
+        holding_event_ids: vec![1],
+        consumed_count: 0,
+        local_events: vec![LocalEvent { event_id: 1, challenge_points: i32::MAX, ..LocalEvent::default() }],
+    };
+    let plain = preview_client_event_points(&m, &request, &[], Some(&[]), RANK_D).unwrap();
+    assert_eq!(plain.challenge_points_for(1), 3);
+    assert_eq!(plain.challenge_points_for(2), 0);
+    assert_eq!(plain.local_events[0].challenge_points, i32::MIN + 2);
+    m.event_effects = master(json!({"MasterEventEffect": [
+        effect(1, 1, EVENT_POINT, 2, json!({}), [10000; 5])
+    ]}))
+    .event_effects;
+    let card = member(1, 1, Some(1), 1, &[], 1);
+    let bonus = preview_client_event_points(&m, &request, &[Some(&card)], Some(&[]), RANK_D).unwrap();
+    assert_eq!(bonus.points_for(1), 2 * plain.points_for(1));
+    assert_eq!(bonus.challenge_points_for(1), plain.challenge_points_for(1));
+    request.route = EventResultRoute::NormalSkip;
+    request.local_events.clear();
+    assert_eq!(
+        preview_client_event_points(&m, &request, &[Some(&card)], Some(&[]), RANK_D).unwrap().challenge_points_for(1),
+        3
+    );
+    // Missing skip EP rows skip the entire counter update, including challenge points.
+    request.holding_event_ids = vec![3];
+    assert_eq!(preview_client_event_points(&m, &request, &[], Some(&[]), RANK_D).unwrap().challenge_points_for(3), 0);
+}
+
+#[test]
+fn single_result_point_payoffs_are_independent_of_initial_balances() {
+    let m = counter_master();
+    for route in [
+        EventResultRoute::NormalPlayed,
+        EventResultRoute::NormalSkip,
+        EventResultRoute::ChallengePlayed { event_id: 1 },
+        EventResultRoute::ChallengeSkip { event_id: 1 },
+    ] {
+        let mut request = EventPointRequest {
+            route,
+            holding_event_ids: vec![1],
+            consumed_count: if matches!(route, EventResultRoute::NormalPlayed | EventResultRoute::NormalSkip) {
+                0
+            } else {
+                200
+            },
+            local_events: vec![LocalEvent { event_id: 1, ..LocalEvent::default() }],
+        };
+        let zero = preview_client_event_points(&m, &request, &[], Some(&[]), RANK_D).unwrap();
+        for balance in [i32::MIN, -1, 200, i32::MAX] {
+            request.local_events[0].points = balance;
+            request.local_events[0].challenge_points = balance;
+            request.local_events[0].added = vec![99];
+            let actual = preview_client_event_points(&m, &request, &[], Some(&[]), RANK_D).unwrap();
+            assert_eq!(actual.points, zero.points, "{route:?} EP balance {balance}");
+            assert_eq!(actual.challenge_points, zero.challenge_points, "{route:?} CP balance {balance}");
+        }
+    }
 }
 
 #[test]
