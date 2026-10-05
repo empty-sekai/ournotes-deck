@@ -138,10 +138,10 @@ impl OrderScoreInterval {
         if self.exact_mean.is_some_and(|v| v.denominator == 0) || self.final_life.is_some_and(|(lo, hi)| lo > hi) {
             return Err(invalid("invalid exact mean or life support"));
         }
-        if let Some(exact) = self.exact_mean {
-            if !exact_in_interval(exact, self.mean)? {
-                return Err(invalid("exact mean lies outside its enclosure"));
-            }
+        if let Some(exact) = self.exact_mean
+            && !exact_in_interval(exact, self.mean)?
+        {
+            return Err(invalid("exact mean lies outside its enclosure"));
         }
         for (&threshold, tail) in &self.tails {
             let prior = self.moment_tail(threshold)?;
@@ -213,10 +213,10 @@ impl OrderScoreInterval {
         if old.bounds.intersect(refined.bounds) != Some(refined.bounds) {
             return Err(invalid("tail refinement widens bounds"));
         }
-        if let (Some(a), Some(b)) = (old.exact, refined.exact) {
-            if compare_exact(a, b)? != std::cmp::Ordering::Equal {
-                return Err(invalid("tail refinement changes an exact value"));
-            }
+        if let (Some(a), Some(b)) = (old.exact, refined.exact)
+            && compare_exact(a, b)? != std::cmp::Ordering::Equal
+        {
+            return Err(invalid("tail refinement changes an exact value"));
         }
         let mut next = self.clone();
         next.tails.insert(threshold, TailProbability { bounds: refined.bounds, exact: old.exact.or(refined.exact) });
@@ -226,10 +226,10 @@ impl OrderScoreInterval {
     }
 
     pub fn refine_payoff(&mut self, refined: PayoffRefinement) -> Result<(), Error> {
-        if let Some(exact) = refined.exact {
-            if !exact_in_interval(exact, refined.bounds)? {
-                return Err(invalid("exact payoff lies outside its enclosure"));
-            }
+        if let Some(exact) = refined.exact
+            && !exact_in_interval(exact, refined.bounds)?
+        {
+            return Err(invalid("exact payoff lies outside its enclosure"));
         }
         let prior = order_payoff(self, &refined.map)?;
         if prior.bounds.intersect(refined.bounds) != Some(refined.bounds)
@@ -237,10 +237,10 @@ impl OrderScoreInterval {
         {
             return Err(invalid("payoff refinement widens its bounds or has invalid exact metadata"));
         }
-        if let (Some(a), Some(b)) = (prior.exact, refined.exact) {
-            if compare_exact(a, b)? != std::cmp::Ordering::Equal {
-                return Err(invalid("payoff refinement changes an exact value"));
-            }
+        if let (Some(a), Some(b)) = (prior.exact, refined.exact)
+            && compare_exact(a, b)? != std::cmp::Ordering::Equal
+        {
+            return Err(invalid("payoff refinement changes an exact value"));
         }
         self.refined_payoff = Some(refined);
         Ok(())
@@ -258,10 +258,10 @@ struct OrderPayoff {
 fn order_payoff(order: &OrderScoreInterval, map: &PayoffMap) -> Result<OrderPayoff, Error> {
     let plain =
         |bounds, exact| OrderPayoff { bounds, exact, thresholds: Vec::new(), joint_life: false, truncated_at: None };
-    if let Some(refined) = &order.refined_payoff {
-        if &refined.map == map {
-            return Ok(plain(refined.bounds, refined.exact));
-        }
+    if let Some(refined) = &order.refined_payoff
+        && &refined.map == map
+    {
+        return Ok(plain(refined.bounds, refined.exact));
     }
     match map {
         PayoffMap::Score => Ok(plain(order.mean, order.exact_mean)),

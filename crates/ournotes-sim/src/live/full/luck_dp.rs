@@ -672,10 +672,10 @@ fn compile<M: Mass>(
             Some(probes) => probes[shape],
             None => rows.iter().find(|row| row.shape == shape && row.may_hold).map(|row| row.member),
         };
-        if let Some(member) = member {
-            if !rows.iter().any(|row| row.shape == shape && row.member == member && row.may_hold) {
-                return Err(Error::Input(format!("LUCK DP: position {member} holds no score-up of shape {shape}")));
-            }
+        if let Some(member) = member
+            && !rows.iter().any(|row| row.shape == shape && row.member == member && row.may_hold)
+        {
+            return Err(Error::Input(format!("LUCK DP: position {member} holds no score-up of shape {shape}")));
         }
         plan.probes.push(member.is_some());
     }

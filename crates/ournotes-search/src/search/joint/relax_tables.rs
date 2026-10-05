@@ -334,7 +334,7 @@ impl RelaxTables {
             let best_p = self.snap_power_by_character[profile][c].first(snap_taken).map_or(base_p, |v| v.max(base_p));
             let best_g = at
                 .iter()
-                .map(|&pos| self.snap_gain_by_character[c][pos].first(snap_taken).map_or(f64::NEG_INFINITY, |v| v))
+                .map(|&pos| self.snap_gain_by_character[c][pos].first(snap_taken).unwrap_or(f64::NEG_INFINITY))
                 .fold(base_g, f64::max);
             let best_b = if points {
                 self.snap_bonus_by_character[c].first(snap_taken).map_or(base_b, |v| v.max(base_b))

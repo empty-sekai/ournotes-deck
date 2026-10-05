@@ -841,7 +841,7 @@ fn built_problem_reuses_frozen_inputs_across_live_snap_and_gekisou_score_pt() {
             assert_eq!(built.context().request().k, 3);
             for row in &first.results {
                 let evaluated = auxiliary::evaluate_built(&built, row.members, row.snaps).unwrap();
-                assert_eq!(evaluated.results, [row.clone()]);
+                assert_eq!(evaluated.results, std::slice::from_ref(row));
                 assert_eq!(evaluated.optimality, ournotes_search::types::Optimality::NotApplicable);
                 assert_eq!(evaluated.telemetry.leaves.visited, 1);
             }

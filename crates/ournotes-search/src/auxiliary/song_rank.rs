@@ -45,10 +45,10 @@ impl SongValue {
             }
             _ => return Err(invalid()),
         };
-        if let Some(value) = exact {
-            if !exact_in_interval(value, bounds)? {
-                return Err(invalid());
-            }
+        if let Some(value) = exact
+            && !exact_in_interval(value, bounds)?
+        {
+            return Err(invalid());
         }
         Ok(Self { id, power: deck.power, exact, bounds })
     }

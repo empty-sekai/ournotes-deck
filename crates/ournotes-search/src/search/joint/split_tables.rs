@@ -306,7 +306,7 @@ mod tests {
         let (characters, snaps) = (6usize, 5usize);
         let members: Vec<(usize, u16)> = (0..9).map(|m| (m, (m % characters) as u16)).collect();
         let value = |m: usize, choice: usize| ((m * 37 + choice * 11) % 23) as f64 + 0.25 * m as f64;
-        let admitted = |m: usize, choice: usize| (m + choice) % 4 != 0;
+        let admitted = |m: usize, choice: usize| !(m + choice).is_multiple_of(4);
         let plain = Plain::compile(
             &members,
             characters,

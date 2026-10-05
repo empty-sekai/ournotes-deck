@@ -1812,9 +1812,8 @@ impl LiveModel {
             (std::mem::take(&mut self.scratch.listed), std::mem::take(&mut self.scratch.updated));
         for ph in PHASES {
             listed.clear();
-            if self.phase_life.is_some() {
-                let life = self.life.peek_life_at_ms(t)?;
-                self.phase_life.as_mut().expect("life trace enabled")[(ph - 1) as usize] = life;
+            if let Some(phase_life) = self.phase_life.as_mut() {
+                phase_life[(ph - 1) as usize] = self.life.peek_life_at_ms(t)?;
             }
             let gk_view =
                 self.gk.as_ref().map(|g| GkView { ctrl: &g.ctrl, prev_lots: &g.prev_lots, prev_lot_ms: g.prev_lot_ms });

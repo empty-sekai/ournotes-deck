@@ -864,7 +864,7 @@ impl Recorder {
             tel.incumbents.first_full = Some(self.point(tel, best, kth, filled, self.progress()));
         }
         let i = &mut tel.incumbents;
-        if (i.updates - 1) % i.stride != 0 {
+        if !(i.updates - 1).is_multiple_of(i.stride) {
             return;
         }
         if i.timeline.len() == TIMELINE {
@@ -874,7 +874,7 @@ impl Recorder {
                 keep % 2 == 1
             });
             i.stride *= 2;
-            if (i.updates - 1) % i.stride != 0 {
+            if !(i.updates - 1).is_multiple_of(i.stride) {
                 return;
             }
         }

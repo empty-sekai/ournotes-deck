@@ -258,10 +258,10 @@ impl IntervalTopK {
         }
         for (exact, interval) in [(candidate.exact_score, candidate.score), (candidate.exact_payoff, candidate.payoff)]
         {
-            if let Some(exact) = exact {
-                if !exact_in_interval(exact, interval)? {
-                    return Err(invalid("exact value lies outside its enclosure"));
-                }
+            if let Some(exact) = exact
+                && !exact_in_interval(exact, interval)?
+            {
+                return Err(invalid("exact value lies outside its enclosure"));
             }
         }
         if candidate.equality.as_ref().is_some_and(|c| !Rc::ptr_eq(&c.scope, &self.scope)) {
@@ -292,10 +292,10 @@ impl IntervalTopK {
             payoff =
                 payoff.intersect(other.payoff).ok_or_else(|| invalid("equal mappings have disjoint payoff bounds"))?;
             for (a, b) in [(candidate.exact_score, other.exact_score), (candidate.exact_payoff, other.exact_payoff)] {
-                if let (Some(a), Some(b)) = (a, b) {
-                    if compare_exact(a, b)? != Ordering::Equal {
-                        return Err(invalid("equal programs disagree on exact value"));
-                    }
+                if let (Some(a), Some(b)) = (a, b)
+                    && compare_exact(a, b)? != Ordering::Equal
+                {
+                    return Err(invalid("equal programs disagree on exact value"));
                 }
             }
         }
@@ -341,10 +341,10 @@ impl IntervalTopK {
             return Err(invalid("refinement widens or contradicts its enclosure"));
         }
         for (previous, next) in [(old.exact_score, exact_score), (old.exact_payoff, exact_payoff)] {
-            if let (Some(previous), Some(next)) = (previous, next) {
-                if compare_exact(previous, next)? != Ordering::Equal {
-                    return Err(invalid("refinement changes an exact value"));
-                }
+            if let (Some(previous), Some(next)) = (previous, next)
+                && compare_exact(previous, next)? != Ordering::Equal
+            {
+                return Err(invalid("refinement changes an exact value"));
             }
         }
         let mut next = old.clone();
@@ -400,7 +400,7 @@ impl IntervalTopK {
             }
             steps.push((t, compare_bound(grid(t), lower) == Ordering::Equal, c.tie.power));
         }
-        steps.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        steps.sort_unstable_by_key(|a| std::cmp::Reverse(a.0));
         let threshold = steps[self.k - 1].0;
         // Candidates above the threshold beat any power; those at it beat only a smaller power.
         let above = steps.iter().take_while(|s| s.0 > threshold).count();

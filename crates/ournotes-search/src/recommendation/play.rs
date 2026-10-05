@@ -65,7 +65,7 @@ impl Pattern {
             JudgementStream::with_accuracy(&chart, &dc.judgement_types, rule.as_ref(), self.accuracy)?;
         if self.miss_every > 0 {
             for (index, row) in stream.judged.iter_mut().enumerate() {
-                if (index as u64 + 1) % self.miss_every == 0 {
+                if (index as u64 + 1).is_multiple_of(self.miss_every) {
                     row[2] = 1;
                 }
             }
@@ -119,11 +119,11 @@ pub(super) fn parse(
             return None;
         }
     };
-    if let (Some(scene_id), Some(score_id)) = (scene_id, score_id) {
-        if let Err(error) = super::complete_stream(data, kind, scene_id, score_id, &stream) {
-            issues.0.push(super::issue(path, error));
-            return None;
-        }
+    if let (Some(scene_id), Some(score_id)) = (scene_id, score_id)
+        && let Err(error) = super::complete_stream(data, kind, scene_id, score_id, &stream)
+    {
+        issues.0.push(super::issue(path, error));
+        return None;
     }
     echo["complete"] = json!(true);
     echo["frames"] = json!(stream.frames.len());
@@ -223,12 +223,12 @@ mod tests {
                 let PlayPolicy::Stream { stream } = policy else { panic!("expanded once to stream") };
                 let mut expected = base.clone();
                 for (index, row) in expected.judged.iter_mut().enumerate() {
-                    if every != 0 && (index as u64 + 1) % every == 0 {
+                    if every != 0 && (index as u64 + 1).is_multiple_of(every) {
                         row[2] = 1;
                     }
                 }
                 assert_eq!(stream, expected);
-                assert_eq!(echo["misses"].as_u64().unwrap(), if every == 0 { 0 } else { 5 / every });
+                assert_eq!(echo["misses"].as_u64().unwrap(), 5u64.checked_div(every).unwrap_or(0));
                 assert_eq!(echo["judged"], 5);
                 assert!(echo["frames"].as_u64().unwrap() > 0);
                 assert_eq!(echo["kind"], "pattern");

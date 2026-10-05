@@ -582,14 +582,14 @@ impl OwnedSnapshot {
             if master.characters.iter().any(|row| !ranks.contains_key(&row.id)) {
                 out.error("player.characterRanks", "coverage_conflict", "complete coverage is missing characters");
             }
-            if let (Some(sum), Some(total)) = (sum, total) {
-                if sum != total {
-                    out.error(
-                        "player.characterTotalRank",
-                        "rank_conflict",
-                        "complete local-rank sum differs from the independent total",
-                    );
-                }
+            if let (Some(sum), Some(total)) = (sum, total)
+                && sum != total
+            {
+                out.error(
+                    "player.characterTotalRank",
+                    "rank_conflict",
+                    "complete local-rank sum differs from the independent total",
+                );
             }
         }
         let vip = out.required("player.vipRank", self.player.vip_rank);
@@ -915,10 +915,10 @@ fn resolve_level(
         out.error(format!("{path}.levelOrExp"), "master_row_missing", "cultivation has no matching level row");
         return None;
     }
-    if let (Some(a), Some(b)) = (by_level, by_exp) {
-        if a.level != b.level {
-            out.error(format!("{path}.levelOrExp"), "cultivation_conflict", "level and exp describe different levels");
-        }
+    if let (Some(a), Some(b)) = (by_level, by_exp)
+        && a.level != b.level
+    {
+        out.error(format!("{path}.levelOrExp"), "cultivation_conflict", "level and exp describe different levels");
     }
     by_level.or(by_exp).map(|r| r.level)
 }

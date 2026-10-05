@@ -95,7 +95,7 @@ impl RootOrder {
             p.snaps[SLOTS[0]] = snap_of(domain, choice);
             rows.push(((m, choice), super::node_upper(e.pool, domain, bounds, &p, 1, orders)?));
         }
-        rows.sort_by(|a, b| b.1.cmp(&a.1));
+        rows.sort_by_key(|a| std::cmp::Reverse(a.1));
         let (children, caps) = rows.into_iter().unzip();
         Ok(Self { children, caps })
     }
@@ -299,7 +299,7 @@ fn polish_rounds(w: &Warm<'_>, rounds: usize, e: &mut Engine<'_, '_>) -> Result<
                 ranked.push((surrogate(w, &n, e)?, n));
             }
         }
-        ranked.sort_by(|a, b| b.0.cmp(&a.0));
+        ranked.sort_by_key(|a| std::cmp::Reverse(a.0));
         for (value, d) in ranked.into_iter().take(POLISH) {
             if !evaluate(w, value, d, true, e)? {
                 return Ok(false);
@@ -376,7 +376,7 @@ fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>) -> Result<(), Error> {
                     break;
                 }
                 checks += 1;
-                if checks % 64 == 0 && e.expired() {
+                if checks.is_multiple_of(64) && e.expired() {
                     return Ok(());
                 }
                 let v = surrogate(w, &n, e)?;
