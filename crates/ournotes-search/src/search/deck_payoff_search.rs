@@ -67,7 +67,16 @@ pub(super) fn solve(
                 return stopped(e, root);
             }
             let Some(offered) = e.offered.take().or_else(|| e.recorded(&row.deck)) else {
-                // A supplied incumbent already outside the Top-K: K evaluated decks rank ahead of it.
+                // This known deck is outside Top-K, but its optimistic rank may still precede an unseen winner.
+                // No retained exact payoff means a bounded ranking cannot close on this row. The full joint
+                // traversal retains the incumbents and proves every remaining candidate against them.
+                if bounds.bounded_only() {
+                    if joint_follows {
+                        return hand_over(e);
+                    }
+                    return Err(Error::Domain("unsettled deck payoff without a joint traversal".into()));
+                }
+                // A deck-determined payoff is exact: K evaluated decks rank ahead of this exact ranking entry.
                 below.entry(row.deck.members).or_default().push((row.deck, i128::MIN));
                 continue;
             };
