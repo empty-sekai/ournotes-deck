@@ -1496,7 +1496,7 @@ fn joint_rec(
             }
         }
         if depth < 5
-            && let Some(cap) = bounds.carrier_split_expected_upper(e.pool, domain, p, depth, start, orders, threshold)
+            && let Some(cap) = bounds.carrier_split_expected_upper(domain, p, depth, start, orders, threshold)
         {
             let module = joint.modules.entry("carrierSplit").or_default();
             module.checks += 1;
@@ -1637,7 +1637,7 @@ fn joint_rec(
             && offset > start
             && offset % 16 == 0
             && let Some((threshold, _)) = e.safe_cutoff()
-            && let Some(cap) = bounds.carrier_split_expected_upper(e.pool, domain, p, depth, offset, orders, threshold)
+            && let Some(cap) = bounds.carrier_split_expected_upper(domain, p, depth, offset, orders, threshold)
         {
             let module = e.tel.joint.modules.entry("carrierSplitTail").or_default();
             module.checks += 1;

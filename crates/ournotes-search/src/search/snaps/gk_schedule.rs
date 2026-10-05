@@ -1070,6 +1070,15 @@ pub(crate) struct KeyedEnvelope {
     gains: RefCell<HashMap<(usize, usize), [f64; 5]>>,
 }
 
+impl KeyedEnvelope {
+    /// The approximate bytes the envelope keeps.
+    pub(crate) fn bytes(&self) -> usize {
+        let values = self.pc.len() + self.pj.iter().map(Vec::len).sum::<usize>() + self.sums.len();
+        values * std::mem::size_of::<f64>()
+            + self.gains.borrow().len() * std::mem::size_of::<((usize, usize), [f64; 5])>()
+    }
+}
+
 impl CarrierKeys {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(

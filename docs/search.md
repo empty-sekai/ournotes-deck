@@ -809,12 +809,12 @@ above the K-th payoff is also bounded with power and gain coupled: for any weigh
 `P·(A0 + G) <= (λ·P + (A0 + G)/λ)^2 / 4`, and the slots to fill relax `λ·power + gain/λ` as one value per pair (per
 list for the carriers, by the same table relaxation for the other slots), so a pair's power and gain come from the
 same pair. `λ` is the step of a geometric grid (ratio 1.08) nearest `sqrt((A0 + G)/P)` at the uncoupled terms; the
-bound of `T` is the smaller of the two. The check stops at the first `T` still above the K-th payoff. Below the leader the slots to fill take candidates
-in ascending choice order, so a node's completions use the choices from its start on, and in a node's choice loop
-every child from an offset on, with its completions, uses the choices from that offset on. The tables are compiled for
-the pairs from each of a few suffix starts (0, 8, then about half again each time); a node reads the latest start at
-most its own, and every 16 offsets the loop bounds all the children left by the latest start at most the offset and
-stops when that bound is below the K-th payoff.
+bound of `T` is the smaller of the two. The check stops at the first `T` still above the K-th payoff. Below the leader
+the slots to fill take candidates in ascending choice order, so a node's completions use the choices from its start
+on, and in a node's choice loop every child from an offset on, with its completions, uses the choices from that offset
+on. The tables are compiled for the pairs from each of a few suffix starts (0, 8, then about half again each time); a
+node reads the latest start at most its own, and every 16 offsets the loop bounds all the children left by the latest
+start at most the offset and stops when that bound is below the K-th payoff.
 
 **Gated combo bonuses.** A combo bonus window whose trigger is a sole positive combo-count condition on its own
 range counts at an entry only once the range's combo can reach the threshold by the entry's chart time. Its start

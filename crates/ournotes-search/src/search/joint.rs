@@ -33,6 +33,7 @@ mod prefix_character;
 mod prefix_resource;
 mod relax_tables;
 mod resource;
+mod split_tables;
 pub(crate) use bonus::BonusScratch;
 
 /// Leader first, then the other physical slots. Performance order is never a decision.

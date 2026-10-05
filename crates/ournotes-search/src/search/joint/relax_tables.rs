@@ -38,19 +38,29 @@ impl<T: Copy + PartialOrd> Top<T> {
 }
 
 /// The `take` (at most 5) largest values pushed so far, largest first.
-struct Largest<T> {
+pub(super) struct Largest<T> {
     values: [T; 5],
     len: usize,
     take: usize,
 }
 
 impl<T: Copy + PartialOrd> Largest<T> {
-    fn new(take: usize, zero: T) -> Self {
+    pub(super) fn new(take: usize, zero: T) -> Self {
         assert!(take <= 5, "at most five slots");
         Largest { values: [zero; 5], len: 0, take }
     }
 
-    fn push(&mut self, x: T) {
+    /// Whether pushing `x` would keep it: fewer than `take` values so far, or `x` above the least kept.
+    pub(super) fn admits(&self, x: T) -> bool {
+        self.len < self.take || (self.take > 0 && x > self.values[self.take - 1])
+    }
+
+    /// The values kept, largest first.
+    pub(super) fn values(&self) -> &[T] {
+        &self.values[..self.len]
+    }
+
+    pub(super) fn push(&mut self, x: T) {
         let mut i = if self.len < self.take {
             self.len += 1;
             self.len - 1
@@ -68,14 +78,14 @@ impl<T: Copy + PartialOrd> Largest<T> {
 }
 
 impl Largest<i64> {
-    fn sum(&self) -> i64 {
+    pub(super) fn sum(&self) -> i64 {
         self.values[..self.len].iter().sum()
     }
 }
 
 impl Largest<f64> {
     /// The sum in descending order, rounded up.
-    fn sum_up(&self) -> f64 {
+    pub(super) fn sum_up(&self) -> f64 {
         self.values[..self.len].iter().fold(0.0, |sum, &x| add_up(sum, x))
     }
 }

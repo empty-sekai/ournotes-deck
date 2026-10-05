@@ -6,16 +6,19 @@
 //! that are no carrier, with gains under the same envelope; the node bound is the largest of these. The slots to fill
 //! of a node take candidates from a choice index on (ascending below the leader), so every table is also kept for the
 //! pairs from each of a few suffix starts, and a bound reads the latest start at most its index.
-use super::relax_tables::{RelaxTables, Top};
+use super::split_tables::{ByCharacter, Plain, PlainParts};
 use super::*;
 use crate::search::snaps::{CarrierKeys, KeyedEnvelope};
-use std::cell::{OnceCell, RefCell};
+use ournotes_sim::num::FxHashMap;
+use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 /// The most distinct carrier lists split over; with more, the multisets to visit grow past a cheap node check.
 const MAX_LISTS: usize = 8;
 /// The most envelopes kept at a time.
 const ENV_CACHE: usize = 512;
+/// The most bytes of envelopes and tables kept at a time (approximately); past it every envelope is dropped.
+const TABLE_BUDGET: usize = 192 << 20;
 /// The first suffix start after 0; each later one is about half again the previous.
 const FIRST_START: usize = 8;
 /// The ratio between neighbouring weights `λ` of the coupled bound: a weight off the best one by at most half a step
@@ -31,16 +34,28 @@ pub(super) struct CarrierSplit {
     class_at: Vec<usize>,
     /// The classes of all pool members.
     classes: usize,
+    /// `[pool member]`: the index of its character among the domain's characters.
+    character: Vec<u16>,
+    /// The number of domain characters.
+    characters: usize,
+    /// The domain members with their character index.
+    members: Vec<(usize, u16)>,
+    /// The number of domain Snaps.
+    snaps: usize,
     /// Suffix starts, ascending from 0: the tables at start `k` cover the pairs from choice index `starts[k]` on.
     starts: Vec<usize>,
-    /// `[list]`: the list's pairs (pool member, choice) with their character.
-    pairs: Vec<Vec<(usize, usize, i64)>>,
+    /// `[list]`: the list's pairs (pool member, choice).
+    pairs: Vec<Vec<(usize, usize)>>,
     /// `[start][profile][list]`: the powers of the list's pairs by character.
     power: Vec<Vec<Vec<ByCharacter<i64>>>>,
+    /// `[start][profile]`: the power tables of the pairs that are no carrier (filled on first use).
+    plain_power: Vec<Vec<OnceCell<Option<Plain<i64>>>>>,
     /// `[r]`: the multisets of at most `r` lists.
     sets: Vec<Vec<Vec<u16>>>,
-    /// Envelopes by sorted carrier lists.
-    envs: RefCell<HashMap<Vec<u16>, Rc<SplitEnv>>>,
+    /// Envelopes by sorted carrier lists (`env_key`).
+    envs: RefCell<FxHashMap<u32, Rc<SplitEnv>>>,
+    /// The approximate bytes of the envelopes kept and their tables.
+    bytes: Cell<usize>,
 }
 
 struct SplitEnv {
@@ -49,70 +64,35 @@ struct SplitEnv {
     read: RefCell<Vec<f64>>,
     /// `[start][list]`: the gains of the list's pairs by character (filled on first use).
     gain: Vec<Vec<OnceCell<ByCharacter<f64>>>>,
-    /// `[start]`: the relaxation tables of the pairs that are no carrier, with their gains (filled on first use; None
-    /// when a table value is not finite).
-    plain: Vec<OnceCell<Option<RelaxTables>>>,
+    /// `[start]`: the gain tables of the pairs that are no carrier (filled on first use; None when a gain is not
+    /// finite).
+    plain: Vec<OnceCell<Option<Plain<f64>>>>,
     /// The coupled tables by (start, leader profile, weight index), filled on first use.
-    coupled: RefCell<HashMap<(usize, usize, i32), Rc<Coupled>>>,
+    coupled: RefCell<FxHashMap<(usize, usize, i32), Rc<Coupled>>>,
 }
 
 /// The tables of one weight `λ`: every pair reads `λ·power + gain/λ`, rounded up.
 struct Coupled {
     /// `[list]`: the values of the list's pairs from the start on by character.
     lists: Vec<ByCharacter<f64>>,
-    /// The relaxation tables of the pairs from the start on that are no carrier, reading the value as their gain
-    /// (None when a value is not finite).
-    plain: Option<RelaxTables>,
+    /// The tables of the pairs from the start on that are no carrier (None when a value is not finite).
+    plain: Option<Plain<f64>>,
 }
 
-/// One carrier list's pairs by character: the best value of its pairs without a Snap and the best values per Snap.
-struct ByCharacter<T> {
-    rows: Vec<(i64, Option<T>, Top<T>)>,
+/// The key of a sorted multiset of at most five lists below 15.
+fn env_key(ids: &[u16]) -> u32 {
+    assert!(ids.len() <= 5, "at most five carriers");
+    ids.iter().enumerate().fold(0, |key, (i, &id)| key | (u32::from(id) + 1) << (4 * i))
 }
 
-impl<T: Copy + PartialOrd> ByCharacter<T> {
-    fn compile(pairs: &[(usize, usize, i64)], value: impl Fn(usize, usize) -> T) -> Self {
-        let larger = |a: T, b: T| if b > a { b } else { a };
-        let mut by: HashMap<i64, (Option<T>, HashMap<u32, T>)> = HashMap::new();
-        for &(m, c, ch) in pairs {
-            let v = value(m, c);
-            let row = by.entry(ch).or_default();
-            if c == 0 {
-                row.0 = Some(row.0.map_or(v, |x| larger(x, v)));
-            } else {
-                let x = row.1.entry((c - 1) as u32).or_insert(v);
-                *x = larger(*x, v);
-            }
-        }
-        let mut rows: Vec<_> = by
-            .into_iter()
-            .map(|(ch, (base, snaps))| (ch, base, Top::from_best(snaps.into_iter().map(|(j, v)| (v, j)))))
-            .collect();
-        rows.sort_by_key(|row| row.0);
-        ByCharacter { rows }
-    }
+/// The power of the free slots' table relaxation.
+fn plain_power(parts: &PlainParts<i64>) -> i64 {
+    parts.best.sum().min(parts.base.sum() + parts.increments.sum())
+}
 
-    /// The `k` largest best values of characters outside `taken` (character IDs) without a Snap or with one outside
-    /// `taken_snaps`, summed in descending order with `add`; None with fewer such characters.
-    fn top(&self, taken: &[i64], taken_snaps: &[bool], k: usize, zero: T, add: impl Fn(T, T) -> T) -> Option<T> {
-        if k == 0 {
-            return Some(zero);
-        }
-        let mut best: Vec<T> = self
-            .rows
-            .iter()
-            .filter(|row| !taken.contains(&row.0))
-            .filter_map(|(_, base, snaps)| match (*base, snaps.first(|j| taken_snaps[j as usize])) {
-                (Some(a), Some(b)) => Some(if b > a { b } else { a }),
-                (a, b) => a.or(b),
-            })
-            .collect();
-        if best.len() < k {
-            return None;
-        }
-        best.sort_by(|a, b| b.partial_cmp(a).expect("finite split value"));
-        Some(best[..k].iter().fold(zero, |sum, &v| add(sum, v)))
-    }
+/// The gain of the free slots' table relaxation, rounded up.
+fn plain_gain(parts: &PlainParts<f64>) -> f64 {
+    parts.best.sum_up().min(add_up(parts.base.sum_up(), parts.increments.sum_up()))
 }
 
 impl CarrierSplit {
@@ -125,9 +105,10 @@ impl CarrierSplit {
         if lists == 0 || lists > MAX_LISTS {
             return None;
         }
+        let snaps = domain.snaps().len();
         let mut index = vec![Vec::new(); pool.members.len()];
         for &m in domain.members() {
-            index[m] = vec![u32::MAX; domain.snaps().len() + 1];
+            index[m] = vec![u32::MAX; snaps + 1];
         }
         for (i, &(m, c)) in b.choices.iter().enumerate() {
             index[m][c] = u32::try_from(i).ok()?;
@@ -138,6 +119,17 @@ impl CarrierSplit {
             class_at.push(classes);
             classes += keys.classes(m);
         }
+        let mut ids: Vec<i64> = Vec::new();
+        let mut character = vec![u16::MAX; pool.members.len()];
+        for &m in domain.members() {
+            let id = pool.members[m].character_id;
+            let at = ids.iter().position(|&x| x == id).unwrap_or_else(|| {
+                ids.push(id);
+                ids.len() - 1
+            });
+            character[m] = u16::try_from(at).ok()?;
+        }
+        let members: Vec<(usize, u16)> = domain.members().iter().map(|&m| (m, character[m])).collect();
         let mut starts = vec![0];
         let mut next = FIRST_START;
         while next < b.choices.len() {
@@ -146,9 +138,9 @@ impl CarrierSplit {
         }
         let mut pairs = vec![Vec::new(); lists];
         for &m in domain.members() {
-            for c in 0..=domain.snaps().len() {
+            for c in 0..=snaps {
                 if let Some(id) = keys.list(m, c) {
-                    pairs[id as usize].push((m, c, pool.members[m].character_id));
+                    pairs[id as usize].push((m, c));
                 }
             }
         }
@@ -160,17 +152,22 @@ impl CarrierSplit {
                         pairs
                             .iter()
                             .map(|list| {
-                                let list: Vec<_> =
-                                    list.iter().copied().filter(|&(m, c, _)| index[m][c] as usize >= from).collect();
-                                ByCharacter::compile(&list, |m, c| {
-                                    b.a[m] + b.lead[profile][m] + if c == 0 { 0 } else { b.w[m][c - 1] }
-                                })
+                                let rows = list
+                                    .iter()
+                                    .filter(|&&(m, c)| index[m][c] as usize >= from)
+                                    .map(|&(m, c)| {
+                                        let w = if c == 0 { 0 } else { b.w[m][c - 1] };
+                                        (character[m], c, b.a[m] + b.lead[profile][m] + w)
+                                    })
+                                    .collect();
+                                ByCharacter::compile(rows, 0)
                             })
                             .collect()
                     })
                     .collect()
             })
             .collect();
+        let plain_power = starts.iter().map(|_| (0..b.lead.len()).map(|_| OnceCell::new()).collect()).collect();
         let sets = (0..5).map(|r| multisets(lists, r)).collect();
         Some(CarrierSplit {
             keys,
@@ -178,11 +175,17 @@ impl CarrierSplit {
             index,
             class_at,
             classes,
+            character,
+            characters: ids.len(),
+            members,
+            snaps,
             starts,
             pairs,
             power,
+            plain_power,
             sets,
             envs: RefCell::default(),
+            bytes: Cell::new(0),
         })
     }
 
@@ -191,8 +194,19 @@ impl CarrierSplit {
         self.starts.partition_point(|&s| s <= from) - 1
     }
 
+    /// Whether a pair is no carrier and lies at or after suffix start `k`.
+    fn plain_pair(&self, k: usize, m: usize, c: usize) -> bool {
+        self.keys.list(m, c).is_none() && self.index[m][c] as usize >= self.starts[k]
+    }
+
+    /// Counts `bytes` more kept.
+    fn keep(&self, bytes: usize) {
+        self.bytes.set(self.bytes.get() + bytes);
+    }
+
     fn env(&self, ids: &[u16]) -> Rc<SplitEnv> {
-        if let Some(e) = self.envs.borrow().get(ids) {
+        let key = env_key(ids);
+        if let Some(e) = self.envs.borrow().get(&key) {
             return e.clone();
         }
         let e = Rc::new(SplitEnv {
@@ -203,10 +217,12 @@ impl CarrierSplit {
             coupled: RefCell::default(),
         });
         let mut envs = self.envs.borrow_mut();
-        if envs.len() >= ENV_CACHE {
+        if envs.len() >= ENV_CACHE || self.bytes.get() >= TABLE_BUDGET {
             envs.clear();
+            self.bytes.set(0);
         }
-        envs.insert(ids.to_vec(), e.clone());
+        self.keep(e.env.bytes() + self.classes * std::mem::size_of::<f64>());
+        envs.insert(key, e.clone());
         e
     }
 
@@ -222,75 +238,82 @@ impl CarrierSplit {
         g
     }
 
+    /// A list's pairs from suffix start `k` on by character, with `value` per pair.
+    fn list_rows<T>(&self, k: usize, list: usize, value: impl Fn(usize, usize) -> T) -> Vec<(u16, usize, T)> {
+        let from = self.starts[k];
+        self.pairs[list]
+            .iter()
+            .filter(|&&(m, c)| self.index[m][c] as usize >= from)
+            .map(|&(m, c)| (self.character[m], c, value(m, c)))
+            .collect()
+    }
+
     /// The gains of a list's pairs from suffix start `k` on by character under an envelope.
     fn gains<'a>(&self, e: &'a SplitEnv, k: usize, list: usize) -> &'a ByCharacter<f64> {
         e.gain[k][list].get_or_init(|| {
-            let from = self.starts[k];
-            let list: Vec<_> =
-                self.pairs[list].iter().copied().filter(|&(m, c, _)| self.index[m][c] as usize >= from).collect();
-            ByCharacter::compile(&list, |m, c| self.gain(e, m, c))
+            let table = ByCharacter::compile(self.list_rows(k, list, |m, c| self.gain(e, m, c)), 0.0);
+            self.keep(table.bytes());
+            table
         })
     }
 
-    /// The relaxation tables of the pairs from suffix start `k` on that are no carrier, under an envelope.
-    fn plain<'a>(
-        &self,
-        b: &JointBounds,
-        pool: &Pool,
-        domain: &CandidateDomain,
-        e: &'a SplitEnv,
-        k: usize,
-    ) -> Option<&'a RelaxTables> {
-        e.plain[k]
+    /// The tables of the pairs from suffix start `k` on that are no carrier, with `value` per pair as a gain.
+    fn plain_tables(&self, k: usize, value: &dyn Fn(usize, usize) -> f64) -> Option<Plain<f64>> {
+        let table = Plain::compile(
+            &self.members,
+            self.characters,
+            self.snaps,
+            &|m, c| self.plain_pair(k, m, c),
+            value,
+            &|_, _, v, base| (v - base).next_up(),
+            &|base: f64| base.max(0.0),
+            &|v: f64| v.is_finite(),
+            0.0,
+            f64::NEG_INFINITY,
+        )?;
+        self.keep(table.bytes());
+        Some(table)
+    }
+
+    /// The gain tables of the pairs from suffix start `k` on that are no carrier, under an envelope.
+    fn plain<'a>(&self, e: &'a SplitEnv, k: usize) -> Option<&'a Plain<f64>> {
+        e.plain[k].get_or_init(|| self.plain_tables(k, &|m, c| self.gain(e, m, c))).as_ref()
+    }
+
+    /// The power tables of the pairs from suffix start `k` on that are no carrier, for a leader profile.
+    fn plain_power<'a>(&'a self, b: &JointBounds, k: usize, profile: usize) -> Option<&'a Plain<i64>> {
+        self.plain_power[k][profile]
             .get_or_init(|| {
-                let (keys, from) = (&self.keys, self.starts[k]);
-                RelaxTables::compile_where(
-                    b,
-                    pool,
-                    domain,
-                    &|m, c| keys.list(m, c).is_none() && self.index[m][c] as usize >= from,
-                    &|m, c| [self.gain(e, m, c); 5],
+                Plain::compile(
+                    &self.members,
+                    self.characters,
+                    self.snaps,
+                    &|m, c| self.plain_pair(k, m, c),
+                    &|m, c| b.a[m] + b.lead[profile][m] + if c == 0 { 0 } else { b.w[m][c - 1] },
+                    &|m, j, _, _| b.w[m][j],
+                    &|base| base,
+                    &|_| true,
+                    0,
+                    i64::MIN,
                 )
             })
             .as_ref()
     }
 
     /// The coupled tables of weight `WEIGHT_STEP^j` for the pairs from suffix start `k` on under an envelope.
-    #[allow(clippy::too_many_arguments)]
-    fn coupled(
-        &self,
-        b: &JointBounds,
-        pool: &Pool,
-        domain: &CandidateDomain,
-        e: &SplitEnv,
-        k: usize,
-        profile: usize,
-        j: i32,
-    ) -> Rc<Coupled> {
+    fn coupled(&self, b: &JointBounds, e: &SplitEnv, k: usize, profile: usize, j: i32) -> Rc<Coupled> {
         if let Some(c) = e.coupled.borrow().get(&(k, profile, j)) {
             return c.clone();
         }
-        let (lambda, from) = (WEIGHT_STEP.powi(j), self.starts[k]);
+        let lambda = WEIGHT_STEP.powi(j);
         let value = |m: usize, c: usize| {
             let power = b.a[m] + b.lead[profile][m] + if c == 0 { 0 } else { b.w[m][c - 1] };
             add_up((lambda * power as f64).next_up(), (self.gain(e, m, c) / lambda).next_up())
         };
-        let lists = self
-            .pairs
-            .iter()
-            .map(|list| {
-                let list: Vec<_> =
-                    list.iter().copied().filter(|&(m, c, _)| self.index[m][c] as usize >= from).collect();
-                ByCharacter::compile(&list, value)
-            })
-            .collect();
-        let plain = RelaxTables::compile_where(
-            b,
-            pool,
-            domain,
-            &|m, c| self.keys.list(m, c).is_none() && self.index[m][c] as usize >= from,
-            &|m, c| [value(m, c); 5],
-        );
+        let lists: Vec<ByCharacter<f64>> =
+            (0..self.lists).map(|list| ByCharacter::compile(self.list_rows(k, list, value), 0.0)).collect();
+        self.keep(lists.iter().map(ByCharacter::bytes).sum());
+        let plain = self.plain_tables(k, &value);
         let c = Rc::new(Coupled { lists, plain });
         e.coupled.borrow_mut().insert((k, profile, j), c.clone());
         c
@@ -342,7 +365,6 @@ impl JointBounds {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn carrier_split_expected_upper(
         &self,
-        pool: &Pool,
         domain: &CandidateDomain,
         p: &PhysicalDeck,
         depth: usize,
@@ -350,21 +372,20 @@ impl JointBounds {
         orders: &[([usize; 5], u128)],
         threshold: i128,
     ) -> Option<i128> {
-        self.split_upper(pool, domain, p, depth, from, orders, threshold, threshold)
+        self.split_upper(domain, p, depth, from, orders, threshold, threshold)
     }
 
     /// `carrier_split_expected_upper` without a threshold, every multiset coupled.
     #[cfg(feature = "search-diagnostics")]
     pub(crate) fn carrier_split_coupled_upper(
         &self,
-        pool: &Pool,
         domain: &CandidateDomain,
         p: &PhysicalDeck,
         depth: usize,
         from: usize,
         orders: &[([usize; 5], u128)],
     ) -> Option<i128> {
-        self.split_upper(pool, domain, p, depth, from, orders, i128::MAX, i128::MIN)
+        self.split_upper(domain, p, depth, from, orders, i128::MAX, i128::MIN)
     }
 
     /// The carrier split bound; a multiset whose bound exceeds `couple_above` also takes the coupled bound: every
@@ -374,7 +395,6 @@ impl JointBounds {
     #[allow(clippy::too_many_arguments)]
     fn split_upper(
         &self,
-        pool: &Pool,
         domain: &CandidateDomain,
         p: &PhysicalDeck,
         depth: usize,
@@ -393,13 +413,14 @@ impl JointBounds {
         let profile = self.profile[p.members[2]];
         let choices = Self::prefix_choices(domain, p, depth);
         let r = 5 - depth;
-        let mut taken = Vec::with_capacity(depth);
-        let mut taken_snaps = vec![false; domain.snaps().len()];
+        let mut taken = vec![false; split.characters];
+        let mut taken_snaps = vec![false; split.snaps];
+        let mut placed = Vec::with_capacity(depth);
         let mut placed_ids = Vec::with_capacity(depth);
         let mut p0 = 0i64;
         for &slot in &SLOTS[..depth] {
             let (m, c) = (p.members[slot], choices[slot]);
-            taken.push(pool.members[m].character_id);
+            taken[split.character[m] as usize] = true;
             if c > 0 {
                 taken_snaps[c - 1] = true;
             }
@@ -407,11 +428,11 @@ impl JointBounds {
                 placed_ids.push(id);
             }
             p0 += self.a[m] + self.lead[profile][m] + if c == 0 { 0 } else { self.w[m][c - 1] };
+            placed.push((m, c));
         }
-        let placed = || SLOTS[..depth].iter().map(|&slot| (p.members[slot], choices[slot]));
-        // the split's tables read the same gain at every position
-        let positions = [0; 5];
-        let mut plain_taken = None;
+        let commands = keys.commands_of(placed.iter().copied(), r);
+        // [slots to fill without a carrier]: their power, the same under every envelope
+        let mut free_power = [None; 5];
         let mut best = i128::MIN;
         let mut ids = Vec::with_capacity(5);
         'sets: for t in &split.sets[r] {
@@ -429,31 +450,35 @@ impl JointBounds {
             ids.extend_from_slice(t);
             ids.sort_unstable();
             let e = split.env(&ids);
-            let a0 = keys.a0(&e.env, placed(), r);
+            let a0 = keys.a0_of(&e.env, commands);
             let mut gain = 0f64;
-            for (m, c) in placed() {
-                gain = add_up(gain, super::super::uniform::mean_up(&keys.gains(&e.env, m, c)));
+            for &(m, c) in &placed {
+                gain = add_up(gain, split.gain(&e, m, c));
             }
             let placed_gain = gain;
             for (list, n) in runs(t) {
                 gain = add_up(gain, split.gains(&e, k, list).top(&taken, &taken_snaps, n, 0.0, add_up)?);
             }
             let k0 = r - t.len();
-            let free = &SLOTS[depth..depth + k0];
             if k0 > 0 {
-                let tables = split.plain(self, pool, domain, &e, k)?;
-                let (taken_characters, taken_snaps) =
-                    plain_taken.get_or_insert_with(|| tables.taken(pool, domain, p, depth));
-                let (pp, pg, _) = tables.free_part(self, profile, free, &positions, taken_characters, taken_snaps);
+                let tables = split.plain(&e, k)?;
+                let pp = match free_power[k0] {
+                    Some(v) => v,
+                    None => {
+                        let v = plain_power(&split.plain_power(self, k, profile)?.parts(k0, &taken, &taken_snaps, 0));
+                        free_power[k0] = Some(v);
+                        v
+                    }
+                };
                 power += pp;
-                gain = add_up(gain, pg);
+                gain = add_up(gain, plain_gain(&tables.parts(k0, &taken, &taken_snaps, 0.0)));
             }
             let level = self.carrier_level(ids.len());
             let mut numerator = level.payoff_cap_from(a0, power, gain, 0).checked_mul(mass)?;
             if numerator > couple_above {
                 let j = weight(add_up(a0, gain), power);
                 let lambda = WEIGHT_STEP.powi(j);
-                let c = split.coupled(self, pool, domain, &e, k, profile, j);
+                let c = split.coupled(self, &e, k, profile, j);
                 // the prefix's terms, then the slots to fill (one value per pair)
                 let mut sum = add_up((lambda * p0 as f64).next_up(), (add_up(a0, placed_gain) / lambda).next_up());
                 let mut complete = true;
@@ -464,13 +489,9 @@ impl JointBounds {
                     }
                 }
                 if k0 > 0 {
-                    match (&c.plain, &plain_taken) {
-                        (Some(tables), Some((taken_characters, taken_snaps))) => {
-                            let (_, v, _) =
-                                tables.free_part(self, profile, free, &positions, taken_characters, taken_snaps);
-                            sum = add_up(sum, v);
-                        }
-                        _ => complete = false,
+                    match &c.plain {
+                        Some(tables) => sum = add_up(sum, plain_gain(&tables.parts(k0, &taken, &taken_snaps, 0.0))),
+                        None => complete = false,
                     }
                 }
                 if complete {
@@ -651,14 +672,15 @@ mod tests {
         // character 3 with Snap 0 8
         let pairs = [(0, 0, 1), (0, 1, 1), (1, 2, 2), (2, 1, 3)];
         let value = |m: usize, c: usize| [[5, 9, 0], [0, 0, 7], [0, 8, 0]][m][c];
-        let table = ByCharacter::compile(&pairs, value);
+        let table = ByCharacter::compile(pairs.iter().map(|&(m, c, ch)| (ch, c, value(m, c))).collect(), 0);
         let add = |a: i64, b: i64| a + b;
-        assert_eq!(table.top(&[], &[false, false], 2, 0, add), Some(17));
+        let taken = |characters: &[usize]| (0..4).map(|c| characters.contains(&c)).collect::<Vec<_>>();
+        assert_eq!(table.top(&taken(&[]), &[false, false], 2, 0, add), Some(17));
         // Snap 0 taken: character 1 keeps its pair without a Snap, character 3 has none left
-        assert_eq!(table.top(&[], &[true, false], 2, 0, add), Some(12));
-        assert_eq!(table.top(&[], &[true, false], 3, 0, add), None);
-        assert_eq!(table.top(&[2], &[false, false], 2, 0, add), Some(17));
-        assert_eq!(table.top(&[1], &[false, true], 2, 0, add), None);
-        assert_eq!(table.top(&[1, 2, 3], &[false, false], 0, 0, add), Some(0));
+        assert_eq!(table.top(&taken(&[]), &[true, false], 2, 0, add), Some(12));
+        assert_eq!(table.top(&taken(&[]), &[true, false], 3, 0, add), None);
+        assert_eq!(table.top(&taken(&[2]), &[false, false], 2, 0, add), Some(17));
+        assert_eq!(table.top(&taken(&[1]), &[false, true], 2, 0, add), None);
+        assert_eq!(table.top(&taken(&[1, 2, 3]), &[false, false], 0, 0, add), Some(0));
     }
 }
