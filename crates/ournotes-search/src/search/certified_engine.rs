@@ -1,7 +1,9 @@
 //! The interval frontier of the ordinary production traversal. Exact incumbents are never synthesized from bounds.
 use super::*;
 use crate::search::{
-    certified_search::CertifiedEvaluation,
+    certified_search::{
+        CertifiedEvaluation, PayoffMap, aggregate_orders, canonicalize_performers, refine_order_with_exact_law,
+    },
     interval_topk::{CandidateInterval, CanonicalTie, IntervalTopK, RankingProof, RemainingDomain},
 };
 use ournotes_sim::live::certified::F64Interval;
@@ -78,6 +80,20 @@ pub(super) struct CertifiedEntry {
     members: [i64; 5],
     snaps: [Option<i64>; 5],
     power: i32,
+    refinement: Option<Box<RetainedRefinement>>,
+}
+
+struct RetainedRefinement {
+    /// Retained independently of the optional score cache: partial order refinements are proof state.
+    evaluation: CertifiedEvaluation,
+    map: PayoffMap,
+    program: Vec<u8>,
+}
+
+impl RetainedRefinement {
+    fn new(admitted: bool, evaluation: CertifiedEvaluation, map: PayoffMap, program: Vec<u8>) -> Option<Box<Self>> {
+        admitted.then(|| Box::new(Self { evaluation, map, program }))
+    }
 }
 
 pub(super) struct CertifiedState {
@@ -85,6 +101,10 @@ pub(super) struct CertifiedState {
     entries: BTreeMap<u64, CertifiedEntry>,
     cutoff: Option<(i128, i32)>,
     score_cache: BTreeMap<(Vec<u8>, i32), CertifiedEvaluation>,
+    /// Refinement can hit its deadline after the physical traversal already closed the domain.
+    domain_exhausted: bool,
+    /// Fixed on the first scored leaf; long charts retain no per-candidate 120-order refinement state.
+    refinement_admitted: Option<bool>,
     /// The master's lottery-related skills, classified once per request.
     luck_skills: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
 }
@@ -96,6 +116,8 @@ impl CertifiedState {
             entries: BTreeMap::new(),
             cutoff: None,
             score_cache: BTreeMap::new(),
+            domain_exhausted: false,
+            refinement_admitted: None,
             luck_skills: None,
         })
     }
@@ -107,9 +129,30 @@ impl CertifiedState {
         let (&id, entry) = self.entries.iter().find(|(_, e)| e.physical == *p)?;
         Some((self.frontier.get(id)?.exact_payoff, entry.power))
     }
+
+    fn proof(&self, exhausted: bool, upper: Option<f64>) -> Result<RankingProof, Error> {
+        self.frontier.proof(if exhausted || self.domain_exhausted {
+            RemainingDomain::Exhausted
+        } else {
+            RemainingDomain::Open { upper }
+        })
+    }
+}
+
+/// A completed certificate starts no further work and therefore does not open a new stop reason.
+fn pending_refinement(proof: RankingProof, stopped: impl FnOnce() -> bool) -> Option<RankingProof> {
+    if proof.complete || stopped() { None } else { Some(proof) }
 }
 
 impl Engine<'_, '_> {
+    pub(super) fn admit_certified_refinement(&mut self, notes: usize, frames: usize) {
+        self.certified
+            .as_mut()
+            .expect("certified request")
+            .refinement_admitted
+            .get_or_insert(ournotes_sim::live::full::LuckExactBudget::admits_chart(notes, frames));
+    }
+
     pub(super) fn certified_luck_skills(
         &mut self,
     ) -> Result<std::sync::Arc<ournotes_sim::live::full::LuckSkills>, Error> {
@@ -155,8 +198,10 @@ impl Engine<'_, '_> {
         power: i32,
         evaluation: CertifiedEvaluation,
         program_identity: Vec<u8>,
-        payoff_identity: Vec<u8>,
+        map: PayoffMap,
     ) -> Result<(), Error> {
+        // The leaf transfers its already constructed map; never rebuild a deck's native payoff steps.
+        let payoff_identity = format!("{map:?}").into_bytes();
         let state = self.certified.as_mut().expect("certified request");
         let members = physical.members.map(|i| self.pool.members[i].id);
         let snaps = physical.snaps.map(|i| i.map(|i| self.pool.snaps[i].id));
@@ -168,6 +213,7 @@ impl Engine<'_, '_> {
             });
         }
         let id = self.tel.leaves.visited;
+        let retained_program = (state.refinement_admitted == Some(true)).then(|| program_identity.clone());
         let equality = state.frontier.certify_equal_program(program_identity, power, payoff_identity);
         state.frontier.insert(CandidateInterval {
             id,
@@ -182,7 +228,13 @@ impl Engine<'_, '_> {
         // Its equality class may already have settled the payoff further.
         let exact = state.frontier.get(id).map_or(evaluation.exact_payoff, |c| c.exact_payoff);
         self.offered = Some(super::Offered { payoff: exact.map(|x| (x.numerator, x.denominator)), power, score: None });
-        state.entries.insert(id, CertifiedEntry { physical, members, snaps, power });
+        let refinement = RetainedRefinement::new(
+            state.refinement_admitted == Some(true) && state.frontier.get(id).is_some(),
+            evaluation,
+            map,
+            retained_program.unwrap_or_default(),
+        );
+        state.entries.insert(id, CertifiedEntry { physical, members, snaps, power, refinement });
         state.entries.retain(|id, _| state.frontier.get(*id).is_some());
         state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
         self.tel.leaves.peak_retained = self.tel.leaves.peak_retained.max(state.entries.len());
@@ -192,25 +244,177 @@ impl Engine<'_, '_> {
         Ok(())
     }
 
+    /// Once the physical domain is exhausted, spend bounded work only on candidates whose ordering still
+    /// overlaps. Every installed order is a complete nominal law; declined/partial trees keep their old bounds.
+    pub(super) fn refine_certified_frontier(&mut self) -> Result<(), Error> {
+        use ournotes_sim::live::full::{LuckExactBudget, LuckExactDecline, luck_exact_law_with_ranking};
+        let state = self.certified.as_mut().expect("certified request");
+        state.domain_exhausted = true;
+        if state.refinement_admitted != Some(true) {
+            return Ok(());
+        }
+        let mut work = LuckExactBudget::default();
+        let mut attempted = std::collections::BTreeSet::<(u64, usize)>::new();
+        loop {
+            let state = self.certified.as_ref().expect("certified request");
+            let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
+            let Some(proof) = pending_refinement(proof, || self.expired() || work.exhausted()) else {
+                return Ok(());
+            };
+            let state = self.certified.as_ref().expect("certified request");
+            // proof.ambiguous is scheduled by its upper/lower payoff bounds and canonical ties. It is
+            // only a work priority: the frontier alone establishes every returned rank.
+            let selected = proof.ambiguous.iter().find_map(|&id| {
+                let entry = &state.entries[&id];
+                let retained = entry.refinement.as_ref()?;
+                let mut indices: Vec<_> = if matches!(retained.map, PayoffMap::Score) {
+                    retained
+                        .evaluation
+                        .orders
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, order)| {
+                            (order.exact_mean.is_none() && !attempted.contains(&(id, index))).then_some(index)
+                        })
+                        .collect()
+                } else {
+                    retained
+                        .evaluation
+                        .refinements
+                        .iter()
+                        .filter_map(|refinement| {
+                            (!attempted.contains(&(id, refinement.order_index))).then_some(refinement.order_index)
+                        })
+                        .collect()
+                };
+                indices.sort_unstable();
+                indices.dedup();
+                (!indices.is_empty())
+                    .then(|| (id, entry.physical, retained.program.clone(), retained.map.clone(), indices))
+            });
+            let Some((id, physical, program, map, indices)) = selected else {
+                return Ok(());
+            };
+            let mut input = expectation::context(self.pool, &physical, &self.request.objective)?;
+            if let Some(value) = self.simulation.music_length_ms {
+                input.params.music_length_ms = value;
+            }
+            if let Some(value) = self.simulation.score_music_length_ms {
+                input.params.score_music_length_ms = Some(value);
+            }
+            if canonicalize_performers(&mut input) != program {
+                return Err(Error::Domain("certified refinement changed the performer order basis".into()));
+            }
+            let setup =
+                input.gekisou.as_ref().ok_or_else(|| Error::Domain("LUCK refinement requires Gekisou".into()))?;
+            for index in indices {
+                if attempted.contains(&(id, index)) {
+                    continue;
+                }
+                let state = self.certified.as_ref().expect("certified request");
+                let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
+                let Some(proof) = pending_refinement(proof, || self.expired() || work.exhausted()) else {
+                    return Ok(());
+                };
+                if !proof.ambiguous.contains(&id) {
+                    break;
+                }
+                let state = self.certified.as_ref().expect("certified request");
+                let order =
+                    state.entries[&id].refinement.as_ref().expect("admitted candidate").evaluation.orders[index].order;
+                attempted.insert((id, index));
+                let performers = order.map(|slot| input.performers[slot].clone());
+                self.tel.lottery_refinement.attempted_orders += 1;
+                let master = self.pool.master;
+                let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+                let result = luck_exact_law_with_ranking(
+                    master,
+                    &performers,
+                    &input.notes,
+                    &input.events,
+                    input.params,
+                    setup,
+                    &input.play,
+                    &input.delta_times,
+                    input.rank_confirmations.as_deref(),
+                    &mut work,
+                    || self.expired(),
+                );
+                self.rec.clock.lap(resume);
+                let result = result?;
+                let telemetry = &mut self.tel.lottery_refinement;
+                telemetry.replay_runs += result.stats.replay_runs;
+                telemetry.frames += result.stats.frames;
+                telemetry.terminal_paths += result.stats.terminal_paths;
+                let Some(law) = result.law else {
+                    telemetry.declined_orders += 1;
+                    if result.decline == Some(LuckExactDecline::Cancelled) {
+                        return Ok(());
+                    }
+                    if result.decline == Some(LuckExactDecline::Domain) {
+                        // Every physical candidate has the same declared notes/frame schedule. Do not
+                        // rebuild all live candidates just to rediscover this request-wide refusal.
+                        return Ok(());
+                    }
+                    continue;
+                };
+                telemetry.completed_orders += 1;
+                let state = self.certified.as_mut().expect("certified request");
+                let retained = state
+                    .entries
+                    .get_mut(&id)
+                    .expect("live candidate selected above")
+                    .refinement
+                    .as_mut()
+                    .expect("admitted candidate");
+                if !refine_order_with_exact_law(&mut retained.evaluation.orders[index], &map, &law)? {
+                    self.tel.lottery_refinement.arithmetic_declines += 1;
+                    continue;
+                }
+                let evaluation = aggregate_orders(retained.evaluation.orders.clone(), &map)?;
+                // Another member of the same proven program class can already have narrowed the
+                // frontier. Retain that restriction too, never reinstall a wider cached enclosure.
+                let current = state.frontier.get(id).expect("live candidate selected above");
+                let score = current
+                    .score
+                    .intersect(evaluation.score)
+                    .ok_or_else(|| Error::Domain("conflicting refined score certificates".into()))?;
+                let payoff = current
+                    .payoff
+                    .intersect(evaluation.payoff)
+                    .ok_or_else(|| Error::Domain("conflicting refined payoff certificates".into()))?;
+                state.frontier.refine(
+                    id,
+                    current.revision,
+                    score,
+                    payoff,
+                    evaluation.exact_score,
+                    evaluation.exact_payoff,
+                )?;
+                if let Some(entry) = state.entries.get_mut(&id) {
+                    entry.refinement.as_mut().expect("admitted candidate").evaluation = evaluation;
+                }
+                state.entries.retain(|id, _| state.frontier.get(*id).is_some());
+                state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
+                self.tel.lottery_refinement.installed_orders += 1;
+                self.report_progress();
+            }
+        }
+    }
+
     pub(super) fn certified_results(&self, exhausted: bool) -> Result<(Vec<RecommendedDeck>, RankingProof), Error> {
         let state = self.certified.as_ref().expect("certified request");
-        let domain = if exhausted {
-            RemainingDomain::Exhausted
+        let upper = if self.rec.bounded {
+            self.rec.unexplored.map(|upper| {
+                F64Interval::integer(upper)
+                    .divide(F64Interval::integer(ORDERS as i128))
+                    .expect("positive divisor")
+                    .upper()
+            })
         } else {
-            RemainingDomain::Open {
-                upper: if self.rec.bounded {
-                    self.rec.unexplored.map(|upper| {
-                        F64Interval::integer(upper)
-                            .divide(F64Interval::integer(ORDERS as i128))
-                            .expect("positive divisor")
-                            .upper()
-                    })
-                } else {
-                    None
-                },
-            }
+            None
         };
-        let proof = state.frontier.proof(domain)?;
+        let proof = state.proof(exhausted, upper)?;
         let results = proof
             .ordered_prefix
             .iter()
@@ -236,5 +440,93 @@ impl Engine<'_, '_> {
             })
             .collect::<Result<Vec<_>, Error>>()?;
         Ok((results, proof))
+    }
+}
+
+#[cfg(test)]
+mod refinement_tests {
+    use super::*;
+
+    fn frontier(k: usize) -> CertifiedState {
+        let mut state = CertifiedState::new(k).unwrap();
+        for (id, lo, hi) in [(1, 10.0, 11.0), (2, 3.0, 5.0), (3, 4.0, 6.0)] {
+            let bounds = F64Interval::new(lo, hi).unwrap();
+            state
+                .frontier
+                .insert(CandidateInterval {
+                    id,
+                    tie: CanonicalTie { power: 100, key: vec![id as i64] },
+                    score: bounds,
+                    payoff: bounds,
+                    exact_score: None,
+                    exact_payoff: None,
+                    equality: None,
+                    revision: 0,
+                })
+                .unwrap();
+        }
+        state
+    }
+
+    #[test]
+    fn charts_outside_refinement_admission_retain_no_per_order_entry_state() {
+        use crate::search::certified_search::OrderScoreInterval;
+        use ournotes_sim::live::full::LuckExactBudget;
+        for (notes, frames, expected) in [(33, 193, false), (12, 513, false), (12, 193, true)] {
+            let orders = uniform::all_orders()
+                .into_iter()
+                .map(|order| OrderScoreInterval {
+                    order,
+                    mean: F64Interval::ONE,
+                    support: (1, 1),
+                    exact_mean: None,
+                    final_life: Some((1000, 1000)),
+                    tails: BTreeMap::new(),
+                    refined_payoff: None,
+                })
+                .collect();
+            let evaluation = aggregate_orders(orders, &PayoffMap::Score).unwrap();
+            let entry = CertifiedEntry {
+                physical: PhysicalDeck { members: [0, 1, 2, 3, 4], snaps: [None; 5] },
+                members: [1, 2, 3, 4, 5],
+                snaps: [None; 5],
+                power: 1,
+                refinement: RetainedRefinement::new(
+                    LuckExactBudget::admits_chart(notes, frames),
+                    evaluation,
+                    PayoffMap::Score,
+                    vec![1, 2, 3],
+                ),
+            };
+            assert_eq!(entry.refinement.is_some(), expected);
+            if let Some(retained) = entry.refinement {
+                assert_eq!(retained.evaluation.orders.len(), ORDERS);
+            }
+        }
+        eprintln!(
+            "retained LUCK base order rows: {} bytes per admitted frontier candidate, excluding nested allocations",
+            ORDERS * std::mem::size_of::<OrderScoreInterval>()
+        );
+    }
+
+    #[test]
+    fn a_refinement_timeout_retains_the_exhausted_domain_and_proved_prefix() {
+        let mut state = frontier(2);
+        assert!(state.proof(false, None).unwrap().ordered_prefix.is_empty());
+        // The physical traversal closed before the refinement deadline, although payoff overlap remains.
+        state.domain_exhausted = true;
+        let proof = state.proof(false, None).unwrap();
+        assert_eq!(proof.ordered_prefix, [1]);
+        assert_eq!(proof.ambiguous.len(), 2);
+        assert!(!proof.complete);
+        assert!(pending_refinement(proof, || true).is_none());
+        assert_eq!(state.proof(false, None).unwrap().ordered_prefix, [1]);
+    }
+
+    #[test]
+    fn an_already_complete_frontier_does_not_read_a_later_refinement_deadline() {
+        let proof = frontier(1).proof(true, None).unwrap();
+        assert!(proof.complete);
+        assert!(pending_refinement(proof, || panic!("a completed proof must not become a new timeout")).is_none());
     }
 }

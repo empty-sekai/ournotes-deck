@@ -32,6 +32,7 @@
 | `candidate` | 启发式候选策略的计数 | 开发 |
 | `caches` | 各缓存的查询与命中 | 开发 |
 | `memory` | 程序的峰值内存 | 页面、开发 |
+| `lotteryRefinement` | LUCK 完整 nominal 路径细化的工作量 | 开发 |
 
 ## `environment`
 
@@ -186,6 +187,22 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 ## `candidate`
 
 启发式候选策略：`warmupMemberSets`、`warmupProposals`、`explorationProposals`。
+
+## `lotteryRefinement`
+
+物理候选域已穷尽后，仅细化仍影响排序的候选与顺序。所有计数是本次请求的累计值；工作配额耗尽或拒绝细化不构成证明。
+
+| 字段 | 含义 |
+|---|---|
+| `attemptedOrders` | 尝试构造完整 nominal law 的顺序数 |
+| `completedOrders` | 已遍历全部正概率路径、总质量精确等于 1 的顺序数 |
+| `installedOrders` | 完整 law 成功用于收紧排序前沿的顺序数 |
+| `declinedOrders` | 因不支持的输入、随机源、工作配额、取消或算术容量而未得到完整 law 的顺序数 |
+| `arithmeticDeclines` | law 已完整，但搜索侧精确收益算术无法表示，因此未安装的顺序数 |
+| `replayRuns`、`frames`、`terminalPaths` | 已启动的前缀重放数、已执行帧数、已完成终止路径数，包含最终未发布 law 的尝试 |
+
+细化运行计入 `time.simulationMs`，与原有 `leaves.simulations` 的每队 120 顺序粗求值分别计数。排名得到认证时可以停止，
+因此 `Complete` 不要求每个顺序都完成精确细化，也不保证结果中已有精确的有理数期望值。
 
 ## `caches`
 

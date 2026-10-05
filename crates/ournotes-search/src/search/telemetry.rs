@@ -38,6 +38,8 @@ pub struct Telemetry {
     pub candidate: CandidateStrategy,
     pub caches: Caches,
     pub memory: Memory,
+    /// Bounded nominal LUCK refinement, separately counted from the 120-order coarse scorer.
+    pub lottery_refinement: LotteryRefinement,
 }
 
 impl Default for Telemetry {
@@ -62,8 +64,25 @@ impl Default for Telemetry {
             candidate: CandidateStrategy::default(),
             caches: Caches::default(),
             memory: Memory::default(),
+            lottery_refinement: LotteryRefinement::default(),
         }
     }
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LotteryRefinement {
+    pub attempted_orders: u64,
+    /// Orders for which the provider completed every positive-mass nominal path.
+    pub completed_orders: u64,
+    /// Complete laws successfully installed in the ranking frontier.
+    pub installed_orders: u64,
+    pub declined_orders: u64,
+    /// Complete laws whose search-side exact payoff arithmetic exceeded its representation.
+    pub arithmetic_declines: u64,
+    pub replay_runs: u64,
+    pub terminal_paths: u64,
+    pub frames: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -262,8 +281,9 @@ pub struct Proof {
     /// Time spent computing `upperBound` after the stop (not part of the search deadline).
     pub bound_ms: f64,
     /// Upper bound of the best payoff over the whole domain: the larger of the best payoff and the bounds of the
-    /// branches still open; it only decreases during the search and equals `best` once complete. Null while no bound
-    /// is known (a traversal that does not track it, or a stop in a search part other than the last).
+    /// branches still open. Equals `best` for a complete nonempty deterministic result. At a stop, finalization
+    /// folds the complete remaining domain across search parts; running multiple-part progress may be unknown.
+    /// Null for an empty domain, an unknown bound, or a certified lottery frontier (use its payoff intervals).
     pub global_upper_bound: Option<String>,
 }
 

@@ -203,6 +203,62 @@ impl LuckSkillTable {
     }
 }
 
+/// Exact nominal intervals of the current native table, retaining its binary32 buff.
+fn nominal_bonus_weights(table: &LuckSkillTable, minimum: i64) -> Result<Vec<(u64, u64, i64)>, Error> {
+    if table.items.is_empty() {
+        return Err(game("no luck lottery item"));
+    }
+    if table.items.iter().any(|&(_, result)| !(0..=3).contains(&result)) {
+        return Err(Error::Unsupported("LUCK DP: lottery result outside Miss/Hit/Super Hit/Critical".into()));
+    }
+    let (mut total, mut per) = (nominal_total(&table.items)?, 0i32);
+    if minimum >= 1 {
+        let (mut included, mut excluded, mut n) = (0i32, 0i32, 0i32);
+        for &(weight, result) in &table.items {
+            let weight = buffed(table.buff, weight);
+            if weight < 0 {
+                return Err(Error::Unsupported("LUCK DP: negative lottery weight".into()));
+            }
+            if result >= minimum {
+                included = included.checked_add(weight).ok_or_else(nominal_weight_overflow)?;
+                n += 1;
+            } else {
+                excluded = excluded.checked_add(weight).ok_or_else(nominal_weight_overflow)?;
+            }
+        }
+        if n == 0 {
+            return Err(game("no luck lottery item"));
+        }
+        per = sdiv(excluded, n);
+        total = per.checked_mul(n).and_then(|v| included.checked_add(v)).ok_or_else(nominal_weight_overflow)?;
+    }
+    if total < 1 {
+        return Err(game("lottery table with a total weight below 1"));
+    }
+    let (mut out, mut lo) = (Vec::new(), 0i32);
+    for &(weight, result) in &table.items {
+        if minimum >= 1 && result < minimum {
+            continue;
+        }
+        let weight = per.checked_add(buffed(table.buff, weight)).ok_or_else(nominal_weight_overflow)?;
+        if weight < 0 {
+            return Err(Error::Unsupported("LUCK DP: negative lottery weight".into()));
+        }
+        let hi = lo.checked_add(weight).ok_or_else(|| Error::Capacity("LUCK DP lottery weight overflow".into()))?;
+        // Without a minimum the modulus remains the ORIGINAL, unbuffed total. Buffed cumulative
+        // intervals therefore truncate at that total; normalizing the buffed weights changes the game.
+        let (a, b) = (lo.clamp(0, total), hi.clamp(0, total));
+        if b > a {
+            out.push(((b - a) as u64, total as u64, result));
+        }
+        lo = hi;
+    }
+    if lo < total {
+        return Err(game("no luck lottery item"));
+    }
+    Ok(out)
+}
+
 /// The luck lottery: base points per judged note, bonus results per lot, minimum-result guarantees.
 #[derive(Clone, Debug)]
 pub(crate) struct LotteryMachine {
@@ -239,58 +295,7 @@ impl LotteryMachine {
     ) -> Result<Vec<(u64, u64, i64)>, Error> {
         let mut table = self.tables.get(lot_type).ok_or_else(|| game("lot type out of range"))?.clone();
         table.buff = buff as f32 / 100f32;
-        if table.items.is_empty() {
-            return Err(game("no luck lottery item"));
-        }
-        if table.items.iter().any(|&(_, result)| !(0..=3).contains(&result)) {
-            return Err(Error::Unsupported("LUCK DP: lottery result outside Miss/Hit/Super Hit/Critical".into()));
-        }
-        let (mut total, mut per) = (nominal_total(&table.items)?, 0i32);
-        if minimum >= 1 {
-            let (mut included, mut excluded, mut n) = (0i32, 0i32, 0i32);
-            for &(weight, result) in &table.items {
-                let weight = buffed(table.buff, weight);
-                if weight < 0 {
-                    return Err(Error::Unsupported("LUCK DP: negative lottery weight".into()));
-                }
-                if result >= minimum {
-                    included = included.checked_add(weight).ok_or_else(nominal_weight_overflow)?;
-                    n += 1;
-                } else {
-                    excluded = excluded.checked_add(weight).ok_or_else(nominal_weight_overflow)?;
-                }
-            }
-            if n == 0 {
-                return Err(game("no luck lottery item"));
-            }
-            per = sdiv(excluded, n);
-            total = per.checked_mul(n).and_then(|v| included.checked_add(v)).ok_or_else(nominal_weight_overflow)?;
-        }
-        if total < 1 {
-            return Err(game("lottery table with a total weight below 1"));
-        }
-        let (mut out, mut lo) = (Vec::new(), 0i32);
-        for &(weight, result) in &table.items {
-            if minimum >= 1 && result < minimum {
-                continue;
-            }
-            let weight = per.checked_add(buffed(table.buff, weight)).ok_or_else(nominal_weight_overflow)?;
-            if weight < 0 {
-                return Err(Error::Unsupported("LUCK DP: negative lottery weight".into()));
-            }
-            let hi = lo.checked_add(weight).ok_or_else(|| Error::Capacity("LUCK DP lottery weight overflow".into()))?;
-            // Without a minimum the modulus remains the ORIGINAL, unbuffed total. Buffed cumulative
-            // intervals therefore truncate at that total; normalizing the buffed weights changes the game.
-            let (a, b) = (lo.clamp(0, total), hi.clamp(0, total));
-            if b > a {
-                out.push(((b - a) as u64, total as u64, result));
-            }
-            lo = hi;
-        }
-        if lo < total {
-            return Err(game("no luck lottery item"));
-        }
-        Ok(out)
+        nominal_bonus_weights(&table, minimum)
     }
 
     /// Nominal base-point probabilities using the same note and judgement dispatch as `base_point`.
@@ -418,6 +423,15 @@ impl LotteryMachine {
     }
 
     fn luck_bonus(&mut self, lot_type: usize, t: i32, random: &mut LiveRandom) -> Result<i64, Error> {
+        if random.is_nominal() {
+            let applied = self.max_minimum_result();
+            let table = self.tables.get(lot_type).ok_or_else(|| game("lot type out of range"))?;
+            let result = random.nominal_lottery(nominal_bonus_weights(table, applied)?)?;
+            if applied >= 1 {
+                self.consume_minimum(applied, t);
+            }
+            return Ok(result);
+        }
         let r = random.next_int(LUCK);
         let applied = self.max_minimum_result();
         let table = self.tables.get(lot_type).ok_or_else(|| game("lot type out of range"))?;
@@ -436,6 +450,9 @@ impl LotteryMachine {
         let u = j.wrapping_add(1) as u32;
         if u < 9 && (0x107u32 >> (u & 31)) & 1 != 0 {
             return Ok(0);
+        }
+        if random.is_nominal() {
+            return random.nominal_lottery(self.base_point_probability_weights(note_type, j)?);
         }
         let r = random.next_int(LUCK);
         let items = if is_sub_note(note_type) {
@@ -1525,6 +1542,32 @@ mod nominal_lottery_tests {
     }
 
     #[test]
+    fn nominal_hooks_count_native_draws_and_consume_minimum_only_after_a_choice() {
+        let mut machine = machine(vec![(5, 0), (2, 2), (4, 3)]);
+        let mut random = LiveRandom::with_nominal_prefix(vec![0]);
+        assert_eq!(machine.base_point(122, 5, &mut random).unwrap(), 0);
+        assert_eq!(machine.base_point(1, 1, &mut random).unwrap(), 0);
+        assert_eq!(random.draws(), 0);
+        assert_eq!(machine.base_point(1, 2, &mut random).unwrap(), 0);
+        assert_eq!(random.draws(), 1, "an unhandled judgement still consumes the native base draw");
+        assert_eq!(machine.base_point(21, 6, &mut random).unwrap(), 5);
+        assert_eq!(random.draws(), 2, "a deterministic table still consumes a draw");
+        let minimum = machine.enable_minimum(2, 1);
+        assert_eq!(machine.luck_bonus(0, 77, &mut random).unwrap(), 3);
+        assert_eq!(random.draws(), 3);
+        assert!(!machine.is_minimum_active(minimum));
+        assert_eq!(machine.take_last_consumed(minimum), 77);
+        assert!(random.nominal_covers_draws() && random.nominal_prefix_consumed());
+
+        let minimum = machine.enable_minimum(2, 1);
+        let mut pending = LiveRandom::with_nominal_prefix(Vec::new());
+        assert!(machine.luck_bonus(0, 88, &mut pending).is_err());
+        assert!(pending.nominal_branch().is_some() && pending.nominal_covers_draws());
+        assert!(machine.is_minimum_active(minimum), "a missing choice stops before consuming a guarantee");
+        assert_eq!(machine.take_last_consumed(minimum), -1);
+    }
+
+    #[test]
     fn buffed_lottery_keeps_the_unbuffed_modulus() {
         let machine = machine(vec![(3, 0), (1, 1), (2, 2), (4, 3)]);
         let probabilities = machine.bonus_probabilities(0, 100, 0).unwrap();
@@ -1563,7 +1606,7 @@ mod nominal_lottery_tests {
     fn integer_masses_match_every_native_modulus_position() {
         for items in [vec![(3, 0), (1, 1), (2, 2), (4, 3)], vec![(2, 0), (3, 2), (1, 3), (4, 3)]] {
             let machine = machine(items);
-            for buff in [0, 25, 100, 250] {
+            for buff in [0, 25, 53, 100, 250] {
                 for minimum in 0..=3 {
                     let weights = machine.bonus_probability_weights(0, buff, minimum).unwrap();
                     let total = weights[0].1;
@@ -1575,6 +1618,7 @@ mod nominal_lottery_tests {
                     }
                     let mut table = machine.tables[0].clone();
                     table.buff = buff as f32 / 100.0;
+                    assert_eq!(nominal_bonus_weights(&table, minimum).unwrap(), weights);
                     let mut actual = [0u64; 4];
                     for r in 0..total as i32 {
                         let result =

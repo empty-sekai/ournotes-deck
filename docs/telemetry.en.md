@@ -35,6 +35,7 @@ reports the work so far, a recommendation result reports the whole request.
 | `candidate` | Heuristic candidate strategy counters | dev |
 | `caches` | Lookups and hits of each cache | dev |
 | `memory` | Peak memory of the program | page, dev |
+| `lotteryRefinement` | Work spent refining complete nominal LUCK paths | dev |
 
 ## `environment`
 
@@ -198,6 +199,24 @@ powerFrontier}`; `powerFrontierClosed`.
 ## `candidate`
 
 Heuristic candidate strategy: `warmupMemberSets`, `warmupProposals`, `explorationProposals`.
+
+## `lotteryRefinement`
+
+After the physical candidate domain is exhausted, refine only candidates and orders that still affect ranking.
+Counters accumulate within the request; exhausting an allowance or declining refinement is not a proof.
+
+| Field | Meaning |
+|---|---|
+| `attemptedOrders` | Orders for which construction of a complete nominal law was attempted |
+| `completedOrders` | Orders whose every positive-mass path terminated and whose total mass is exactly one |
+| `installedOrders` | Complete laws successfully used to narrow the ranking frontier |
+| `declinedOrders` | Orders without a complete law due to unsupported inputs or random sources, work allowances, cancellation or arithmetic capacity |
+| `arithmeticDeclines` | Complete laws not installed because search-side exact payoff arithmetic could not represent the result |
+| `replayRuns`, `frames`, `terminalPaths` | Prefix replays started, frames executed and terminal paths completed, including attempts that ultimately publish no law |
+
+Refinement time is charged to `time.simulationMs`; its runs are separate from the coarse 120-order evaluations
+counted by `leaves.simulations`. Refinement can stop once the ranking is certified, so `Complete` does not require
+every order to have an exact law or every returned expectation to have an exact rational value.
 
 ## `caches`
 
