@@ -168,7 +168,7 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | `pair` | 单个子分支的上界 |
 | `nodeTies`、`pairTies` | 上界等于第 K 名、靠综合力保留的次数 |
 | `seedBonusSkipped` | PT 预热时不在最高奖金区间而跳过的前缀 |
-| `modules` | 按名称的上界模块（`memberAdditive` 等），各为全部深度合计的 `{checks, pruned}` |
+| `modules` | 按名称的上界模块（`memberAdditive` 等；`carrierSplit`：按空位将放的连击载体拆分的节点上界，载体见 `carriers`；`carrierSplitTail`：同一上界用于节点选择循环里剩下的全部子节点），各为全部深度合计的 `{checks, pruned}` |
 | `carriers` | 撃奏分数且谱面有连击区间时，按连击载体数分档的廉价上界（载体：带撃奏连击加成窗口的成员与 Snap；已放 `c` 个载体、还剩 `r` 个空位的节点读第 `c + r` 档）：`levels` 是全池上界之外编译的档数（各搜索分段取最大），`nodes[n]` 是读第 `n` 档（0 到 5）的受检节点数 |
 | `rootOrder` | 根层按深度 1 上界降序访问：`skipped` 是某个分支已严格劣于第 K 名后不再访问的根分支数（它们都会在深度 1 被剪），`traversalsPruned` 是最好的根分支一开始就已劣于第 K 名的遍历数（整个域或撃奏的一个转换分段及其槽位规则） |
 

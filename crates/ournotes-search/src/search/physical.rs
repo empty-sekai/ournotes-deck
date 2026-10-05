@@ -1495,6 +1495,16 @@ fn joint_rec(
                 return Ok(true);
             }
         }
+        if depth < 5
+            && let Some(cap) = bounds.carrier_split_expected_upper(e.pool, domain, p, depth, start, orders, threshold)
+        {
+            let module = joint.modules.entry("carrierSplit").or_default();
+            module.checks += 1;
+            if cap < threshold || (exact_ties && cap == threshold && power < i64::from(cutoff_power)) {
+                module.pruned += 1;
+                return Ok(true);
+            }
+        }
         if depth < 5 && e.correlated {
             joint.correlated.check(depth);
             let correlated =
@@ -1616,6 +1626,22 @@ fn joint_rec(
             let module = e.tel.joint.modules.entry("orderStepsTail").or_default();
             module.checks += 1;
             if steps < threshold || (exact_ties && steps == threshold && steps_power < i64::from(cutoff_power)) {
+                module.pruned += 1;
+                e.tel.joint.tail_choices_skipped[depth] += (width - offset) as u64;
+                break;
+            }
+        }
+        // Every child from `offset` on and its completions take candidates from `offset` on: the carrier split of
+        // that suffix bounds them all.
+        if depth > 0
+            && offset > start
+            && offset % 16 == 0
+            && let Some((threshold, _)) = e.safe_cutoff()
+            && let Some(cap) = bounds.carrier_split_expected_upper(e.pool, domain, p, depth, offset, orders, threshold)
+        {
+            let module = e.tel.joint.modules.entry("carrierSplitTail").or_default();
+            module.checks += 1;
+            if cap < threshold {
                 module.pruned += 1;
                 e.tel.joint.tail_choices_skipped[depth] += (width - offset) as u64;
                 break;

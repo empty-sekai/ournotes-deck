@@ -1160,6 +1160,16 @@ impl CarrierKeys {
         self.list_of[m][choice]
     }
 
+    /// The class of a pool member and choice: pairs of one member and class have the same gains under every envelope.
+    pub(crate) fn class(&self, m: usize, choice: usize) -> usize {
+        self.class_of[m][choice]
+    }
+
+    /// The number of distinct carrier window lists.
+    pub(crate) fn list_count(&self) -> usize {
+        self.lists.len()
+    }
+
     /// The envelope of the completions of a prefix with carriers of the lists `placed` and `r` slots to fill.
     pub(crate) fn envelope(&self, placed: &[u16], r: usize) -> Rc<KeyedEnvelope> {
         let mut ids = placed.to_vec();
@@ -1169,6 +1179,18 @@ impl CarrierKeys {
         if let Some(e) = self.cache.borrow().get(&key) {
             return e.clone();
         }
+        let e = Rc::new(self.build_envelope(&ids, r));
+        let mut cache = self.cache.borrow_mut();
+        if cache.len() >= KEYED_CACHE {
+            cache.clear();
+        }
+        cache.insert(key, e.clone());
+        e
+    }
+
+    /// `envelope` without the cache: the envelope of the decks with carriers of the lists `ids` and at most `r` other
+    /// carriers.
+    pub(crate) fn build_envelope(&self, ids: &[u16], r: usize) -> KeyedEnvelope {
         let lists: Vec<&[ComboBonusRow]> = ids.iter().map(|&i| &self.lists[i as usize][..]).collect();
         let (mut g, mut sums) = (Vec::new(), Vec::new());
         keyed_factors(&self.gc, &self.coef.times, &self.member_cb, &lists, r, &mut g, &mut sums);
@@ -1184,13 +1206,7 @@ impl CarrierKeys {
             let coef = Coef { k: ks, z: self.coef.z.clone(), ..Default::default() };
             factor_error_sensitivity(&coef, d.judgement_max).expect("keyed sensitivity at most the pool-wide one")
         });
-        let e = Rc::new(KeyedEnvelope { a0, sensitivity, pc, pj, sums, gains: RefCell::default() });
-        let mut cache = self.cache.borrow_mut();
-        if cache.len() >= KEYED_CACHE {
-            cache.clear();
-        }
-        cache.insert(key, e.clone());
-        e
+        KeyedEnvelope { a0, sensitivity, pc, pj, sums, gains: RefCell::default() }
     }
 
     /// `A0` of an envelope for completions of the placed performers `placed` (pool member, choice) with `free` slots to
@@ -1238,11 +1254,16 @@ impl CarrierKeys {
         if let Some(g) = env.gains.borrow().get(&(m, choice)) {
             return *g;
         }
-        let class = self.class_of[m][choice];
-        let reads = RampReads { gc: &self.gc, sums: &env.sums, times: &self.coef.times };
-        let g = self.windows[m][class].each_ref().map(|c| window_gain(c, &env.pc, &env.pj, Some(reads)));
+        let g = self.gains_uncached(env, m, choice);
         env.gains.borrow_mut().insert((m, choice), g);
         g
+    }
+
+    /// `gains` without storing them in the envelope.
+    pub(crate) fn gains_uncached(&self, env: &KeyedEnvelope, m: usize, choice: usize) -> [f64; 5] {
+        let class = self.class_of[m][choice];
+        let reads = RampReads { gc: &self.gc, sums: &env.sums, times: &self.coef.times };
+        self.windows[m][class].each_ref().map(|c| window_gain(c, &env.pc, &env.pj, Some(reads)))
     }
 
     /// Diagnostics only: each entry's envelope coefficient, its term in the cheap sum with the performers `placed`

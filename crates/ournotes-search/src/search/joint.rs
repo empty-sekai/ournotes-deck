@@ -23,6 +23,7 @@ use ournotes_sim::scenario::EventPayoffInput;
 use std::collections::{HashMap, HashSet};
 
 mod bonus;
+mod carrier_split;
 mod classes;
 mod composition;
 mod cutoff;
@@ -132,6 +133,8 @@ pub(crate) struct JointBounds {
     pub(crate) choices: Vec<(usize, usize)>,
     /// With a Gekisou combo range: the cheap bounds of decks with few combo carriers (see `CarrierLevels`).
     carrier_levels: Option<CarrierLevels>,
+    /// With carrier keys: the node bounds split by the carriers of the slots to fill (see `carrier_split`).
+    carrier_split: Option<carrier_split::CarrierSplit>,
 }
 
 /// The cheap bounds of decks with at most `n < 5` Gekisou combo carriers (a slot whose member and Snap bring combo
@@ -341,6 +344,7 @@ impl JointBounds {
             prefix_character: None,
             choices,
             carrier_levels: None,
+            carrier_split: None,
         };
         compiled.compile_tables(pool, domain);
         if !compiled.gekisou {
@@ -365,6 +369,7 @@ impl JointBounds {
                 })
                 .collect();
             compiled.carrier_levels = Some(CarrierLevels { carrier, at, keys });
+            compiled.carrier_split = carrier_split::CarrierSplit::compile(&compiled, pool, domain);
         }
         Ok(compiled)
     }
@@ -398,6 +403,7 @@ impl JointBounds {
             prefix_character: None,
             choices: self.choices.clone(),
             carrier_levels: None,
+            carrier_split: None,
         };
         b.compile_tables(pool, domain);
         b

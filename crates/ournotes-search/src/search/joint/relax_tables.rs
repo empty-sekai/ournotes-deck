@@ -8,18 +8,18 @@ const KEEP: usize = 5;
 
 /// Up to KEEP (value, key) entries with distinct keys, best first.
 #[derive(Clone, Debug, Default)]
-struct Top<T> {
+pub(super) struct Top<T> {
     entries: Vec<(T, u32)>,
 }
 impl<T: Copy + PartialOrd> Top<T> {
-    fn from_best(best: impl Iterator<Item = (T, u32)>) -> Self {
+    pub(super) fn from_best(best: impl Iterator<Item = (T, u32)>) -> Self {
         let mut entries: Vec<(T, u32)> = best.collect();
         entries.sort_by(|a, b| b.0.partial_cmp(&a.0).expect("finite table value").then(a.1.cmp(&b.1)));
         entries.truncate(KEEP);
         Top { entries }
     }
     /// The best value whose key is free, if any.
-    fn first(&self, taken: impl Fn(u32) -> bool) -> Option<T> {
+    pub(super) fn first(&self, taken: impl Fn(u32) -> bool) -> Option<T> {
         self.entries.iter().find(|e| !taken(e.1)).map(|e| e.0)
     }
 }
@@ -27,6 +27,8 @@ impl<T: Copy + PartialOrd> Top<T> {
 pub(super) struct RelaxTables {
     /// Domain characters (distinct, any order).
     characters: Vec<i64>,
+    /// Whether a character has a member with an allowed pair (every character without a filter).
+    present: Vec<bool>,
     /// [profile][character]: best member-only power, and best power per Snap (key = domain Snap index).
     base_power: Vec<Vec<i64>>,
     snap_power_by_character: Vec<Vec<Top<i64>>>,
@@ -44,8 +46,26 @@ pub(super) struct RelaxTables {
 impl RelaxTables {
     /// None when a table value is not finite; the scan then remains the relaxation.
     pub(super) fn compile(b: &JointBounds, pool: &Pool, domain: &CandidateDomain) -> Option<Self> {
-        let members = domain.members();
+        Self::compile_where(b, pool, domain, &|_, _| true, &|m, c| b.gains[m][c])
+    }
+
+    /// The tables of the pairs (pool member, choice) that `allowed` admits, with the gains `gains` reads. A member
+    /// with an admitted pair keeps its member-only power and gain as the base of its Snap increments, so each admitted
+    /// pair is at most its character's base plus its Snap's increment, as in the unfiltered tables.
+    pub(super) fn compile_where(
+        b: &JointBounds,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        allowed: &dyn Fn(usize, usize) -> bool,
+        gains: &dyn Fn(usize, usize) -> [f64; 5],
+    ) -> Option<Self> {
+        let all: Vec<usize> = domain.members().to_vec();
+        let members: Vec<usize> =
+            all.iter().copied().filter(|&m| (0..=domain.snaps().len()).any(|c| allowed(m, c))).collect();
+        let members = &members[..];
         let snaps = domain.snaps().len();
+        // [member index][choice]
+        let g: Vec<Vec<[f64; 5]>> = members.iter().map(|&m| (0..=snaps).map(|c| gains(m, c)).collect()).collect();
         let mut characters: Vec<i64> = Vec::new();
         let member_character: Vec<usize> = members
             .iter()
@@ -57,9 +77,21 @@ impl RelaxTables {
                 })
             })
             .collect();
+        let mut present = vec![false; characters.len()];
+        for &c in &member_character {
+            present[c] = true;
+        }
+        // characters of the domain with no admitted pair stay absent
+        for &m in &all {
+            let c = pool.members[m].character_id;
+            if !characters.contains(&c) {
+                characters.push(c);
+                present.push(false);
+            }
+        }
         let nc = characters.len();
         let profiles = b.lead.len();
-        if b.gains.iter().flatten().flatten().any(|g| !g.is_finite()) {
+        if g.iter().flatten().flatten().any(|g| !g.is_finite()) {
             return None;
         }
         // Maxima over the members of one character, keyed by Snap; then the KEEP best Snaps.
@@ -68,7 +100,9 @@ impl RelaxTables {
             for (i, &m) in members.iter().enumerate() {
                 if member_character[i] == c {
                     for (j, slot) in best.iter_mut().enumerate() {
-                        *slot = slot.max(value(m, j));
+                        if allowed(m, j + 1) {
+                            *slot = slot.max(value(i, j));
+                        }
                     }
                 }
             }
@@ -86,7 +120,9 @@ impl RelaxTables {
                     let own = b.a[m] + b.lead[profile][m];
                     base_power[profile][c] = base_power[profile][c].max(own);
                     for (j, slot) in best.iter_mut().enumerate() {
-                        *slot = (*slot).max(own + b.w[m][j]);
+                        if allowed(m, j + 1) {
+                            *slot = (*slot).max(own + b.w[m][j]);
+                        }
                     }
                 }
                 snap_power_by_character[profile][c] = Top::from_best(best.into_iter().zip(0..));
@@ -96,12 +132,12 @@ impl RelaxTables {
         let mut snap_gain_by_character: Vec<[Top<f64>; 5]> = vec![Default::default(); nc];
         for c in 0..nc {
             for pos in 0..5 {
-                for (i, &m) in members.iter().enumerate() {
+                for i in 0..members.len() {
                     if member_character[i] == c {
-                        base_gain[c][pos] = base_gain[c][pos].max(b.gains[m][0][pos]);
+                        base_gain[c][pos] = base_gain[c][pos].max(g[i][0][pos]);
                     }
                 }
-                let best = by_character(c, &|m, j| b.gains[m][j + 1][pos]);
+                let best = by_character(c, &|i, j| g[i][j + 1][pos]);
                 snap_gain_by_character[c][pos] = Top::from_best(best.into_iter().zip(0..));
             }
         }
@@ -117,7 +153,9 @@ impl RelaxTables {
                     }
                     base_bonus[c] = base_bonus[c].max(pt.member[m]);
                     for (j, slot) in best.iter_mut().enumerate() {
-                        *slot = (*slot).max(pt.member[m] + pt.snap[j]);
+                        if allowed(m, j + 1) {
+                            *slot = (*slot).max(pt.member[m] + pt.snap[j]);
+                        }
                     }
                 }
                 snap_bonus_by_character[c] = Top::from_best(best.into_iter().zip(0..));
@@ -129,10 +167,13 @@ impl RelaxTables {
             let mut power = vec![i64::MIN; nc];
             let mut gain = [(); 5].map(|_| vec![f64::NEG_INFINITY; nc]);
             for (i, &m) in members.iter().enumerate() {
+                if !allowed(m, j + 1) {
+                    continue;
+                }
                 let c = member_character[i];
                 power[c] = power[c].max(b.w[m][j]);
                 for (pos, row) in gain.iter_mut().enumerate() {
-                    row[c] = row[c].max((b.gains[m][j + 1][pos] - b.gains[m][0][pos]).next_up());
+                    row[c] = row[c].max((g[i][j + 1][pos] - g[i][0][pos]).next_up());
                 }
             }
             increment_power.push(Top::from_best(power.into_iter().zip(0..)));
@@ -140,6 +181,7 @@ impl RelaxTables {
         }
         Some(RelaxTables {
             characters,
+            present,
             base_power,
             snap_power_by_character,
             base_gain,
@@ -192,7 +234,7 @@ impl RelaxTables {
         let character_taken = |c: u32| taken_characters[c as usize];
         let (mut powers, mut gains, mut bonuses) = (Vec::new(), Vec::new(), Vec::new());
         let (mut base_powers, mut base_gains, mut base_bonuses) = (Vec::new(), Vec::new(), Vec::new());
-        for c in (0..self.characters.len()).filter(|&c| !taken_characters[c]) {
+        for c in (0..self.characters.len()).filter(|&c| self.present[c] && !taken_characters[c]) {
             let base_p = self.base_power[profile][c];
             let base_g = free.iter().map(|&s| self.base_gain[c][positions[s]]).fold(0.0, f64::max);
             let base_b = if b.points.is_some() { self.base_bonus[c] } else { 0 };

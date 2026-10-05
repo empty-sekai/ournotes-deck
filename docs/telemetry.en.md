@@ -177,7 +177,7 @@ checked; `tail` and `pair` count at the parent's depth (they check its children)
 | `pair` | Bound of a single child branch |
 | `nodeTies`, `pairTies` | Bounds equal to the K-th payoff, kept on power |
 | `seedBonusSkipped` | PT warm start: prefixes outside the maximum-bonus regime |
-| `modules` | Bound modules by name (`memberAdditive`, ...), each `{checks, pruned}` over all depths |
+| `modules` | Bound modules by name (`memberAdditive`, ...; `carrierSplit`: the node bound split by the combo carriers of the slots to fill, see `carriers`; `carrierSplitTail`: the same bound over the children left in a node's choice loop), each `{checks, pruned}` over all depths |
 | `carriers` | Gekisou score on a chart with a combo range: cheap bounds by the number of combo carriers (a member and Snap bringing Gekisou combo bonus windows; a node with `c` carriers placed and `r` slots to fill reads level `c + r`): `levels` compiled apart from the pool-wide bounds (the largest over the search parts), `nodes[n]` the bounded nodes reading level `n` (0 to 5) |
 | `rootOrder` | Root children visited in descending order of their depth-1 bound: `skipped` counts root children left once one was strictly inferior to the K-th (each would be pruned at depth 1), `traversalsPruned` the traversals (the whole domain, or one Gekisou conversion part with its slot rules) whose best root child already was |
 

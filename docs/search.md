@@ -797,6 +797,20 @@ judged before the frame; within a run of frames with one playing range it does n
 range is not an ordered combo range keeps the flat factor. The candidate cap reads the increments of the
 candidate's own combo bonus windows, the gain tables those of their carrier level or keyed envelope.
 
+**Carrier split.** A completion of a prefix whose placed carriers bring the window lists `S` has exactly the carriers
+of `S` and of some multiset `T` of lists, one per carrier among its slots to fill. Its cheap bound is at most the one
+of a complete deck under the envelope keyed by `S` and `T` with no carrier to come, every slot reading its gains under
+that envelope. For every `T` of at most the slots to fill, each list of `T` adds its best powers and best gains over
+distinct characters outside the prefix with no Snap or a Snap outside the prefix, and the slots without a carrier the
+table relaxation of the pairs that are no carrier, with gains under the same envelope; the node bound is the largest
+over `T` (characters and Snaps may repeat between the lists and the other slots, which only enlarges the completion
+set). The search stops at the first `T` above the K-th payoff. Below the leader the slots to fill take candidates
+in ascending choice order, so a node's completions use the choices from its start on, and in a node's choice loop
+every child from an offset on, with its completions, uses the choices from that offset on. The tables are compiled for
+the pairs from each of a few suffix starts (0, 8, then about half again each time); a node reads the latest start at
+most its own, and every 16 offsets the loop bounds all the children left by the latest start at most the offset and
+stops when that bound is below the K-th payoff.
+
 **Gated combo bonuses.** A combo bonus window whose trigger is a sole positive combo-count condition on its own
 range counts at an entry only once the range's combo can reach the threshold by the entry's chart time. Its start
 needs the threshold counted from judgements processed before that frame; judged in chart order, those are at

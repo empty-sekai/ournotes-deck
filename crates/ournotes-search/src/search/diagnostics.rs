@@ -214,6 +214,8 @@ pub struct PrefixAuditScratch {
     pub class_bound_cache_hits: u64,
     pub checked_bonus_prefixes: u64,
     pub checked_resource_prefixes: u64,
+    /// Prefixes also bounded by the carrier split (see `JointBounds::carrier_split_expected_upper`).
+    pub checked_carrier_split_prefixes: u64,
     pub checked_character_prefixes: u64,
     /// Complete decks whose per-order caps (cheap, raw, fine) were summed.
     pub checked_order_leaves: u64,
@@ -374,6 +376,12 @@ pub fn prefix_upper(
         }
     }
     let mut numerator = cap.saturating_mul(ORDERS as i128);
+    if let Some(split) =
+        b.carrier_split_expected_upper(&built.pool, built.domain(), &p, depth, 0, &MEAN_ORDERS, i128::MAX)
+    {
+        numerator = numerator.min(split);
+        scratch.checked_carrier_split_prefixes += 1;
+    }
     if depth == 5 {
         let exact = power_of(built, &p)?;
         let positions: Vec<_> = uniform::all_orders().iter().map(uniform::positions_of).collect();
@@ -465,6 +473,12 @@ pub fn path_bounds(
             row["correlated"] =
                 s(nb.correlated_expected_upper_keyed(pool, domain, &p, depth, &MEAN_ORDERS, keyed.as_ref())?).into();
             row["resource"] = nb.resource_expected_upper(pool, domain, &p, depth, &MEAN_ORDERS).map(s).into();
+            row["carrierSplit"] =
+                b.carrier_split_expected_upper(pool, domain, &p, depth, 0, &MEAN_ORDERS, i128::MAX).map(s).into();
+            // the search's node reads the suffix after the last placed pair below the leader
+            let start = if depth == 1 { 0 } else { path[depth - 1] + 1 };
+            row["carrierSplitStart"] =
+                b.carrier_split_expected_upper(pool, domain, &p, depth, start, &MEAN_ORDERS, i128::MAX).map(s).into();
             row["modules"] = b
                 .modules()
                 .iter()
@@ -533,10 +547,23 @@ pub fn next_choice_bounds(
     let choice =
         p.snaps[slot].map_or(0, |s| built.domain().snaps().iter().position(|&v| v == s).expect("compiled Snap") + 1);
     let offset = bounds.choices.iter().position(|&x| x == (p.members[slot], choice)).expect("compiled pair");
-    Ok(Some(ChoiceBounds {
-        suffix: bounds.tail_upper(&state, offset)?,
-        pair: bounds.pair_upper(&state, p.members[slot], choice)?,
-    }))
+    let mut suffix = bounds.tail_upper(&state, offset)?;
+    // the carrier split from the first choice index of the pairs to fill
+    let from = super::joint::SLOTS[depth..]
+        .iter()
+        .map(|&s| {
+            let c = p.snaps[s]
+                .map_or(0, |v| built.domain().snaps().iter().position(|&x| x == v).expect("compiled Snap") + 1);
+            bounds.choices.iter().position(|&x| x == (p.members[s], c)).expect("compiled pair")
+        })
+        .min()
+        .expect("a slot to fill");
+    if let Some(split) =
+        bounds.carrier_split_expected_upper(&built.pool, built.domain(), &p, depth, from, &MEAN_ORDERS, i128::MAX)
+    {
+        suffix.0 = suffix.0.min(split);
+    }
+    Ok(Some(ChoiceBounds { suffix, pair: bounds.pair_upper(&state, p.members[slot], choice)? }))
 }
 
 /// Original-domain per-member PT caps (every performance order) for independent membership-filter auditing.
