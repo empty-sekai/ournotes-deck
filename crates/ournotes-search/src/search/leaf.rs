@@ -22,7 +22,11 @@ const CUTOFF_EVERY: usize = 30;
 /// How the evaluation of a team's performance orders ended.
 pub(super) enum Leaf {
     Evaluated(FiniteEvaluation),
-    Certified(crate::search::certified_search::CertifiedEvaluation, Vec<u8>, Vec<u8>),
+    Certified(
+        crate::search::certified_search::CertifiedEvaluation,
+        Vec<u8>,
+        crate::search::certified_search::PayoffMap,
+    ),
     /// Provably below the K-th: not a Top-K deck.
     Pruned,
     /// The budget ran out.
@@ -81,17 +85,8 @@ impl Engine<'_, '_> {
             if let Some(v) = self.simulation.score_music_length_ms {
                 input.params.score_music_length_ms = Some(v);
             }
-            // The entire context is fixed by this request-local Engine. Uniformly averaging all 120 orders makes
-            // equal complete performer multisets equivalent; power and the full payoff mapping are separate keys.
-            let mut performers: Vec<_> = input.performers.iter().map(|p| (format!("{p:?}"), p.clone())).collect();
-            performers.sort_by(|a, b| a.0.cmp(&b.0));
-            let keys: Vec<_> = performers.iter().map(|p| &p.0).collect();
-            let program = format!("uniform120/full-performers/{keys:?}").into_bytes();
-            // Cache order labels use this stable program basis, never the physical layout. All 120 orders still
-            // appear exactly once, paired support skills remain inside each Performer, and no order is exposed
-            // as a best physical order in the interval answer.
-            input.performers =
-                performers.into_iter().map(|p| p.1).collect::<Vec<_>>().try_into().expect("five performers");
+            self.admit_certified_refinement(input.notes.len(), input.play.frames.len());
+            let program = crate::search::certified_search::canonicalize_performers(&mut input);
             let master = self.pool.master;
             let score = if let Some(score) = self.cached_certified_score(&program, power) {
                 score
@@ -127,9 +122,8 @@ impl Engine<'_, '_> {
                 power,
                 support,
             )?;
-            let payoff = format!("{map:?}").into_bytes();
             let evaluation = crate::search::certified_search::aggregate_orders(score.orders, &map)?;
-            return Ok(Leaf::Certified(evaluation, program, payoff));
+            return Ok(Leaf::Certified(evaluation, program, map));
         }
         if let Some(threshold) = crate::search::snaps::census() {
             return self.census_leaf(physical, power, cut, threshold);

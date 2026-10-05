@@ -14,6 +14,8 @@ const FIXTURE_SEED: u64 = 20_261_001;
 const SCORE_ID: i64 = 1004;
 const EVENT_ID: i64 = 7;
 
+#[path = "fixtures/luck_refinement.rs"]
+mod luck_refinement;
 #[path = "fixtures/numeric_domain.rs"]
 mod numeric_domain;
 #[path = "fixtures/proof_telemetry.rs"]

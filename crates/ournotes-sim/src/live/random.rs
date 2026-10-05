@@ -132,6 +132,24 @@ pub struct LiveRandom {
     streams: [NetRandom; 4],
     /// Values drawn since the streams were seeded.
     draws: u64,
+    /// Optional independent nominal LUCK path. Native seeded execution never installs one.
+    nominal: Option<NominalScript>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NominalOutcome {
+    pub weight: u64,
+    pub total: u64,
+    pub value: i64,
+}
+
+/// A prefix of nontrivial semantic lottery outcomes, not a script of PRNG seeds or raw integer values.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NominalScript {
+    prefix: Vec<usize>,
+    cursor: usize,
+    handled_draws: u64,
+    branch: Option<Vec<NominalOutcome>>,
 }
 
 impl LiveRandom {
@@ -140,6 +158,7 @@ impl LiveRandom {
             base_seed,
             streams: std::array::from_fn(|i| NetRandom::new(Self::derive_sub_seed(base_seed, i as i32))),
             draws: 0,
+            nominal: None,
         }
     }
 
@@ -154,6 +173,69 @@ impl LiveRandom {
     /// The number of values drawn from any stream since the streams were seeded.
     pub fn draws(&self) -> u64 {
         self.draws
+    }
+
+    pub(crate) fn with_nominal_prefix(prefix: Vec<usize>) -> Self {
+        let mut random = Self::new(0);
+        random.nominal = Some(NominalScript { prefix, cursor: 0, handled_draws: 0, branch: None });
+        random
+    }
+
+    pub(crate) fn is_nominal(&self) -> bool {
+        self.nominal.is_some()
+    }
+
+    /// Every raw draw must have passed through an admitted semantic LUCK draw. In particular a SKILL
+    /// probability draw, even one whose answer happens to be deterministic, declines this narrow backend.
+    pub(crate) fn nominal_covers_draws(&self) -> bool {
+        self.nominal.as_ref().is_some_and(|script| script.handled_draws == self.draws)
+    }
+
+    pub(crate) fn nominal_branch(&self) -> Option<&[NominalOutcome]> {
+        self.nominal.as_ref()?.branch.as_deref()
+    }
+
+    pub(crate) fn nominal_prefix_consumed(&self) -> bool {
+        self.nominal.as_ref().is_some_and(|script| script.cursor == script.prefix.len() && script.branch.is_none())
+    }
+
+    /// Draw using exact nominal integer masses. Called at the native draw site, including one-outcome
+    /// tables, so the native draw counter still observes one call. Duplicate results are coalesced only
+    /// after the caller has established the native table's buff/minimum redistribution and modulus.
+    pub(crate) fn nominal_lottery(&mut self, weights: Vec<(u64, u64, i64)>) -> Result<i64, Error> {
+        let invalid = |message: &str| Error::Unsupported(format!("nominal LUCK replay: {message}"));
+        let script = self.nominal.as_mut().ok_or_else(|| invalid("no path script"))?;
+        self.draws = self.draws.checked_add(1).ok_or_else(|| invalid("draw counter overflow"))?;
+        script.handled_draws = script.handled_draws.checked_add(1).ok_or_else(|| invalid("draw counter overflow"))?;
+        let total = weights.first().map(|v| v.1).filter(|&v| v > 0).ok_or_else(|| invalid("empty lottery"))?;
+        let mut sum = 0u64;
+        let mut outcomes = Vec::<NominalOutcome>::new();
+        for (weight, denominator, value) in weights {
+            if denominator != total {
+                return Err(invalid("inconsistent lottery modulus"));
+            }
+            sum = sum.checked_add(weight).ok_or_else(|| invalid("lottery mass overflow"))?;
+            if weight == 0 {
+                continue;
+            }
+            if let Some(outcome) = outcomes.iter_mut().find(|outcome| outcome.value == value) {
+                outcome.weight = outcome.weight.checked_add(weight).ok_or_else(|| invalid("lottery mass overflow"))?;
+            } else {
+                outcomes.push(NominalOutcome { weight, total, value });
+            }
+        }
+        if sum != total || outcomes.is_empty() {
+            return Err(invalid("lottery does not partition probability one"));
+        }
+        if outcomes.len() == 1 {
+            return Ok(outcomes[0].value);
+        }
+        let Some(&choice) = script.prefix.get(script.cursor) else {
+            script.branch = Some(outcomes);
+            return Err(invalid("another outcome branch is required"));
+        };
+        script.cursor += 1;
+        outcomes.get(choice).map(|outcome| outcome.value).ok_or_else(|| invalid("path outcome is out of range"))
     }
 
     /// `Range(type, max)`.
@@ -178,5 +260,37 @@ impl LiveRandom {
     pub fn next_int(&mut self, stream: usize) -> i32 {
         self.draws += 1;
         self.streams[stream].next_range(i32::MIN, i32::MAX).expect("valid range")
+    }
+}
+
+#[cfg(test)]
+mod nominal_tests {
+    use super::*;
+
+    #[test]
+    fn semantic_draws_preserve_mass_and_count_even_for_deterministic_tables() {
+        let mut random = LiveRandom::with_nominal_prefix(vec![1]);
+        assert_eq!(random.nominal_lottery(vec![(2, 5, 7), (3, 5, 7)]).unwrap(), 7);
+        assert_eq!(random.nominal_lottery(vec![(1, 3, 0), (2, 3, 3)]).unwrap(), 3);
+        assert!(random.nominal_prefix_consumed());
+        assert!(random.nominal_covers_draws());
+        assert_eq!(random.draws(), 2);
+        assert!(random.nominal_lottery(vec![(1, 3, 0), (2, 3, 3)]).is_err());
+        assert_eq!(random.nominal_branch().unwrap().iter().map(|v| v.weight).sum::<u64>(), 3);
+        assert!(random.nominal_covers_draws(), "the pending native draw is counted on both sides");
+        assert_eq!(random.draws(), 3);
+    }
+
+    #[test]
+    fn an_unhandled_random_source_or_incomplete_mass_never_becomes_a_nominal_law() {
+        let mut random = LiveRandom::with_nominal_prefix(Vec::new());
+        random.value(SKILL);
+        assert!(!random.nominal_covers_draws());
+        assert!(random.nominal_lottery(vec![(1, 3, 0), (2, 3, 3)]).is_err());
+        assert!(random.nominal_branch().is_some());
+        assert!(!random.nominal_covers_draws(), "check before expanding a pending branch too");
+        let mut invalid = LiveRandom::with_nominal_prefix(Vec::new());
+        assert!(invalid.nominal_lottery(vec![(1, 3, 0), (1, 3, 3)]).is_err());
+        assert!(invalid.nominal_branch().is_none(), "missing probability is not normalized away");
     }
 }

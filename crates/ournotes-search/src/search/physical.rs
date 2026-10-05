@@ -1246,6 +1246,9 @@ pub(crate) fn solve_physical_impl(
         }
     }
     engine.tel.incumbents.warm_start.final_top_k = engine.seeded_in_top();
+    if engine.certified.is_some() && engine.stop.is_none() {
+        engine.refine_certified_frontier()?;
+    }
     let standing = engine.standing();
     engine.rec.begin(&mut engine.tel, "finish", None);
     let results = if engine.certified.is_some() {
