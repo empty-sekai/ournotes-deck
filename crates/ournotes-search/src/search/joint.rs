@@ -65,8 +65,9 @@ struct PointBound {
     multiplier: i64,
     /// Prefix maximum reward multiplier at reachable score thresholds (solo rank rules only).
     score_tiers: Option<Vec<(i64, i64)>>,
-    /// The concave majorant of the step multiplier `score_tiers` (see `uniform::concave_majorant`).
-    hull: Option<Vec<(i64, i64)>>,
+    /// The concave majorants of the step multiplier truncated at each tier: `hulls[k]` is that of `score_tiers[..=k]`
+    /// (see `uniform::concave_majorant`), which equals the step multiplier's majorant on the scores below tier `k + 1`.
+    hulls: Option<Vec<Vec<(i64, i64)>>>,
     target: Option<ScoreTarget>,
 }
 
@@ -80,6 +81,9 @@ struct TailTables {
     power: Vec<Vec<i64>>,
     gain: [Vec<f64>; 5],
     bonus: Vec<i64>,
+    spread: Vec<f64>,
+    /// Per position, the suffix maxima of the per-position gains (`order_gains`).
+    order_gain: [Vec<f64>; 5],
 }
 
 /// One prefix's unconstrained remaining slots, excluding the next pair being enumerated.
@@ -87,7 +91,57 @@ pub(crate) struct TailState {
     profile: usize,
     /// `A0` of the envelope the rows read (see `Keyed`).
     a0: f64,
+    /// The spread of the rows' slots (see `JointBounds::order_gain_bounds`).
+    spread: f64,
+    /// Per position `p`, at least the gain sum of the rows' slots in every order that leaves `p` to the next slot.
+    beside: [f64; 5],
     rows: Vec<(i64, f64, i64, usize, u128)>,
+}
+
+/// What the order-step bound of a node (see [`JointBounds::order_steps_prepare`]) reads of its placed slots, and the
+/// open pairs of each suffix of the candidate order from the first offset a check of the node's choice loop asked for
+/// (the loop asks for ascending offsets, so one backward pass collects them all).
+#[derive(Default)]
+pub(crate) struct OrderSteps {
+    ready: bool,
+    depth: usize,
+    profile: usize,
+    /// The relaxed power and event bonus maxima of the node's completions (`JointBounds::relax`).
+    caps: (i64, i64),
+    /// The placed slots' power and event bonus.
+    placed: (i64, i64),
+    a0: f64,
+    /// Per performance order, the placed slots' gain sum in slot order, rounded up.
+    gains: Vec<f64>,
+    /// The placed characters, and per choice whether a placed slot holds its Snap.
+    characters: Vec<i64>,
+    used: Vec<bool>,
+    /// The suffix summaries from candidate `first` on: per offset the largest per-position gains of the open pairs
+    /// and the top of `stack`, a persistent stack of (power, bonus, parent) whose path from a top holds that suffix's
+    /// Pareto frontier.
+    first: usize,
+    free: Vec<[f64; 5]>,
+    top: Vec<u32>,
+    stack: Vec<(i64, i64, u32)>,
+    singles: Vec<(i64, i64)>,
+    sums: Vec<(i64, i64)>,
+    factors: Vec<f64>,
+    steps: Vec<(f64, i128)>,
+}
+
+/// The empty path of `OrderSteps::stack`.
+const NO_PAIR: u32 = u32::MAX;
+
+impl OrderSteps {
+    /// Starts a node: the next `JointBounds::order_steps_prepare` prepares it anew.
+    pub(crate) fn reset(&mut self) {
+        self.ready = false;
+    }
+
+    /// Whether an open slot of the node may take a member and choice: no placed character or Snap.
+    fn open(&self, pool: &Pool, m: usize, choice: usize) -> bool {
+        !self.characters.contains(&pool.members[m].character_id) && !self.used[choice]
+    }
 }
 
 /// Per physical slot choice masks (index = domain Snap index plus one, 0 = None) for a domain partition. A forced
@@ -106,9 +160,15 @@ pub(crate) struct JointBounds {
     profile: Vec<usize>,
     /// Position-mean gains (every position of a row holds the row's mean): the gains of every node bound.
     gains: Vec<Vec<[f64; 5]>>,
-    /// The per-position gains of the pool-wide envelope, for the per-order caps of complete teams (empty in carrier
-    /// levels).
+    /// The per-position gains of the envelope, for the per-order caps of complete teams and the order-step bound.
     order_gains: Vec<Vec<[f64; 5]>>,
+    /// Per member and choice, at least how far its largest per-position gain lies above its position-mean gain: with
+    /// them a node's position-mean gain sum bounds the gain sum of every order too (see `PointBound::mean_payoff`).
+    spread: Vec<Vec<f64>>,
+    /// `spread_top[k]`: at least the sum of the largest member spreads of any `k` distinct domain members.
+    spread_top: [f64; 6],
+    /// Per position, the largest per-position gain of any domain member and choice.
+    column: [f64; 5],
     a0: f64,
     global: f64,
     eps: f64,
@@ -180,6 +240,74 @@ fn pareto_pairs(mut pairs: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
 /// Every gain row replaced by its rounded-up position mean (see the module documentation).
 fn mean_table(gains: &[Vec<[f64; 5]>]) -> Vec<Vec<[f64; 5]>> {
     gains.iter().map(|rows| rows.iter().map(super::uniform::mean_row).collect()).collect()
+}
+/// How far a row's largest per-position gain lies above its position mean (`mean[0]`, every entry the same), rounded
+/// up so that `add_up(mean, spread)` is at least the largest gain.
+fn row_spread(row: &[f64; 5], mean: &[f64; 5]) -> f64 {
+    (row.iter().copied().fold(0.0, f64::max) - mean[0]).next_up().max(0.0)
+}
+/// The spread of every member and choice (see `JointBounds::spread`), the sums of the largest member spreads and the
+/// largest per-position gains.
+fn spread_tables(
+    order_gains: &[Vec<[f64; 5]>],
+    gains: &[Vec<[f64; 5]>],
+    domain: &CandidateDomain,
+) -> (Vec<Vec<f64>>, [f64; 6], [f64; 5]) {
+    let spread: Vec<Vec<f64>> = order_gains
+        .iter()
+        .zip(gains)
+        .map(|(rows, means)| rows.iter().zip(means).map(|(row, mean)| row_spread(row, mean)).collect())
+        .collect();
+    let mut largest: Vec<f64> =
+        domain.members().iter().map(|&m| spread[m].iter().copied().fold(0.0, f64::max)).collect();
+    largest.sort_by(|a, b| b.total_cmp(a));
+    let mut top = [0.0; 6];
+    for k in 1..6 {
+        top[k] = add_up(top[k - 1], largest.get(k - 1).copied().unwrap_or(0.0));
+    }
+    let mut column = [0.0f64; 5];
+    for &m in domain.members() {
+        for row in &order_gains[m] {
+            for (c, &g) in column.iter_mut().zip(row) {
+                *c = c.max(g);
+            }
+        }
+    }
+    (spread, top, column)
+}
+/// The largest gain sums of per-position gain rows over their placements on distinct positions: `best[mask]` over
+/// the placements onto exactly the positions in `mask` (negative infinity for the other masks), rounded up.
+fn placement_sums<'a>(rows: impl Iterator<Item = &'a [f64; 5]>) -> [f64; 32] {
+    let mut best = [f64::NEG_INFINITY; 32];
+    best[0] = 0.0;
+    for row in rows {
+        let mut next = [f64::NEG_INFINITY; 32];
+        for (mask, &sum) in best.iter().enumerate() {
+            if sum == f64::NEG_INFINITY {
+                continue;
+            }
+            for (pos, &g) in row.iter().enumerate() {
+                if mask & (1 << pos) == 0 {
+                    next[mask | (1 << pos)] = next[mask | (1 << pos)].max(add_up(sum, g));
+                }
+            }
+        }
+        best = next;
+    }
+    best
+}
+/// At least the gain sum of every order of five slots: the placed rows with their placement sums `best`, every other
+/// slot at most `column[p]` at its position `p`, and the positions in `excluded` taken by none of them.
+fn order_gain_bound(best: &[f64; 32], column: &[f64; 5], excluded: usize) -> f64 {
+    let mut bound = f64::NEG_INFINITY;
+    for (mask, &sum) in best.iter().enumerate() {
+        if mask & excluded != 0 || sum == f64::NEG_INFINITY {
+            continue;
+        }
+        bound = bound
+            .max((0..5).filter(|&pos| (mask | excluded) & (1 << pos) == 0).fold(sum, |s, pos| add_up(s, column[pos])));
+    }
+    bound
 }
 
 impl JointBounds {
@@ -273,6 +401,7 @@ impl JointBounds {
             return Err(unavailable("nonfinite/negative score relaxation"));
         }
         let gains = mean_table(&order_gains);
+        let (spread, spread_top, column) = spread_tables(&order_gains, &gains, domain);
         let points = match metric {
             Metric::ScoreAtLeast { threshold } | Metric::ScoreAndLifeAtLeast { threshold, .. } => Some(
                 PointBound::score_target(pool.members.len(), domain.snaps().len(), ScoreTarget::AtLeast(*threshold)),
@@ -326,6 +455,9 @@ impl JointBounds {
             profile: t.profile_of,
             gains,
             order_gains,
+            spread,
+            spread_top,
+            column,
             a0,
             global,
             eps,
@@ -378,13 +510,18 @@ impl JointBounds {
     /// These cheap bounds with another linear envelope (per-position `gains`): the same power tables and choice order,
     /// no fine bound.
     fn level(&self, pool: &Pool, domain: &CandidateDomain, a0: f64, global: f64, gains: Vec<Vec<[f64; 5]>>) -> Self {
+        let means = mean_table(&gains);
+        let (spread, spread_top, column) = spread_tables(&gains, &means, domain);
         let mut b = Self {
             a: self.a.clone(),
             w: self.w.clone(),
             lead: self.lead.clone(),
             profile: self.profile.clone(),
-            gains: mean_table(&gains),
+            gains: means,
             order_gains: gains,
+            spread,
+            spread_top,
+            column,
             a0,
             global,
             eps: self.eps,
@@ -419,8 +556,14 @@ impl JointBounds {
             let mut power = vec![vec![0; n + 1]; self.lead.len()];
             let mut gain: [Vec<f64>; 5] = std::array::from_fn(|_| vec![0.0; n + 1]);
             let mut bonus = vec![0; n + 1];
+            let mut spread = vec![0.0f64; n + 1];
+            let mut order_gain: [Vec<f64>; 5] = std::array::from_fn(|_| vec![0.0; n + 1]);
             for i in (0..n).rev() {
                 let (m, choice) = self.choices[i];
+                spread[i] = spread[i + 1].max(self.spread[m][choice]);
+                for (pos, column) in order_gain.iter_mut().enumerate() {
+                    column[i] = column[i + 1].max(self.order_gains[m][choice][pos]);
+                }
                 for (profile, row) in power.iter_mut().enumerate() {
                     let p = self.a[m] + self.lead[profile][m] + if choice == 0 { 0 } else { self.w[m][choice - 1] };
                     row[i] = row[i + 1].max(p);
@@ -432,7 +575,7 @@ impl JointBounds {
                     bonus[i] = bonus[i + 1].max(pt.member[m] + if choice == 0 { 0 } else { pt.snap[choice - 1] });
                 }
             }
-            TailTables { power, gain, bonus }
+            TailTables { power, gain, bonus, spread, order_gain }
         });
         self.relax_tables = relax_tables::RelaxTables::compile(self, pool, domain);
         if self.gekisou && self.points.is_none() {
@@ -720,18 +863,136 @@ impl JointBounds {
         keyed: Option<&Keyed>,
     ) -> (i128, i64) {
         let (power, gain, bonus) = self.relax(pool, domain, p, depth, &SLOTS[depth..], positions, keyed);
-        (self.payoff_cap_from(keyed.map_or(self.a0, |k| k.a0), power, gain, bonus), power)
+        let max_gain = self.node_order_gain(domain, p, depth, gain, keyed);
+        (self.payoff_cap_from(keyed.map_or(self.a0, |k| k.a0), power, gain, bonus, max_gain), power)
+    }
+
+    /// Diagnostics only: the PT score tiers, their concave majorant and the constant multiplier.
+    #[cfg(feature = "search-diagnostics")]
+    pub(crate) fn point_tiers(&self) -> serde_json::Value {
+        self.points.as_ref().map_or(
+            serde_json::Value::Null,
+            |pt| serde_json::json!({"tiers":pt.score_tiers,"hull":pt.hulls.as_ref().and_then(|h| h.last()),"multiplier":pt.multiplier}),
+        )
+    }
+
+    /// Diagnostics only: the relaxation behind a node's cheap bound (keyed when given) with its mean score cap, and
+    /// the PT read at that cap on the concave majorant and on the step function.
+    #[cfg(feature = "search-diagnostics")]
+    pub(crate) fn node_score_profile(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        keyed: Option<&Keyed>,
+    ) -> serde_json::Value {
+        let (power, gain, bonus) = self.relax(pool, domain, p, depth, &SLOTS[depth..], &[0, 1, 2, 3, 4], keyed);
+        let (spread, best) = self.order_gain_bounds(domain, p, depth, 5 - depth, keyed);
+        let max_gain = self.node_order_gain(domain, p, depth, gain, keyed);
+        let a0 = keyed.map_or(self.a0, |k| k.a0);
+        let cap = |gain: f64| ((power as f64) * add_up(a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
+        let (score_cap, max_cap) = (cap(gain), cap(max_gain));
+        serde_json::json!({"power":power,"gain":gain,"spread":spread,"a0":a0,"global":self.global,"eps":self.eps,
+            "placementGain":order_gain_bound(&best, &self.column, 0),"maxGain":max_gain,
+            "bonus":bonus,"meanScoreCap":score_cap.to_string(),"maxScoreCap":max_cap.to_string(),
+            "payoff":self.points.as_ref().map(|pt| pt.mean_payoff(bonus, score_cap, max_cap).to_string()),
+            "fullHullPayoff":self.points.as_ref().map(|pt| pt.mean_payoff(bonus, score_cap, i128::MAX).to_string()),
+            "stepPayoff":self.points.as_ref().map(|pt| pt.order_payoff(bonus, score_cap).to_string())})
+    }
+
+    /// Diagnostics only: the cheap score caps of a complete team per order ([`JointBounds::order_cheap_caps`]
+    /// before the PT step).
+    #[cfg(feature = "search-diagnostics")]
+    pub(crate) fn order_score_caps(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        power: i64,
+        orders: &[[usize; 5]],
+    ) -> Vec<i128> {
+        let choices = Self::prefix_choices(domain, p, 5);
+        let level = self.carrier_level(self.carriers_placed(p, 5, &choices));
+        let keyed = self.keyed(p, 5, &choices, 0, 0);
+        let a0 = keyed.as_ref().map_or(level.a0, |k| k.a0);
+        orders
+            .iter()
+            .map(|positions| {
+                let gain = (0..5).fold(0.0, |gain, slot| {
+                    add_up(
+                        gain,
+                        keyed
+                            .as_ref()
+                            .map_or(level.order_gains[p.members[slot]][choices[slot]][positions[slot]], |k| {
+                                k.order_placed[slot][positions[slot]]
+                            }),
+                    )
+                });
+                ((power as f64) * add_up(a0, gain).min(level.global) * (1.0 + level.eps)).ceil() as i128
+            })
+            .collect()
     }
 
     fn payoff_cap(&self, power: i64, gain: f64, bonus: i64) -> i128 {
-        self.payoff_cap_from(self.a0, power, gain, bonus)
+        self.payoff_cap_from(self.a0, power, gain, bonus, f64::INFINITY)
     }
 
     /// `payoff_cap` with the `A0` of some envelope at most this one's: a bound of the mean payoff over the orders when
-    /// `gain` sums position-mean gains.
-    fn payoff_cap_from(&self, a0: f64, power: i64, gain: f64, bonus: i64) -> i128 {
-        let score_cap = ((power as f64) * add_up(a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
-        self.points.as_ref().map_or(score_cap, |pt| pt.mean_payoff(bonus, score_cap))
+    /// `gain` sums position-mean gains and `max_gain` bounds the gain sum of every order (an infinite `max_gain`
+    /// leaves the global coefficient).
+    fn payoff_cap_from(&self, a0: f64, power: i64, gain: f64, bonus: i64, max_gain: f64) -> i128 {
+        let cap = |gain: f64| ((power as f64) * add_up(a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
+        let score_cap = cap(gain);
+        self.points.as_ref().map_or(score_cap, |pt| pt.mean_payoff(bonus, score_cap, cap(max_gain)))
+    }
+
+    /// Two bounds of the gain sum of any completion of a prefix in any order (in the keyed envelope, if any, for the
+    /// placed slots): the spread above its position-mean gain sum, of its placed slots and the largest member spreads
+    /// for its `free` slots to fill; and the placement sums of its placed slots' per-position rows (see
+    /// `order_gain_bound`, whose other slots take the largest per-position gains).
+    fn order_gain_bounds(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        free: usize,
+        keyed: Option<&Keyed>,
+    ) -> (f64, [f64; 32]) {
+        let mut spread = self.spread_top[free];
+        let mut rows = [[0.0; 5]; 5];
+        for (row, &slot) in rows.iter_mut().zip(&SLOTS[..depth]) {
+            let placed = match keyed {
+                Some(k) => {
+                    *row = k.order_placed[slot];
+                    row_spread(&k.order_placed[slot], &k.placed[slot])
+                }
+                None => {
+                    let choice = p.snaps[slot]
+                        .map_or(0, |s| domain.snaps().iter().position(|&v| v == s).expect("compiled Snap") + 1);
+                    *row = self.order_gains[p.members[slot]][choice];
+                    self.spread[p.members[slot]][choice]
+                }
+            };
+            spread = add_up(spread, placed);
+        }
+        (spread, placement_sums(rows[..depth].iter()))
+    }
+
+    /// At least the gain sum of every order of every completion of a prefix whose position-mean gain sum is at most
+    /// `gain` (see `order_gain_bounds`); infinite without points.
+    fn node_order_gain(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        gain: f64,
+        keyed: Option<&Keyed>,
+    ) -> f64 {
+        if self.points.is_none() {
+            return f64::INFINITY;
+        }
+        let (spread, best) = self.order_gain_bounds(domain, p, depth, 5 - depth, keyed);
+        add_up(gain, spread).min(order_gain_bound(&best, &self.column, 0))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -964,9 +1225,17 @@ impl JointBounds {
         if self.tails.is_none() || !(1..5).contains(&depth) {
             return None;
         }
+        let (spread, beside) = if self.points.is_some() {
+            let (spread, best) = self.order_gain_bounds(domain, p, depth, 4 - depth, keyed);
+            (spread, std::array::from_fn(|pos| order_gain_bound(&best, &self.column, 1 << pos)))
+        } else {
+            (f64::INFINITY, [f64::INFINITY; 5])
+        };
         Some(TailState {
             profile: self.profile[p.members[2]],
             a0: keyed.map_or(self.a0, |k| k.a0),
+            spread,
+            beside,
             rows: orders
                 .iter()
                 .map(|(positions, weight)| {
@@ -983,11 +1252,14 @@ impl JointBounds {
     /// character/resource relaxation. Overlap between those sets is deliberately allowed.
     pub(crate) fn tail_upper(&self, state: &TailState, offset: usize) -> Result<(i128, i64), Error> {
         let t = self.tails.as_ref().expect("compiled tail table");
+        let placed = (0..5).map(|pos| add_up(t.order_gain[pos][offset], state.beside[pos])).fold(f64::MIN, f64::max);
         let mut total = 0i128;
         let mut power = 0;
         for &(p, g, b, pos, weight) in &state.rows {
             power = p + t.power[state.profile][offset];
-            let payoff = self.payoff_cap_from(state.a0, power, add_up(g, t.gain[pos][offset]), b + t.bonus[offset]);
+            let gain = add_up(g, t.gain[pos][offset]);
+            let max_gain = add_up(gain, add_up(state.spread, t.spread[offset])).min(placed);
+            let payoff = self.payoff_cap_from(state.a0, power, gain, b + t.bonus[offset], max_gain);
             total = total
                 .checked_add(
                     payoff
@@ -1008,12 +1280,15 @@ impl JointBounds {
             + if choice == 0 { 0 } else { self.w[member][choice - 1] };
         let added_bonus =
             self.points.as_ref().map_or(0, |pt| pt.member[member] + if choice == 0 { 0 } else { pt.snap[choice - 1] });
+        let row = &self.order_gains[member][choice];
+        let placed = (0..5).map(|pos| add_up(row[pos], state.beside[pos])).fold(f64::MIN, f64::max);
         let mut total = 0i128;
         let mut power = 0;
         for &(p, g, b, pos, weight) in &state.rows {
             power = p + added_power;
-            let payoff =
-                self.payoff_cap_from(state.a0, power, add_up(g, self.gains[member][choice][pos]), b + added_bonus);
+            let gain = add_up(g, self.gains[member][choice][pos]);
+            let max_gain = add_up(gain, add_up(state.spread, self.spread[member][choice])).min(placed);
+            let payoff = self.payoff_cap_from(state.a0, power, gain, b + added_bonus, max_gain);
             total = total
                 .checked_add(
                     payoff
@@ -1145,7 +1420,8 @@ impl JointBounds {
         let mut used = HashSet::new();
         let a0 = keyed.map_or(self.a0, |k| k.a0);
         let mut totals = self.correlation_scales.map(|r| (r * a0).next_up());
-        let mut bonus = 0;
+        // The uncoupled maxima of power and gain for the per-order score cap of PT.
+        let (mut bonus, mut power_sum, mut gain_sum) = (0, 0i64, 0.0);
         for &slot in &SLOTS[..depth] {
             let m = p.members[slot];
             characters.insert(pool.members[m].character_id);
@@ -1162,14 +1438,16 @@ impl JointBounds {
             if let Some(pt) = &self.points {
                 bonus += pt.member[m] + j.map_or(0, |j| pt.snap[j]);
             }
+            power_sum += power;
+            gain_sum = add_up(gain_sum, gain);
         }
-        let mut remaining = HashMap::<i64, ([f64; 3], i64)>::new();
+        let mut remaining = HashMap::<i64, ([f64; 3], i64, i64, f64)>::new();
         for &m in domain.members() {
             let c = pool.members[m].character_id;
             if characters.contains(&c) {
                 continue;
             }
-            let row = remaining.entry(c).or_insert(([0.0; 3], 0));
+            let row = remaining.entry(c).or_insert(([0.0; 3], 0, 0, 0.0));
             for choice in 0..=domain.snaps().len() {
                 if choice > 0 && used.contains(&domain.snaps()[choice - 1]) {
                     continue;
@@ -1183,6 +1461,8 @@ impl JointBounds {
                 if let Some(pt) = &self.points {
                     row.1 = row.1.max(pt.member[m] + if choice == 0 { 0 } else { pt.snap[choice - 1] });
                 }
+                row.2 = row.2.max(power);
+                row.3 = row.3.max(gain);
             }
         }
         for (i, total) in totals.iter_mut().enumerate() {
@@ -1203,7 +1483,17 @@ impl JointBounds {
             })
             .min()
             .expect("three scales");
-        self.points.as_ref().map_or(score_cap, |pt| pt.mean_payoff(bonus, score_cap))
+        self.points.as_ref().map_or(score_cap, |pt| {
+            let mut powers: Vec<_> = remaining.values().map(|r| r.2).collect();
+            powers.sort_unstable_by(|a, b| b.cmp(a));
+            power_sum += powers.iter().take(5 - depth).sum::<i64>();
+            let mut gains: Vec<_> = remaining.values().map(|r| r.3).collect();
+            gains.sort_by(|a, b| b.total_cmp(a));
+            gain_sum = gains.iter().take(5 - depth).fold(gain_sum, |sum, &g| add_up(sum, g));
+            let gain = self.node_order_gain(domain, p, depth, gain_sum, keyed);
+            let max_cap = ((power_sum as f64) * add_up(a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
+            pt.mean_payoff(bonus, score_cap, max_cap)
+        })
     }
 
     pub(crate) fn correlated_expected_upper(
@@ -1479,19 +1769,21 @@ impl JointBounds {
         Ok((total, power))
     }
 
-    /// A node bound that keeps the payoff step of each performance order (`positions`, one per order). The placed
-    /// slots read their gains at the order's positions (keyed when the node has a keyed envelope) and each slot to
-    /// fill the largest gain a remaining pair of `open` (the members and choices the open slots may take) has at its
-    /// position. Power and event bonus stay paired: a completion's pair is at most the placed one plus, per slot to
-    /// fill, the pair of some remaining member and choice (characters and Snaps may repeat), so it is dominated by a
-    /// point of the Pareto frontier of those sums, and each part is also at most its relaxed maximum of
+    /// The order-step bound: a node bound that keeps the payoff step of each performance order (`positions`, one per
+    /// order). The placed slots read their gains at the order's positions (keyed when the node has a keyed envelope)
+    /// and each slot to fill the largest gain an open pair (a remaining member and choice the open slots may take) has
+    /// at its position. Power and event bonus stay paired: a completion's pair is at most the placed one plus, per
+    /// slot to fill, the pair of some open member and choice (characters and Snaps may repeat), so it is dominated by
+    /// a point of the Pareto frontier of those sums, and each part is also at most its relaxed maximum of
     /// [`JointBounds::relax`]. An order's payoff is nondecreasing in its score cap and its bonus, so the sum over the
     /// orders of the frontier's best payoff bounds the payoff numerator of every completion without the concave
-    /// majorant that the position-mean bound needs. With no remaining pair the prefix has no completion and the
-    /// bound is `i128::MIN`. Needs the leader placed (`depth > 0`). None without a point or score-target payoff, or
-    /// on overflow.
+    /// majorant that the position-mean bound needs. With no open pair the prefix has no completion and the bound is
+    /// `i128::MIN`.
+    ///
+    /// This prepares the node's part in `steps` (once per node; [`OrderSteps::reset`] starts a node). False without
+    /// a point or score-target payoff, or at the root (`depth == 0`), where the node has no such bound.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn order_step_upper(
+    pub(crate) fn order_steps_prepare(
         &self,
         pool: &Pool,
         domain: &CandidateDomain,
@@ -1499,44 +1791,83 @@ impl JointBounds {
         depth: usize,
         positions: &[[usize; 5]],
         keyed: Option<&Keyed>,
-        open: &[(usize, usize)],
-    ) -> Option<(i128, i64)> {
-        let pt = self.points.as_ref()?;
+        steps: &mut OrderSteps,
+    ) -> bool {
+        if steps.ready {
+            return true;
+        }
+        let Some(pt) = &self.points else { return false };
         if depth == 0 {
-            return None;
+            return false;
         }
         let (power, _, bonus) = self.relax(pool, domain, p, depth, &SLOTS[depth..], &[0, 1, 2, 3, 4], keyed);
         let profile = self.profile[p.members[2]];
         let choices = Self::prefix_choices(domain, p, depth);
-        let characters = SLOTS.map(|slot| pool.members[p.members[slot]].character_id);
-        let characters = &characters[..depth];
-        let used = SLOTS.map(|slot| p.snaps[slot]);
-        let used = &used[..depth];
         let (mut placed_power, mut placed_bonus) = (0i64, 0i64);
+        steps.characters.clear();
+        steps.used.clear();
+        steps.used.resize(domain.snaps().len() + 1, false);
         for &slot in &SLOTS[..depth] {
             let (m, choice) = (p.members[slot], choices[slot]);
-            placed_power += self.a[m] + self.lead[profile][m] + if choice == 0 { 0 } else { self.w[m][choice - 1] };
-            placed_bonus += pt.member[m] + if choice == 0 { 0 } else { pt.snap[choice - 1] };
+            placed_power += self.pair_power(profile, m, choice);
+            placed_bonus += pt.pair_bonus(m, choice);
+            steps.characters.push(pool.members[m].character_id);
         }
+        for (choice, used) in steps.used.iter_mut().enumerate().skip(1) {
+            *used = SLOTS[..depth].iter().any(|&slot| p.snaps[slot] == Some(domain.snaps()[choice - 1]));
+        }
+        steps.gains.clear();
+        steps.gains.extend(positions.iter().map(|order| {
+            SLOTS[..depth].iter().fold(0.0, |gain, &slot| {
+                add_up(
+                    gain,
+                    keyed.map_or(self.order_gains[p.members[slot]][choices[slot]][order[slot]], |placed| {
+                        placed.order_placed[slot][order[slot]]
+                    }),
+                )
+            })
+        }));
+        steps.depth = depth;
+        steps.profile = profile;
+        steps.caps = (power, bonus);
+        steps.placed = (placed_power, placed_bonus);
+        steps.a0 = keyed.map_or(self.a0, |k| k.a0);
+        steps.first = usize::MAX;
+        steps.ready = true;
+        true
+    }
+
+    /// The power of a member and choice under a leader profile.
+    fn pair_power(&self, profile: usize, m: usize, choice: usize) -> i64 {
+        self.a[m] + self.lead[profile][m] + if choice == 0 { 0 } else { self.w[m][choice - 1] }
+    }
+
+    /// The order-step bound of the prepared node's completions whose open slots take pairs of `open` (one pass over
+    /// them). None on overflow.
+    pub(crate) fn order_steps_open(
+        &self,
+        pool: &Pool,
+        positions: &[[usize; 5]],
+        steps: &mut OrderSteps,
+        open: &[(usize, usize)],
+    ) -> Option<(i128, i64)> {
+        let pt = self.points.as_ref()?;
         let mut free = [0f64; 5];
-        // The Pareto frontier of the remaining pairs in one pass while their bonuses do not increase (the candidate
-        // order sorts by bonus first), else by a sort.
-        let (mut single, mut ordered, mut any) = (Vec::new(), true, false);
+        // The Pareto frontier of the open pairs in one pass while their bonuses do not increase (the candidate order
+        // sorts by bonus first), else by a sort.
+        let (mut ordered, mut any) = (true, false);
         let mut run = i64::MIN;
+        steps.singles.clear();
         for &(m, choice) in open {
-            if characters.contains(&pool.members[m].character_id)
-                || choice > 0 && used.contains(&Some(domain.snaps()[choice - 1]))
-            {
+            if !steps.open(pool, m, choice) {
                 continue;
             }
             any = true;
             for (position, g) in free.iter_mut().enumerate() {
                 *g = g.max(self.order_gains[m][choice][position]);
             }
-            let pair = (
-                self.a[m] + self.lead[profile][m] + if choice == 0 { 0 } else { self.w[m][choice - 1] },
-                pt.member[m] + if choice == 0 { 0 } else { pt.snap[choice - 1] },
-            );
+            let pair = (self.pair_power(steps.profile, m, choice), pt.pair_bonus(m, choice));
+            let single = &mut steps.singles;
             if !ordered {
                 single.push(pair);
                 continue;
@@ -1552,46 +1883,156 @@ impl JointBounds {
             }
             run = run.max(pair.0);
         }
-        if !any && depth < 5 {
+        if !any {
             return Some((i128::MIN, i64::MIN));
         }
-        let single = if ordered { single } else { pareto_pairs(single) };
-        let mut sums = vec![(placed_power, placed_bonus)];
-        for _ in depth..5 {
-            sums = pareto_pairs(
-                sums.iter().flat_map(|&(a, b)| single.iter().map(move |&(c, d)| (a + c, b + d))).collect(),
-            );
+        if !ordered {
+            steps.singles = pareto_pairs(std::mem::take(&mut steps.singles));
         }
-        let sums: Vec<(i64, i64)> = sums.into_iter().map(|(a, b)| (a.min(power), b.min(bonus))).collect();
-        let a0 = keyed.map_or(self.a0, |k| k.a0);
-        let mut factors: Vec<f64> = positions
-            .iter()
-            .map(|order| {
-                let mut gain = 0.0;
-                for (k, &slot) in SLOTS.iter().enumerate() {
-                    let g = if k < depth {
-                        keyed.map_or(self.order_gains[p.members[slot]][choices[slot]][order[slot]], |placed| {
-                            placed.order_placed[slot][order[slot]]
-                        })
-                    } else {
-                        free[order[slot]]
+        self.order_steps_total(pt, positions, steps, &free, None)
+    }
+
+    /// The order-step bound of the prepared node's completions whose open slots take pairs from candidate `offset`
+    /// on. The first call of a node collects the suffixes from its offset on; later calls ask for later suffixes.
+    pub(crate) fn order_steps_suffix(
+        &self,
+        pool: &Pool,
+        positions: &[[usize; 5]],
+        steps: &mut OrderSteps,
+        offset: usize,
+    ) -> Option<(i128, i64)> {
+        let pt = self.points.as_ref()?;
+        let free = self.order_steps_singles(pool, steps, offset);
+        if steps.singles.is_empty() {
+            return Some((i128::MIN, i64::MIN));
+        }
+        self.order_steps_total(pt, positions, steps, &free, None)
+    }
+
+    /// The order-step bound of the prepared node's completions whose next slot (`SLOTS[depth]`) takes the pair `m`,
+    /// `choice` of candidate `offset` and whose other open slots take pairs from `offset + 1` on. The child's own
+    /// character and Snap stay open to those slots, which only enlarges the completion set.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn order_steps_pair(
+        &self,
+        pool: &Pool,
+        positions: &[[usize; 5]],
+        steps: &mut OrderSteps,
+        offset: usize,
+        m: usize,
+        choice: usize,
+    ) -> Option<(i128, i64)> {
+        let pt = self.points.as_ref()?;
+        let free = self.order_steps_singles(pool, steps, offset + 1);
+        if steps.singles.is_empty() {
+            return Some((i128::MIN, i64::MIN));
+        }
+        self.order_steps_total(pt, positions, steps, &free, Some((m, choice)))
+    }
+
+    /// The largest per-position gains of the open pairs from `offset` on, with their (power, bonus) Pareto frontier
+    /// in `steps.singles` (bonus descending). Collects the suffix summaries from `offset` on when the node has none
+    /// that far back: one backward pass keeps the frontier of each suffix as the top of a persistent stack.
+    fn order_steps_singles(&self, pool: &Pool, steps: &mut OrderSteps, offset: usize) -> [f64; 5] {
+        let pt = self.points.as_ref().expect("prepared order steps");
+        let n = self.choices.len();
+        let offset = offset.min(n);
+        if offset < steps.first {
+            steps.first = offset;
+            steps.free.clear();
+            steps.free.resize(n + 1 - offset, [0.0; 5]);
+            steps.top.clear();
+            steps.top.resize(n + 1 - offset, NO_PAIR);
+            steps.stack.clear();
+            let (mut free, mut top) = ([0f64; 5], NO_PAIR);
+            for i in (offset..n).rev() {
+                let (m, choice) = self.choices[i];
+                if steps.open(pool, m, choice) {
+                    for (position, g) in free.iter_mut().enumerate() {
+                        *g = g.max(self.order_gains[m][choice][position]);
+                    }
+                    let (power, bonus) = (self.pair_power(steps.profile, m, choice), pt.pair_bonus(m, choice));
+                    // Pairs come in nondecreasing bonus order: the new one removes the frontier points it dominates
+                    // from the top, unless the top dominates it. Out of that order the stack may keep dominated
+                    // points too, which no bound reads as better than the frontier.
+                    let mut below = top;
+                    while below != NO_PAIR {
+                        let (p, b, parent) = steps.stack[below as usize];
+                        if p > power || b > bonus {
+                            break;
+                        }
+                        below = parent;
+                    }
+                    top = match steps.stack.get(below as usize) {
+                        Some(&(p, b, _)) if p >= power && b >= bonus => below,
+                        _ => {
+                            steps.stack.push((power, bonus, below));
+                            (steps.stack.len() - 1) as u32
+                        }
                     };
-                    gain = add_up(gain, g);
                 }
-                add_up(a0, gain).min(self.global) * (1.0 + self.eps)
-            })
-            .collect();
-        // Orders with the same factor share their payoff.
-        factors.sort_unstable_by(f64::total_cmp);
-        let mut total = 0i128;
-        for run in factors.chunk_by(|a, b| a.to_bits() == b.to_bits()) {
-            let best = sums
-                .iter()
-                .map(|&(sum_power, sum_bonus)| pt.order_payoff(sum_bonus, ((sum_power as f64) * run[0]).ceil() as i128))
-                .max()?;
-            total = total.checked_add(best.checked_mul(run.len() as i128)?)?;
+                steps.free[i - offset] = free;
+                steps.top[i - offset] = top;
+            }
         }
-        Some((total, power))
+        steps.singles.clear();
+        let (mut at, mut ordered) = (steps.top[offset - steps.first], true);
+        while at != NO_PAIR {
+            let (power, bonus, parent) = steps.stack[at as usize];
+            if let Some(&(p, b)) = steps.singles.last() {
+                ordered &= bonus < b && power > p;
+            }
+            steps.singles.push((power, bonus));
+            at = parent;
+        }
+        if !ordered {
+            steps.singles = pareto_pairs(std::mem::take(&mut steps.singles));
+        }
+        steps.free[offset - steps.first]
+    }
+
+    /// The order-step bound from the prepared node, an optional child pair of the next slot and the open pairs'
+    /// per-position gains (`free`) and frontier (`steps.singles`).
+    fn order_steps_total(
+        &self,
+        pt: &PointBound,
+        positions: &[[usize; 5]],
+        steps: &mut OrderSteps,
+        free: &[f64; 5],
+        child: Option<(usize, usize)>,
+    ) -> Option<(i128, i64)> {
+        let (power, bonus) = steps.caps;
+        let (mut placed_power, mut placed_bonus) = steps.placed;
+        let mut placed = steps.depth;
+        if let Some((m, choice)) = child {
+            placed_power += self.pair_power(steps.profile, m, choice);
+            placed_bonus += pt.pair_bonus(m, choice);
+            placed += 1;
+        }
+        steps.sums.clear();
+        steps.sums.push((placed_power, placed_bonus));
+        for _ in placed..5 {
+            let singles = &steps.singles;
+            let cross = steps.sums.iter().flat_map(|&(a, b)| singles.iter().map(move |&(c, d)| (a + c, b + d)));
+            steps.sums = pareto_pairs(cross.collect());
+        }
+        for sum in &mut steps.sums {
+            *sum = (sum.0.min(power), sum.1.min(bonus));
+        }
+        let child_slot = SLOTS[steps.depth];
+        let (a0, global, eps) = (steps.a0, self.global, self.eps);
+        steps.factors.clear();
+        steps.factors.extend(positions.iter().zip(&steps.gains).map(|(order, &placed_gain)| {
+            let mut gain = placed_gain;
+            if let Some((m, choice)) = child {
+                gain = add_up(gain, self.order_gains[m][choice][order[child_slot]]);
+            }
+            for &slot in &SLOTS[placed..] {
+                gain = add_up(gain, free[order[slot]]);
+            }
+            add_up(a0, gain).min(global) * (1.0 + eps)
+        }));
+        Some((pt.order_payoff_sum(&steps.sums, &steps.factors, &mut steps.steps)?, power))
     }
 }
 
@@ -1605,10 +2046,62 @@ impl PointBound {
                 ScoreTarget::Capped(t) => i64::from(t),
             },
             score_tiers: None,
-            hull: None,
+            hulls: None,
             target: Some(target),
         }
     }
+    /// The event bonus of a member and choice.
+    fn pair_bonus(&self, m: usize, choice: usize) -> i64 {
+        self.member[m] + if choice == 0 { 0 } else { self.snap[choice - 1] }
+    }
+
+    /// At least the sum over performance orders (one `factors` entry each) of the largest PT of one order over
+    /// (power, bonus) pairs whose score caps are `ceil(power * factor)`. With score tiers that largest PT is a step
+    /// function of the factor: a pair reaches a tier from some factor on, and then pays at least the tier's PT. The
+    /// cap reaches `score` only when the rounded product exceeds `score - 1`, which needs the factor above
+    /// `(score - 1) / power` less a relative rounding error, so each step starts no later than the threshold taken a
+    /// few ulps low (`steps` holds the steps between the smallest and the largest factor). Without tiers, or with a
+    /// score target, each order reads the pairs.
+    fn order_payoff_sum(&self, pairs: &[(i64, i64)], factors: &[f64], steps: &mut Vec<(f64, i128)>) -> Option<i128> {
+        let best = |factor: f64| {
+            pairs.iter().map(|&(power, bonus)| self.order_payoff(bonus, ((power as f64) * factor).ceil() as i128)).max()
+        };
+        let (Some(tiers), None) = (&self.score_tiers, self.target) else {
+            return factors.iter().try_fold(0i128, |total, &factor| total.checked_add(best(factor)?));
+        };
+        let (low, high) = factors.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), &f| (l.min(f), h.max(f)));
+        // A cap below every tier pays nothing.
+        let mut base = 0i128;
+        steps.clear();
+        for &(power, bonus) in pairs {
+            for &(score, _) in tiers {
+                let from = if score <= 0 {
+                    f64::NEG_INFINITY
+                } else if power > 0 {
+                    (score - 1) as f64 / power as f64 * (1.0 - 4.0 * f64::EPSILON)
+                } else {
+                    continue;
+                };
+                let paid = self.order_payoff(bonus, i128::from(score));
+                if from <= low {
+                    base = base.max(paid);
+                } else if from <= high {
+                    steps.push((from, paid));
+                }
+            }
+        }
+        steps.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let mut run = base;
+        for step in steps.iter_mut() {
+            run = run.max(step.1);
+            step.1 = run;
+        }
+        factors.iter().try_fold(0i128, |total, &factor| {
+            let at = steps.partition_point(|&(from, _)| from <= factor);
+            total.checked_add(if at == 0 { base } else { steps[at - 1].1 })
+        })
+    }
+
     /// The PT of one performance order of a deck with this event bonus whose score is at most `score_cap`.
     fn order_payoff(&self, bonus: i64, score_cap: i128) -> i128 {
         if let Some(target) = self.target {
@@ -1621,23 +2114,30 @@ impl PointBound {
     }
 
     /// A bound of the mean PT over the performance orders of a deck with this event bonus whose mean score is at most
-    /// `score_cap`. The PT of an order is `(bonus + 10000) * m(S) / 10000` with `m` the step multiplier, which is not
-    /// concave; its concave majorant `M` gives `E[m(S)] <= E[M(S)] <= M(E[S]) <= M(score_cap)` (Jensen, `M`
-    /// non-decreasing), and the rounding goes up. Without score tiers the multiplier is constant.
-    fn mean_payoff(&self, bonus: i64, score_cap: i128) -> i128 {
+    /// `score_cap` and whose score in every order is at most `max_cap`. The PT of an order is
+    /// `(bonus + 10000) * m(S) / 10000` with `m` the step multiplier, which is not concave. Every score is at most
+    /// `max_cap`, where `m` equals the step of the tiers at or below `max_cap`; the concave majorant `M` of that
+    /// truncated step gives `E[m(S)] <= E[M(S)] <= M(E[S]) <= M(score_cap)` (Jensen, `M` non-decreasing), and the
+    /// rounding goes up. The PT of every order is also at most the PT at `max_cap`. Without score tiers the multiplier
+    /// is constant.
+    fn mean_payoff(&self, bonus: i64, score_cap: i128, max_cap: i128) -> i128 {
         if let Some(target) = self.target {
             return match target {
-                // A bound on E[S] alone cannot rule out S >= threshold, especially for signed network scores.
-                // Per-order caps above can still prove impossibility without exchanging expectation and cutoff.
-                ScoreTarget::AtLeast(_) => 1,
+                // A bound on E[S] alone cannot rule out S >= threshold, especially for signed network scores; the
+                // per-order cap can.
+                ScoreTarget::AtLeast(threshold) => i128::from(max_cap >= i128::from(threshold)),
                 // min(S,t) is nondecreasing and concave on the entire signed score domain.
                 ScoreTarget::Capped(threshold) => score_cap.min(i128::from(threshold)),
             };
         }
-        match &self.hull {
-            None => ((bonus + 10000) * self.multiplier / 10000) as i128,
-            Some(hull) => super::uniform::concave_value_ceil(hull, score_cap, i128::from(bonus + 10000), 10000)
-                .expect("PT values in the nonwrapping domain"),
+        match (&self.hulls, &self.score_tiers) {
+            (Some(hulls), Some(tiers)) => {
+                let k = tiers.partition_point(|&(score, _)| i128::from(score) <= max_cap).max(1) - 1;
+                super::uniform::concave_value_ceil(&hulls[k], score_cap, i128::from(bonus + 10000), 10000)
+                    .expect("PT values in the nonwrapping domain")
+                    .min(self.order_payoff(bonus, max_cap))
+            }
+            _ => ((bonus + 10000) * self.multiplier / 10000) as i128,
         }
     }
 
@@ -1773,8 +2273,10 @@ impl PointBound {
         let signed = context.rank_confirmations.iter().flatten().any(|c| c.percent < 0);
         let score_tiers: Option<Vec<(i64, i64)>> = (!multiplayer || (room.is_some() && !signed))
             .then(|| scores.into_iter().zip(values).map(|(s, v)| (s, v * rate)).collect());
-        let hull = score_tiers.as_deref().map(super::uniform::concave_majorant);
-        Ok(Self { member, snap, multiplier, score_tiers, hull, target: None })
+        let hulls = score_tiers
+            .as_deref()
+            .map(|tiers| (1..=tiers.len()).map(|k| super::uniform::concave_majorant(&tiers[..k])).collect());
+        Ok(Self { member, snap, multiplier, score_tiers, hulls, target: None })
     }
 }
 
@@ -1814,12 +2316,104 @@ mod network_point_tests {
                 for b in [-1000i128, -10, 0, 1, 10, 100, 1000] {
                     let mean_ceiling = (a + b).div_euclid(2) + i128::from((a + b).rem_euclid(2) != 0);
                     assert!(
-                        2 * probability.mean_payoff(0, mean_ceiling)
+                        2 * probability.mean_payoff(0, mean_ceiling, a.max(b))
                             >= i128::from(a >= threshold as i128) + i128::from(b >= threshold as i128)
                     );
                     assert!(
-                        2 * capped.mean_payoff(0, mean_ceiling) >= a.min(threshold as i128) + b.min(threshold as i128)
+                        2 * capped.mean_payoff(0, mean_ceiling, a.max(b))
+                            >= a.min(threshold as i128) + b.min(threshold as i128)
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn truncated_majorants_bound_the_mean_step_payoff_below_the_order_cap() {
+        let tiers =
+            vec![(0, 15), (2_104_068, 25), (5_025_129, 35), (11_281_724, 50), (15_052_045, 75), (20_496_573, 100)];
+        let hulls = (1..=tiers.len()).map(|k| super::super::uniform::concave_majorant(&tiers[..k])).collect();
+        let bound = PointBound {
+            member: Vec::new(),
+            snap: Vec::new(),
+            multiplier: 100,
+            score_tiers: Some(tiers),
+            hulls: Some(hulls),
+            target: None,
+        };
+        // An xorshift sequence of order scores; each set's mean and maximum bound its mean step payoff.
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        for _ in 0..2000 {
+            let centre = (next() % 22_000_000) as i128;
+            let width = (next() % 3_000_000) as i128;
+            let scores: Vec<i128> = (0..120).map(|_| (centre + (next() % (width as u64 + 1)) as i128).max(0)).collect();
+            let bonus = (next() % 20_000) as i64;
+            let max = *scores.iter().max().unwrap();
+            let sum: i128 = scores.iter().sum();
+            let mean_ceiling = (sum + 119) / 120;
+            let actual: i128 = scores.iter().map(|&s| bound.order_payoff(bonus, s)).sum();
+            assert!(actual <= 120 * bound.mean_payoff(bonus, mean_ceiling, max), "{centre} {width}");
+            // the truncation is never looser than the full majorant
+            assert!(bound.mean_payoff(bonus, mean_ceiling, max) <= bound.mean_payoff(bonus, mean_ceiling, i128::MAX));
+        }
+        // Every order below the 75 tier: the bound is the 50 step, not the chord to the 100 tier.
+        assert_eq!(bound.mean_payoff(8500, 12_105_470, 12_818_652), 92);
+        assert_eq!(bound.mean_payoff(8500, 12_105_470, i128::MAX), 122);
+    }
+
+    #[test]
+    fn payoff_steps_sum_the_best_order_payoffs_and_never_fall_below_at_tier_edges() {
+        let tiers = vec![(0, 15), (935_655, 25), (2_076_590, 35), (4_741_282, 50), (6_360_627, 75), (8_551_127, 100)];
+        let bound = PointBound {
+            member: Vec::new(),
+            snap: Vec::new(),
+            multiplier: 100,
+            score_tiers: Some(tiers.clone()),
+            hulls: None,
+            target: None,
+        };
+        let exact = |pairs: &[(i64, i64)], factors: &[f64]| -> i128 {
+            factors
+                .iter()
+                .map(|&f| {
+                    pairs.iter().map(|&(p, b)| bound.order_payoff(b, ((p as f64) * f).ceil() as i128)).max().unwrap()
+                })
+                .sum()
+        };
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let mut steps = Vec::new();
+        for _ in 0..2000 {
+            let pairs: Vec<(i64, i64)> =
+                (0..1 + next() % 6).map(|_| ((next() % 400_000) as i64, (next() % 30_000) as i64)).collect();
+            let factors: Vec<f64> = (0..120).map(|_| 5.0 + (next() % 1_000_000) as f64 / 25_000.0).collect();
+            // Random factors never land within a few ulps of a tier edge.
+            assert_eq!(bound.order_payoff_sum(&pairs, &factors, &mut steps), Some(exact(&pairs, &factors)));
+        }
+        // Factors around each edge: the steps start no later than the caps reach the tier.
+        for &(score, _) in &tiers[1..] {
+            for power in [1, 3, 997, 123_457, 399_989] {
+                let edge = (score - 1) as f64 / power as f64;
+                let mut factors = vec![edge];
+                for _ in 0..4 {
+                    factors.push(factors.last().unwrap().next_up());
+                    factors.insert(0, factors[0].next_down());
+                }
+                let pairs = [(power, 8500)];
+                for f in &factors {
+                    let one = std::slice::from_ref(f);
+                    assert!(bound.order_payoff_sum(&pairs, one, &mut steps).unwrap() >= exact(&pairs, one));
                 }
             }
         }
@@ -1865,13 +2459,13 @@ mod network_point_tests {
                 snap: Vec::new(),
                 multiplier,
                 score_tiers: None,
-                hull: None,
+                hulls: None,
                 target: None,
             };
             assert_eq!(route.value_at_rank(&master, event::RANK_NONE).unwrap(), 100);
             assert_eq!(bound.order_payoff(0, 10), 100);
-            assert_eq!(bound.mean_payoff(0, 10), 100);
-            assert_eq!(bound.mean_payoff(0, -1), 100);
+            assert_eq!(bound.mean_payoff(0, 10, 10), 100);
+            assert_eq!(bound.mean_payoff(0, -1, -1), 100);
         }
     }
 }

@@ -138,6 +138,8 @@ struct Engine<'a, 'm> {
     resource: bool,
     bound_scratch: super::snaps::JointScratch,
     bonus_scratch: super::joint::BonusScratch,
+    /// Per depth of the joint traversal, the order-step bound parts of the node there (see `joint::OrderSteps`).
+    order_steps: [super::joint::OrderSteps; 6],
     top: Vec<Entry>,
     certified: Option<CertifiedState>,
     /// The master's lottery-related skills when the decks play lottery-free ([`certified_engine::LotteryMode::Free`]).
@@ -954,6 +956,7 @@ pub(crate) fn solve_physical_impl(
         resource: false,
         bound_scratch: super::snaps::JointScratch::default(),
         bonus_scratch: super::joint::BonusScratch::default(),
+        order_steps: Default::default(),
         top: Vec::new(),
         certified: if lottery == certified_engine::LotteryMode::Certified {
             Some(CertifiedState::new(request.k)?)
@@ -1039,10 +1042,14 @@ pub(crate) fn solve_physical_impl(
                     engine.rec.end(&mut engine.tel);
                     if bounds.is_pt() && !bounds.prefers_compositions() {
                         engine.tel.environment.traversal = Traversal::Joint;
-                        engine.rec.begin(&mut engine.tel, "ptWarmStart", None);
-                        let seed_bonus = bounds.bonus_upper(pool, &plan.domain, &physical, 0);
-                        joint_rec(0, 0, &mut physical, &plan.domain, bounds, &orders, &mut engine, seed_bonus)?;
-                        engine.rec.end(&mut engine.tel);
+                        // The maximum-bonus warmup fills the Top-K; one already full (from the deck payoff ranking)
+                        // leaves it nothing to do, and its pruned walk to a first leaf would repeat the search's.
+                        if engine.safe_cutoff().is_none() {
+                            engine.rec.begin(&mut engine.tel, "ptWarmStart", None);
+                            let seed_bonus = bounds.bonus_upper(pool, &plan.domain, &physical, 0);
+                            joint_rec(0, 0, &mut physical, &plan.domain, bounds, &orders, &mut engine, seed_bonus)?;
+                            engine.rec.end(&mut engine.tel);
+                        }
                         // After the maximum-bonus warmup, whose full Top-K ends it.
                         warm::seed(&mut engine)?;
                         let mut searched = false;
@@ -1450,6 +1457,7 @@ fn joint_rec(
     let level = (placed + 5 - depth).min(5);
     let node_bounds = bounds.carrier_level(level);
     let keyed = if depth > 0 { bounds.keyed(p, depth, &choices, 5 - depth, 5 - depth) } else { None };
+    e.order_steps[depth].reset();
     if depth > 0
         && let Some((threshold, cutoff_power)) = e.safe_cutoff()
     {
@@ -1468,15 +1476,17 @@ fn joint_rec(
         }
         // The open slots take ascending candidate indices from `start` on.
         if depth < 5
-            && let Some((steps, steps_power)) = node_bounds.order_step_upper(
+            && node_bounds.order_steps_prepare(
                 e.pool,
                 domain,
                 p,
                 depth,
                 &e.positions,
                 keyed.as_ref(),
-                &bounds.choices[start..],
+                &mut e.order_steps[depth],
             )
+            && let Some((steps, steps_power)) =
+                node_bounds.order_steps_open(e.pool, &e.positions, &mut e.order_steps[depth], &bounds.choices[start..])
         {
             let module = joint.modules.entry("orderSteps").or_default();
             module.checks += 1;
@@ -1612,16 +1622,28 @@ fn joint_rec(
             && offset > start
             && offset % if depth < 4 { 4 } else { 16 } == 0
             && let Some((threshold, cutoff_power)) = e.safe_cutoff()
-            && let Some((steps, steps_power)) = node_bounds.order_step_upper(
+            && node_bounds.order_steps_prepare(
                 e.pool,
                 domain,
                 p,
                 depth,
                 &e.positions,
                 keyed.as_ref(),
-                &bounds.choices[offset..],
+                &mut e.order_steps[depth],
             )
+            && let Some((steps, steps_power)) =
+                node_bounds.order_steps_suffix(e.pool, &e.positions, &mut e.order_steps[depth], offset)
         {
+            // The suffix summaries hold the open pairs' gains and frontier: the bound of one pass over the suffix.
+            debug_assert_eq!(
+                Some((steps, steps_power)),
+                node_bounds.order_steps_open(
+                    e.pool,
+                    &e.positions,
+                    &mut e.order_steps[depth],
+                    &bounds.choices[offset..]
+                )
+            );
             let exact_ties = cutoff_power > i32::MIN;
             let module = e.tel.joint.modules.entry("orderStepsTail").or_default();
             module.checks += 1;
@@ -1683,6 +1705,30 @@ fn joint_rec(
             }
             if upper == threshold {
                 e.tel.joint.pair_ties[depth] += 1;
+            }
+        }
+        // The order steps of the child's completions: it takes this slot, the slots after it take pairs from
+        // `offset + 1` on (the node's suffix summaries).
+        if (1..4).contains(&depth)
+            && let Some((threshold, cutoff_power)) = e.safe_cutoff()
+            && node_bounds.order_steps_prepare(
+                e.pool,
+                domain,
+                p,
+                depth,
+                &e.positions,
+                keyed.as_ref(),
+                &mut e.order_steps[depth],
+            )
+            && let Some((steps, steps_power)) =
+                node_bounds.order_steps_pair(e.pool, &e.positions, &mut e.order_steps[depth], offset, m, choice)
+        {
+            let exact_ties = cutoff_power > i32::MIN;
+            let module = e.tel.joint.modules.entry("orderStepsPair").or_default();
+            module.checks += 1;
+            if steps < threshold || (exact_ties && steps == threshold && steps_power < i64::from(cutoff_power)) {
+                module.pruned += 1;
+                continue;
             }
         }
         p.members[slot] = m;

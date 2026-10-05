@@ -405,6 +405,7 @@ impl<'m> SearchSession<'m> {
             resource: false,
             bound_scratch: super::super::snaps::JointScratch::default(),
             bonus_scratch: super::super::joint::BonusScratch::default(),
+            order_steps: Default::default(),
             top: std::mem::take(&mut self.top),
             certified: None, // This incremental cursor evaluates deterministic Power/Skip only.
             lottery_free: None,

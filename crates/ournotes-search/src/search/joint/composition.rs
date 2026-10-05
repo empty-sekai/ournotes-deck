@@ -5,6 +5,8 @@ use super::*;
 struct Envelope {
     power: i64,
     gain: f64,
+    /// At least the spread of the gain sum (see `JointBounds::spread`).
+    spread: f64,
     bonus: i64,
     weighted: [f64; 3],
 }
@@ -12,6 +14,7 @@ impl Envelope {
     fn merge(&mut self, r: Self) {
         self.power = self.power.max(r.power);
         self.gain = self.gain.max(r.gain);
+        self.spread = self.spread.max(r.spread);
         self.bonus = self.bonus.max(r.bonus);
         for i in 0..3 {
             self.weighted[i] = self.weighted[i].max(r.weighted[i]);
@@ -20,6 +23,7 @@ impl Envelope {
     fn add(&mut self, r: Self) {
         self.power += r.power;
         self.gain = add_up(self.gain, r.gain);
+        self.spread = add_up(self.spread, r.spread);
         self.bonus += r.bonus;
         for i in 0..3 {
             self.weighted[i] = add_up(self.weighted[i], r.weighted[i]);
@@ -48,6 +52,7 @@ fn add_remaining(total: &mut Envelope, rows: &[Envelope], take: usize) {
     total.power += top_int(|r| r.power);
     total.bonus += top_int(|r| r.bonus);
     total.gain = add_up(total.gain, top_float(&|r| r.gain));
+    total.spread = add_up(total.spread, top_float(&|r| r.spread));
     for i in 0..3 {
         total.weighted[i] = add_up(total.weighted[i], top_float(&|r| r.weighted[i]));
     }
@@ -82,6 +87,7 @@ impl CompositionTables {
                                 target.merge(Envelope {
                                     power,
                                     gain,
+                                    spread: b.spread[m][choice],
                                     bonus,
                                     weighted: b.correlation_scales.map(|r| add_up(power as f64, (r * gain).next_up())),
                                 });
@@ -241,6 +247,7 @@ impl JointBounds {
             Envelope {
                 power,
                 gain,
+                spread: self.spread[m][choice],
                 bonus,
                 weighted: self.correlation_scales.map(|r| add_up(power as f64, (r * gain).next_up())),
             }
@@ -280,15 +287,21 @@ impl JointBounds {
     }
     fn composition_cap(&self, total: Envelope, power_cap: Option<i64>) -> (i128, i64) {
         let power = power_cap.map_or(total.power, |v| v.min(total.power));
-        let mut score =
-            ((power as f64) * add_up(self.a0, total.gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
+        let cap =
+            |gain: f64| ((power as f64) * add_up(self.a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
+        let mut score = cap(total.gain);
         for (i, &r) in self.correlation_scales.iter().enumerate() {
             let w = add_up(total.weighted[i], (r * self.a0).next_up());
             score = score.min(
                 ((((w * w).next_up() / (4.0 * r)).next_up() * (1.0 + self.eps).next_up()).next_up().ceil()) as i128,
             );
         }
-        (self.points.as_ref().map_or(score, |pt| pt.mean_payoff(total.bonus, score)), power)
+        (
+            self.points
+                .as_ref()
+                .map_or(score, |pt| pt.mean_payoff(total.bonus, score, cap(add_up(total.gain, total.spread)))),
+            power,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -466,6 +466,7 @@ pub fn path_bounds(
                 nb.expected_upper_keyed(pool, domain, &p, depth, &MEAN_ORDERS, keyed.as_ref())?;
             row["keyedUpper"] = s(keyed_upper).into();
             row["power"] = power.into();
+            row["scoreProfile"] = nb.node_score_profile(pool, domain, &p, depth, keyed.as_ref());
         }
         if (1..5).contains(&depth) {
             row["correlated"] =
@@ -493,6 +494,9 @@ pub fn path_bounds(
         if depth == 5 {
             let power = power_of(built, &p)?;
             let positions: Vec<_> = uniform::all_orders().iter().map(uniform::positions_of).collect();
+            let scores = b.order_score_caps(domain, &p, power, &positions);
+            row["orderScoreCaps"] = serde_json::json!({"min":s(*scores.iter().min().expect("orders")),
+                "max":s(*scores.iter().max().expect("orders")),"sum":s(scores.iter().sum())});
             let mut caps = b.order_cheap_caps(domain, &p, power, &positions);
             row["cheapOrderSum"] = s(caps.iter().sum()).into();
             b.tighten_order_caps(domain, &p, power, &positions, &mut caps, &mut super::snaps::JointScratch::default());
@@ -521,7 +525,7 @@ pub fn path_bounds(
         }
         out.push(row);
     }
-    Ok(serde_json::json!({"path":path,"depths":out}))
+    Ok(serde_json::json!({"path":path,"points":b.point_tiers(),"depths":out}))
 }
 
 /// Audit the smallest candidate suffix containing this completion's next pair.
@@ -840,6 +844,65 @@ pub fn luck_score_bounds_replay(
         Err(error) => serde_json::json!({"status":"refused","members":members,"snaps":snaps,
             "error":error.to_string(),"ms":ms}),
     })
+}
+
+/// Per performance order of one deck, the certified LUCK curve DP and the production summary that contains it, timed
+/// apart, and which orders share a DP curve.
+pub fn luck_orders_profile(
+    built: &BuiltProblem<'_>,
+    members: [i64; 5],
+    snaps: [Option<i64>; 5],
+) -> Result<serde_json::Value, Error> {
+    let (input, setup) = luck_input(built, members, snaps)?;
+    let master = built.pool.master;
+    let skills = ournotes_sim::live::full::luck_skills(master)?;
+    let mut curves: Vec<String> = Vec::new();
+    let mut rows = Vec::new();
+    for order in uniform::all_orders() {
+        let performers: Vec<_> = order.iter().map(|&slot| input.performers[slot].clone()).collect();
+        let started = std::time::Instant::now();
+        let dp = ournotes_sim::live::full::luck_rush_dp_certified_with_ranking(
+            master,
+            &skills,
+            &input.notes,
+            &input.events,
+            input.params,
+            &setup,
+            &input.play,
+            &input.delta_times,
+            &performers,
+            None,
+            input.rank_confirmations.as_deref(),
+        );
+        let dp_ms = started.elapsed().as_secs_f64() * 1e3;
+        let (curve, states, transitions) = match &dp {
+            Ok(result) => (format!("{:?}{:?}", result.steps, result.probes), result.peak_states, result.transitions),
+            Err(error) => (format!("error {error}"), 0, 0),
+        };
+        let index = curves.iter().position(|c| *c == curve).unwrap_or_else(|| {
+            curves.push(curve);
+            curves.len() - 1
+        });
+        let started = std::time::Instant::now();
+        let summary = ournotes_sim::live::full::luck_score_summary_with_ranking(
+            master,
+            &skills,
+            &performers,
+            &input.notes,
+            &input.events,
+            input.params,
+            &setup,
+            &input.play,
+            &input.delta_times,
+            input.rank_confirmations.as_deref(),
+        );
+        let summary_ms = started.elapsed().as_secs_f64() * 1e3;
+        rows.push(serde_json::json!({"order":order,"dpMs":dp_ms,"summaryMs":summary_ms,"curve":index,
+            "peakStates":states,"transitions":transitions,
+            "mean":summary.as_ref().ok().map(|s| [s.final_mean.lower, s.final_mean.upper]),
+            "error":summary.err().map(|e| e.to_string())}));
+    }
+    Ok(serde_json::json!({"members":members,"snaps":snaps,"curves":curves.len(),"orders":rows}))
 }
 
 /// Benchmark the production summary for exactly the same supplied physical performance order.

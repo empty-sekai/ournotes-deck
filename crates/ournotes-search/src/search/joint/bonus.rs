@@ -7,12 +7,15 @@ use std::collections::BTreeMap;
 struct Row {
     power: i64,
     gain: f64,
+    /// At least the spread of the gain sum (see `JointBounds::spread`).
+    spread: f64,
     weighted: [f64; 3],
 }
 impl Row {
     fn merge(&mut self, other: Self) {
         self.power = self.power.max(other.power);
         self.gain = self.gain.max(other.gain);
+        self.spread = self.spread.max(other.spread);
         for i in 0..3 {
             self.weighted[i] = self.weighted[i].max(other.weighted[i]);
         }
@@ -21,6 +24,7 @@ impl Row {
         Self {
             power: self.power + other.power,
             gain: add_up(self.gain, other.gain),
+            spread: add_up(self.spread, other.spread),
             weighted: std::array::from_fn(|i| add_up(self.weighted[i], other.weighted[i])),
         }
     }
@@ -80,6 +84,7 @@ impl JointBounds {
                 let row = Row {
                     power,
                     gain,
+                    spread: self.spread[m][choice],
                     weighted: self.correlation_scales.map(|r| add_up(power as f64, (r * gain).next_up())),
                 };
                 let bonus = pt.member[m] + if choice == 0 { 0 } else { pt.snap[choice - 1] };
@@ -136,6 +141,7 @@ impl JointBounds {
             fixed = fixed.plus(Row {
                 power,
                 gain,
+                spread: self.spread[m][choice],
                 weighted: self.correlation_scales.map(|r| add_up(power as f64, (r * gain).next_up())),
             });
             bonus += pt.member[m] + if choice == 0 { 0 } else { pt.snap[choice - 1] };
@@ -160,18 +166,23 @@ impl JointBounds {
         }
         scratch.found += 1;
         let rows = scratch.rows.get(&key)?.as_ref()?;
+        let (_, best) = self.order_gain_bounds(domain, p, depth, 5 - depth, None);
+        let placement = order_gain_bound(&best, &self.column, 0);
         let mut caps = Vec::with_capacity(rows.len());
         for &(extra, residual) in rows {
             let row = fixed.plus(residual);
-            let mut score =
-                ((row.power as f64) * add_up(self.a0, row.gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
+            let cap = |gain: f64| {
+                ((row.power as f64) * add_up(self.a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128
+            };
+            let max_cap = cap(add_up(row.gain, row.spread).min(placement));
+            let mut score = cap(row.gain);
             for (i, &r) in self.correlation_scales.iter().enumerate() {
                 let w = add_up(row.weighted[i], (r * self.a0).next_up());
                 let cap =
                     (((w * w).next_up() / (4.0 * r)).next_up() * (1.0 + self.eps).next_up()).next_up().ceil() as i128;
                 score = score.min(cap);
             }
-            caps.push((bonus + extra, pt.mean_payoff(bonus + extra, score), row.power));
+            caps.push((bonus + extra, pt.mean_payoff(bonus + extra, score, max_cap), row.power));
         }
         Some(caps)
     }

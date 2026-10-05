@@ -474,7 +474,7 @@ impl JointBounds {
                 gain = add_up(gain, plain_gain(&tables.parts(k0, &taken, &taken_snaps, 0.0)));
             }
             let level = self.carrier_level(ids.len());
-            let mut numerator = level.payoff_cap_from(a0, power, gain, 0).checked_mul(mass)?;
+            let mut numerator = level.payoff_cap_from(a0, power, gain, 0, f64::INFINITY).checked_mul(mass)?;
             if numerator > couple_above {
                 let j = weight(add_up(a0, gain), power);
                 let lambda = WEIGHT_STEP.powi(j);
@@ -578,9 +578,9 @@ impl JointBounds {
             }
             let level = self.carrier_level(ids.len());
             let a0 = keys.a0(&e.env, placed.iter().copied(), r);
-            let numerator = level.payoff_cap_from(a0, pw, gain, 0).saturating_mul(mass);
+            let numerator = level.payoff_cap_from(a0, pw, gain, 0, f64::INFINITY).saturating_mul(mass);
             let own = keys.a0(&e.env, placed.iter().chain(pick).copied(), 0);
-            best.own = best.own.max(level.payoff_cap_from(own, pw, gain, 0).saturating_mul(mass));
+            best.own = best.own.max(level.payoff_cap_from(own, pw, gain, 0, f64::INFINITY).saturating_mul(mass));
             if numerator > best.numerator {
                 best = Best { numerator, own: best.own, pick: pick.to_vec(), power: pw, gain, a0, lists: ids };
             }
