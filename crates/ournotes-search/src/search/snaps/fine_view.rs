@@ -235,14 +235,7 @@ impl FineView<'_> {
             for &(k, w) in &scratch.ramp_windows {
                 let r = &parts[k].ramps[w.ramp as usize - 1];
                 for e in w.lo as usize..w.hi as usize {
-                    let cnt = counts[e];
-                    scratch.ramp[e] += if cnt.is_nan() {
-                        w.note
-                    } else {
-                        let steps =
-                            (ournotes_sim::num::floor_to_i32(cnt as f32 / r.unit as f32) as i64).clamp(0, r.max_count);
-                        r.table[(steps as usize).min(r.table.len() - 1)] * r.mult
-                    };
+                    scratch.ramp[e] += ramp_factor(&w, r, counts[e]);
                 }
             }
             scratch.counts = counts;
@@ -455,6 +448,41 @@ impl JointFineBounds {
             "rushMasksProvided": rush_masks.is_some(),
             "slots": slots,
         })
+    }
+
+    /// Diagnostics only: the candidate cap with every slot, with none, and without each slot, beside each slot's
+    /// linear gain and the envelope's base coefficient, at one set of positions.
+    #[cfg(feature = "search-diagnostics")]
+    pub(crate) fn slot_attribution(
+        &self,
+        power: i64,
+        members: [usize; 5],
+        choices: [usize; 5],
+        positions: &[usize; 5],
+    ) -> serde_json::Value {
+        let classes = std::array::from_fn::<_, 5, _>(|s| self.choice_class(members[s], choices[s]));
+        let empty = Contrib::default();
+        let view = FineView { coef: &self.coef, fine: &self.fine, chain_extra: self.chain_extra };
+        let mut scratch = Scratch::default();
+        let mut cap = |keep: [bool; 5]| {
+            let parts = std::array::from_fn(|k| {
+                let s = positions.iter().position(|&p| p == k).expect("positions are a permutation");
+                if keep[s] { &self.contrib[members[s]][classes[s]][k] } else { &empty }
+            });
+            let mut src = [0; 5];
+            for s in (0..5).filter(|&s| keep[s]) {
+                src[positions[s]] = self.fine.src[members[s]][classes[s]];
+            }
+            view.fine_bound(power, parts, src, CandLife::Unknown, &mut scratch, None)
+        };
+        let all = cap([true; 5]);
+        let none = cap([false; 5]);
+        let without: Vec<i64> = (0..5).map(|s| cap(std::array::from_fn(|t| t != s))).collect();
+        let only: Vec<i64> = (0..5).map(|s| cap(std::array::from_fn(|t| t == s))).collect();
+        let gains: Vec<f64> = (0..5).map(|s| self.contrib[members[s]][classes[s]][positions[s]].gain).collect();
+        let ne = self.coef.times.len();
+        serde_json::json!({"power":power,"all":all,"none":none,"without":without,"only":only,"gains":gains,
+            "baseCoefficient":self.coef.pc[ne]})
     }
 
     /// The per-entry terms of the candidate cap, for slack attribution against a simulation. Not a bound by itself.

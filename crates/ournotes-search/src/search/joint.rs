@@ -1278,6 +1278,40 @@ impl JointBounds {
         Some(self.fine.as_ref()?.cb_windows(p.members, choices, positions))
     }
 
+    /// Diagnostics only: a complete team's cheap per-order terms (base coefficient, each slot's gain, cap, margin)
+    /// beside its fine cap with every slot, with none and without each slot, at one set of positions.
+    #[cfg(feature = "search-diagnostics")]
+    pub(crate) fn cheap_fine_attribution(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        power: i64,
+        positions: &[usize; 5],
+    ) -> serde_json::Value {
+        let choices = Self::prefix_choices(domain, p, 5);
+        let level = self.carrier_level(self.carriers_placed(p, 5, &choices));
+        let keyed = self.keyed(p, 5, &choices, 0, 0);
+        let gains: Vec<f64> = (0..5)
+            .map(|slot| {
+                keyed.as_ref().map_or(level.order_gains[p.members[slot]][choices[slot]][positions[slot]], |k| {
+                    k.order_placed[slot][positions[slot]]
+                })
+            })
+            .collect();
+        let notes = self.carrier_levels.as_ref().and_then(|l| l.keys.as_ref()).map(|keys| {
+            let ids: Vec<u16> = (0..5).filter_map(|slot| keys.list(p.members[slot], choices[slot])).collect();
+            let env = keys.envelope(&ids, 0);
+            let placed: Vec<_> = (0..5).map(|slot| (p.members[slot], choices[slot], positions[slot])).collect();
+            let (coef, term, budget) = keys.note_terms(&env, &placed);
+            let trace = self.fine.as_ref().map(|f| f.fine_trace(power, p.members, choices, positions, None).1);
+            serde_json::json!({"coef":coef,"term":term,"budget":budget,"trace":trace})
+        });
+        serde_json::json!({"notes":notes,"keyed":keyed.is_some(),"a0":keyed.as_ref().map_or(level.a0, |k| k.a0),
+            "levelA0":level.a0,"poolA0":self.a0,"gains":gains,"global":level.global,"eps":level.eps,
+            "cheapCap":self.order_cheap_caps(domain, p, power, &[*positions])[0].to_string(),
+            "fine":self.fine.as_ref().map(|f| f.slot_attribution(power, p.members, choices, positions))})
+    }
+
     #[cfg(feature = "search-diagnostics")]
     pub(crate) fn fine_trace(
         &self,

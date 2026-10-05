@@ -422,6 +422,90 @@ pub fn audit_order_caps(
     Ok(serde_json::json!({"orders":orders.len(),"violations":bad.len(),"first":bad.first()}))
 }
 
+/// The joint traversal's bounds along the path that reaches a complete legal deck: the leader, then the other pairs
+/// in choice order. Per depth: the carrier level and the node bounds as payoff numerators (pool-wide, carrier level,
+/// keyed, correlated, resource) and the pair cap of the path's next pair from the parent; at depth 5 the sums of the
+/// per-order cheap and fine caps. Numerators are over the 120 orders.
+pub fn path_bounds(
+    built: &BuiltProblem<'_>,
+    members: [i64; 5],
+    snaps: [Option<i64>; 5],
+) -> Result<serde_json::Value, Error> {
+    use super::joint::{JointBounds, SLOTS};
+    let full = physical(built, members, snaps)?;
+    let Some(b) = built.context.plan.joint.as_ref() else { return Ok(serde_json::Value::Null) };
+    let (pool, domain) = (&built.pool, built.domain());
+    let choice_of = |slot: usize| {
+        let c = full.snaps[slot].map_or(0, |s| domain.snaps().iter().position(|&v| v == s).expect("compiled Snap") + 1);
+        b.choices.iter().position(|&x| x == (full.members[slot], c)).expect("compiled pair")
+    };
+    let mut rest: Vec<usize> = [0, 1, 3, 4].into_iter().map(choice_of).collect();
+    rest.sort_unstable();
+    let mut path = vec![choice_of(2)];
+    path.extend(rest);
+    let mut p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
+    let s = |v: i128| v.to_string();
+    let mut out = Vec::new();
+    for depth in 0..=5 {
+        let choices = JointBounds::prefix_choices(domain, &p, depth);
+        let placed = b.carriers_placed(&p, depth, &choices);
+        let level = (placed + 5 - depth).min(5);
+        let nb = b.carrier_level(level);
+        let keyed = if depth > 0 { b.keyed(&p, depth, &choices, 5 - depth, 5 - depth) } else { None };
+        let mut row = serde_json::json!({"depth":depth,"carriersPlaced":placed,"level":level,"keyed":keyed.is_some()});
+        if depth > 0 {
+            row["poolWide"] = s(b.expected_upper(pool, domain, &p, depth, &MEAN_ORDERS)?.0).into();
+            row["levelUpper"] = s(nb.expected_upper(pool, domain, &p, depth, &MEAN_ORDERS)?.0).into();
+            let (keyed_upper, power) =
+                nb.expected_upper_keyed(pool, domain, &p, depth, &MEAN_ORDERS, keyed.as_ref())?;
+            row["keyedUpper"] = s(keyed_upper).into();
+            row["power"] = power.into();
+        }
+        if (1..5).contains(&depth) {
+            row["correlated"] =
+                s(nb.correlated_expected_upper_keyed(pool, domain, &p, depth, &MEAN_ORDERS, keyed.as_ref())?).into();
+            row["resource"] = nb.resource_expected_upper(pool, domain, &p, depth, &MEAN_ORDERS).map(s).into();
+            row["modules"] = b
+                .modules()
+                .iter()
+                .map(|m| serde_json::json!([m.name(), m.node_upper(pool, &p, depth, true, &MEAN_ORDERS).map(s)]))
+                .collect::<Vec<_>>()
+                .into();
+        }
+        if depth == 5 {
+            let power = power_of(built, &p)?;
+            let positions: Vec<_> = uniform::all_orders().iter().map(uniform::positions_of).collect();
+            let mut caps = b.order_cheap_caps(domain, &p, power, &positions);
+            row["cheapOrderSum"] = s(caps.iter().sum()).into();
+            b.tighten_order_caps(domain, &p, power, &positions, &mut caps, &mut super::snaps::JointScratch::default());
+            row["fineOrderSum"] = s(caps.iter().sum()).into();
+            row["attribution"] = audit_orders()
+                .iter()
+                .take(2)
+                .map(|order| b.cheap_fine_attribution(domain, &p, power, &uniform::positions_of(order)))
+                .collect::<Vec<_>>()
+                .into();
+        } else {
+            let (m, choice) = b.choices[path[depth]];
+            if (1..5).contains(&depth) {
+                let low = b.carrier_level((placed + 4 - depth).min(5));
+                let high = b.carrier_level((placed + 5 - depth).min(5));
+                let carrier = b.is_carrier(m, choice) && !std::ptr::eq(low, high);
+                let (pair_bounds, keyed) =
+                    if carrier { (high, keyed) } else { (low, b.keyed(&p, depth, &choices, 4 - depth, 5 - depth)) };
+                if let Some(state) = pair_bounds.tail_state_keyed(pool, domain, &p, depth, &MEAN_ORDERS, keyed.as_ref())
+                {
+                    row["nextPair"] = s(pair_bounds.pair_upper(&state, m, choice)?.0).into();
+                }
+            }
+            p.members[SLOTS[depth]] = m;
+            p.snaps[SLOTS[depth]] = (choice != 0).then(|| domain.snaps()[choice - 1]);
+        }
+        out.push(row);
+    }
+    Ok(serde_json::json!({"path":path,"depths":out}))
+}
+
 /// Audit the smallest candidate suffix containing this completion's next pair.
 /// Unlike prefix_upper, this cap certifies a suffix-restricted completion set.
 pub struct ChoiceBounds {

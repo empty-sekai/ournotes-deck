@@ -206,15 +206,17 @@ impl GkCombo {
 /// The Gekisou combo factor bound of every deck whose members bring combo bonus windows in at most `n` slots (its
 /// carriers; `member_cb`: each allowed member's distinct window lists over its classes). The running bonus of such a
 /// deck at a time is at most the sum of the `n` largest members' there (each the largest over its lists), and the
-/// count it builds, which opens the gates, is at most the one this bonus builds. `n = 5` covers every deck.
+/// count it builds, which opens the gates, is at most the one this bonus builds. `n = 5` covers every deck. `counts`
+/// receives the same decks' combo count bound of every entry (`GkCombo::inclusive_counts`).
 pub(super) fn carrier_factors(
     gc: &GkCombo,
     times: &[i32],
     member_cb: &[Vec<Vec<ComboBonusRow>>],
     n: usize,
     out: &mut Vec<f64>,
+    counts: &mut Vec<f64>,
 ) {
-    keyed_factors(gc, times, member_cb, &[], n, out);
+    keyed_factors(gc, times, member_cb, &[], n, out, counts);
 }
 
 /// `carrier_factors` of the decks with carriers of the window lists `placed` and at most `r` other carriers: the
@@ -226,6 +228,7 @@ pub(super) fn keyed_factors(
     placed: &[&[ComboBonusRow]],
     r: usize,
     out: &mut Vec<f64>,
+    counts: &mut Vec<f64>,
 ) {
     let mut sums = Vec::new();
     gc.fill(
@@ -248,6 +251,18 @@ pub(super) fn keyed_factors(
         out,
         &mut sums,
     );
+    // each running bonus is at least a candidate's, so each running count is at least its count
+    gc.inclusive_counts(times, &sums, counts);
+}
+
+/// The note factor a combo ramp window `w` adds at an entry whose playing range's combo count is at most `count`
+/// (NaN where no ramp may be read: the flat factor). The table does not decrease with the count.
+pub(super) fn ramp_factor(w: &Window, ramp: &ComboRamp, count: f64) -> f64 {
+    if count.is_nan() {
+        return w.note;
+    }
+    let steps = (ournotes_sim::num::floor_to_i32(count as f32 / ramp.unit as f32) as i64).clamp(0, ramp.max_count);
+    ramp.table[(steps as usize).min(ramp.table.len() - 1)] * ramp.mult
 }
 
 /// The running combo bonus of a list of bonus windows at each time of a non-decreasing sequence (`windows`: `(start,
@@ -284,6 +299,9 @@ pub(super) struct GkFactors {
     /// With a combo range: `carriers[n]` bounds the Gekisou combo factor of every deck with at most `n < 5` carrier
     /// slots (a slot whose member and Snap bring Gekisou combo bonus windows); each is at most `g` (empty: none).
     pub(super) carriers: Vec<Vec<f64>>,
+    /// With a combo range: `counts[n]` bounds the combo count of every entry for the decks of `carriers[n]`, `n = 5` for
+    /// every deck (`GkCombo::inclusive_counts`; empty: none).
+    pub(super) counts: Vec<Vec<f64>>,
     pub(super) l: Vec<f64>,
     pub(super) r: Vec<f64>,
     /// Per completing range with a rank bonus: (range end time, percent / 100, the entries of its range score).
@@ -335,6 +353,7 @@ impl GkFactors {
         let mut gv: Vec<f64> =
             times.iter().map(|&t| if combo.iter().any(|&(a, b)| a <= t && t <= b) { gmax } else { 1.0 }).collect();
         let mut carriers: Vec<Vec<f64>> = Vec::new();
+        let mut counts: Vec<Vec<f64>> = Vec::new();
         let gcombo = if combo.is_empty() || ablated(ablate::GEKISOU_COMBO) {
             None
         } else {
@@ -391,12 +410,15 @@ impl GkFactors {
                 })
                 .collect();
             let gc = GkCombo { range, upto, entries: lists, ordered, tab, gmax, fresh };
-            carrier_factors(&gc, &times, member_cb, 5, &mut gv);
+            let mut every = Vec::new();
+            carrier_factors(&gc, &times, member_cb, 5, &mut gv, &mut every);
             for n in 0..5 {
-                let mut v = Vec::new();
-                carrier_factors(&gc, &times, member_cb, n, &mut v);
+                let (mut v, mut c) = (Vec::new(), Vec::new());
+                carrier_factors(&gc, &times, member_cb, n, &mut v, &mut c);
                 carriers.push(v);
+                counts.push(c);
             }
+            counts.push(every);
             Some(gc)
         };
 
@@ -572,7 +594,7 @@ impl GkFactors {
             let (score_frames, floors) = rerun_floors(setup, &times, &exec_lo, &reexec);
             rv = network_rank_factors(&judged, &score_frames, &floors, &snapshots);
         }
-        Ok(GkFactors { g: gv, carriers, l: lv, r: rv, ranks, nobreak, exec_lo, confirm, combo: gcombo })
+        Ok(GkFactors { g: gv, carriers, counts, l: lv, r: rv, ranks, nobreak, exec_lo, confirm, combo: gcombo })
     }
 }
 
@@ -759,14 +781,17 @@ pub(super) struct CarrierLevel {
 }
 
 /// `terms[e] = (pre, combo, rank)` of each entry, so that the pool-wide coefficient is
-/// `pre * G_e * combo / cnc * rank`; `factors[n]` the combo factor bound of decks with at most `n` carriers. A level
-/// whose factor equals the next one's (or the pool-wide one) is `None`: the next level covers it unchanged.
+/// `pre * G_e * combo / cnc * rank`; `factors[n]` the combo factor bound of decks with at most `n` carriers and
+/// `counts[n]` their combo count bound (`GkFactors::counts`, `n = 5` for every deck). A level whose factor and counts
+/// equal the next one's (or the pool-wide ones) is `None`: the next level covers it unchanged.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn carrier_level_envelopes(
     coef: &Coef,
     terms: &[(f64, f64, f64)],
     cnc: f64,
     pool_factor: &[f64],
     factors: &[Vec<f64>],
+    counts: &[Vec<f64>],
     members: &[usize],
     contrib: &[Vec<[Contrib; 5]>],
 ) -> Vec<Option<CarrierLevel>> {
@@ -776,7 +801,7 @@ pub(super) fn carrier_level_envelopes(
     for n in 0..factors.len() {
         let g = &factors[n];
         let next = factors.get(n + 1).map_or(pool_factor, |v| &v[..]);
-        if g == next {
+        if g == next && same_bits(&counts[n], &counts[n + 1]) {
             continue;
         }
         let (ks, pc, pj) = factor_sums(coef, terms, cnc, |e| g[e]);
@@ -788,7 +813,7 @@ pub(super) fn carrier_level_envelopes(
                 .iter()
                 .map(|arr| {
                     std::array::from_fn(|k| {
-                        let v = window_gain(&arr[k].windows, arr[k].budget, &pc, &pj);
+                        let v = window_gain(&arr[k], &pc, &pj, Some(&counts[n]));
                         best[k] = best[k].max(v);
                         v
                     })
@@ -827,19 +852,33 @@ fn factor_sums(
 
 /// The gain of a member, class and position (its windows and conversion budget) under the prefix sums of some
 /// coefficients, by the operations of the pool-wide gains. The conversion budget read the pool-wide coefficients,
-/// never smaller.
-fn window_gain(windows: &[Window], budget: f64, pc: &[f64], pj: &[Vec<f64>; 4]) -> f64 {
+/// never smaller. With combo count bounds `counts`, a combo ramp window adds its factor at each entry's count
+/// (`ramp_factor`), as the candidate cap reads it.
+pub(super) fn window_gain(c: &Contrib, pc: &[f64], pj: &[Vec<f64>; 4], counts: Option<&[f64]>) -> f64 {
     let mut v = 0f64;
-    for x in windows {
+    for x in &c.windows {
         let (lo, hi) = (x.lo as usize, x.hi as usize);
-        v += x.note * (pc[hi] - pc[lo]);
+        match counts.filter(|_| x.ramp != 0) {
+            Some(counts) => {
+                let ramp = &c.ramps[x.ramp as usize - 1];
+                for e in lo..hi {
+                    v += ramp_factor(x, ramp, counts[e]) * (pc[e + 1] - pc[e]);
+                }
+            }
+            None => v += x.note * (pc[hi] - pc[lo]),
+        }
         for j in 0..4 {
             if x.judge[j] != 0.0 {
                 v += x.judge[j] * (pj[j][hi] - pj[j][lo]);
             }
         }
     }
-    v + budget
+    v + c.budget
+}
+
+/// Whether two count bounds hold the same values (NaN where no ramp may be read).
+fn same_bits(a: &[f64], b: &[f64]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
 }
 
 /// What the Gekisou combo carriers a search prefix placed tell the linear envelope of its completions. With carriers
@@ -853,7 +892,8 @@ pub(crate) struct CarrierKeys {
     /// The distinct carrier window lists; the list of every pool member and choice (0 = None, `j + 1` = Snap `j`).
     lists: Vec<Vec<ComboBonusRow>>,
     list_of: Vec<Vec<Option<u16>>>,
-    /// The class of every pool member and choice, and the windows and conversion budget of every class by position.
+    /// The class of every pool member and choice, and the windows, combo ramps and conversion budget of every class by
+    /// position.
     class_of: Vec<Vec<usize>>,
     windows: Vec<Vec<ClassWindows>>,
     /// Times, `z`, `max_jp` and `jp` of the entries, with `terms` and `cnc` as in `carrier_level_envelopes`.
@@ -862,6 +902,8 @@ pub(crate) struct CarrierKeys {
     cnc: f64,
     /// The combo factor bound of decks with at most `n` carriers, `n` in 0..=5 (5: every deck).
     levels: Vec<Vec<f64>>,
+    /// The combo count bound of the same decks (`GkFactors::counts`).
+    level_counts: Vec<Vec<f64>>,
     /// With the additive drift envelope, what its offset reads; the factor commands and their largest factor of every
     /// pool member and choice at any position.
     additive: Option<KeyedDrift>,
@@ -870,8 +912,8 @@ pub(crate) struct CarrierKeys {
     cache: RefCell<HashMap<KeyedKey, Rc<KeyedEnvelope>>>,
 }
 
-/// The windows and conversion budget of a member's class at each position.
-type ClassWindows = [(Vec<Window>, f64); 5];
+/// The windows, combo ramps and conversion budget of a member's class at each position (the rest default).
+type ClassWindows = [Contrib; 5];
 
 /// A keyed envelope's key: the sorted placed lists (zero-padded), their count and the slots to fill.
 type KeyedKey = ([u16; 5], usize, usize);
@@ -899,6 +941,8 @@ pub(crate) struct KeyedEnvelope {
     sensitivity: f64,
     pc: Vec<f64>,
     pj: [Vec<f64>; 4],
+    /// The combo count bound of every entry (`GkCombo::inclusive_counts`).
+    counts: Vec<f64>,
     gains: RefCell<HashMap<(usize, usize), [f64; 5]>>,
 }
 
@@ -910,6 +954,7 @@ impl CarrierKeys {
         terms: Vec<(f64, f64, f64)>,
         cnc: f64,
         levels: Vec<Vec<f64>>,
+        level_counts: Vec<Vec<f64>>,
         members: &[usize],
         class_of: &[Vec<u16>],
         contrib: &[Vec<[Contrib; 5]>],
@@ -950,7 +995,17 @@ impl CarrierKeys {
                 })
                 .collect();
             choice_class[m] = classes;
-            windows[m] = contrib[m].iter().map(|arr| arr.each_ref().map(|x| (x.windows.clone(), x.budget))).collect();
+            windows[m] = contrib[m]
+                .iter()
+                .map(|arr| {
+                    arr.each_ref().map(|x| Contrib {
+                        windows: x.windows.clone(),
+                        budget: x.budget,
+                        ramps: x.ramps.clone(),
+                        ..Default::default()
+                    })
+                })
+                .collect();
         }
         CarrierKeys {
             gc: gc.clone(),
@@ -969,6 +1024,7 @@ impl CarrierKeys {
             terms,
             cnc,
             levels,
+            level_counts,
             additive,
             commands,
             cache: RefCell::default(),
@@ -990,9 +1046,13 @@ impl CarrierKeys {
             return e.clone();
         }
         let lists: Vec<&[ComboBonusRow]> = ids.iter().map(|&i| &self.lists[i as usize][..]).collect();
-        let mut g = Vec::new();
-        keyed_factors(&self.gc, &self.coef.times, &self.member_cb, &lists, r, &mut g);
-        let level = &self.levels[(ids.len() + r).min(5)];
+        let (mut g, mut counts) = (Vec::new(), Vec::new());
+        keyed_factors(&self.gc, &self.coef.times, &self.member_cb, &lists, r, &mut g, &mut counts);
+        let n = (ids.len() + r).min(5);
+        let level = &self.levels[n];
+        for (c, &l) in counts.iter_mut().zip(&self.level_counts[n]) {
+            *c = if c.is_nan() || l.is_nan() { f64::NAN } else { c.min(l) };
+        }
         let (ks, pc, pj) = factor_sums(&self.coef, &self.terms, self.cnc, |e| g[e].min(level[e]));
         let a0 = pc[ks.len()];
         // the completions read coefficients at most these, so their factor error sensitivity is at most theirs
@@ -1000,7 +1060,7 @@ impl CarrierKeys {
             let coef = Coef { k: ks, z: self.coef.z.clone(), ..Default::default() };
             factor_error_sensitivity(&coef, d.judgement_max).expect("keyed sensitivity at most the pool-wide one")
         });
-        let e = Rc::new(KeyedEnvelope { a0, sensitivity, pc, pj, gains: RefCell::default() });
+        let e = Rc::new(KeyedEnvelope { a0, sensitivity, pc, pj, counts, gains: RefCell::default() });
         let mut cache = self.cache.borrow_mut();
         if cache.len() >= KEYED_CACHE {
             cache.clear();
@@ -1055,9 +1115,38 @@ impl CarrierKeys {
             return *g;
         }
         let class = self.class_of[m][choice];
-        let g = self.windows[m][class].each_ref().map(|(w, budget)| window_gain(w, *budget, &env.pc, &env.pj));
+        let g = self.windows[m][class].each_ref().map(|c| window_gain(c, &env.pc, &env.pj, Some(&env.counts)));
         env.gains.borrow_mut().insert((m, choice), g);
         g
+    }
+
+    /// Diagnostics only: each entry's envelope coefficient, its term in the cheap sum with the performers `placed`
+    /// (pool member, choice, position) and their conversion budgets.
+    #[cfg(feature = "search-diagnostics")]
+    pub(crate) fn note_terms(
+        &self,
+        env: &KeyedEnvelope,
+        placed: &[(usize, usize, usize)],
+    ) -> (Vec<f64>, Vec<f64>, f64) {
+        let ne = env.pc.len() - 1;
+        let coef: Vec<f64> = (0..ne).map(|e| env.pc[e + 1] - env.pc[e]).collect();
+        let mut term = coef.clone();
+        let mut budget = 0f64;
+        for &(m, choice, k) in placed {
+            let c = &self.windows[m][self.class_of[m][choice]][k];
+            budget += c.budget;
+            for x in &c.windows {
+                for e in x.lo as usize..x.hi as usize {
+                    let note =
+                        if x.ramp == 0 { x.note } else { ramp_factor(x, &c.ramps[x.ramp as usize - 1], env.counts[e]) };
+                    term[e] += note * coef[e];
+                    for j in 0..4 {
+                        term[e] += x.judge[j] * (env.pj[j][e + 1] - env.pj[j][e]);
+                    }
+                }
+            }
+        }
+        (coef, term, budget)
     }
 }
 
@@ -1199,7 +1288,7 @@ mod tests {
     }
 
     #[test]
-    fn carrier_factors_cover_every_deck_with_that_many_carriers() {
+    fn carrier_factors_and_counts_cover_every_deck_with_that_many_carriers() {
         // two ordered combo ranges, entries at repeated chart times, a table rising to 1.3
         let times: Vec<i32> = (0..40).map(|i| 100 + 40 * (i / 2) + if i >= 20 { 1000 } else { 0 }).collect();
         let gc = GkCombo {
@@ -1232,15 +1321,16 @@ mod tests {
                     .collect()
             })
             .collect();
-        let bound: Vec<Vec<f64>> = (0..=5)
+        let (bound, counts): (Vec<Vec<f64>>, Vec<Vec<f64>>) = (0..=5)
             .map(|n| {
-                let mut v = Vec::new();
-                carrier_factors(&gc, &times, &members, n, &mut v);
-                v
+                let (mut v, mut c) = (Vec::new(), Vec::new());
+                carrier_factors(&gc, &times, &members, n, &mut v, &mut c);
+                (v, c)
             })
-            .collect();
+            .unzip();
         for n in 0..5 {
             assert!(bound[n].iter().zip(&bound[n + 1]).all(|(a, b)| a <= b), "{n}");
+            assert!(counts[n].iter().zip(&counts[n + 1]).all(|(a, b)| a <= b), "{n}");
         }
         // every deck: a subset of the members, each with one of its lists, through the candidate fill
         for mask in 0usize..1 << members.len() {
@@ -1266,8 +1356,11 @@ mod tests {
                     &mut own,
                     &mut sums,
                 );
+                let mut own_counts = Vec::new();
+                gc.inclusive_counts(&times, &sums, &mut own_counts);
                 let level = &bound[picks.len()];
                 assert!(own.iter().zip(level).all(|(a, b)| a <= b), "{picks:?} {choice}");
+                assert!(own_counts.iter().zip(&counts[picks.len()]).all(|(a, b)| a <= b), "{picks:?} {choice}");
                 // any of its carriers placed with their lists, the others among the slots to fill
                 for placed in 0usize..1 << picks.len() {
                     let lists: Vec<&[ComboBonusRow]> = picks
@@ -1276,13 +1369,16 @@ mod tests {
                         .filter(|(i, _)| placed & (1 << i) != 0)
                         .map(|(i, &m)| &members[m][((choice >> i) & 1).min(members[m].len() - 1)][..])
                         .collect();
-                    let mut keyed = Vec::new();
-                    keyed_factors(&gc, &times, &members, &lists, picks.len() - lists.len(), &mut keyed);
+                    let (mut keyed, mut keyed_counts) = (Vec::new(), Vec::new());
+                    let r = picks.len() - lists.len();
+                    keyed_factors(&gc, &times, &members, &lists, r, &mut keyed, &mut keyed_counts);
                     assert!(own.iter().zip(&keyed).all(|(a, b)| a <= b), "{picks:?} {choice} {placed}");
+                    assert!(own_counts.iter().zip(&keyed_counts).all(|(a, b)| a <= b), "{picks:?} {choice} {placed}");
                 }
             }
         }
         // fewer carriers really count less here
         assert!(bound[1].iter().sum::<f64>() < bound[5].iter().sum::<f64>());
+        assert!(counts[1].iter().sum::<f64>() < counts[5].iter().sum::<f64>());
     }
 }

@@ -903,6 +903,8 @@ impl<'a> SnapLive<'a> {
         // command and factor totals for the drift margin: per position, the largest over members and classes
         let mut cmd_k = [0f64; 5];
         let mut fac_k = [0f64; 5];
+        // with a combo range, every deck's combo count bound: a combo ramp window adds its factor at it
+        let pool_counts = gkf.as_ref().filter(|_| fine.gcombo.is_some()).and_then(|g| g.counts.get(5)).map(|c| &c[..]);
         for &m in &members {
             let mut per = Vec::with_capacity(classes[m].len());
             for c in &classes[m] {
@@ -911,24 +913,13 @@ impl<'a> SnapLive<'a> {
                     let (w, cmds, fac, ops, spans, ramps, rush, ops_plain, cmds_plain) =
                         windows(&geo, k, &member_live[m], &c.rows, &ev_by_k[k]);
                     let fac = fac.iter().copied().fold(0f64, f64::max);
-                    let mut g = 0f64;
-                    let mut judge = false;
-                    for x in &w {
-                        let (lo, hi) = (x.lo as usize, x.hi as usize);
-                        g += x.note * (coef.pc[hi] - coef.pc[lo]);
-                        for j in 0..4 {
-                            if x.judge[j] != 0.0 {
-                                judge = true;
-                                g += x.judge[j] * (coef.pj[j][hi] - coef.pj[j][lo]);
-                            }
-                        }
-                    }
+                    let judge = w.iter().any(|x| x.judge.iter().any(|&j| j != 0.0));
                     cmd_k[k] = cmd_k[k].max(cmds);
                     fac_k[k] = fac_k[k].max(fac);
                     let cb = if fine.gcombo.is_some() { combo_windows(&c.rows) } else { Vec::new() };
                     arr[k] = Contrib {
                         windows: w,
-                        gain: g,
+                        gain: 0.0,
                         judge,
                         ops,
                         ops_plain,
@@ -941,6 +932,7 @@ impl<'a> SnapLive<'a> {
                         ramps,
                         rush,
                     };
+                    arr[k].gain = window_gain(&arr[k], &coef.pc, &coef.pj, pool_counts);
                 }
                 per.push(arr);
             }
@@ -1082,27 +1074,36 @@ impl<'a> SnapLive<'a> {
             additive.and_then(|(roundings, b)| additive_joint_envelope(a0, global, eps, roundings, b, chain_extra));
         let carrier_levels = match gkf.as_ref() {
             Some(g) if !level_terms.is_empty() => {
-                carrier_level_envelopes(&coef, &level_terms, cnc as f64, &g.g, &g.carriers, &members, &contrib)
-                    .into_iter()
-                    .map(|level| {
-                        let mut level = level?;
-                        if joint_additive.is_some() {
-                            // a deck of the level reads coefficients at most the level's, so its factor error
-                            // sensitivity is at most theirs; every input is at most the pool-wide one, whose
-                            // envelope exists
-                            let (roundings, pool_b) = additive.expect("pool-wide additive envelope");
-                            let level_coef = Coef { k: level.k.clone(), z: coef.z.clone(), ..Default::default() };
-                            let b = factor_error_sensitivity(&level_coef, judgement_max.expect("judgement factors"))
-                                .expect("level sensitivity at most the pool-wide one")
-                                .min(pool_b);
-                            let (a, top, _) =
-                                additive_joint_envelope(level.a0, level.global, eps, roundings, b, chain_extra)
-                                    .expect("level envelope at most the pool-wide one");
-                            (level.a0, level.global) = (a, top);
-                        }
-                        Some(level)
-                    })
-                    .collect()
+                carrier_level_envelopes(
+                    &coef,
+                    &level_terms,
+                    cnc as f64,
+                    &g.g,
+                    &g.carriers,
+                    &g.counts,
+                    &members,
+                    &contrib,
+                )
+                .into_iter()
+                .map(|level| {
+                    let mut level = level?;
+                    if joint_additive.is_some() {
+                        // a deck of the level reads coefficients at most the level's, so its factor error
+                        // sensitivity is at most theirs; every input is at most the pool-wide one, whose
+                        // envelope exists
+                        let (roundings, pool_b) = additive.expect("pool-wide additive envelope");
+                        let level_coef = Coef { k: level.k.clone(), z: coef.z.clone(), ..Default::default() };
+                        let b = factor_error_sensitivity(&level_coef, judgement_max.expect("judgement factors"))
+                            .expect("level sensitivity at most the pool-wide one")
+                            .min(pool_b);
+                        let (a, top, _) =
+                            additive_joint_envelope(level.a0, level.global, eps, roundings, b, chain_extra)
+                                .expect("level envelope at most the pool-wide one");
+                        (level.a0, level.global) = (a, top);
+                    }
+                    Some(level)
+                })
+                .collect()
             }
             _ => Vec::new(),
         };
@@ -1131,6 +1132,7 @@ impl<'a> SnapLive<'a> {
                     level_terms.clone(),
                     cnc as f64,
                     levels,
+                    g.counts.clone(),
                     &members,
                     &class_of,
                     &contrib,
