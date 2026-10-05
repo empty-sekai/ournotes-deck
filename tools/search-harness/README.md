@@ -72,6 +72,14 @@ Experiments can change `strategy`, `limits`, or add member/Snap exclusions. They
 
 Reports retain complete returned results with their best orders, oracle Top-K, candidate/simulation/cache/bound counters, exact Top-1 gap, input hashes, binary identity and source manifest.
 
+`sourceManifest` hashes the current checkout's `crates/` (both scorer and search),
+legacy `src/` and `tests/`, the harness, and the root Cargo manifest and lockfile.
+Build output directories (`target`) and Python caches are excluded. Uncommitted
+crate edits therefore change the manifest even when `sourceHead` is unchanged.
+The manifest records the source files observed before the run; `binarySha256`
+identifies the executable. These hashes alone do not attest that the executable
+was built from that checkout; preserve the build command and toolchain separately.
+
 ## Fixed-deck audits
 
 The following binaries take a `DECKS` JSON array of `{"members":[...],"snaps":[...]}`, write their report, and exit nonzero on any violation. They need no exhaustive oracle, so they apply to full-size rosters; the decks are typically the returned results of a search.
