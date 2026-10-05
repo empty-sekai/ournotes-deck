@@ -306,7 +306,7 @@ fn team(
     let cap_attained = e.certified.is_none()
         && e.top.iter().any(|entry| entry.physical == canonical && entry.evaluation.expected_payoff.numerator == cap);
     if bounds.has_terminal_payoff_cap() && cap_attained {
-        let proposals = bounds.layout_power_frontier(domain, p, e.request.k);
+        let proposals = bounds.layout_power_frontier(e.pool, domain, p, e.request.k);
         let exhausted = proposals.len() < e.request.k;
         let last = proposals.last().copied();
         for proposal in proposals {
