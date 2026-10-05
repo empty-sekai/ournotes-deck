@@ -1,0 +1,189 @@
+name: Release artifacts
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.source.outputs.tag }}
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: source
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          commit=$(git rev-parse "refs/tags/$TAG^{commit}")
+          git show "$commit:Cargo.toml" > /tmp/release-Cargo.toml
+          python3 -c 'import os,tomllib; assert tomllib.load(open("/tmp/release-Cargo.toml","rb"))["workspace"]["package"]["version"] == os.environ["TAG"][1:]'
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+  native:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ needs.resolve.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.resolve.outputs.commit }}
+      BUILD_TARGET: ${{ matrix.target }}
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: automation
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.commit }}
+          path: source
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install static Linux linker
+        if: contains(matrix.target, 'linux-musl')
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y musl-tools
+          linker_key="CARGO_TARGET_$(echo "$BUILD_TARGET" | tr 'a-z-' 'A-Z_')_LINKER"
+          echo "$linker_key=musl-gcc" >> "$GITHUB_ENV"
+      - name: Build tagged CLI binaries
+        working-directory: source
+        run: cargo build --release --locked --target "$BUILD_TARGET" --bins
+      - name: Export synthetic CLI inputs
+        working-directory: source
+        env:
+          BDON_HARNESS_OUT: work/corpus
+        run: cargo test --release --locked --target "$BUILD_TARGET" --test adapter_fixture_export export_search_harness_inputs -- --ignored --exact
+      - name: Package and run extracted binaries
+        run: |
+          python automation/scripts/release/package.py native --source source --output dist --tag "$TAG" --commit "$SOURCE_COMMIT" --target "$BUILD_TARGET"
+          python automation/scripts/release/smoke-native.py dist source/work/corpus
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  wasm:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      TAG: ${{ needs.resolve.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.resolve.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: automation
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.commit }}
+          path: source
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install exact binding tool and browser
+        run: |
+          cargo install wasm-bindgen-cli --version 0.2.127 --locked
+          npm install --prefix automation/work/browser playwright@1.58.2
+          automation/work/browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Build tagged WASM modules and bindings
+        working-directory: source
+        run: |
+          for module in replay recommend; do
+            cargo build --release --locked --target wasm32-unknown-unknown --manifest-path "wasm/$module/Cargo.toml"
+            for binding in web nodejs; do
+              wasm-bindgen --target "$binding" --out-dir "work/bindings/$module/$binding" "wasm/$module/target/wasm32-unknown-unknown/release/ournotes_${module}_wasm.wasm"
+            done
+          done
+      - name: Export native account references
+        working-directory: source
+        env:
+          OURNOTES_ACCOUNT_CORPUS: work/account-corpus
+        run: cargo test --release --locked --test adapter_fixture_export export_account_transport_corpus -- --ignored --exact
+      - name: Package and verify extracted WASM in Node and Chromium
+        env:
+          NODE_PATH: ${{ github.workspace }}/automation/work/browser/node_modules
+        run: |
+          python3 automation/scripts/release/package.py wasm --source source --output dist --tag "$TAG" --commit "$SOURCE_COMMIT"
+          mkdir -p work/unpacked
+          for archive in dist/*.tar.gz; do tar xzf "$archive" -C work/unpacked; done
+          recommend="work/unpacked/ournotes-recommend-wasm-$TAG"
+          replay="work/unpacked/ournotes-replay-wasm-$TAG"
+          node source/tools/search-harness/account-wasm.cjs "$recommend/nodejs/ournotes_recommend_wasm.js" source/work/account-corpus
+          node automation/scripts/release/smoke-wasm.cjs "$recommend" "$replay" source/work/account-corpus
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: [resolve, native, wasm]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.resolve.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.resolve.outputs.commit }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Hash and publish all verified packages
+        run: |
+          test "$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)" = "$SOURCE_COMMIT"
+          cd dist
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 7
+          sha256sum * > SHA256SUMS
+          gh release view "$TAG" >/dev/null || gh release create "$TAG" --verify-tag --title "ournotes-deck $TAG" --generate-notes
+          gh release upload "$TAG" *
+          gh release download "$TAG" --dir ../readback
+          cd ../readback
+          sha256sum -c SHA256SUMS
+          echo "Published $TAG from $SOURCE_COMMIT; all seven downloaded packages match SHA256SUMS." >> "$GITHUB_STEP_SUMMARY"
