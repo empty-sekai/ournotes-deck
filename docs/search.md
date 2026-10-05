@@ -804,7 +804,12 @@ that envelope. For every `T` of at most the slots to fill, each list of `T` adds
 distinct characters outside the prefix with no Snap or a Snap outside the prefix, and the slots without a carrier the
 table relaxation of the pairs that are no carrier, with gains under the same envelope; the node bound is the largest
 over `T` (characters and Snaps may repeat between the lists and the other slots, which only enlarges the completion
-set). The search stops at the first `T` above the K-th payoff. Below the leader the slots to fill take candidates
+set). Every gain is the mean over the five positions, so each table holds one value per pair. A `T` whose bound is
+above the K-th payoff is also bounded with power and gain coupled: for any weight `λ > 0`,
+`P·(A0 + G) <= (λ·P + (A0 + G)/λ)^2 / 4`, and the slots to fill relax `λ·power + gain/λ` as one value per pair (per
+list for the carriers, by the same table relaxation for the other slots), so a pair's power and gain come from the
+same pair. `λ` is the step of a geometric grid (ratio 1.08) nearest `sqrt((A0 + G)/P)` at the uncoupled terms; the
+bound of `T` is the smaller of the two. The check stops at the first `T` still above the K-th payoff. Below the leader the slots to fill take candidates
 in ascending choice order, so a node's completions use the choices from its start on, and in a node's choice loop
 every child from an offset on, with its completions, uses the choices from that offset on. The tables are compiled for
 the pairs from each of a few suffix starts (0, 8, then about half again each time); a node reads the latest start at

@@ -12,15 +12,71 @@ pub(super) struct Top<T> {
     entries: Vec<(T, u32)>,
 }
 impl<T: Copy + PartialOrd> Top<T> {
+    /// The KEEP best entries, by value then key, as a full sort would order them.
     pub(super) fn from_best(best: impl Iterator<Item = (T, u32)>) -> Self {
-        let mut entries: Vec<(T, u32)> = best.collect();
-        entries.sort_by(|a, b| b.0.partial_cmp(&a.0).expect("finite table value").then(a.1.cmp(&b.1)));
-        entries.truncate(KEEP);
+        let before = |a: &(T, u32), b: &(T, u32)| match a.0.partial_cmp(&b.0).expect("finite table value") {
+            std::cmp::Ordering::Equal => a.1 < b.1,
+            order => order.is_gt(),
+        };
+        let mut entries: Vec<(T, u32)> = Vec::with_capacity(KEEP);
+        for e in best {
+            if entries.len() == KEEP {
+                if !before(&e, &entries[KEEP - 1]) {
+                    continue;
+                }
+                entries.pop();
+            }
+            let at = entries.partition_point(|x| before(x, &e));
+            entries.insert(at, e);
+        }
         Top { entries }
     }
     /// The best value whose key is free, if any.
     pub(super) fn first(&self, taken: impl Fn(u32) -> bool) -> Option<T> {
         self.entries.iter().find(|e| !taken(e.1)).map(|e| e.0)
+    }
+}
+
+/// The `take` (at most 5) largest values pushed so far, largest first.
+struct Largest<T> {
+    values: [T; 5],
+    len: usize,
+    take: usize,
+}
+
+impl<T: Copy + PartialOrd> Largest<T> {
+    fn new(take: usize, zero: T) -> Self {
+        assert!(take <= 5, "at most five slots");
+        Largest { values: [zero; 5], len: 0, take }
+    }
+
+    fn push(&mut self, x: T) {
+        let mut i = if self.len < self.take {
+            self.len += 1;
+            self.len - 1
+        } else if x > self.values[self.take - 1] {
+            self.take - 1
+        } else {
+            return;
+        };
+        while i > 0 && x > self.values[i - 1] {
+            self.values[i] = self.values[i - 1];
+            i -= 1;
+        }
+        self.values[i] = x;
+    }
+}
+
+impl Largest<i64> {
+    fn sum(&self) -> i64 {
+        self.values[..self.len].iter().sum()
+    }
+}
+
+impl Largest<f64> {
+    /// The sum in descending order, rounded up.
+    fn sum_up(&self) -> f64 {
+        self.values[..self.len].iter().fold(0.0, |sum, &x| add_up(sum, x))
     }
 }
 
@@ -94,15 +150,23 @@ impl RelaxTables {
         if g.iter().flatten().flatten().any(|g| !g.is_finite()) {
             return None;
         }
+        // [member index][Snap]: whether the member's pair with the Snap is admitted
+        let admitted: Vec<Vec<bool>> = members.iter().map(|&m| (1..=snaps).map(|c| allowed(m, c)).collect()).collect();
+        // [character]: its member indices
+        let mut of_character = vec![Vec::new(); nc];
+        for (i, &c) in member_character.iter().enumerate() {
+            of_character[c].push(i);
+        }
+        // the gains read the same at every position: compute the first and copy it
+        let same = g.iter().flatten().all(|row| row.iter().all(|&x| x.to_bits() == row[0].to_bits()));
+        let positions = if same { 1 } else { 5 };
         // Maxima over the members of one character, keyed by Snap; then the KEEP best Snaps.
         let by_character = |c: usize, value: &dyn Fn(usize, usize) -> f64| -> Vec<f64> {
             let mut best = vec![f64::NEG_INFINITY; snaps];
-            for (i, &m) in members.iter().enumerate() {
-                if member_character[i] == c {
-                    for (j, slot) in best.iter_mut().enumerate() {
-                        if allowed(m, j + 1) {
-                            *slot = slot.max(value(i, j));
-                        }
+            for &i in &of_character[c] {
+                for (j, slot) in best.iter_mut().enumerate() {
+                    if admitted[i][j] {
+                        *slot = slot.max(value(i, j));
                     }
                 }
             }
@@ -113,14 +177,12 @@ impl RelaxTables {
         for profile in 0..profiles {
             for c in 0..nc {
                 let mut best = vec![i64::MIN; snaps];
-                for (i, &m) in members.iter().enumerate() {
-                    if member_character[i] != c {
-                        continue;
-                    }
+                for &i in &of_character[c] {
+                    let m = members[i];
                     let own = b.a[m] + b.lead[profile][m];
                     base_power[profile][c] = base_power[profile][c].max(own);
                     for (j, slot) in best.iter_mut().enumerate() {
-                        if allowed(m, j + 1) {
+                        if admitted[i][j] {
                             *slot = (*slot).max(own + b.w[m][j]);
                         }
                     }
@@ -131,14 +193,16 @@ impl RelaxTables {
         let mut base_gain = vec![[f64::NEG_INFINITY; 5]; nc];
         let mut snap_gain_by_character: Vec<[Top<f64>; 5]> = vec![Default::default(); nc];
         for c in 0..nc {
-            for pos in 0..5 {
-                for i in 0..members.len() {
-                    if member_character[i] == c {
-                        base_gain[c][pos] = base_gain[c][pos].max(g[i][0][pos]);
-                    }
+            for pos in 0..positions {
+                for &i in &of_character[c] {
+                    base_gain[c][pos] = base_gain[c][pos].max(g[i][0][pos]);
                 }
                 let best = by_character(c, &|i, j| g[i][j + 1][pos]);
                 snap_gain_by_character[c][pos] = Top::from_best(best.into_iter().zip(0..));
+            }
+            for pos in positions..5 {
+                base_gain[c][pos] = base_gain[c][0];
+                snap_gain_by_character[c][pos] = snap_gain_by_character[c][0].clone();
             }
         }
         let mut base_bonus = vec![0i64; nc];
@@ -147,13 +211,11 @@ impl RelaxTables {
             for c in 0..nc {
                 let mut best = vec![i64::MIN; snaps];
                 base_bonus[c] = i64::MIN;
-                for (i, &m) in members.iter().enumerate() {
-                    if member_character[i] != c {
-                        continue;
-                    }
+                for &i in &of_character[c] {
+                    let m = members[i];
                     base_bonus[c] = base_bonus[c].max(pt.member[m]);
                     for (j, slot) in best.iter_mut().enumerate() {
-                        if allowed(m, j + 1) {
+                        if admitted[i][j] {
                             *slot = (*slot).max(pt.member[m] + pt.snap[j]);
                         }
                     }
@@ -167,17 +229,24 @@ impl RelaxTables {
             let mut power = vec![i64::MIN; nc];
             let mut gain = [(); 5].map(|_| vec![f64::NEG_INFINITY; nc]);
             for (i, &m) in members.iter().enumerate() {
-                if !allowed(m, j + 1) {
+                if !admitted[i][j] {
                     continue;
                 }
                 let c = member_character[i];
                 power[c] = power[c].max(b.w[m][j]);
-                for (pos, row) in gain.iter_mut().enumerate() {
+                for (pos, row) in gain.iter_mut().enumerate().take(positions) {
                     row[c] = row[c].max((g[i][j + 1][pos] - g[i][0][pos]).next_up());
                 }
             }
             increment_power.push(Top::from_best(power.into_iter().zip(0..)));
-            increment_gain.push(gain.map(|row| Top::from_best(row.into_iter().zip(0..))));
+            let mut tops: [Top<f64>; 5] = Default::default();
+            for (pos, row) in gain.into_iter().enumerate().take(positions) {
+                tops[pos] = Top::from_best(row.into_iter().zip(0..));
+            }
+            for pos in positions..5 {
+                tops[pos] = tops[0].clone();
+            }
+            increment_gain.push(tops);
         }
         Some(RelaxTables {
             characters,
@@ -230,23 +299,34 @@ impl RelaxTables {
         if take == 0 {
             return (0, 0.0, 0);
         }
+        // the distinct positions of the free slots
+        let (mut at, mut distinct) = ([0usize; 5], 0);
+        for &s in free {
+            if !at[..distinct].contains(&positions[s]) {
+                at[distinct] = positions[s];
+                distinct += 1;
+            }
+        }
+        let at = &at[..distinct];
         let snap_taken = |j: u32| taken_snaps[j as usize];
         let character_taken = |c: u32| taken_characters[c as usize];
-        let (mut powers, mut gains, mut bonuses) = (Vec::new(), Vec::new(), Vec::new());
-        let (mut base_powers, mut base_gains, mut base_bonuses) = (Vec::new(), Vec::new(), Vec::new());
+        let points = b.points.is_some();
+        let (mut powers, mut gains, mut bonuses) =
+            (Largest::new(take, 0), Largest::new(take, 0.0), Largest::new(take, 0));
+        let (mut base_powers, mut base_gains, mut base_bonuses) =
+            (Largest::new(take, 0), Largest::new(take, 0.0), Largest::new(take, 0));
+        let mut any_character = false;
         for c in (0..self.characters.len()).filter(|&c| self.present[c] && !taken_characters[c]) {
+            any_character = true;
             let base_p = self.base_power[profile][c];
-            let base_g = free.iter().map(|&s| self.base_gain[c][positions[s]]).fold(0.0, f64::max);
-            let base_b = if b.points.is_some() { self.base_bonus[c] } else { 0 };
+            let base_g = at.iter().map(|&pos| self.base_gain[c][pos]).fold(0.0, f64::max);
+            let base_b = if points { self.base_bonus[c] } else { 0 };
             let best_p = self.snap_power_by_character[profile][c].first(snap_taken).map_or(base_p, |v| v.max(base_p));
-            let best_g = free
+            let best_g = at
                 .iter()
-                .map(|&s| {
-                    let pos = positions[s];
-                    self.snap_gain_by_character[c][pos].first(snap_taken).map_or(f64::NEG_INFINITY, |v| v)
-                })
+                .map(|&pos| self.snap_gain_by_character[c][pos].first(snap_taken).map_or(f64::NEG_INFINITY, |v| v))
                 .fold(base_g, f64::max);
-            let best_b = if b.points.is_some() {
+            let best_b = if points {
                 self.snap_bonus_by_character[c].first(snap_taken).map_or(base_b, |v| v.max(base_b))
             } else {
                 0
@@ -258,45 +338,33 @@ impl RelaxTables {
             base_gains.push(base_g);
             base_bonuses.push(base_b);
         }
-        let snaps = self.increment_power.len();
-        let mut snap_power = vec![0i64; snaps];
-        let mut snap_gain = vec![0.0f64; snaps];
-        let mut snap_bonus = vec![0i64; snaps];
-        let any_character = !powers.is_empty();
-        for j in (0..snaps).filter(|&j| !taken_snaps[j]) {
-            if let Some(v) = self.increment_power[j].first(character_taken) {
-                snap_power[j] = snap_power[j].max(v);
-            }
-            for &s in free {
-                if let Some(v) = self.increment_gain[j][positions[s]].first(character_taken) {
-                    snap_gain[j] = snap_gain[j].max(v);
+        // every Snap counts, a taken one with nothing
+        let (mut snap_power, mut snap_gain, mut snap_bonus) =
+            (Largest::new(take, 0), Largest::new(take, 0.0), Largest::new(take, 0));
+        for j in 0..self.increment_power.len() {
+            let (mut p, mut g, mut bonus) = (0i64, 0.0f64, 0i64);
+            if !taken_snaps[j] {
+                if let Some(v) = self.increment_power[j].first(character_taken) {
+                    p = p.max(v);
+                }
+                for &pos in at {
+                    if let Some(v) = self.increment_gain[j][pos].first(character_taken) {
+                        g = g.max(v);
+                    }
+                }
+                if let Some(pt) = &b.points
+                    && any_character
+                {
+                    bonus = pt.snap[j].max(0);
                 }
             }
-            if let Some(pt) = &b.points
-                && any_character
-            {
-                snap_bonus[j] = pt.snap[j].max(0);
-            }
+            snap_power.push(p);
+            snap_gain.push(g);
+            snap_bonus.push(bonus);
         }
-        // Select the `take` largest, then sum them in descending order exactly as a full sort would.
-        let top_int = |mut v: Vec<i64>| {
-            if v.len() > take {
-                v.select_nth_unstable_by(take - 1, |a, b| b.cmp(a));
-                v.truncate(take);
-            }
-            v.iter().sum::<i64>()
-        };
-        let top_float = |mut v: Vec<f64>| {
-            if v.len() > take {
-                v.select_nth_unstable_by(take - 1, |a, b| b.total_cmp(a));
-                v.truncate(take);
-            }
-            v.sort_by(|a, b| b.total_cmp(a));
-            v.iter().fold(0.0, |sum, &x| add_up(sum, x))
-        };
-        let power = top_int(powers).min(top_int(base_powers) + top_int(snap_power));
-        let gain = top_float(gains).min(add_up(top_float(base_gains), top_float(snap_gain)));
-        let bonus = top_int(bonuses).min(top_int(base_bonuses) + top_int(snap_bonus));
+        let power = powers.sum().min(base_powers.sum() + snap_power.sum());
+        let gain = gains.sum_up().min(add_up(base_gains.sum_up(), snap_gain.sum_up()));
+        let bonus = bonuses.sum().min(base_bonuses.sum() + snap_bonus.sum());
         (power, gain, bonus)
     }
 }

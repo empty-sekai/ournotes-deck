@@ -1165,6 +1165,11 @@ impl CarrierKeys {
         self.class_of[m][choice]
     }
 
+    /// The number of classes of a pool member (every class below it).
+    pub(crate) fn classes(&self, m: usize) -> usize {
+        self.windows[m].len()
+    }
+
     /// The number of distinct carrier window lists.
     pub(crate) fn list_count(&self) -> usize {
         self.lists.len()

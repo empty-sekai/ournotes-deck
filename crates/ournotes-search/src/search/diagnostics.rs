@@ -376,9 +376,7 @@ pub fn prefix_upper(
         }
     }
     let mut numerator = cap.saturating_mul(ORDERS as i128);
-    if let Some(split) =
-        b.carrier_split_expected_upper(&built.pool, built.domain(), &p, depth, 0, &MEAN_ORDERS, i128::MAX)
-    {
+    if let Some(split) = b.carrier_split_coupled_upper(&built.pool, built.domain(), &p, depth, 0, &MEAN_ORDERS) {
         numerator = numerator.min(split);
         scratch.checked_carrier_split_prefixes += 1;
     }
@@ -479,6 +477,12 @@ pub fn path_bounds(
             let start = if depth == 1 { 0 } else { path[depth - 1] + 1 };
             row["carrierSplitStart"] =
                 b.carrier_split_expected_upper(pool, domain, &p, depth, start, &MEAN_ORDERS, i128::MAX).map(s).into();
+            row["carrierSplitCoupled"] =
+                b.carrier_split_coupled_upper(pool, domain, &p, depth, start, &MEAN_ORDERS).map(s).into();
+            if depth >= 2 && std::env::var_os("PATH_BOUNDS_COMPLETIONS").is_some() {
+                row["carrierSplitCompletions"] =
+                    b.carrier_split_completions(pool, domain, &p, depth, start, &MEAN_ORDERS, 1 << 29).into();
+            }
             row["modules"] = b
                 .modules()
                 .iter()
@@ -558,8 +562,7 @@ pub fn next_choice_bounds(
         })
         .min()
         .expect("a slot to fill");
-    if let Some(split) =
-        bounds.carrier_split_expected_upper(&built.pool, built.domain(), &p, depth, from, &MEAN_ORDERS, i128::MAX)
+    if let Some(split) = bounds.carrier_split_coupled_upper(&built.pool, built.domain(), &p, depth, from, &MEAN_ORDERS)
     {
         suffix.0 = suffix.0.min(split);
     }

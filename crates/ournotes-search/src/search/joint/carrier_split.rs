@@ -18,12 +18,19 @@ const MAX_LISTS: usize = 8;
 const ENV_CACHE: usize = 512;
 /// The first suffix start after 0; each later one is about half again the previous.
 const FIRST_START: usize = 8;
+/// The ratio between neighbouring weights `λ` of the coupled bound: a weight off the best one by at most half a step
+/// loses at most `((s + 1/s)/2)² - 1` with `s = √WEIGHT_STEP`, under 0.1%.
+const WEIGHT_STEP: f64 = 1.08;
 
 pub(super) struct CarrierSplit {
     keys: Rc<CarrierKeys>,
     lists: usize,
     /// The choice index (see `JointBounds::choices`) of every pool member and choice, `u32::MAX` outside them.
     index: Vec<Vec<u32>>,
+    /// `[pool member]`: the offset of the member's classes in an envelope's gains read.
+    class_at: Vec<usize>,
+    /// The classes of all pool members.
+    classes: usize,
     /// Suffix starts, ascending from 0: the tables at start `k` cover the pairs from choice index `starts[k]` on.
     starts: Vec<usize>,
     /// `[list]`: the list's pairs (pool member, choice) with their character.
@@ -38,13 +45,24 @@ pub(super) struct CarrierSplit {
 
 struct SplitEnv {
     env: KeyedEnvelope,
-    /// The position-mean gain of every member's class read so far.
-    read: RefCell<HashMap<(usize, usize), f64>>,
+    /// The position-mean gain of every member's class (at `class_at[member] + class`), NaN until read.
+    read: RefCell<Vec<f64>>,
     /// `[start][list]`: the gains of the list's pairs by character (filled on first use).
     gain: Vec<Vec<OnceCell<ByCharacter<f64>>>>,
     /// `[start]`: the relaxation tables of the pairs that are no carrier, with their gains (filled on first use; None
     /// when a table value is not finite).
     plain: Vec<OnceCell<Option<RelaxTables>>>,
+    /// The coupled tables by (start, leader profile, weight index), filled on first use.
+    coupled: RefCell<HashMap<(usize, usize, i32), Rc<Coupled>>>,
+}
+
+/// The tables of one weight `λ`: every pair reads `λ·power + gain/λ`, rounded up.
+struct Coupled {
+    /// `[list]`: the values of the list's pairs from the start on by character.
+    lists: Vec<ByCharacter<f64>>,
+    /// The relaxation tables of the pairs from the start on that are no carrier, reading the value as their gain
+    /// (None when a value is not finite).
+    plain: Option<RelaxTables>,
 }
 
 /// One carrier list's pairs by character: the best value of its pairs without a Snap and the best values per Snap.
@@ -114,6 +132,12 @@ impl CarrierSplit {
         for (i, &(m, c)) in b.choices.iter().enumerate() {
             index[m][c] = u32::try_from(i).ok()?;
         }
+        let mut class_at = Vec::with_capacity(pool.members.len());
+        let mut classes = 0;
+        for m in 0..pool.members.len() {
+            class_at.push(classes);
+            classes += keys.classes(m);
+        }
         let mut starts = vec![0];
         let mut next = FIRST_START;
         while next < b.choices.len() {
@@ -148,7 +172,18 @@ impl CarrierSplit {
             })
             .collect();
         let sets = (0..5).map(|r| multisets(lists, r)).collect();
-        Some(CarrierSplit { keys, lists, index, starts, pairs, power, sets, envs: RefCell::default() })
+        Some(CarrierSplit {
+            keys,
+            lists,
+            index,
+            class_at,
+            classes,
+            starts,
+            pairs,
+            power,
+            sets,
+            envs: RefCell::default(),
+        })
     }
 
     /// The latest suffix start at most `from`.
@@ -162,9 +197,10 @@ impl CarrierSplit {
         }
         let e = Rc::new(SplitEnv {
             env: self.keys.build_envelope(ids, 0),
-            read: RefCell::default(),
+            read: RefCell::new(vec![f64::NAN; self.classes]),
             gain: self.starts.iter().map(|_| (0..self.lists).map(|_| OnceCell::new()).collect()).collect(),
             plain: self.starts.iter().map(|_| OnceCell::new()).collect(),
+            coupled: RefCell::default(),
         });
         let mut envs = self.envs.borrow_mut();
         if envs.len() >= ENV_CACHE {
@@ -176,10 +212,14 @@ impl CarrierSplit {
 
     /// The position-mean gain of a pool member and choice under an envelope (read once per member and class).
     fn gain(&self, e: &SplitEnv, m: usize, c: usize) -> f64 {
-        *e.read
-            .borrow_mut()
-            .entry((m, self.keys.class(m, c)))
-            .or_insert_with(|| super::super::uniform::mean_up(&self.keys.gains_uncached(&e.env, m, c)))
+        let at = self.class_at[m] + self.keys.class(m, c);
+        let read = e.read.borrow()[at];
+        if !read.is_nan() {
+            return read;
+        }
+        let g = super::super::uniform::mean_up(&self.keys.gains_uncached(&e.env, m, c));
+        e.read.borrow_mut()[at] = g;
+        g
     }
 
     /// The gains of a list's pairs from suffix start `k` on by character under an envelope.
@@ -214,6 +254,53 @@ impl CarrierSplit {
             })
             .as_ref()
     }
+
+    /// The coupled tables of weight `WEIGHT_STEP^j` for the pairs from suffix start `k` on under an envelope.
+    #[allow(clippy::too_many_arguments)]
+    fn coupled(
+        &self,
+        b: &JointBounds,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        e: &SplitEnv,
+        k: usize,
+        profile: usize,
+        j: i32,
+    ) -> Rc<Coupled> {
+        if let Some(c) = e.coupled.borrow().get(&(k, profile, j)) {
+            return c.clone();
+        }
+        let (lambda, from) = (WEIGHT_STEP.powi(j), self.starts[k]);
+        let value = |m: usize, c: usize| {
+            let power = b.a[m] + b.lead[profile][m] + if c == 0 { 0 } else { b.w[m][c - 1] };
+            add_up((lambda * power as f64).next_up(), (self.gain(e, m, c) / lambda).next_up())
+        };
+        let lists = self
+            .pairs
+            .iter()
+            .map(|list| {
+                let list: Vec<_> =
+                    list.iter().copied().filter(|&(m, c, _)| self.index[m][c] as usize >= from).collect();
+                ByCharacter::compile(&list, value)
+            })
+            .collect();
+        let plain = RelaxTables::compile_where(
+            b,
+            pool,
+            domain,
+            &|m, c| self.keys.list(m, c).is_none() && self.index[m][c] as usize >= from,
+            &|m, c| [value(m, c); 5],
+        );
+        let c = Rc::new(Coupled { lists, plain });
+        e.coupled.borrow_mut().insert((k, profile, j), c.clone());
+        c
+    }
+}
+
+/// The index `j` of the weight `WEIGHT_STEP^j` nearest `√(q/power)`, the weight at which `(λ·power + q/λ)²/4` equals
+/// `power·q`.
+fn weight(q: f64, power: i64) -> i32 {
+    ((q / power as f64).sqrt().ln() / WEIGHT_STEP.ln()).round() as i32
 }
 
 /// Every multiset of at most `r` of `0..lists`, as nondecreasing sequences.
@@ -250,7 +337,8 @@ impl JointBounds {
     /// The carrier split bound, as a payoff numerator over the order masses `orders` (position-mean gains read the
     /// same at every position), of the completions of a prefix at `depth` (1..5) whose slots to fill take candidates
     /// from choice index `from` on. Stops at the first multiset whose bound exceeds `threshold`, returning that bound;
-    /// otherwise the largest. None without the split tables.
+    /// otherwise the largest. None without the split tables. A multiset whose bound exceeds `threshold` is first
+    /// coupled (see `split_upper`).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn carrier_split_expected_upper(
         &self,
@@ -261,6 +349,39 @@ impl JointBounds {
         from: usize,
         orders: &[([usize; 5], u128)],
         threshold: i128,
+    ) -> Option<i128> {
+        self.split_upper(pool, domain, p, depth, from, orders, threshold, threshold)
+    }
+
+    /// `carrier_split_expected_upper` without a threshold, every multiset coupled.
+    #[cfg(feature = "search-diagnostics")]
+    pub(crate) fn carrier_split_coupled_upper(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        from: usize,
+        orders: &[([usize; 5], u128)],
+    ) -> Option<i128> {
+        self.split_upper(pool, domain, p, depth, from, orders, i128::MAX, i128::MIN)
+    }
+
+    /// The carrier split bound; a multiset whose bound exceeds `couple_above` also takes the coupled bound: every
+    /// completion's `power·(A0 + gain)` is at most `(λ·power + (A0 + gain)/λ)²/4` for any weight `λ > 0`, and the
+    /// slots to fill relax `λ·power + gain/λ` as one value per pair, so a pair's power and gain come from the same
+    /// pair. The weight is the step nearest the one at which the bound meets the uncoupled one at its terms.
+    #[allow(clippy::too_many_arguments)]
+    fn split_upper(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        from: usize,
+        orders: &[([usize; 5], u128)],
+        threshold: i128,
+        couple_above: i128,
     ) -> Option<i128> {
         let split = self.carrier_split.as_ref()?;
         if !(1..5).contains(&depth) {
@@ -288,7 +409,8 @@ impl JointBounds {
             p0 += self.a[m] + self.lead[profile][m] + if c == 0 { 0 } else { self.w[m][c - 1] };
         }
         let placed = || SLOTS[..depth].iter().map(|&slot| (p.members[slot], choices[slot]));
-        let positions = [0, 1, 2, 3, 4];
+        // the split's tables read the same gain at every position
+        let positions = [0; 5];
         let mut plain_taken = None;
         let mut best = i128::MIN;
         let mut ids = Vec::with_capacity(5);
@@ -312,32 +434,184 @@ impl JointBounds {
             for (m, c) in placed() {
                 gain = add_up(gain, super::super::uniform::mean_up(&keys.gains(&e.env, m, c)));
             }
+            let placed_gain = gain;
             for (list, n) in runs(t) {
                 gain = add_up(gain, split.gains(&e, k, list).top(&taken, &taken_snaps, n, 0.0, add_up)?);
             }
             let k0 = r - t.len();
+            let free = &SLOTS[depth..depth + k0];
             if k0 > 0 {
                 let tables = split.plain(self, pool, domain, &e, k)?;
                 let (taken_characters, taken_snaps) =
                     plain_taken.get_or_insert_with(|| tables.taken(pool, domain, p, depth));
-                let (pp, pg, _) = tables.free_part(
-                    self,
-                    profile,
-                    &SLOTS[depth..depth + k0],
-                    &positions,
-                    taken_characters,
-                    taken_snaps,
-                );
+                let (pp, pg, _) = tables.free_part(self, profile, free, &positions, taken_characters, taken_snaps);
                 power += pp;
                 gain = add_up(gain, pg);
             }
-            let numerator = self.carrier_level(ids.len()).payoff_cap_from(a0, power, gain, 0).checked_mul(mass)?;
+            let level = self.carrier_level(ids.len());
+            let mut numerator = level.payoff_cap_from(a0, power, gain, 0).checked_mul(mass)?;
+            if numerator > couple_above {
+                let j = weight(add_up(a0, gain), power);
+                let lambda = WEIGHT_STEP.powi(j);
+                let c = split.coupled(self, pool, domain, &e, k, profile, j);
+                // the prefix's terms, then the slots to fill (one value per pair)
+                let mut sum = add_up((lambda * p0 as f64).next_up(), (add_up(a0, placed_gain) / lambda).next_up());
+                let mut complete = true;
+                for (list, n) in runs(t) {
+                    match c.lists[list].top(&taken, &taken_snaps, n, 0.0, add_up) {
+                        Some(v) => sum = add_up(sum, v),
+                        None => complete = false,
+                    }
+                }
+                if k0 > 0 {
+                    match (&c.plain, &plain_taken) {
+                        (Some(tables), Some((taken_characters, taken_snaps))) => {
+                            let (_, v, _) =
+                                tables.free_part(self, profile, free, &positions, taken_characters, taken_snaps);
+                            sum = add_up(sum, v);
+                        }
+                        _ => complete = false,
+                    }
+                }
+                if complete {
+                    let product = (sum * sum).next_up() / 4.0;
+                    let cap = (product.min(power as f64 * level.global) * (1.0 + level.eps)).ceil() as i128;
+                    numerator = numerator.min(cap.checked_mul(mass)?);
+                }
+            }
             best = best.max(numerator);
             if numerator > threshold {
                 return Some(numerator);
             }
         }
         Some(best)
+    }
+
+    /// Diagnostics only: the bound the carrier split relaxes, taken over the completions of a prefix at `depth`
+    /// (2..5) one by one. Each completion takes pairs from choice index `from` on in ascending order, with characters
+    /// and Snaps free and distinct, and reads its own powers and gains under the envelope of its own carrier lists.
+    /// `A0` reads the slots to fill as free, as the split does; `ownA0` reads the completion's performers. None
+    /// without the split tables or past `limit` completions.
+    #[cfg(feature = "search-diagnostics")]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn carrier_split_completions(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        from: usize,
+        orders: &[([usize; 5], u128)],
+        limit: u64,
+    ) -> Option<serde_json::Value> {
+        let split = self.carrier_split.as_ref()?;
+        if !(2..5).contains(&depth) {
+            return None;
+        }
+        let mass = i128::try_from(orders.iter().map(|o| o.1).sum::<u128>()).ok()?;
+        let keys = &split.keys;
+        let profile = self.profile[p.members[2]];
+        let choices = Self::prefix_choices(domain, p, depth);
+        let r = 5 - depth;
+        let placed: Vec<(usize, usize)> = SLOTS[..depth].iter().map(|&s| (p.members[s], choices[s])).collect();
+        let power = |m: usize, c: usize| self.a[m] + self.lead[profile][m] + if c == 0 { 0 } else { self.w[m][c - 1] };
+        let character = |m: usize| pool.members[m].character_id;
+        let p0: i64 = placed.iter().map(|&(m, c)| power(m, c)).sum();
+        let candidates: Vec<(usize, usize)> = self.choices[from.min(self.choices.len())..]
+            .iter()
+            .copied()
+            .filter(|&(m, c)| placed.iter().all(|&(pm, pc)| character(pm) != character(m) && (c == 0 || pc != c)))
+            .collect();
+        struct Best {
+            numerator: i128,
+            own: i128,
+            pick: Vec<(usize, usize)>,
+            power: i64,
+            gain: f64,
+            a0: f64,
+            lists: Vec<u16>,
+        }
+        let mut best = Best {
+            numerator: i128::MIN,
+            own: i128::MIN,
+            pick: Vec::new(),
+            power: 0,
+            gain: 0.0,
+            a0: 0.0,
+            lists: Vec::new(),
+        };
+        let mut count = 0u64;
+        let mut visit = |pick: &[(usize, usize)]| {
+            count += 1;
+            let mut ids: Vec<u16> = placed.iter().chain(pick).filter_map(|&(m, c)| keys.list(m, c)).collect();
+            ids.sort_unstable();
+            let e = split.env(&ids);
+            let mut gain = 0f64;
+            for &(m, c) in &placed {
+                gain = add_up(gain, super::super::uniform::mean_up(&keys.gains(&e.env, m, c)));
+            }
+            let mut pw = p0;
+            for &(m, c) in pick {
+                pw += power(m, c);
+                gain = add_up(gain, split.gain(&e, m, c));
+            }
+            let level = self.carrier_level(ids.len());
+            let a0 = keys.a0(&e.env, placed.iter().copied(), r);
+            let numerator = level.payoff_cap_from(a0, pw, gain, 0).saturating_mul(mass);
+            let own = keys.a0(&e.env, placed.iter().chain(pick).copied(), 0);
+            best.own = best.own.max(level.payoff_cap_from(own, pw, gain, 0).saturating_mul(mass));
+            if numerator > best.numerator {
+                best = Best { numerator, own: best.own, pick: pick.to_vec(), power: pw, gain, a0, lists: ids };
+            }
+        };
+        type Pair = (usize, usize);
+        type Clash<'a> = dyn Fn(&[Pair], Pair) -> bool + 'a;
+        type Visit<'a> = dyn FnMut(&[Pair]) + 'a;
+        fn walk(
+            at: usize,
+            pick: &mut Vec<Pair>,
+            r: usize,
+            candidates: &[Pair],
+            clash: &Clash,
+            visit: &mut Visit,
+            budget: &mut u64,
+        ) {
+            if pick.len() == r {
+                *budget = budget.saturating_sub(1);
+                visit(pick);
+                return;
+            }
+            for i in at..candidates.len() {
+                if *budget == 0 {
+                    return;
+                }
+                if !clash(pick, candidates[i]) {
+                    pick.push(candidates[i]);
+                    walk(i + 1, pick, r, candidates, clash, visit, budget);
+                    pick.pop();
+                }
+            }
+        }
+        let clash = |pick: &[(usize, usize)], (m, c): (usize, usize)| {
+            pick.iter().any(|&(pm, pc)| character(pm) == character(m) || (c != 0 && pc == c))
+        };
+        let mut budget = limit;
+        walk(0, &mut Vec::with_capacity(r), r, &candidates, &clash, &mut visit, &mut budget);
+        if budget == 0 {
+            return None;
+        }
+        let s = |v: i128| v.to_string();
+        Some(serde_json::json!({
+            "candidates": candidates.len(),
+            "completions": count,
+            "upper": s(best.numerator),
+            "ownA0": s(best.own),
+            "argmax": best.pick.iter().map(|&(m, c)| [m, c]).collect::<Vec<_>>(),
+            "lists": best.lists,
+            "power": best.power,
+            "gain": best.gain,
+            "a0": best.a0,
+        }))
     }
 }
 
@@ -358,6 +632,17 @@ mod tests {
         assert_eq!(sorted.len(), all.len());
         assert_eq!(multisets(6, 4).len(), 1 + 6 + 21 + 56 + 126);
         assert_eq!(runs(&[0, 0, 2, 3, 3]).collect::<Vec<_>>(), [(0, 2), (2, 1), (3, 2)]);
+    }
+
+    #[test]
+    fn the_nearest_weight_meets_the_product_within_its_step() {
+        for (q, power) in [(1387.0, 290_825i64), (2.5, 7), (0.01, 1_000_000)] {
+            let lambda = WEIGHT_STEP.powi(weight(q, power));
+            let bound = (lambda * power as f64 + q / lambda).powi(2) / 4.0;
+            let product = q * power as f64;
+            assert!(bound >= product * (1.0 - 1e-12));
+            assert!(bound <= product * 1.001);
+        }
     }
 
     #[test]
