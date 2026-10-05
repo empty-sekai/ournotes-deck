@@ -89,6 +89,13 @@ impl<'m> Tables<'m> {
             let mu = song.as_ref().map(|s| s.slot());
             let r = calc.slot_power(Some(&slot), None, mu.as_ref(), Some(&bonus))?;
             let b = r.base_power.add(r.character_rank).add(r.character_total_rank).add(r.memory);
+            // Native wrapping point constructors can leave small fractional BP
+            // values. Range checks alone do not establish the additive identity:
+            // every resolved stat must also be a whole number of points.
+            let whole_points = |c: CardPower| c.to_array().iter().all(|value| value % 10_000 == 0);
+            if !whole_points(b) || !whole_points(r.total) {
+                return Err(Error::Domain(format!("member card {}: nonintegral resolved power stats", m.id)));
+            }
             if !in_domain(b, BP_LIMIT) || !in_domain(r.total, BP_LIMIT) {
                 return Err(Error::Domain(format!("member card {}: negative or oversized stats", m.id)));
             }
