@@ -394,10 +394,14 @@ fn canonical_jst_date_has_explicit_domain_and_tick_precision() {
     assert_eq!(parse_master_jst_canonical("9999-12-31T23:59:59.9999999").unwrap(), 3155378975999999999);
     let x = parse_master_jst_canonical("2024-02-29 00:00:00.0000001").unwrap();
     assert_eq!(x - parse_master_jst_canonical("2024-02-28").unwrap(), 864000000001);
+    assert_eq!(
+        parse_master_jst_canonical("2026/09/30 18:00:00").unwrap(),
+        parse_master_jst_canonical("2026-09-30T18:00:00").unwrap()
+    );
     for text in ["2023-02-29", "2024-01-01T24:00:00", "2024-00-01", "0000-01-01"] {
         assert!(parse_master_jst_canonical(text).is_err(), "{text}");
     }
-    for text in ["2024-01-01T00:00:00Z", "2024-01-01T00:00:00+09:00", "1/1/2024", " 2024-01-01", ""] {
+    for text in ["2024-01-01T00:00:00Z", "2024-01-01T00:00:00+09:00", "1/1/2024", "2024/01-01", " 2024-01-01", ""] {
         assert!(matches!(parse_master_jst_canonical(text), Err(ournotes_sim::Error::Unsupported(_))), "{text}");
     }
 }

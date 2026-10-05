@@ -776,15 +776,16 @@ fn days_before_year(year: i64) -> i64 {
     y * 365 + y / 4 - y / 100 + y / 400
 }
 
-/// Supported master-date adapter: yyyy-MM-dd, or yyyy-MM-dd[T or space]HH:mm:ss with optional 1..7
-/// fractional digits. No timezone suffix, locale formats, trimming, or DateTime.Kind coercion is assumed.
-/// The client accepts broader InvariantCulture DateTime.Parse inputs; unsupported forms are explicit errors.
+/// Supported master-date adapter: yyyy-MM-dd or yyyy/MM/dd (one separator throughout), optionally followed by
+/// [T or space]HH:mm:ss with optional 1..7 fractional digits. No timezone suffix, other locale formats, trimming,
+/// or DateTime.Kind coercion is assumed. The client accepts broader InvariantCulture DateTime.Parse inputs;
+/// unsupported forms are explicit errors.
 pub fn parse_master_jst_canonical(text: &str) -> Result<i64, Error> {
     let b = text.as_bytes();
     let supported = b.is_ascii()
         && (b.len() == 10 || b.len() == 19 || (21..=27).contains(&b.len()))
-        && b.get(4) == Some(&b'-')
-        && b.get(7) == Some(&b'-')
+        && matches!(b.get(4), Some(b'-' | b'/'))
+        && b.get(7) == b.get(4)
         && (b.len() == 10 || (matches!(b[10], b'T' | b' ') && b[13] == b':' && b[16] == b':'))
         && (b.len() <= 19 || b[19] == b'.');
     if !supported {
