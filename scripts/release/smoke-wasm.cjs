@@ -25,7 +25,13 @@ const untimed = answer => {
   return copy;
 };
 const { ReplaySession } = require(path.join(replayRoot, 'nodejs/ournotes_replay_wasm.js'));
-const session = new ReplaySession(data);
+// The recommendation corpus has no audio provenance. Supply an explicit synthetic
+// five-second audio length for this separate replay witness, keeping account data intact.
+const replayDocument = JSON.parse(data);
+assert.equal(replayDocument.provenance.synthetic, true);
+replayDocument.provenance.replay = { musicLengthsMs: { '1004': 5000 } };
+const replayData = JSON.stringify(replayDocument);
+const session = new ReplaySession(replayData);
 const chart = JSON.parse(session.describeChart(1004));
 assert(chart.notes.length > 0);
 const template = session.template(1004, 100000, 60);
@@ -40,7 +46,7 @@ self.onmessage=async({data:input})=>{try{
 await Promise.all([initRecommend(),initReplay()]);
 const solver=new DeckSolver(new TextEncoder().encode(input.data));
 const answers=input.inputs.map(({request})=>JSON.parse(solver.recommend(input.account,request)));
-const session=new ReplaySession(input.data);
+const session=new ReplaySession(input.replayData);
 const chart=JSON.parse(session.describeChart(1004));
 const result=JSON.parse(session.run(session.template(1004,100000,60)));
 solver.free();session.free();postMessage({answers,chart,replay:result});
@@ -67,7 +73,7 @@ const server = http.createServer((req, res) => {
       worker.onerror = event => { clearTimeout(timer); worker.terminate(); reject(Error(event.message)); };
       worker.onmessage = ({ data }) => { clearTimeout(timer); worker.terminate(); resolve(data); };
       worker.postMessage(input);
-    }), { data, account, inputs });
+    }), { data, replayData, account, inputs });
     assert.equal(actual.error, undefined, actual.error);
     inputs.forEach(({name, expected}, index) => assert.deepEqual(untimed(actual.answers[index]), untimed(expected), name));
     assert.deepEqual(actual.chart, chart);
