@@ -74,7 +74,10 @@ fn combo_gate(env: &Env, r: &Row) -> Option<i64> {
 /// each unit count until its value stops growing: `min(value * min(count, max), cap)` with the native product
 /// range, through the same mill quantization as the flat window. None outside that domain or above 4096 steps.
 fn combo_ramp(env: &Env, r: &Row) -> Option<(i64, i64, Rc<Vec<f64>>)> {
-    if !r.gk || r.effect_type != 2001 || r.value <= 0 || r.cumulative == 0 {
+    // The frame-read ramp requires a running updater to refresh its cumulative count each frame.
+    // Untimed sustained effects retain the count from their first activation, including after the
+    // playing range changes. Keep their flat peak window until a separate held-factor bound exists.
+    if !r.gk || r.trigger_type != 1 || r.effect_type != 2001 || r.value <= 0 || r.cumulative == 0 {
         return None;
     }
     let c = env.master.cumulative_condition(r.cumulative)?;

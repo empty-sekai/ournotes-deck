@@ -19,6 +19,7 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo clippy --all-targets --features native-fixtures -- -D warnings
       - run: cargo test --release
+      - run: cargo test --release --features search-diagnostics --test adapter_fixture_export
 
   msrv:
     runs-on: ubuntu-latest
