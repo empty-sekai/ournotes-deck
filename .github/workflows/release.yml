@@ -166,12 +166,26 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      checks: read
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.resolve.outputs.tag }}
       SOURCE_COMMIT: ${{ needs.resolve.outputs.commit }}
     steps:
+      - name: Require passing source CI
+        run: |
+          for attempt in $(seq 1 90); do
+            gh api "repos/$GH_REPO/commits/$SOURCE_COMMIT/check-runs?filter=latest&per_page=100" > /tmp/source-checks.json
+            if python3 -c 'import json,sys; checks=json.load(open("/tmp/source-checks.json"))["check_runs"]; required=[next((c for c in checks if c["name"]==name),None) for name in ("test","msrv")]; failed=any(c and c["status"]=="completed" and c["conclusion"]!="success" for c in required); passed=all(c and c["status"]=="completed" and c["conclusion"]=="success" for c in required); sys.exit(2 if failed else 0 if passed else 1)'; then
+              break
+            else
+              state=$?
+              test "$state" -eq 1 || exit "$state"
+            fi
+            test "$attempt" -lt 90
+            sleep 20
+          done
       - uses: actions/download-artifact@v4
         with:
           path: dist
