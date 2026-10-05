@@ -26,7 +26,8 @@ def percentile(values, p):
 
 def identity(binary, source_root):
     files = {}
-    for base in ("src", "tests", "tools/search-harness"):
+    # The scorer and search now live in workspace crates. Keep the legacy roots for older checkouts.
+    for base in ("src", "tests", "crates", "tools/search-harness"):
         for path in sorted((source_root / base).rglob("*")):
             if path.is_file() and "target" not in path.parts and "__pycache__" not in path.parts:
                 files[path.relative_to(source_root).as_posix()] = sha(path)
