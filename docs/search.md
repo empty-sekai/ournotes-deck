@@ -594,6 +594,11 @@ The bounds in use:
   and node bounds through the concave majorant of the tiers. It does not assume that a higher grade pays more.
   Multiplayer keeps the unrestricted tier cap.
 
+**Network rank snapshots.** Network rank bonuses read retained controller score snapshots. A timed factor can
+still affect notes in its finish score frame before the end command is filed, so the snapshot factor envelope
+includes that whole frame, clamped to the declared score clock. The cheap and per-order fine caps use these
+windows, and cutoff tables keep the full cap while ranking uses the retained snapshots.
+
 Correlation preparation probes at most 16 leader/pair prefixes, independently of traversal order. Unless the
 correlated bound tightens the cheap expected upper bound there by more than 3%, the solver skips that optional
 bound and keeps the ordinary complete traversal. The probe is a cost policy, not a proof, and never removes

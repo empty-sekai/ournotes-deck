@@ -8,6 +8,8 @@ pub(super) struct Geo<'g> {
     /// Entry chart times, non-decreasing.
     pub(super) times: &'g [i32],
     pub(super) exec: &'g Exec,
+    /// Last score frame when rank bonuses retain historical score snapshots.
+    pub(super) snapshot_frame_limit: Option<i32>,
 }
 
 impl Geo<'_> {
@@ -18,10 +20,17 @@ impl Geo<'_> {
         hi.saturating_sub(lo) as f64
     }
 
-    /// Entries with a chart time in `[a, b)`.
+    /// Entries with a chart time in `[a, b)`. Historical snapshots can retain a factor on its end score frame
+    /// before the end command is filed, so that frame's entries also belong to the snapshot envelope.
     pub(super) fn range(&self, a: i64, b: i64) -> (u32, u32) {
         let lo = self.times.partition_point(|&x| (x as i64) < a);
-        let hi = self.times.partition_point(|&x| (x as i64) < b);
+        let hi = match self.snapshot_frame_limit {
+            Some(last) => {
+                let end = get_frame(b.clamp(i32::MIN as i64, i32::MAX as i64) as i32).min(last);
+                self.times.partition_point(|&x| get_frame(x).min(last) <= end)
+            }
+            None => self.times.partition_point(|&x| (x as i64) < b),
+        };
         (lo as u32, hi.max(lo) as u32)
     }
 
@@ -301,6 +310,21 @@ mod lifetime_command_tests {
     use super::*;
     use ournotes_sim::live::score::ScoreFactorState;
     use ournotes_sim::live::skill::{FactorCommand, apply_factor};
+
+    #[test]
+    fn snapshot_windows_include_the_end_score_frame() {
+        let times = [360, 380, 390, 400, 401, 420];
+        let exec = Exec { e: Vec::new(), max: 2, max_frame: 100, sparse: Vec::new() };
+        let mut geo = Geo { frames: &[], times: &times, exec: &exec, snapshot_frame_limit: None };
+        assert_eq!(geo.range(160, 390), (0, 2));
+        assert_eq!(geo.range(160, 400), (0, 3));
+        geo.snapshot_frame_limit = Some(99);
+        assert_eq!(geo.range(160, 390), (0, 4));
+        assert_eq!(geo.range(160, 400), (0, 4));
+        assert_eq!(geo.range(160, i64::MAX), (0, 6));
+        geo.snapshot_frame_limit = Some(10);
+        assert_eq!(geo.range(160, 400), (0, 6));
+    }
 
     #[test]
     fn reused_pool_slots_do_not_bound_total_starts() {
