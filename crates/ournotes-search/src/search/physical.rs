@@ -1337,69 +1337,87 @@ fn joint_regimes(
         }
         parts.push((plan.domain.clone(), rules));
     }
-    e.rec.begin(&mut e.tel, "conversionCompile", None);
-    let prepare = Instant::now();
-    let mut conversion = telemetry::Conversion { snaps: converting.len(), ..Default::default() };
-    let mut compiled = Vec::with_capacity(parts.len());
-    for (domain, rules) in parts {
-        match JointBounds::compile(e.pool, e.request, &domain, e.metric, e.event_input, e.simulation) {
-            Ok(b) => compiled.push((domain, rules, b)),
+    let total = parts.iter().map(|(_, rules)| rules.len() as u64).sum();
+    e.tel.environment.bounds.conversion =
+        Some(telemetry::Conversion { snaps: converting.len(), parts: total as usize, ..Default::default() });
+    e.rec.parts = total;
+    let global_flags = (e.correlated, e.resource);
+    // Parts are grouped by their shared envelope. Within a group each slot rule is visited once;
+    // the envelope can be released as soon as that group's last traversal is complete.
+    let mut priority = std::collections::HashMap::new();
+    if !warm::static_order() {
+        for t in &e.top {
+            let key = warm::traversal_of(&t.physical, &converting);
+            priority.entry(key).or_insert((t.evaluation.expected_payoff.numerator, t.power));
+        }
+    }
+    let mut schedule: Vec<_> = parts.into_iter().enumerate().collect();
+    schedule.sort_by_key(|(i, (_, rules))| {
+        std::cmp::Reverse((0..rules.len()).filter_map(|j| priority.get(&(*i, j)).copied()).max())
+    });
+    let bound_pending = |e: &mut Engine<'_, '_>| -> Result<(), Error> {
+        // The pool-wide bound covers the active group and every group still awaiting compilation.
+        let started = e.bound_start();
+        let upper = joint_root_upper(e.pool, &plan.domain, bounds, orders, 0)?;
+        e.fold_unexplored(upper, started);
+        Ok(())
+    };
+    for (i, (domain, rules)) in schedule {
+        e.rec.frontier.clear();
+        if e.expired() {
+            bound_pending(e)?;
+            return Ok(());
+        }
+        e.rec.begin(&mut e.tel, "conversionCompile", None);
+        let prepare = Instant::now();
+        let result = JointBounds::compile(e.pool, e.request, &domain, e.metric, e.event_input, e.simulation);
+        e.tel.environment.bounds.conversion.as_mut().expect("conversion context").compile_ms +=
+            prepare.elapsed().as_secs_f64() * 1000.0;
+        e.rec.end(&mut e.tel);
+        let mut part = match result {
+            Ok(part) => part,
             Err(error) => {
-                conversion.compile_ms = prepare.elapsed().as_secs_f64() * 1000.0;
-                conversion.fallback = Some(error.to_string());
-                e.tel.environment.bounds.conversion = Some(conversion);
-                e.rec.end(&mut e.tel);
+                e.tel.environment.bounds.conversion.as_mut().expect("conversion context").fallback =
+                    Some(error.to_string());
+                // One whole-domain traversal also covers any groups already completed.
+                (e.correlated, e.resource) = global_flags;
+                e.rec.parts = 1;
+                e.rec.parts_done = 0;
+                *p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
                 e.rec.begin(&mut e.tel, "search", None);
                 ordered_root(p, &plan.domain, bounds, orders, e)?;
                 e.rec.end(&mut e.tel);
                 return Ok(());
             }
-        }
-    }
-    conversion.compile_ms = prepare.elapsed().as_secs_f64() * 1000.0;
-    conversion.parts = compiled.iter().map(|(_, rules, _)| rules.len()).sum();
-    let total = conversion.parts as u64;
-    e.tel.environment.bounds.conversion = Some(conversion);
-    e.rec.end(&mut e.tel);
-    e.rec.parts = total;
-    // One root traversal per (part, slot rules); every traversal runs. With the visit order on, the traversals that
-    // hold Top-K incumbents run first, best incumbent first, the others in the static order, and each root loop
-    // follows its children's bound order (warm.rs).
-    let mut flags = Vec::with_capacity(compiled.len());
-    let mut traversals = Vec::new();
-    for (i, (domain, rules, part)) in compiled.iter().enumerate() {
-        let correlated = part.correlation_worthwhile(e.pool, domain, orders)?;
-        flags.push((correlated, part.resource_worthwhile(e.pool, domain, orders, correlated)?));
-        traversals.extend((0..rules.len()).map(|j| (i, j)));
-    }
-    if !warm::static_order() {
-        let mut best = std::collections::HashMap::new();
-        for t in &e.top {
-            let key = warm::traversal_of(&t.physical, &converting);
-            best.entry(key).or_insert((t.evaluation.expected_payoff.numerator, t.power));
-        }
-        traversals.sort_by_key(|t| std::cmp::Reverse(best.get(t).copied()));
-    }
-    for (i, j) in traversals {
-        let (domain, rules, part) = &mut compiled[i];
-        (e.correlated, e.resource) = flags[i];
-        let (r, label) = &rules[j];
-        part.set_rules(e.pool, domain, r.clone());
-        *p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
-        e.rec.frontier.clear();
-        e.rec.begin(&mut e.tel, "search", Some(label.clone()));
-        let more = ordered_root(p, domain, part, orders, e)?;
-        e.rec.end(&mut e.tel);
-        if !more {
-            if e.rec.parts_done + 1 < total {
-                // The later parts: the pool-wide bounds hold for every deck of the domain.
-                let started = e.bound_start();
-                let upper = joint_root_upper(e.pool, &plan.domain, bounds, orders, 0)?;
-                e.fold_unexplored(upper, started);
-            }
+        };
+        if e.expired() {
+            bound_pending(e)?;
             return Ok(());
         }
-        e.rec.parts_done += 1;
+        e.correlated = part.correlation_worthwhile(e.pool, &domain, orders)?;
+        e.resource = part.resource_worthwhile(e.pool, &domain, orders, e.correlated)?;
+        let mut rule_order: Vec<_> = (0..rules.len()).collect();
+        rule_order.sort_by_key(|&j| std::cmp::Reverse(priority.get(&(i, j)).copied()));
+        for j in rule_order {
+            e.rec.frontier.clear();
+            if e.expired() {
+                bound_pending(e)?;
+                return Ok(());
+            }
+            let (r, label) = &rules[j];
+            part.set_rules(e.pool, &domain, r.clone());
+            *p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
+            e.rec.begin(&mut e.tel, "search", Some(label.clone()));
+            let more = ordered_root(p, &domain, &part, orders, e)?;
+            e.rec.end(&mut e.tel);
+            if !more {
+                if e.rec.parts_done + 1 < total {
+                    bound_pending(e)?;
+                }
+                return Ok(());
+            }
+            e.rec.parts_done += 1;
+        }
     }
     Ok(())
 }
