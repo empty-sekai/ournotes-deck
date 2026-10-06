@@ -40,3 +40,12 @@ and the complete-domain ranking certificate determine the returned order indepen
 The synthetic `long_stream_refinement_materializes_the_boundary_candidate` test exercises this path through
 the public recommendation entry point. The storage-policy unit test distinguishes eager storage from backend
 admission and checks that the ordinary long-chart domain remains eligible for bounded refinement.
+
+## Initial proposals
+
+A certified request evaluates at most `min(K, 3)` proposals during warm start. The subsequent traversal retains
+the complete requested domain and uses the certified lower cutoff when enough candidates are available.
+This proposal allowance controls search order, independently of the request's total work and time limits.
+
+The `certified_seed_budget_preserves_the_complete_canonical_ranking` test checks the canonical result against
+exhaustive score search at several K and cache capacities, including the full candidate count.
