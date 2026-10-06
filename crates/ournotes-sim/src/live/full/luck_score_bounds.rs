@@ -100,6 +100,7 @@ impl ComboObserver {
 
     /// Ascending disjoint half-open intervals of the first `frames` frames to observe at this query. `frame_of` is
     /// the monotone frame a note at a chart time is filed in. Return the intervals through [`Self::end`].
+    #[inline(never)]
     pub(super) fn begin(
         &mut self,
         frames: usize,
@@ -170,6 +171,7 @@ impl ComboObserver {
     }
 
     /// Records an observation; true when it differs from the note's previous one.
+    #[inline(never)]
     pub(super) fn changed(&mut self, frame: usize, index: usize, bits: (u32, u32)) -> bool {
         if self.seen.len() <= frame {
             self.seen.resize_with(frame + 1, Vec::new);
