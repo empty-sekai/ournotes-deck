@@ -444,6 +444,55 @@ fn shared_frames_give_each_order_its_own_result_with_gekisou_lotteries() {
     }
 }
 
+#[test]
+fn shared_orders_preserve_wrapping_effect_key_order() {
+    let mut tables = tables();
+    tables["MasterSkillEffectSetting"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"_id": 8, "_skillEffectType": 3002, "_phase": 1}));
+    let trigger = json!({"_skillTriggerConditionGroup": 53});
+    tables["MasterSupportSkillEffect"] = json!([
+        row("_supportSkillID", 1, 9, 3002, 1500, trigger.clone()),
+        row("_supportSkillID", 2_674_777_890_687_884_984, 9, 3001, 500, trigger)
+    ]);
+    let master = master_from(&tables);
+    let mut live = live(false);
+    for p in &mut live.performers {
+        p.live_skill = None;
+        p.support_skills.clear();
+    }
+    live.performers[0].support_skills.push((9, 1));
+    live.notes = vec![LiveNote { note_id: 1, time_ms: 200, note_operate_type: 1, judgement_type: 1 }];
+    live.events = vec![(0, 100), (2, 100)];
+    live.params.converted_note_count = 1;
+    live.params.music_length_ms = 1000;
+    live.play.frames = vec![
+        PlayFrame { time_ms: 0, judged: Vec::new() },
+        PlayFrame { time_ms: 100, judged: Vec::new() },
+        PlayFrame { time_ms: 200, judged: vec![JudgedNote { note_id: 1, judgement: 5, judgement_time_ms: 200 }] },
+    ];
+    live.delta_times = vec![0.1; live.play.frames.len()];
+    let mut orders = vec![vec![0, 1, 2, 3, 4], vec![2, 1, 0, 3, 4]];
+    // At position 0 damage precedes recovery (life 501); at position 2 the
+    // wrapped recovery key is i64::MIN and precedes damage (life 1).
+    for _ in 0..2 {
+        let mut seen = vec![false; orders.len()];
+        let sharing = live
+            .simulate_orders(&master, &orders, LiveRandom::new(5), |i, shared| {
+                assert!(!std::mem::replace(&mut seen[i], true));
+                let separate = live.simulate(&master, &orders[i], LiveRandom::new(5))?;
+                assert_eq!(separate.current_life(), if orders[i][0] == 0 { 501 } else { 1 });
+                assert_eq!(outcome(shared), outcome(&separate), "order {:?}", orders[i]);
+                Ok(())
+            })
+            .unwrap();
+        assert!(seen.iter().all(|&visited| visited));
+        assert!(sharing.branches > 0);
+        orders.reverse();
+    }
+}
+
 #[cfg(feature = "search-diagnostics")]
 #[test]
 fn applier_event_plan_matches_reference_after_every_frame() {

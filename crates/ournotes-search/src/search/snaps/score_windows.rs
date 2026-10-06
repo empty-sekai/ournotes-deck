@@ -362,7 +362,7 @@ mod lifetime_command_tests {
             assert_eq!(frames.closed(i64::MAX, i64::MAX), Some(((count - 1) as i64, (count - 1) as i64)));
             let setup =
                 FullSetup { notes: Vec::new(), events: Vec::new(), play: LivePlay::default(), params, gk: None };
-            assert_eq!(Exec::new(&setup, &[], None).max_frame, count);
+            assert_eq!(Exec::new(&setup, &[], None, &[]).max_frame, count);
         }
     }
 
@@ -422,10 +422,39 @@ mod lifetime_command_tests {
     }
 }
 
+/// Times representing lower score-frame bounds for timer commands, one per play frame. A compact floor requires exact i32
+/// elapsed times in binary32, nondecreasing durations, and an update of every active timer in every play frame.
+/// A release checker skips the elapsed-time check in ExecuteFrame; gated sustained updaters may pause while their
+/// mission gate is closed. Without these premises, frame zero is the conservative floor. The music-length clamp
+/// applies to released and timed finishes independently.
+pub(super) fn command_floor_times<'r>(setup: &FullSetup, mut rows: impl Iterator<Item = &'r Row>) -> Vec<i32> {
+    let exact_clock = |t: i32| (0..=1 << 24).contains(&t);
+    let compact = setup.play.frames.iter().all(|f| exact_clock(f.time_ms))
+        && setup.play.frames.windows(2).all(|w| w[0].time_ms <= w[1].time_ms)
+        && setup.notes.iter().all(|n| exact_clock(n.time_ms))
+        && setup.events.iter().all(|&(_, t)| exact_clock(t))
+        && setup.gk.as_ref().is_none_or(|g| g.setup.fevers.iter().all(|&(a, b)| exact_clock(a) && exact_clock(b)))
+        && rows.all(|r| {
+            // 15000 adds the row's raw value to live-effect durations; cumulative counts do not scale it.
+            !(r.effect_type == 15000 && r.value < 0 || r.act > 0.0 && (r.release != 0 || r.gk && r.trigger_type == 2))
+        });
+    setup
+        .play
+        .frames
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let previous = if compact && i > 0 { setup.play.frames[i - 1].time_ms } else { 0 };
+            let length = setup.params.music_length_ms;
+            if length > 0 { previous.min(length) } else { previous }
+        })
+        .collect()
+}
+
 /// How many times each 40 ms score frame up to the last judged note can be executed (its first run and the re-runs
 /// after a command lands in it or before it), from the frame schedule and the notes judged in each play frame: in a
 /// play frame, both recalculations re-execute score frames only from the earliest frame a command filed in that play
-/// frame can land in (the previous play frame's frame for skill commands, the chart time of each judged note) up to
+/// frame can land in (the certified timer floor and the chart time of each judged note) up to
 /// the current one. Commands that land after the last note cannot change a note's score and count as none.
 pub(super) struct Exec {
     pub(super) e: Vec<u32>,
@@ -436,7 +465,7 @@ pub(super) struct Exec {
 }
 
 impl Exec {
-    pub(super) fn new(setup: &FullSetup, times: &[i32], gk: Option<&GkFactors>) -> Exec {
+    pub(super) fn new(setup: &FullSetup, times: &[i32], gk: Option<&GkFactors>, command_floors: &[i32]) -> Exec {
         let score_frames = ScoreFrames::new(&setup.params);
         let max_frame = score_frames.last() + 1;
         let Some(&last_note) = times.last() else {
@@ -446,10 +475,9 @@ impl Exec {
         let g_last = clamp(last_note);
         let notes: HashMap<i32, i32> = setup.notes.iter().map(|n| (n.note_id, n.time_ms)).collect();
         let mut diff = vec![0i64; g_last as usize + 2];
-        let mut prev_to = 0;
         for (i, f) in setup.play.frames.iter().enumerate() {
             let to = clamp(f.time_ms);
-            let mut lo = if i == 0 { 0 } else { prev_to };
+            let mut lo = command_floors.get(i).copied().map(clamp).unwrap_or(0);
             for j in &f.judged {
                 if let Some(&t) = notes.get(&j.note_id) {
                     lo = lo.min(clamp(t));
@@ -463,7 +491,6 @@ impl Exec {
                 diff[lo as usize] += 2;
                 diff[hi as usize + 1] -= 2;
             }
-            prev_to = to;
         }
         // confirming a rank bonus undoes the score frames after the range start and executes them again
         for &(a, b) in gk.map_or(&[][..], |g| &g.confirm[..]) {

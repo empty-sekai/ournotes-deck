@@ -1283,14 +1283,15 @@ impl LiveModel {
     /// A duration-adjustment row (15000) with a value below zero keeps this prefix empty: its later execution can
     /// move a running effect's finish before the current frame.
     ///
-    /// A later command lands at a time no earlier than the least of: this frame's time (skill execution, finish and
-    /// re-application times; live skill events not yet fired), the positive music length (the cap on effect finish
-    /// times), `future_note_ms` (note commands, and checker override times taken from notes judged later), the start
-    /// of every Gekisou range not yet finished (range-start and range-state override times, override times read from
-    /// the playing range's judged notes and the solo ranking rewind), and the end of every externally ranked range
-    /// awaiting its confirmation (the fixed rank bonus). Commands file at `get_frame` of their time, capped to the
-    /// final addressable frame, and a rewind keeps the frames up to its own. The calculator keeps that final frame
-    /// open and settles only frames strictly below the horizon, so every settled frame retains its final score.
+    /// A later command lands at a time no earlier than the least of: this frame's time (skill execution and
+    /// re-application times; live skill events not yet fired), pending timed finishes, the positive music length
+    /// (finish-time clamp), `future_note_ms` (note commands, and checker override times taken from notes judged
+    /// later), the start of every Gekisou range not yet finished (range-start and range-state override times,
+    /// override times read from the playing range's judged notes and the solo ranking rewind), and the end of every
+    /// externally ranked range awaiting its confirmation (the fixed rank bonus). Commands file at `get_frame` of
+    /// their time, capped to the final addressable frame, and a rewind keeps the frames up to its own. The calculator
+    /// keeps that final frame open and settles only frames strictly below the horizon, so every settled frame
+    /// retains its final score.
     pub fn settle(&mut self, future_note_ms: i32) -> Settled {
         if self.rows.iter().any(|row| row.effect_type == 15000 && row.effect_value < 0) {
             return Settled { frame: 0, total: 0, fixed: 0 };
@@ -1298,6 +1299,21 @@ impl LiveModel {
         let mut horizon = self.frame_time.min(future_note_ms);
         if self.music_length_ms > 0 {
             horizon = horizon.min(self.music_length_ms);
+        }
+        for skill in &self.live {
+            for effect in &skill.effects {
+                if let Some(finish) = effect.state.pending_finish_ms(effect.act) {
+                    horizon = horizon.min(finish);
+                }
+            }
+        }
+        for skill in &self.cond {
+            for updater in &skill.updater.updaters {
+                let effect = skill.updater.effect(updater.effect);
+                if let Some(finish) = updater.state.pending_finish_ms(effect.act) {
+                    horizon = horizon.min(finish);
+                }
+            }
         }
         if let Some(gk) = &self.gk {
             for (idx, (range, state)) in gk.ctrl.ranges.iter().zip(&gk.ctrl.states).enumerate() {

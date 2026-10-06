@@ -39,6 +39,7 @@ pub(crate) struct LiveCtx<'a> {
     /// Sum over all notes of coefficient * (1 + drift) * (1 + CHAIN_EPS).
     base: f64,
     global: f64,
+    /// Outward bounds for the rounded score-up state at every note.
     factor_bounds: [f32; 2],
 }
 
@@ -54,6 +55,9 @@ fn score_type_of_judgement(j: i32) -> i32 {
 
 impl<'a> LiveCtx<'a> {
     pub fn new(master: &'a Master, pool: &Pool, model: &'a LiveModel) -> Result<LiveCtx<'a>, Error> {
+        if model.events.len() > (1 << 20) {
+            return Err(Error::Domain("per-order live event count exceeds the proven rounding domain".into()));
+        }
         let mut profiles: Vec<(i64, i64)> = Vec::new();
         let mut profile_of = Vec::with_capacity(pool.members.len());
         for m in &pool.members {
@@ -98,8 +102,8 @@ impl<'a> LiveCtx<'a> {
                             || end.time_ms < start.time_ms
                             || end.owner_id != start.owner_id
                             || end.judgement != start.judgement
-                            || end.note_mill != -start.note_mill
-                            || end.judge_mill != -start.judge_mill
+                            || start.note_mill.checked_neg() != Some(end.note_mill)
+                            || start.judge_mill.checked_neg() != Some(end.judge_mill)
                     })
                 {
                     return Err(Error::Domain("live search requires paired nonnegative score-up effects".into()));
@@ -115,6 +119,7 @@ impl<'a> LiveCtx<'a> {
         for per in &cmds {
             n_max = n_max
                 .checked_add(per.iter().map(Vec::len).max().unwrap_or(0))
+                .filter(|&n| n <= (1 << 20))
                 .ok_or_else(|| Error::Domain("live factor command count exceeds its proof range".into()))?;
             let f = per
                 .iter()
@@ -176,12 +181,13 @@ impl<'a> LiveCtx<'a> {
         }
         let mut ctx = LiveCtx { model, profile_of, cmds, event_index, inside, base, global: 0.0, factor_bounds };
         ctx.global = ctx.a_plus_all();
-        if !ctx.global.is_finite() {
+        if !ctx.global.is_finite() || ctx.global < 0.0 {
             return Err(Error::Domain("live score envelope has no finite coefficient".into()));
         }
         Ok(ctx)
     }
 
+    /// Certifies the entire power domain before any representative is removed.
     pub fn prove_score_domain(&self, power_upper_bound: i64, cancelled: impl FnMut() -> bool) -> Result<bool, Error> {
         self.model.prove_search_domain(power_upper_bound, self.factor_bounds, cancelled)
     }

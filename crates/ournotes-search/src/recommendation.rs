@@ -1063,15 +1063,30 @@ pub struct AnswerProgress<'a> {
 
 fn exact(f: &Fraction) -> Result<(i128, u128), Error> {
     let bad = || Error::Domain("result fraction".into());
-    Ok((f.numerator.parse().map_err(|_| bad())?, f.denominator.parse().map_err(|_| bad())?))
+    let numerator = f.numerator.parse().map_err(|_| bad())?;
+    let denominator = f.denominator.parse().map_err(|_| bad())?;
+    if denominator == 0 {
+        return Err(bad());
+    }
+    Ok((numerator, denominator))
 }
 
-fn floor_div(n: i128, d: u128) -> i64 {
-    n.div_euclid(d as i128) as i64
+/// Exact rounding for a positive denominator, including denominators above i128::MAX.
+fn floor_div(n: i128, d: u128) -> i128 {
+    match i128::try_from(d) {
+        Ok(d) => n.div_euclid(d),
+        Err(_) => {
+            if n < 0 {
+                -1
+            } else {
+                0
+            }
+        }
+    }
 }
 
-fn ceil_div(n: i128, d: u128) -> i64 {
-    -((-n).div_euclid(d as i128)) as i64
+fn ceil_div(n: i128, d: u128) -> i128 {
+    floor_div(n, d) + i128::from(n.unsigned_abs() % d != 0)
 }
 
 /// Whether a metric's value is a probability.
@@ -1081,7 +1096,22 @@ fn probability(metric: &Metric) -> bool {
 
 fn bound(metric: &Metric, n: i128, d: u128, up: bool) -> Value {
     if probability(metric) {
-        json!(n as f64 / d as f64)
+        use ournotes_sim::live::certified::F64Interval;
+        if n == 0 {
+            return json!(0.0);
+        }
+        if n >= 0 && n as u128 == d {
+            return json!(1.0);
+        }
+        let denominator = match i128::try_from(d) {
+            Ok(d) => F64Interval::integer(d),
+            // Both integer parts fit i128, and the interval operations preserve the full unsigned value.
+            Err(_) => {
+                F64Interval::integer((d >> 1) as i128).scale_integer(2).add(F64Interval::integer((d & 1) as i128))
+            }
+        };
+        let value = F64Interval::integer(n).divide(denominator).expect("positive result denominator");
+        json!(if up { value.upper() } else { value.lower() })
     } else if up {
         json!(ceil_div(n, d))
     } else {
@@ -1157,7 +1187,7 @@ fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_orders: bool) ->
             let score = match (&deck.expected_score, &deck.score_interval) {
                 (Some(score), _) => {
                     let (n, d) = exact(score)?;
-                    Some(floor_div(n, d))
+                    Some(i64::try_from(floor_div(n, d)).map_err(|_| Error::Domain("result score exceeds i64".into()))?)
                 }
                 (None, Some(interval)) => Some(interval.lower_f64().floor() as i64),
                 (None, None) => None,
@@ -1481,6 +1511,119 @@ mod account_bounds;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_fraction_rounding_covers_signed_and_unsigned_limits() {
+        let half_unsigned = 1u128 << 127;
+        for (n, d, lower, upper) in [
+            (7, 3, 2, 3),
+            (-7, 3, -3, -2),
+            (i128::MIN, 1, i128::MIN, i128::MIN),
+            (i128::MAX, 1, i128::MAX, i128::MAX),
+            (i128::MIN, i128::MAX as u128, -2, -1),
+            (i128::MAX, i128::MAX as u128, 1, 1),
+            (i128::MIN, half_unsigned, -1, -1),
+            (i128::MAX, half_unsigned, 0, 1),
+            (1, half_unsigned, 0, 1),
+            (-1, half_unsigned, -1, 0),
+            (i128::MIN, u128::MAX, -1, 0),
+            (i128::MAX, u128::MAX, 0, 1),
+            (0, u128::MAX, 0, 0),
+        ] {
+            assert_eq!(floor_div(n, d), lower, "floor of {n}/{d}");
+            assert_eq!(ceil_div(n, d), upper, "ceiling of {n}/{d}");
+        }
+        assert_eq!(
+            exact(&Fraction { numerator: i128::MIN.to_string(), denominator: u128::MAX.to_string() }).unwrap(),
+            (i128::MIN, u128::MAX)
+        );
+        assert!(exact(&Fraction { numerator: "1".into(), denominator: "0".into() }).is_err());
+    }
+
+    #[test]
+    fn integer_result_bounds_preserve_exact_rounding_at_fraction_limits() {
+        let denominator = 1u128 << 127;
+        for (numerator, lower, upper) in [(1, 0, 1), (-1, -1, 0)] {
+            assert_eq!(bound(&Metric::Score, numerator, denominator, false), json!(lower));
+            assert_eq!(bound(&Metric::Score, numerator, denominator, true), json!(upper));
+        }
+        assert_eq!(bound(&Metric::Score, i128::MIN, 1, true), json!(i128::MIN));
+        assert_eq!(bound(&Metric::Score, i128::MAX, 1, false), json!(i128::MAX));
+    }
+
+    #[test]
+    fn probability_result_bounds_enclose_exact_rationals() {
+        use crate::search::{expectation::ExactExpectation, interval_topk::exact_in_interval};
+        use ournotes_sim::live::certified::F64Interval;
+        for metric in
+            [Metric::ScoreAtLeast { threshold: 1 }, Metric::ScoreAndLifeAtLeast { threshold: 1, min_final_life: 1 }]
+        {
+            for (n, d) in [
+                (1, 3),
+                (1, 10),
+                (1, 2),
+                (0, 1),
+                (1, 1),
+                (0, u128::MAX),
+                (i128::MAX, i128::MAX as u128),
+                (1, 1u128 << 127),
+                (1, u128::MAX),
+                (i128::MAX, 1u128 << 127),
+                (i128::MAX, u128::MAX),
+                (i128::MAX - 1, u128::MAX),
+            ] {
+                let lower = bound(&metric, n, d, false).as_f64().unwrap();
+                let upper = bound(&metric, n, d, true).as_f64().unwrap();
+                assert!(
+                    exact_in_interval(
+                        ExactExpectation { numerator: n, denominator: d },
+                        F64Interval::new(lower, upper).unwrap()
+                    )
+                    .unwrap(),
+                    "{n}/{d} outside [{lower}, {upper}]"
+                );
+                if n == 0 || n as u128 == d {
+                    assert_eq!(lower, upper);
+                }
+            }
+        }
+        let metric = Metric::ScoreAtLeast { threshold: 1 };
+        assert!(bound(&metric, 1, 3, true).as_f64().unwrap() > 1.0 / 3.0);
+        assert!(bound(&metric, 1, 10, false).as_f64().unwrap() < 0.1);
+    }
+
+    #[test]
+    fn uniform_lottery_average_keeps_an_unsigned_result_denominator() {
+        use crate::search::{
+            certified_search::{OrderScoreInterval, PayoffMap, aggregate_orders},
+            expectation::ExactExpectation,
+            uniform,
+        };
+        use ournotes_sim::live::certified::F64Interval;
+        let orders = uniform::all_orders()
+            .into_iter()
+            .enumerate()
+            .map(|(index, order)| OrderScoreInterval {
+                order,
+                mean: F64Interval::point(if index == 0 { 2f64.powi(-121) } else { 0.0 }).unwrap(),
+                support: (0, 1),
+                exact_mean: Some(ExactExpectation {
+                    numerator: i128::from(index == 0),
+                    denominator: if index == 0 { 1u128 << 121 } else { 1 },
+                }),
+                final_life: None,
+                tails: Default::default(),
+                refined_payoff: None,
+            })
+            .collect();
+        let evaluation = aggregate_orders(orders, &PayoffMap::Score).unwrap();
+        let fraction = evaluation.exact_score.unwrap();
+        assert_eq!(fraction.numerator, 1);
+        assert_eq!(fraction.denominator, 120u128 << 121);
+        assert!(fraction.denominator > i128::MAX as u128);
+        assert_eq!(bound(&Metric::Score, fraction.numerator, fraction.denominator, false), json!(0));
+        assert_eq!(bound(&Metric::Score, fraction.numerator, fraction.denominator, true), json!(1));
+    }
 
     #[test]
     fn certified_team_keeps_rational_bounds_without_fabricating_exact_values_or_orders() {

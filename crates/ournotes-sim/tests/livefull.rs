@@ -158,6 +158,88 @@ fn late_judgements_are_rewound() {
 }
 
 #[test]
+fn settled_prefix_keeps_pending_timed_finishes() {
+    // At the long-duration boundary the integer elapsed time exceeds the
+    // duration while its binary32 representation still equals that duration.
+    for (activation, end, pause, resume) in [(0.025, 50, 50, 51), (16777.216, 16_777_241, 16_777_242, 16_777_244)] {
+        for support in [false, true] {
+            let mut t = tables();
+            t["MasterLiveSkillEffect"][0]["_activationTimeSecond"] = json!(activation);
+            t["MasterSupportSkillEffect"].as_array_mut().unwrap().push(support_row(
+                60,
+                60,
+                2000,
+                1000,
+                json!({"_activationTimeSecond": activation}),
+            ));
+            let master = master_from(&t);
+            let note = LiveNote { note_id: 1, time_ms: end, note_operate_type: 1, judgement_type: 1 };
+            let mut deck = vec![Performer::default(); 5];
+            if support {
+                deck[0].support_skills = vec![(60, 1)];
+            } else {
+                deck[0].live_skill = Some((1, 1));
+            }
+            let params = LiveParams { music_length_ms: end + 1000, ..params(&[note]) };
+            let mut model = LiveModel::new(&master, &deck, &[note], &[(0, 25)], params).unwrap();
+            for time in [0, 25, 26] {
+                model.frame(time, &[]).unwrap();
+            }
+            model.frame(pause, &[JudgedNote { note_id: 1, judgement: 5, judgement_time_ms: end }]).unwrap();
+            assert_eq!(model.score(), 726_000);
+            let settled = model.settle(i32::MAX);
+            assert!(settled.frame <= get_frame(end));
+            assert_eq!(settled.total, 0);
+            model.frame(resume, &[]).unwrap();
+            assert_eq!(model.score(), 660_000);
+            model.frame(end + 80, &[]).unwrap();
+            assert_eq!(model.settle(i32::MAX).total, i64::from(model.score()));
+            #[cfg(feature = "search-diagnostics")]
+            assert_eq!(model.settled_violations(), 0);
+        }
+    }
+}
+
+#[test]
+fn settled_prefix_respects_music_length_finish_clamp() {
+    let mut t = tables();
+    t["MasterLiveSkillEffect"][0]["_activationTimeSecond"] = json!(1.0);
+    let master = master_from(&t);
+    let note = LiveNote { note_id: 1, time_ms: 500, note_operate_type: 1, judgement_type: 1 };
+    let deck = [performer(Some((1, 1)), &[], 0)];
+    let params = LiveParams { music_length_ms: 100, score_music_length_ms: Some(1500), ..params(&[note]) };
+    let mut model = LiveModel::new(&master, &deck, &[note], &[(0, 25)], params).unwrap();
+    for time in [0, 25, 26] {
+        model.frame(time, &[]).unwrap();
+    }
+    model.frame(500, &[JudgedNote { note_id: 1, judgement: 5, judgement_time_ms: 500 }]).unwrap();
+    assert_eq!(model.score(), 726_000);
+    let settled = model.settle(i32::MAX);
+    assert!(settled.frame <= get_frame(100));
+    assert_eq!(settled.total, 0);
+    model.frame(1026, &[]).unwrap();
+    assert_eq!(model.score(), 660_000);
+    #[cfg(feature = "search-diagnostics")]
+    assert_eq!(model.settled_violations(), 0);
+}
+
+#[test]
+fn duration_reducing_extensions_keep_score_frames_unsettled() {
+    let mut t = tables();
+    t["MasterSupportSkillEffect"].as_array_mut().unwrap().push(support_row(60, 60, 15000, -1000, json!({})));
+    let master = master_from(&t);
+    let note = LiveNote { note_id: 1, time_ms: 50, note_operate_type: 1, judgement_type: 1 };
+    let deck = [performer(Some((1, 1)), &[(60, 1)], 0)];
+    let mut model = LiveModel::new(&master, &deck, &[note], &[(0, 25)], params(&[note])).unwrap();
+    for time in [0, 25, 26] {
+        model.frame(time, &[]).unwrap();
+    }
+    model.frame(100, &[JudgedNote { note_id: 1, judgement: 5, judgement_time_ms: 50 }]).unwrap();
+    let settled = model.settle(i32::MAX);
+    assert_eq!((settled.frame, settled.total), (0, 0));
+}
+
+#[test]
 fn unscored_pass_does_not_block_scored_notes_or_member_events() {
     let m = master();
     let (notes, events) = chart();
