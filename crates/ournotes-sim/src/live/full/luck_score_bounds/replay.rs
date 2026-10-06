@@ -15,6 +15,12 @@
 //! every query each possible rewind target is replayed and the resulting states are joined. A note keeps the
 //! enclosure of its last execution: a frame every path executes replaces it, a frame only some paths execute
 //! joins the new execution to it, and a frame's recorded sum is treated the same way.
+//!
+//! Undoing a frame from separate enclosures of the end state and the recorded sum loses their correlation: both
+//! come from the same path. While every path still holds the end state of its last execution of the most recent
+//! frame, the undo of that frame is also enclosed path by path: each path's end state and recorded sum are
+//! monotone in its start state, so the difference at the start enclosure's endpoints bounds it. The two
+//! enclosures of the undo are intersected.
 
 use super::FIELDS;
 use crate::error::Error;
@@ -121,6 +127,9 @@ struct Frame {
     /// Per class at the frame's start, per class at its end: the enclosure of the binary32 sum the last execution
     /// recorded. None until the frame is executed.
     diff: Option<[Classes; 2]>,
+    /// Per class at the frame's start: the enclosure of the state an undo returns while every path still holds the
+    /// end state of its last execution of this frame. None until the frame is executed.
+    undo: Option<Classes>,
 }
 
 /// A filed note: its chart time and id, and the enclosure of its last execution's factor state per class.
@@ -141,6 +150,8 @@ pub(crate) struct Replay {
     row_steps: Vec<Vec<Step>>,
     state: Classes,
     prev: i32,
+    /// Every path holds the end state of its last execution of frame `prev`.
+    fresh: bool,
     /// Earliest frame that received a filing every path makes since the previous query.
     mandatory: Option<i32>,
     /// Frames that may have received a lottery-dependent filing since the previous query.
@@ -159,6 +170,7 @@ impl Replay {
             row_steps,
             state: [Some(initial_state()), None],
             prev: -1,
+            fresh: false,
             mandatory: None,
             potential: Vec::new(),
         }
@@ -241,7 +253,7 @@ impl Replay {
             undone[top] = self.state;
             for frame in (lowest..=prev).rev() {
                 let at = (frame - lowest) as usize;
-                undone[at] = self.undo(frame as usize, undone[at + 1])?;
+                undone[at] = self.undo(frame as usize, undone[at + 1], frame == prev && self.fresh)?;
             }
         }
         let at = |frame: i32| (frame - lowest) as usize;
@@ -261,6 +273,9 @@ impl Replay {
         for frame in common..=to {
             state = self.execute(frame as usize, state, true)?;
         }
+        // Without a common segment, the paths that replay no frame keep their state; they undid nothing only when
+        // the query starts after prev.
+        self.fresh = common <= to || (self.fresh && common == prev + 1);
         self.state = state;
         self.prev = to;
         self.mandatory = None;
@@ -268,7 +283,8 @@ impl Replay {
         Ok(())
     }
 
-    fn undo(&self, frame: usize, end: Classes) -> Result<Classes, Error> {
+    /// Undo `frame` from `end`. `last` when every path holds the end state of its last execution of the frame.
+    fn undo(&self, frame: usize, end: Classes, last: bool) -> Result<Classes, Error> {
         let diff = self.frames[frame].diff.ok_or_else(|| Error::Input("undo of a frame never executed".into()))?;
         let mut out: Classes = [None, None];
         for (from, row) in diff.iter().enumerate() {
@@ -282,11 +298,86 @@ impl Replay {
                 out[from] = hull(out[from], Some(start));
             }
         }
+        if last {
+            let paired =
+                self.frames[frame].undo.ok_or_else(|| Error::Input("undo of a frame never executed".into()))?;
+            for (out, paired) in out.iter_mut().zip(paired) {
+                *out = match (*out, paired) {
+                    (Some(a), Some(b)) => Some(intersect_fields(a, b)?),
+                    _ => None,
+                };
+            }
+        }
+        Ok(out)
+    }
+
+    /// The enclosure, per class at the frame's start, of the state an undo of `frame` returns right after its
+    /// execution from `start`. Every path through the frame's probe groups is followed from both endpoints of its
+    /// start class with its end state and recorded sum together.
+    fn paired_undo(&self, frame: usize, start: &Classes) -> Result<Classes, Error> {
+        let entry = &self.frames[frame];
+        let (ops, probes) = (&entry.ops, &entry.probes);
+        let mut paths = Vec::with_capacity(8);
+        for (class, fields) in start.iter().enumerate() {
+            let Some(fields) = fields else { continue };
+            for state in [fields.map(|f| f.lower()), fields.map(|f| f.upper())] {
+                paths.push(PairedPath { start: class, class, state, sum: [0.0; FIELDS] });
+            }
+        }
+        dedup_paths(&mut paths);
+        let (mut op, mut probe) = (0, 0);
+        loop {
+            let op_time = ops.get(op).map(|o| o.time);
+            let probe_time = probes.get(probe).copied();
+            match (op_time, probe_time) {
+                (None, None) => break,
+                (Some(a), b) if b.is_none_or(|b| a < b) => {
+                    for path in &mut paths {
+                        path.apply(&[Step::Command(ops[op].deltas)], 1.0);
+                    }
+                    op += 1;
+                }
+                (_, Some(t)) => {
+                    let end = ops[op..].partition_point(|o| o.time == t);
+                    let group = &ops[op..op + end];
+                    let variants = if group.is_empty() { None } else { Some(variants(group, &self.rows)) };
+                    let variants = variants.as_deref().unwrap_or(&self.row_steps);
+                    let stay: Vec<Step> = group.iter().map(|op| Step::Command(op.deltas)).collect();
+                    let mut next = Vec::with_capacity(paths.len() * (1 + variants.len()));
+                    for path in &paths {
+                        let mut kept = *path;
+                        kept.apply(&stay, 1.0);
+                        next.push(kept);
+                        for steps in variants {
+                            let mut switched = *path;
+                            switched.apply(steps, if path.class == 0 { 1.0 } else { -1.0 });
+                            switched.class = 1 - path.class;
+                            next.push(switched);
+                        }
+                    }
+                    dedup_paths(&mut next);
+                    paths = next;
+                    op += end;
+                    probe += 1;
+                }
+                (Some(_), None) => unreachable!("covered by the command arm"),
+            }
+        }
+        let mut out: Classes = [None, None];
+        for path in &paths {
+            let mut fields = zero();
+            for (field, out) in fields.iter_mut().enumerate() {
+                *out = point(path.state[field] - path.sum[field])?;
+            }
+            finite(&fields)?;
+            out[path.start] = hull(out[path.start], Some(fields));
+        }
         Ok(out)
     }
 
     /// Execute `frame` from `state` (per class at its start). `all` when every path executes it.
     fn execute(&mut self, frame: usize, mut state: Classes, all: bool) -> Result<Classes, Error> {
+        let paired = self.paired_undo(frame, &state)?;
         let entry = &self.frames[frame];
         let (ops, probes, notes) = (&entry.ops, &entry.probes, &entry.notes);
         // Per class at the frame's start: the running binary32 sum of the applied commands, per current class.
@@ -341,8 +432,63 @@ impl Replay {
             (false, Some(old)) => [hull_classes(old[0], sums[0]), hull_classes(old[1], sums[1])],
             _ => sums,
         });
+        entry.undo = Some(match (all, entry.undo) {
+            (false, Some(old)) => hull_classes(old, paired),
+            _ => paired,
+        });
         Ok(state)
     }
+}
+
+/// One path through a frame from a start endpoint: its start class, current class, binary32 state and the binary32
+/// sum of the commands it applied.
+#[derive(Clone, Copy, PartialEq)]
+struct PairedPath {
+    start: usize,
+    class: usize,
+    state: [f32; FIELDS],
+    sum: [f32; FIELDS],
+}
+
+impl PairedPath {
+    fn apply(&mut self, steps: &[Step], sign: f32) {
+        for step in steps {
+            match *step {
+                Step::Command(deltas) => {
+                    for (field, &delta) in deltas.iter().enumerate() {
+                        if delta != 0.0 {
+                            self.state[field] += delta;
+                            self.sum[field] += delta;
+                        }
+                    }
+                }
+                Step::Probe(value) => {
+                    if value != 0.0 {
+                        self.state[1] += sign * value;
+                        self.sum[1] += sign * value;
+                    }
+                }
+            }
+        }
+    }
+
+    fn key(&self) -> (usize, usize, [u32; FIELDS], [u32; FIELDS]) {
+        (self.start, self.class, self.state.map(f32::to_bits), self.sum.map(f32::to_bits))
+    }
+}
+
+fn dedup_paths(paths: &mut Vec<PairedPath>) {
+    paths.sort_unstable_by_key(PairedPath::key);
+    paths.dedup_by_key(|path| path.key());
+}
+
+fn intersect_fields(a: Fields, b: Fields) -> Result<Fields, Error> {
+    let mut out = a;
+    for (out, (a, b)) in out.iter_mut().zip(a.iter().zip(b)) {
+        *out = F32Interval::new(a.lower().max(b.lower()), a.upper().min(b.upper()))
+            .map_err(|_| Error::Input("disjoint enclosures of one native undo".into()))?;
+    }
+    Ok(out)
 }
 
 /// The commands at one probe time: ordinary commands of that time and the probe rows, ordered by owner. A path
