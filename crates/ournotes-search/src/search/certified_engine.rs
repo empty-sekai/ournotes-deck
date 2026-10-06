@@ -365,7 +365,7 @@ impl Engine<'_, '_> {
                 &input.play,
                 &input.delta_times,
                 input.rank_confirmations.as_deref(),
-                64,
+                self.limits.cache_entries.min(64),
             )?;
             for (index, _) in priorities {
                 if attempted.contains(&(id, index)) {
