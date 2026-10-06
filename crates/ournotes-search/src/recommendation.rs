@@ -1086,7 +1086,7 @@ fn floor_div(n: i128, d: u128) -> i128 {
 }
 
 fn ceil_div(n: i128, d: u128) -> i128 {
-    floor_div(n, d) + i128::from(n.unsigned_abs() % d != 0)
+    floor_div(n, d) + i128::from(!n.unsigned_abs().is_multiple_of(d))
 }
 
 /// Whether a metric's value is a probability.
