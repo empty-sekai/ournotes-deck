@@ -91,7 +91,7 @@ impl<'a> LiveCtx<'a> {
                     return Err(Error::Unsupported("live skill changing combo, luck or power".into()));
                 }
                 if !c.len().is_multiple_of(2)
-                    || c.chunks_exact(2).any(|pair| {
+                    || c.as_chunks::<2>().0.iter().any(|pair| {
                         let (start, end) = (&pair[0], &pair[1]);
                         start.note_mill < 0
                             || start.judge_mill < 0
