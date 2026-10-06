@@ -181,6 +181,16 @@ impl LiveRandom {
         random
     }
 
+    /// Extend the selected outcomes while preserving the checkpoint's consumed draws and cursor.
+    pub(crate) fn extend_nominal_prefix(&mut self, prefix: Vec<usize>) -> Result<(), Error> {
+        let script = self.nominal.as_mut().ok_or_else(|| Error::Domain("missing nominal script".into()))?;
+        if script.branch.is_some() || !prefix.starts_with(&script.prefix) {
+            return Err(Error::Domain("nominal continuation must extend a settled checkpoint".into()));
+        }
+        script.prefix = prefix;
+        Ok(())
+    }
+
     pub(crate) fn is_nominal(&self) -> bool {
         self.nominal.is_some()
     }
@@ -266,6 +276,27 @@ impl LiveRandom {
 #[cfg(test)]
 mod nominal_tests {
     use super::*;
+
+    #[test]
+    fn checkpoint_extension_preserves_consumption_and_unhandled_draws() {
+        let table = || vec![(1, 2, 10), (1, 2, 20)];
+        let mut random = LiveRandom::with_nominal_prefix(vec![0]);
+        assert_eq!(random.nominal_lottery(table()).unwrap(), 10);
+        let checkpoint = random.clone();
+        random.extend_nominal_prefix(vec![0, 1]).unwrap();
+        assert_eq!(random.nominal_lottery(table()).unwrap(), 20);
+        assert_eq!(random.draws(), 2);
+        assert!(random.nominal_prefix_consumed() && random.nominal_covers_draws());
+        assert_eq!(checkpoint.draws(), 1);
+        assert!(checkpoint.nominal_prefix_consumed());
+        assert!(random.extend_nominal_prefix(vec![1, 1]).is_err());
+        assert!(random.nominal_lottery(table()).is_err());
+        assert!(random.extend_nominal_prefix(vec![0, 1, 0]).is_err());
+        let mut unhandled = checkpoint;
+        unhandled.value(SKILL);
+        unhandled.extend_nominal_prefix(vec![0, 1]).unwrap();
+        assert!(!unhandled.nominal_covers_draws());
+    }
 
     #[test]
     fn semantic_draws_preserve_mass_and_count_even_for_deterministic_tables() {

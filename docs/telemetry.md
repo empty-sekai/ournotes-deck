@@ -195,11 +195,11 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | 字段 | 含义 |
 |---|---|
 | `attemptedOrders` | 尝试构造完整 nominal law 的顺序数 |
-| `completedOrders` | 已遍历全部正概率路径、总质量精确等于 1 的顺序数 |
+| `completedOrders` | 取得完整且总质量精确等于 1 的概率律的顺序数，包括初始模型相等时复用的完整概率律 |
 | `installedOrders` | 完整 law 成功用于收紧排序前沿的顺序数 |
 | `declinedOrders` | 因不支持的输入、随机源、工作配额、取消或算术容量而未得到完整 law 的顺序数 |
 | `arithmeticDeclines` | law 已完整，但搜索侧精确收益算术无法表示，因此未安装的顺序数 |
-| `replayRuns`、`frames`、`terminalPaths` | 已启动的前缀重放数、已执行帧数、已完成终止路径数，包含最终未发布 law 的尝试 |
+| `replayRuns`、`frames`、`terminalPaths` | 所有细化尝试中已启动的重放段数、已执行帧数、已完成终止路径数；复用完整概率律不增加重放工作量 |
 
 细化运行计入 `time.simulationMs`，与原有 `leaves.simulations` 的每队 120 顺序粗求值分别计数。排名得到认证时可以停止，
 因此 `Complete` 不要求每个顺序都完成精确细化，也不保证结果中已有精确的有理数期望值。

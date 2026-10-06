@@ -299,7 +299,8 @@ impl<'m> LeaderProfile<'m> {
 
     /// A component-wise upper bound of the member's percentage over every deck: each effect that targets the member
     /// counted as active with its largest possible count (at most 5, or the cumulative cap), negative
-    /// contributions dropped. Valid while every value times 5 fits in 32 bits.
+    /// contributions dropped. Valid while every value times 5 fits in 32 bits and percentage sums do not wrap;
+    /// [`Self::absolute_sum_bound`] certifies the latter independently of conditions and targets.
     pub fn percent_bound(&self, master: &Master, member: &MemberView) -> CardPower {
         let mut acc = [0i64; 3];
         for (e, ts) in &self.effects {
@@ -322,6 +323,18 @@ impl<'m> LeaderProfile<'m> {
     pub fn max_abs_value(&self) -> i64 {
         // An unrepresentable magnitude must fail the positive domain guard too.
         self.effects.iter().map(|(e, _)| e.effect_value.saturating_abs()).max().unwrap_or(0)
+    }
+
+    /// Bounds every component's absolute percentage sum, including intermediate
+    /// sums and any subset selected by conditions or targets. A cumulative row
+    /// contributes at most five times its absolute value. `None` means that this
+    /// conservative certificate cannot establish nonwrapping i64 accumulation.
+    #[doc(hidden)]
+    pub fn absolute_sum_bound(&self) -> Option<i64> {
+        self.effects.iter().try_fold(0i64, |sum, (effect, _)| {
+            let count = if is_cumulative_leader_effect(effect.skill_effect_type) { 5 } else { 1 };
+            sum.checked_add(effect.effect_value.checked_abs()?.checked_mul(count)?)
+        })
     }
 
     /// Conservative component lower bound using the same target/accumulation
@@ -422,4 +435,40 @@ pub fn snap_event_bonus(master: &Master, player: &Player, card: Option<&SnapView
 /// VIP deck power bonus rate of the player's VIP rank.
 pub fn vip_bonus(master: &Master, player: &Player) -> i64 {
     master.vip_bonus(VIP_DECK_TOTAL_POWER, player.vip_rank)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LeaderProfile;
+    use crate::master::LeaderSkillEffectRow;
+
+    fn absolute_sum(rows: &[(i64, i64)]) -> Option<i64> {
+        let effects: Vec<_> = rows
+            .iter()
+            .map(|&(skill_effect_type, effect_value)| LeaderSkillEffectRow {
+                skill_effect_type,
+                effect_value,
+                ..Default::default()
+            })
+            .collect();
+        LeaderProfile {
+            leader_skill_id: 1,
+            level: 1,
+            simple: false,
+            effects: effects.iter().map(|effect| (effect, None)).collect(),
+        }
+        .absolute_sum_bound()
+    }
+
+    #[test]
+    fn leader_percentage_certificate_bounds_signed_cumulative_rows() {
+        assert_eq!(absolute_sum(&[]), Some(0));
+        assert_eq!(absolute_sum(&[(1000, 17), (1503, -19), (1002, -23)]), Some(135));
+        // Opposite signs may cancel in one evaluation while a condition keeps
+        // only one sign; the certificate includes both magnitudes.
+        assert_eq!(absolute_sum(&[(1000, i64::MAX), (1000, -1)]), None);
+        assert_eq!(absolute_sum(&[(1500, i64::MAX / 5 + 1)]), None);
+        assert_eq!(absolute_sum(&[(1000, i64::MIN)]), None);
+        assert_eq!(absolute_sum(&[(1000, i64::MAX)]), Some(i64::MAX));
+    }
 }
