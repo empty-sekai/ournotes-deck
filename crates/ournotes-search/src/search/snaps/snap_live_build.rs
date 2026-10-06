@@ -13,6 +13,22 @@ impl<'a> SnapLive<'a> {
         let master: &'a Master = pool.master;
         let settings = LiveScoreSettings::from_master(master)?;
         let combo = ComboTable::from_master(master)?;
+        if setup.play.frames.iter().any(|frame| frame.time_ms < 0)
+            || setup.notes.iter().any(|note| note.time_ms < 0)
+            || setup.events.iter().any(|&(_, time)| time < 0)
+        {
+            return Err(Error::Domain("live score proof requires nonnegative clock timestamps".into()));
+        }
+        // A finish may be clamped to the music length even when its start was
+        // later. Its command must be beyond every note's native score frame:
+        // an earlier timestamp in the same frame can still share rounding and undo state.
+        if setup.params.music_length_ms > 0 {
+            let frames = ScoreFrames::new(&setup.params);
+            let finish = frames.at(setup.params.music_length_ms as i64);
+            if setup.notes.iter().any(|note| frames.at(note.time_ms as i64) >= finish) {
+                return Err(Error::Domain("score note reaches the music-length finish clamp frame".into()));
+            }
+        }
         let setting = |key: &str| -> Result<i64, Error> {
             let r = master
                 .live_settings
@@ -44,6 +60,12 @@ impl<'a> SnapLive<'a> {
         for (fi, f) in setup.play.frames.iter().enumerate() {
             for j in &f.judged {
                 let n = *notes.get(&j.note_id).ok_or_else(|| Error::Input(format!("unknown note {}", j.note_id)))?;
+                // Count-triggered effects may use this chart time as their
+                // execution timestamp. A future start can otherwise be followed
+                // by a release before that start, creating a negative window.
+                if n.time_ms > f.time_ms {
+                    return Err(Error::Domain("score note is judged before its chart time".into()));
+                }
                 entries.push((fi, n, j.judgement));
             }
         }
@@ -91,6 +113,7 @@ impl<'a> SnapLive<'a> {
             for (id, lv) in pool.snaps[s].support_skills()? {
                 per.push(support_rows(&env, id, lv)?);
             }
+            check_snap_program_identities(per.iter().flatten())?;
             snap_rows.push(per);
         }
         // with Gekisou on: the Gekisou support skills of each snap (they run only for a member with a Gekisou skill)
@@ -105,8 +128,16 @@ impl<'a> SnapLive<'a> {
                         .gekisou_support_skill(id)
                         .ok_or_else(|| Error::Master(format!("unknown Gekisou support skill {id}")))?;
                     let table = &master.gekisou_support_skill_effects;
-                    snap_gk_rows[j].push(gekisou_rows(&env, table, id, lv, row.gekisou_mission_type)?);
+                    snap_gk_rows[j].push(gekisou_rows(
+                        &env,
+                        table,
+                        RowSource::GekisouSupport,
+                        id,
+                        lv,
+                        row.gekisou_mission_type,
+                    )?);
                 }
+                check_snap_program_identities(snap_gk_rows[j].iter().flatten())?;
             }
             for &m in &members {
                 let v = &pool.members[m];
@@ -120,7 +151,7 @@ impl<'a> SnapLive<'a> {
                     return Err(Error::Unsupported(format!("Gekisou mission type {}", row.gekisou_mission_type)));
                 }
                 let table = &master.gekisou_skill_effects;
-                member_gk.insert(k, gekisou_rows(&env, table, k.0, k.1, row.gekisou_mission_type)?);
+                member_gk.insert(k, gekisou_rows(&env, table, RowSource::Gekisou, k.0, k.1, row.gekisou_mission_type)?);
             }
         }
         let all_rows = || {
@@ -130,6 +161,14 @@ impl<'a> SnapLive<'a> {
                 .chain(snap_gk_rows.iter().flatten().flatten())
                 .chain(member_gk.values().flatten())
         };
+        check_row_identities(all_rows())?;
+        // Once a live effect is EXECUTING, a negative extension can move its
+        // timed finish before its start. The resulting subtraction can make an
+        // earlier note's factor negative, invalidating power representatives.
+        if all_rows().any(|row| row.effect_type == 15000 && row.value < 0) {
+            return Err(Error::Domain("negative live-skill duration extension".into()));
+        }
+        let command_floors = command_floor_times(setup, all_rows());
         // A conversion can only enlarge this closure. Relax all targets/conditions/windows;
         // use a transitive closure so chains of multiple converters cannot escape it.
         for r in all_rows().filter(|r| matches!(r.effect_type, 12006 | 13005)) {
@@ -174,7 +213,7 @@ impl<'a> SnapLive<'a> {
                 snap_gk_rows.iter().map(|per| per.iter().flatten().cloned().collect()).collect();
             // Ordinary controller bonus rows are not represented by the GK-only
             // capacities above. Fixed additions and unknown combo-effect kinds
-            // also need their own proof; retain the old timing bound for them.
+            // also need their own proof.
             // 12004 only protects breaks, while 12006/13005 conversions already
             // participate in the whole-pool judgement closure used below.
             let combo_domain = all_rows().all(|r| match r.effect_type {
@@ -182,7 +221,17 @@ impl<'a> SnapLive<'a> {
                 12001 | 12002 | 12003 | 12005 => false,
                 _ => true,
             });
-            if combo_domain && let Some(bonus) = combo_triggers::maximum_bonus(&member_combo_rows, &snap_combo_rows) {
+            let combo_bonus =
+                combo_domain.then(|| combo_triggers::maximum_bonus(&member_combo_rows, &snap_combo_rows)).flatten();
+            // Every COMBO count refinement uses integer 12000 increments. The
+            // native stack uses binary32, whose upward rounding can cross a
+            // combo-table threshold even when a relative score margin is used.
+            // Share the exact-stack certificate with the 7005 timing bound;
+            // without it this optional objective falls back to exact traversal.
+            if sc.ranges.iter().any(|r| r.mission == MISSION_COMBO) && combo_bonus.is_none() {
+                return Err(Error::Domain("Gekisou COMBO bonus arithmetic outside the certified integer range".into()));
+            }
+            if let Some(bonus) = combo_bonus {
                 g.combo_triggers =
                     combo_triggers::ComboTriggers::compile(master, &g, &entries, &env.count_reach, bonus);
             }
@@ -208,7 +257,7 @@ impl<'a> SnapLive<'a> {
             let (w, budget) = if r.gk {
                 let g = gk_row(&env, r);
                 (g.conv.clone(), gk_budget(&env, r, &g).is_some())
-            } else if env.event_only(r.trigger) {
+            } else if r.release == 0 && env.event_only(r.trigger) {
                 // registered in the start frame, it converts the notes judged in the next frames up to the frame that
                 // processes its end
                 (fire.iter().map(|&i0| (i0 as i64, register_end(&frames, i0, r.act))).collect(), false)
@@ -277,9 +326,9 @@ impl<'a> SnapLive<'a> {
                 damaging = true;
             }
         }
-        // Without recovery and guard every life the simulation computes for a note is at most the base minus the
-        // damage of the entries already filed at that point (judged in earlier frames or earlier in the same frame,
-        // itself included) with chart times up to the note's: damage only lowers life, a life query folds every filed
+        // With ordinary damage, every life a note reads is at most max(0, base - filed damage). The filed damage
+        // comes from entries already judged in earlier frames or earlier in the same frame, including the note
+        // itself, with chart times up to the note's: damage only lowers life, a life query folds every filed
         // command up to its time at least once (the frame cache can fold some twice), and the floor is 0. The damage
         // of an entry is at least the smallest damage of its reachable judgements.
         let dmin: Vec<i64> = reached
@@ -305,9 +354,9 @@ impl<'a> SnapLive<'a> {
             }
             dead_stream.push(base.saturating_sub(sum) <= 0);
         }
-        // the simulation recovers by the value as a 32-bit integer; below 2^30 the sum with a life of at most twice
-        // the base (at most 2^30) cannot wrap
-        if all_rows().any(|r| r.effect_type == 3001 && (r.value as i32) >= 1 << 30) {
+        // The simulation recovers by the native 32-bit amount. It must not lower
+        // the life, and below 2^30 its sum with life <= 2*base <= 2^30 cannot wrap.
+        if all_rows().any(|r| r.effect_type == 3001 && !(0..1 << 30).contains(&(r.value as i32))) {
             return Err(Error::Domain("life recovery outside the modelled range".into()));
         }
         let recovery = all_rows().any(|r| r.effect_type == 3001 && (r.value as i32) > 0);
@@ -473,7 +522,7 @@ impl<'a> SnapLive<'a> {
         let mut combo_max: Vec<f64> = Vec::new();
         let mut best_combo = 0f64;
         let life_f = if env.life_lo > 0 { 1.0 } else { (onus as f64).max(1.0) };
-        let pool_life_up = all_rows().any(|r| matches!(r.effect_type, 3001 | 3003));
+        let pool_life_up = all_rows().any(|r| matches!(r.effect_type, 3001 | 3003 | 3004));
         let mut coef = Coef::default();
         let adj64 = adj as f64;
         let mdf64 = mdf as f64;
@@ -511,7 +560,17 @@ impl<'a> SnapLive<'a> {
                     .collect();
                 let current = &env.gkf.as_ref().expect("Gekisou frames").current;
                 Some(GkFactors::new(
-                    master, setup, sc, &entries, &order, &frames, &reached, overrides, current, &member_cb,
+                    master,
+                    setup,
+                    sc,
+                    &entries,
+                    &order,
+                    &frames,
+                    &reached,
+                    overrides,
+                    current,
+                    &member_cb,
+                    &command_floors,
                 )?)
             }
             _ => None,
@@ -589,7 +648,8 @@ impl<'a> SnapLive<'a> {
             coef.max_jp.push(max_jp);
             coef.jp.push(jp);
             coef.vmask.push(vmask);
-            // with no life recovery or guard among the allowed cards, the life-zero factor where life is certainly 0
+            // Recovery, guard and damage reduction use the pool-wide life factor. Ordinary damage can establish
+            // life zero at an entry from the damage already filed there.
             coef.z.push(
                 if pool_life_up || setup.gk.as_ref().is_some_and(|g| g.confirmations.is_some()) || !dead_stream[i] {
                     assist as f64 * life_f
@@ -623,6 +683,7 @@ impl<'a> SnapLive<'a> {
             }
         }
         let mut fine = Fine {
+            score_frames: ScoreFrames::new(&setup.params),
             rush_eligible: rush::eligible(&env, &entries),
             raw: order.iter().map(|&i| entries[i].2 as u8).collect(),
             group: Vec::with_capacity(ne),
@@ -794,8 +855,9 @@ impl<'a> SnapLive<'a> {
                 .map(|x| (convert_to(x.row.effect_type, x.row.value), x.row.targets.clone()))
                 .filter(|c| c.0 != -1)
                 .collect();
-            let live_life =
-                member_live[m].iter().any(|x| matches!(x.row.effect_type, 3001 | 3003) && x.out.is_none_or(|o| o.yes));
+            let live_life = member_live[m]
+                .iter()
+                .any(|x| matches!(x.row.effect_type, 3001 | 3003 | 3004) && x.out.is_none_or(|o| o.yes));
             fine.life[m] = classes[m]
                 .iter()
                 .map(|c| {
@@ -803,7 +865,7 @@ impl<'a> SnapLive<'a> {
                     for r in c.rows.iter().filter(|r| r.can_start) {
                         match r.effect_type {
                             3001 if r.event_bound => up += (r.value as i32).max(0) as i64,
-                            3001 | 3003 => other = true,
+                            3001 | 3003 | 3004 => other = true,
                             _ => {}
                         }
                     }
@@ -900,15 +962,12 @@ impl<'a> SnapLive<'a> {
                 ev_by_k[idx as usize].push(time);
             }
         }
-        let exec = Exec::new(setup, &coef.times, gkf.as_ref());
+        let exec = Exec::new(setup, &coef.times, gkf.as_ref(), &command_floors);
         #[cfg(feature = "search-diagnostics")]
         {
             fine.exec_profile = exec.e.clone();
         }
-        let snapshot_frame_limit = fine.network_ranking.then(|| {
-            let length = setup.params.score_music_length_ms.filter(|&l| l != 0).unwrap_or(setup.params.music_length_ms);
-            get_frame(length).wrapping_add(50).max(1) - 1
-        });
+        let snapshot_frame_limit = fine.network_ranking.then_some(fine.score_frames.last());
         let geo = Geo { frames: &frames, times: &coef.times, exec: &exec, snapshot_frame_limit };
         let mut contrib: Vec<Vec<[Contrib; 5]>> = vec![Vec::new(); n];
         // command and factor totals for the drift margin: per position, the largest over members and classes
@@ -1059,14 +1118,19 @@ impl<'a> SnapLive<'a> {
         let chain_extra = if gk_on { GK_CHAIN_EPS } else { 0.0 };
         let eps = float_margin::with_chain(drift, chain_extra)
             .ok_or_else(|| Error::Domain("nonfinite factor drift certificate".into()))?;
-        // Restrict the additive refinement to ordinary finite, normal float
-        // chains. This broad range includes the game settings; other accepted
-        // settings continue using the original envelope. With i32 power/counts,
+        // The ideal factor at every scored note is at least one. A score upper
+        // bound alone does not establish the positive lower endpoint needed by
+        // the maximum-power representative; keep the absolute drift below it.
+        if eps >= 0.5 {
+            return Err(Error::Domain("factor drift cannot certify positive score factors".into()));
+        }
+        // Certify finite, normal float chains before either envelope or a
+        // maximum-power representative is used. With i32 power/counts,
         // percentages <= 10^6 and factor norm <= 2^16, the pre-floor products
         // stay inside the binary32 exponent range (zero percentages are exact).
         let normal = |v: f32, low: f32, high: f32| v.is_finite() && low <= v && v <= high;
         let post_normal = |v: f32| v == 0.0 || normal(v, 2f32.powi(-16), 2f32.powi(16));
-        let additive_domain = normal(adj, 2f32.powi(-16), 2f32.powi(16))
+        let normal_chain = normal(adj, 2f32.powi(-16), 2f32.powi(16))
             && normal(mdf, 2f32.powi(-8), 2f32.powi(8))
             && post_normal(assist)
             && post_normal(onus)
@@ -1077,15 +1141,14 @@ impl<'a> SnapLive<'a> {
                 .values()
                 .chain(settings.judgement_score_factor_percent.values())
                 .all(|p| (0..=1_000_000).contains(p));
+        if !normal_chain {
+            return Err(Error::Domain("live score chain is outside the finite normal certificate".into()));
+        }
         let judgement_max =
             settings.judgement_score_factor_percent.values().copied().max().map(|p| (p as f64 / 100.0).next_up());
-        let additive = if additive_domain {
-            let n_upper = cmd_k.iter().fold(0.0f64, |acc, &v| (acc + v).next_up());
-            let roundings = (((3.0 * e_max).next_up() * n_upper).next_up() + (2.0 * n_upper).next_up()).next_up();
-            judgement_max.and_then(|j| factor_error_sensitivity(&coef, j)).map(|b| (roundings, b))
-        } else {
-            None
-        };
+        let n_upper = cmd_k.iter().fold(0.0f64, |acc, &v| (acc + v).next_up());
+        let roundings = (((3.0 * e_max).next_up() * n_upper).next_up() + (2.0 * n_upper).next_up()).next_up();
+        let additive = judgement_max.and_then(|j| factor_error_sensitivity(&coef, j)).map(|b| (roundings, b));
         let joint_additive =
             additive.and_then(|(roundings, b)| additive_joint_envelope(a0, global, eps, roundings, b, chain_extra));
         let carrier_levels = match gkf.as_ref() {

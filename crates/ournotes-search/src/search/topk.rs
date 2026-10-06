@@ -1,7 +1,20 @@
 //! Canonical Top-K with one result per member set.
 
-/// Snap id stand-in for "no snap" in the canonical order (after every snap).
-pub(crate) const NO_SNAP: i64 = i64::MAX;
+/// Canonical Snap order: real card IDs ascending, then empty slots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum SnapKey {
+    Card(i64),
+    Empty,
+}
+
+impl From<Option<i64>> for SnapKey {
+    fn from(id: Option<i64>) -> Self {
+        match id {
+            Some(id) => Self::Card(id),
+            None => Self::Empty,
+        }
+    }
+}
 
 /// A legal, exactly evaluated deck.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,8 +26,8 @@ pub(crate) struct Entry {
     /// The result identity: the five member card ids, ascending.
     pub ids: [i64; 5],
     pub leader_id: i64,
-    /// Snap ids in slot order (`NO_SNAP` for an empty slot).
-    pub snap_ids: [i64; 5],
+    /// Canonical Snap keys in slot order.
+    pub snap_ids: [SnapKey; 5],
     /// Performance order: `order[k]` is the slot at position k.
     pub order: [usize; 5],
     /// Pool indexes, slot order.
@@ -74,5 +87,37 @@ impl TopK {
 
     pub fn into_vec(self) -> Vec<Entry> {
         self.items
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Entry, SnapKey, TopK};
+
+    #[test]
+    fn real_snap_ids_precede_empty_slots_before_performance_order() {
+        let empty = Entry {
+            value: 1,
+            power: 1,
+            ids: [1, 2, 3, 4, 5],
+            leader_id: 1,
+            snap_ids: [SnapKey::Empty; 5],
+            order: [0, 1, 2, 3, 4],
+            members: [1, 2, 0, 3, 4],
+            snaps: [None; 5],
+        };
+        for id in [i64::MIN, -1, 0, i64::MAX] {
+            let mut paired = empty.clone();
+            paired.snap_ids[0] = SnapKey::from(Some(id));
+            paired.snaps[0] = Some(0);
+            paired.order = [4, 3, 2, 1, 0];
+            for candidates in [[empty.clone(), paired.clone()], [paired.clone(), empty.clone()]] {
+                let mut top = TopK::new(1);
+                for candidate in candidates {
+                    top.insert(candidate);
+                }
+                assert_eq!(top.into_vec(), vec![paired.clone()]);
+            }
+        }
     }
 }

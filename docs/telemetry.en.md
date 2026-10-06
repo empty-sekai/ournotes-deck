@@ -208,15 +208,18 @@ Counters accumulate within the request; exhausting an allowance or declining ref
 | Field | Meaning |
 |---|---|
 | `attemptedOrders` | Orders for which construction of a complete nominal law was attempted |
-| `completedOrders` | Orders whose every positive-mass path terminated and whose total mass is exactly one |
+| `completedOrders` | Orders with a complete mass-one law, including laws reused for an equal initialized model |
 | `installedOrders` | Complete laws successfully used to narrow the ranking frontier |
 | `declinedOrders` | Orders without a complete law due to unsupported inputs or random sources, work allowances, cancellation or arithmetic capacity |
 | `arithmeticDeclines` | Complete laws not installed because search-side exact payoff arithmetic could not represent the result |
-| `replayRuns`, `frames`, `terminalPaths` | Prefix replays started, frames executed and terminal paths completed, including attempts that ultimately publish no law |
+| `replayRuns`, `frames`, `terminalPaths` | Replay segments started, frames executed and terminal paths completed across all refinement attempts; reused complete laws add zero playback work |
 
 Refinement time is charged to `time.simulationMs`; its runs are separate from the coarse 120-order evaluations
 counted by `leaves.simulations`. Refinement can stop once the ranking is certified, so `Complete` does not require
 every order to have an exact law or every returned expectation to have an exact rational value.
+
+The [nominal LUCK refinement method](luck-refinement.md) describes the frame checkpoints,
+work accounting and retained ranking certificates.
 
 ## `caches`
 

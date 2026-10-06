@@ -162,6 +162,7 @@ mod tests {
 
     fn row(value: i64, trigger_type: i64) -> Row {
         Row {
+            identity: RowIdentity { source: RowSource::Gekisou, index: 0, id: 0 },
             trigger: 0,
             trigger_type,
             condition: 0,

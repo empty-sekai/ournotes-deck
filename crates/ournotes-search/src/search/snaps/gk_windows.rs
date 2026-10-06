@@ -512,7 +512,9 @@ impl GkFrames {
             };
             return at(x);
         }
-        let timed = if r.act > 0.0 || r.act.is_nan() || r.release == 0 {
+        // Release checkers skip the first elapsed-time check. A nominal duration alone then does not bound the
+        // last active frame, including when the first post-start update is the final play frame.
+        let timed = if r.release == 0 {
             (frame_end(&self.times, self.times[f], f, r.act), register_end(&self.times, f, r.act))
         } else {
             (i64::MAX, i64::MAX)

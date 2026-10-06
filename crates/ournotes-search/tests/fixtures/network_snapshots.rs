@@ -9,6 +9,7 @@ use serde_json::json;
 #[test]
 fn network_snapshot_caps_cover_timed_factor_end_frames() {
     for (duration, snapshot_end) in [(0.24, 400), (0.23, 380)] {
+        let early_note = snapshot_end < 400;
         for (effect, targets) in [(2000, vec![]), (2004, vec![5])] {
             let mut synth = synthetic_master(6, 0, 6);
             set_column(&mut synth, "MasterMemberCard", &mut |row| {
@@ -59,12 +60,29 @@ fn network_snapshot_caps_cover_timed_factor_end_frames() {
                 use ournotes_search::{handler, search::diagnostics};
                 let built = handler::build_card_pool(&data, &roster, &request).unwrap();
                 let audit = diagnostics::audit_order_caps(&built, [1, 2, 3, 4, 5], [None; 5]).unwrap();
-                assert_eq!(audit["orders"], 120);
-                assert_eq!(audit["violations"], 0, "duration={duration} effect={effect}: {audit}");
+                if early_note {
+                    assert!(audit.is_null(), "duration={duration} effect={effect}: {audit}");
+                } else {
+                    assert_eq!(audit["orders"], 120);
+                    assert_eq!(audit["violations"], 0, "duration={duration} effect={effect}: {audit}");
+                }
             }
             let bounded = engine::recommend(&data, &roster, &request).unwrap();
             assert_eq!(bounded.completion, Completion::Complete);
-            assert!(bounded.telemetry.environment.bounds.compiled);
+            assert_eq!(bounded.telemetry.environment.bounds.compiled, !early_note);
+            if early_note {
+                assert!(
+                    bounded
+                        .telemetry
+                        .environment
+                        .bounds
+                        .fallback
+                        .as_deref()
+                        .is_some_and(|reason| reason.contains("score note is judged before its chart time")),
+                    "{:?}",
+                    bounded.telemetry.environment.bounds.fallback
+                );
+            }
             request.strategy = Strategy::Exhaustive;
             let oracle = engine::recommend(&data, &roster, &request).unwrap();
             assert_eq!(oracle.completion, Completion::Complete);
