@@ -1806,8 +1806,9 @@ complete laws and 32 MiB of identity and atom payload, evicting the oldest entri
 
 Every retained law satisfies the complete-tree and mass-one checks. A hit consumes no replay segments or frames
 and remains available after the execution allowance is exhausted. Cancellation is checked before reuse and replay.
-Zero session capacity evaluates each order independently. The search creates a 64-entry session for the selected
-candidate's orders; its capacity is independent of the optional request score-cache setting.
+Zero session capacity evaluates each order independently. The search creates a session for the selected
+candidate's orders with at most `min(cacheEntries, 64)` entries. A request with zero cache entries evaluates
+each exact order independently.
 
 Implementation: [checkpoint replay and initialized-state identity](../crates/ournotes-sim/src/live/full/luck_exact.rs),
 [session use and frontier refinement](../crates/ournotes-search/src/search/certified_engine.rs).
@@ -1871,6 +1872,7 @@ Releasing detailed order rows preserves the intervals already installed on the f
 order is aggregated and intersected with the current certificates, retaining any restriction established by an
 equal-program candidate.
 
+Among overlapping candidates, refinement first selects contenders with smaller payoff upper bounds.
 Within a selected candidate, refinement first evaluates orders with wider payoff enclosures. Every performance
 order has equal weight in the target; canonical order indices break priority ties. This is a work schedule:
 the interval frontier supplies every returned ranking certificate independently of the selected order.
