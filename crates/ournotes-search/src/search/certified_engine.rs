@@ -3,6 +3,7 @@ use super::*;
 use crate::search::{
     certified_search::{
         CertifiedEvaluation, PayoffMap, aggregate_orders, canonicalize_performers, refine_order_with_exact_law,
+        refinement_uncertainty,
     },
     interval_topk::{CandidateInterval, CanonicalTie, IntervalTopK, RankingProof, RemainingDomain},
 };
@@ -258,7 +259,7 @@ impl Engine<'_, '_> {
     /// Once the physical domain is exhausted, spend bounded work only on candidates whose ordering still
     /// overlaps. Every installed order is a complete nominal law; declined/partial trees keep their old bounds.
     pub(super) fn refine_certified_frontier(&mut self) -> Result<(), Error> {
-        use ournotes_sim::live::full::{LuckExactBudget, LuckExactDecline, luck_exact_law_with_ranking};
+        use ournotes_sim::live::full::{LuckExactBudget, LuckExactDecline, LuckExactSession};
         let state = self.certified.as_mut().expect("certified request");
         state.domain_exhausted = true;
         let mut work = LuckExactBudget::default();
@@ -271,9 +272,20 @@ impl Engine<'_, '_> {
                 return Ok(());
             };
             let state = self.certified.as_ref().expect("certified request");
-            // proof.ambiguous is scheduled by its upper/lower payoff bounds and canonical ties. It is
-            // only a work priority: the frontier alone establishes every returned rank.
-            let selected = proof.ambiguous.iter().find_map(|&id| {
+            let mut candidates = proof.ambiguous.clone();
+            // Smaller upper bounds identify contenders closer to exclusion by a proved lower bound.
+            // This is a work priority; the frontier alone establishes every returned rank.
+            candidates.sort_by(|a, b| {
+                state
+                    .frontier
+                    .get(*a)
+                    .expect("live candidate")
+                    .payoff
+                    .upper()
+                    .total_cmp(&state.frontier.get(*b).expect("live candidate").payoff.upper())
+                    .then(a.cmp(b))
+            });
+            let selected = candidates.iter().find_map(|&id| {
                 let entry = &state.entries[&id];
                 let retained = entry.refinement.as_ref()?;
                 let mut indices: Vec<_> = if matches!(retained.map, PayoffMap::Score) {
@@ -302,8 +314,7 @@ impl Engine<'_, '_> {
                     .then(|| (id, entry.physical, retained.program.clone(), retained.map.clone(), indices))
             });
             let Some((id, physical, program, map, indices)) = selected else {
-                let next = proof
-                    .ambiguous
+                let next = candidates
                     .iter()
                     .copied()
                     .find(|id| state.entries[id].refinement.is_none() && !materialized.contains(id));
@@ -332,13 +343,37 @@ impl Engine<'_, '_> {
             }
             let setup =
                 input.gekisou.as_ref().ok_or_else(|| Error::Domain("LUCK refinement requires Gekisou".into()))?;
-            for index in indices {
+            let orders = &self.certified.as_ref().expect("certified request").entries[&id]
+                .refinement
+                .as_ref()
+                .expect("boundary candidate")
+                .evaluation
+                .orders;
+            let mut priorities = indices
+                .into_iter()
+                .map(|index| Ok((index, refinement_uncertainty(&orders[index], &map)?)))
+                .collect::<Result<Vec<_>, Error>>()?;
+            // Uniform-order averaging gives every enclosure width the same aggregate weight.
+            // This schedules exact work; only the interval frontier certifies the ranking.
+            priorities.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            let mut session = LuckExactSession::new(
+                self.pool.master,
+                &input.notes,
+                &input.events,
+                input.params,
+                setup,
+                &input.play,
+                &input.delta_times,
+                input.rank_confirmations.as_deref(),
+                self.limits.cache_entries.min(64),
+            )?;
+            for (index, _) in priorities {
                 if attempted.contains(&(id, index)) {
                     continue;
                 }
                 let state = self.certified.as_ref().expect("certified request");
                 let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
-                let Some(proof) = pending_refinement(proof, || self.expired() || work.exhausted()) else {
+                let Some(proof) = pending_refinement(proof, || self.expired()) else {
                     return Ok(());
                 };
                 if !proof.ambiguous.contains(&id) {
@@ -350,21 +385,8 @@ impl Engine<'_, '_> {
                 attempted.insert((id, index));
                 let performers = order.map(|slot| input.performers[slot].clone());
                 self.tel.lottery_refinement.attempted_orders += 1;
-                let master = self.pool.master;
                 let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
-                let result = luck_exact_law_with_ranking(
-                    master,
-                    &performers,
-                    &input.notes,
-                    &input.events,
-                    input.params,
-                    setup,
-                    &input.play,
-                    &input.delta_times,
-                    input.rank_confirmations.as_deref(),
-                    &mut work,
-                    || self.expired(),
-                );
+                let result = session.law(&performers, &mut work, || self.expired());
                 self.rec.clock.lap(resume);
                 let result = result?;
                 let telemetry = &mut self.tel.lottery_refinement;
