@@ -14,6 +14,17 @@ class StrictComparisonTests(unittest.TestCase):
         r = compare(self.capture, copy.deepcopy(self.capture), self.contract)
         self.assertEqual((r['status'], r['fieldComparisons']), ('passed', 6))
 
+    def test_contract_fields_and_array_lengths_have_declared_types(self):
+        malformed = [None, [], {}, {'integerFields': 'frame,timeMs,score'}]
+        for name in ('integerFields', 'float32BitFields'):
+            for fields in (None, {}, 'score', [123], [False], [[]], [{}], ['']):
+                malformed.append({**self.contract, name: fields})
+        for lengths in (None, [], 'skills', {1: 1}, {'': 1}, {'skills': -1}, {'skills': 1.0}, {'skills': True}):
+            malformed.append({**self.contract, 'arrayLengths': lengths})
+        for contract in malformed:
+            with self.subTest(contract=contract), self.assertRaises(ValueError):
+                compare(self.capture, copy.deepcopy(self.capture), contract)
+
     def test_one_ulp_and_frame_shift_are_retained(self):
         rust = copy.deepcopy(self.capture)
         rust['frames'][0]['frame'] = 1

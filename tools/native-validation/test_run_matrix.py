@@ -1,6 +1,8 @@
 import copy
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -57,6 +59,47 @@ class FrameMatrixTests(unittest.TestCase):
         self.assertEqual(result["counts"]["passed"], 1)
         self.assertEqual(result["counts"]["not_run"], 1)
         self.assertEqual(result["status"], "incomplete")
+
+    def test_contract_validation_preserves_later_case_results(self):
+        (self.directory / "valid-contract.json").write_text(json.dumps(self.contract), encoding="utf-8")
+        self.manifest["cases"].append({**self.case, "id": "second", "contract": "valid-contract.json"})
+        malformed = [
+            None,
+            [],
+            {"integerFields": "frame,timeMs,score"},
+            {"integerFields": ["frame", "timeMs", 123]},
+            {**self.contract, "float32BitFields": "score"},
+            {**self.contract, "float32BitFields": [123]},
+            {**self.contract, "arrayLengths": []},
+            {**self.contract, "arrayLengths": {"skills": True}},
+        ]
+        for contract in malformed:
+            with self.subTest(contract=contract):
+                (self.directory / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
+                result = run(self.manifest, self.directory)
+                self.assertEqual(result["status"], "incomplete")
+                self.assertEqual(result["counts"]["invalid"], 1)
+                self.assertEqual(result["counts"]["passed"], 1)
+                self.assertEqual([(case["id"], case["status"]) for case in result["cases"]],
+                                 [("free-perfect", "invalid"), ("second", "passed")])
+
+    def test_cli_writes_all_case_outcomes_for_an_invalid_contract(self):
+        (self.directory / "valid-contract.json").write_text(json.dumps(self.contract), encoding="utf-8")
+        self.manifest["cases"].append({**self.case, "id": "second", "contract": "valid-contract.json"})
+        self.contract["arrayLengths"] = []
+        self.write()
+        manifest_path = self.directory / "manifest.json"
+        output_path = self.directory / "result.json"
+        manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        completed = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name("run_matrix.py")), str(manifest_path), str(output_path)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        report = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(report["caseCount"], 2)
+        self.assertEqual([case["status"] for case in report["cases"]], ["invalid", "passed"])
+        self.assertEqual(json.loads(completed.stdout)["status"], "incomplete")
 
     def test_frame_sequence_and_terminal_coverage_are_checked(self):
         for frames in (self.capture["frames"][:1], [dict(frame=1, timeMs=0, score=0), dict(frame=2, timeMs=20, score=7)],

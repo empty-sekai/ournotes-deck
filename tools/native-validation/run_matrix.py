@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import re
 
-from compare_native_frames import compare, resolve
+from compare_native_frames import compare, resolve, validate_contract
 
 FORMAT = "ournotes-deck.frame-validation-matrix/1"
 
@@ -96,7 +96,8 @@ def run(manifest, directory):
                 raise ValueError("calculation source identity mismatch")
             for role, capture in (("reference", reference), ("model", actual)):
                 validate_capture(capture, case, role)
-            fields = contract["integerFields"] + contract.get("float32BitFields", [])
+            integer, floating, _ = validate_contract(contract)
+            fields = integer + floating
             if not set(fields) - {"frame", "timeMs"}:
                 raise ValueError("the contract must include a state field")
             state_fields = set(fields) - {"frame", "timeMs"}
