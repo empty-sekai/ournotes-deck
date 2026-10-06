@@ -442,17 +442,54 @@ struct QueryParts {
     note_mean: F64Interval,
     note_support: I32Interval,
     fixed_coefficients: Vec<u8>,
+    /// The last score frame the query sums.
+    to: i32,
+    /// The first score frame the query executed: the notes of the frames before it kept their native values since
+    /// the previous query.
+    executed_from: i32,
+    /// For a rank snapshot, each summed note's score frame, support and mean.
+    notes: Option<Vec<(i32, I32Interval, F64Interval)>>,
 }
 
+/// The note sum and filed bonuses snapshot `end` gained since snapshot `start`, given by their query indices into
+/// the parts of every query. The frames that no query after `start` up to `end` executed again hold the same notes
+/// with the same native values in both snapshots, which cancel exactly: only the notes of the later frames are
+/// enclosed, on each side. Without the notes of both snapshots both whole note sums are enclosed separately.
 fn snapshot_difference(
-    start: Option<&QueryParts>,
-    end: &QueryParts,
+    start: Option<usize>,
+    end: usize,
+    queries: &[QueryParts],
     fixed: &[(i32, u8, F64Interval, I32Interval)],
 ) -> Result<(F64Interval, I32Interval), Error> {
-    let a_support = start.map_or(I32Interval::point(0), |v| v.note_support);
-    let mut mean = end.note_mean.subtract(start.map_or(F64Interval::ZERO, |v| v.note_mean));
-    let mut lower = i64::from(end.note_support.lower()) - i64::from(a_support.upper());
-    let mut upper = i64::from(end.note_support.upper()) - i64::from(a_support.lower());
+    let (start_index, start, end_index, end) = (start, start.map(|index| &queries[index]), end, &queries[end]);
+    // The last frame every query after `start` up to `end` left as `start` summed it.
+    let kept = start_index.zip(start).filter(|&(index, _)| index <= end_index).map(|(index, start)| {
+        let executed = queries[index + 1..=end_index].iter().map(|q| q.executed_from).min().unwrap_or(i32::MAX);
+        start.to.min(executed.saturating_sub(1))
+    });
+    let later = |notes: &[(i32, I32Interval, F64Interval)], kept: i32| {
+        notes.iter().filter(|&&(frame, _, _)| frame > kept).fold(
+            (F64Interval::ZERO, 0i64, 0i64),
+            |(mean, lower, upper), &(_, support, note_mean)| {
+                (mean.add(note_mean), lower + i64::from(support.lower()), upper + i64::from(support.upper()))
+            },
+        )
+    };
+    let (mut mean, mut lower, mut upper) = match (kept, start.and_then(|v| v.notes.as_deref()), end.notes.as_deref()) {
+        (Some(kept), Some(a), Some(b)) => {
+            let (a_mean, a_lower, a_upper) = later(a, kept);
+            let (b_mean, b_lower, b_upper) = later(b, kept);
+            (b_mean.subtract(a_mean), b_lower - a_upper, b_upper - a_lower)
+        }
+        _ => {
+            let a_support = start.map_or(I32Interval::point(0), |v| v.note_support);
+            (
+                end.note_mean.subtract(start.map_or(F64Interval::ZERO, |v| v.note_mean)),
+                i64::from(end.note_support.lower()) - i64::from(a_support.upper()),
+                i64::from(end.note_support.upper()) - i64::from(a_support.lower()),
+            )
+        }
+    };
     for (index, &(_, _, bonus_mean, bonus_support)) in fixed.iter().enumerate() {
         let a = start.and_then(|v| v.fixed_coefficients.get(index)).copied().unwrap_or(0);
         let b = end.fixed_coefficients.get(index).copied().unwrap_or(0);
@@ -887,7 +924,7 @@ fn luck_score_bounds_internal(
                 // Network FEVER_START may snapshot the initial zero before any score calculation.
                 // Both snapshots refer to the very same filed bonus values. Cancel their integer
                 // coefficients before enclosing the remaining difference; never assume independence.
-                let (mean, support) = snapshot_difference(start.map(|i| &query_parts[i]), &query_parts[end], &fixed)?;
+                let (mean, support) = snapshot_difference(*start, end, &query_parts, &fixed)?;
                 let x = i128::from(support.lower()) * i128::from(*percent) / 100;
                 let y = i128::from(support.upper()) * i128::from(*percent) / 100;
                 let bonus_support = I32Interval::new(
@@ -932,6 +969,7 @@ fn luck_score_bounds_internal(
                 let mut note_count = 0;
                 let (mut lo, mut hi) = (0i64, 0i64);
                 let mut mean = F64Interval::ZERO;
+                let mut rank_notes = detailed_queries.contains(&query_means.len()).then(Vec::new);
                 // A note first enters a query at or after `start` (its filing lowers `added`, and an unqueried
                 // note lies after `prev`), so every note's observation is checked in this window once.
                 let first = by_frame.partition_point(|&(f, _)| (f as i32) < start);
@@ -963,15 +1001,19 @@ fn luck_score_bounds_internal(
                     factor_widths(executed, &mut factor_width);
                     let (mut bounds, mut support) =
                         note_bounds(&calc, note, executed, combo, gekisou_combo, rush_percent)?;
-                    mean = mean.add(if note.time_ms <= probability_ready {
+                    let note_mean = if note.time_ms <= probability_ready {
                         let (mean, linked_support) = link_note_probability(&mut bounds, &probability)?;
                         support = linked_support;
                         mean
                     } else {
                         support.as_real()
-                    });
+                    };
+                    mean = mean.add(note_mean);
                     lo += i64::from(support.lower());
                     hi += i64::from(support.upper());
+                    if let Some(notes) = &mut rank_notes {
+                        notes.push((frame as i32, support, note_mean));
+                    }
                     note_count += 1;
                     if retain_notes {
                         measured.push(bounds);
@@ -993,7 +1035,14 @@ fn luck_score_bounds_internal(
                 let support = if measure { checked_support(lo, hi)? } else { I32Interval::point(0) };
                 query_means.push(mean);
                 query_supports.push(support);
-                query_parts.push(QueryParts { note_mean, note_support, fixed_coefficients });
+                query_parts.push(QueryParts {
+                    note_mean,
+                    note_support,
+                    fixed_coefficients,
+                    to: *to,
+                    executed_from: start,
+                    notes: rank_notes,
+                });
                 if details {
                     queries.push(LuckScoreQueryBounds {
                         time_ms: *time_ms,
@@ -1077,28 +1126,67 @@ mod tests {
             (1, 1, F64Interval::new(-1000.0, 2000.0).unwrap(), I32Interval::new(-1000, 2000).unwrap()),
             (2, 0, F64Interval::new(10.0, 20.0).unwrap(), I32Interval::new(10, 20).unwrap()),
         ];
-        let start = QueryParts {
-            note_mean: F64Interval::integer(100),
-            note_support: I32Interval::point(100),
+        let part = |sum: i32| QueryParts {
+            note_mean: F64Interval::integer(i128::from(sum)),
+            note_support: I32Interval::point(sum),
             fixed_coefficients: vec![2, 1],
+            to: 0,
+            executed_from: 0,
+            notes: None,
         };
-        let mut end = QueryParts {
-            note_mean: F64Interval::integer(130),
-            note_support: I32Interval::point(130),
-            fixed_coefficients: vec![2, 1],
-        };
-        let (mean, support) = snapshot_difference(Some(&start), &end, &fixed).unwrap();
+        let mut queries = vec![part(100), part(130)];
+        let (mean, support) = snapshot_difference(Some(0), 1, &queries, &fixed).unwrap();
         assert_eq!(support, I32Interval::point(30));
         assert!(mean.contains(30.0) && mean.upper() - mean.lower() < 1e-10);
         // A rewind removes the second bonus from the prefix, while the first bonus's permanent
         // filing offset and in-prefix copy are present on both sides. Only the latter cancels.
-        end.fixed_coefficients[1] = 0;
-        let (mean, support) = snapshot_difference(Some(&start), &end, &fixed).unwrap();
+        queries[1].fixed_coefficients[1] = 0;
+        let (mean, support) = snapshot_difference(Some(0), 1, &queries, &fixed).unwrap();
         assert_eq!(support, I32Interval::new(10, 20).unwrap());
         assert!(mean.contains(10.0) && mean.contains(20.0));
         // Initial network zero has no symbols, so neither a filing offset nor a prefix may vanish.
-        let (_, support) = snapshot_difference(None, &end, &fixed).unwrap();
+        let (_, support) = snapshot_difference(None, 1, &queries, &fixed).unwrap();
         assert_eq!(support, I32Interval::new(-1870, 4130).unwrap());
+    }
+
+    #[test]
+    fn snapshot_difference_cancels_notes_that_no_later_query_executed_again() {
+        // Two notes in frames 1 and 2 whose lottery leaves each between 100 and 200 points, summed by the start
+        // snapshot at frame 2, and one note in frame 4 between 30 and 60 points.
+        let early = |frame| (frame, I32Interval::new(100, 200).unwrap(), F64Interval::new(100.0, 200.0).unwrap());
+        let late = (4, I32Interval::new(30, 60).unwrap(), F64Interval::new(30.0, 60.0).unwrap());
+        let part = |to: i32, executed_from: i32, notes: Vec<(i32, I32Interval, F64Interval)>, rank: bool| {
+            let (lower, upper) = notes.iter().fold((0, 0), |(l, u), n| (l + n.1.lower(), u + n.1.upper()));
+            QueryParts {
+                note_mean: notes.iter().fold(F64Interval::ZERO, |m, n| m.add(n.2)),
+                note_support: I32Interval::new(lower, upper).unwrap(),
+                fixed_coefficients: Vec::new(),
+                to,
+                executed_from,
+                notes: rank.then_some(notes),
+            }
+        };
+        let mut queries = vec![
+            part(2, 0, vec![early(1), early(2)], true),
+            part(3, 3, vec![early(1), early(2)], false),
+            part(4, 4, vec![early(1), early(2), late], true),
+        ];
+        let (mean, support) = snapshot_difference(Some(0), 2, &queries, &[]).unwrap();
+        assert_eq!(support, I32Interval::new(30, 60).unwrap());
+        assert_eq!((mean.lower(), mean.upper()), (30.0, 60.0));
+        // A query between them executed frame 2 again: its note may have changed, so it is enclosed on each side.
+        queries[1].executed_from = 2;
+        let (_, support) = snapshot_difference(Some(0), 2, &queries, &[]).unwrap();
+        assert_eq!(support, I32Interval::new(130 - 200, 260 - 100).unwrap());
+        // From frame 0 on, every note is enclosed on each side.
+        queries[1].executed_from = 0;
+        let (_, support) = snapshot_difference(Some(0), 2, &queries, &[]).unwrap();
+        assert_eq!(support, I32Interval::new(230 - 400, 460 - 200).unwrap());
+        // Without the start snapshot's notes, so are the whole sums.
+        queries[1].executed_from = 3;
+        queries[0].notes = None;
+        let (_, support) = snapshot_difference(Some(0), 2, &queries, &[]).unwrap();
+        assert_eq!(support, I32Interval::new(230 - 400, 460 - 200).unwrap());
     }
 
     #[test]
@@ -1260,6 +1348,127 @@ mod tests {
             scores.insert(native.score());
         }
         assert!(scores.len() > 1);
+    }
+
+    /// Three ranges with Rank bonuses of 250%: three notes at each of five or six times in the first two ranges,
+    /// whose Rush may or may not run, and a single note in the third. `fine` plays 10 ms frames and spreads each
+    /// three notes over 20 ms (one more note lies just before the second range), so that later filings execute
+    /// score frames of earlier snapshots again.
+    fn lottery_wide_ranges(fine: bool) -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
+        let (mut master, _, mut params, mut setup, _, _) = fixture();
+        master.gekisou_luck_bonus_lots = (0..5)
+            .flat_map(|kind| {
+                (0..4).map(move |result| crate::master::LuckBonusLotRow {
+                    id: kind * 4 + result + 1,
+                    chance_lot_type: kind,
+                    lot_result: result,
+                    weight: 1,
+                })
+            })
+            .collect();
+        master.gekisou_ranking_score_bonuses = (1..=3)
+            .map(|count| crate::master::GekisouRankingBonusRow {
+                id: count,
+                mission_pattern: gekisou::mission_pattern(2, 2, 2),
+                rank: 1,
+                count,
+                score_bonus_percent: 250,
+            })
+            .collect();
+        setup.fevers = vec![(100, 500), (3600, 4100), (7200, 7700)];
+        let spread = if fine { [0, 10, 20] } else { [0; 3] };
+        let mut times: Vec<i32> = (1..=5).chain(36..=41).flat_map(|t| spread.map(|d| t * 100 + d)).collect();
+        if fine {
+            times.push(3590);
+        }
+        times.push(7300);
+        times.sort_unstable();
+        let notes: Vec<_> = times
+            .iter()
+            .enumerate()
+            .map(|(i, &time_ms)| LiveNote { note_id: i as i32 + 1, note_operate_type: 1, judgement_type: 1, time_ms })
+            .collect();
+        params.converted_note_count = notes.len() as i32;
+        params.music_length_ms = 11000;
+        let step = if fine { 10 } else { 100 };
+        let frames: Vec<_> = (0..=11000 / step)
+            .map(|i| PlayFrame {
+                time_ms: i * step,
+                judged: notes
+                    .iter()
+                    .filter(|note| note.time_ms == i * step)
+                    .map(|note| JudgedNote { note_id: note.note_id, judgement: 5, judgement_time_ms: note.time_ms })
+                    .collect(),
+            })
+            .collect();
+        let delta = vec![step as f32 / 1000.0; frames.len()];
+        (master, notes, params, setup, LivePlay { frames, base_seed: 0 }, delta)
+    }
+
+    #[test]
+    fn range_gains_after_lottery_wide_earlier_ranges_stay_enclosed_and_nonnegative() {
+        let (master, notes, params, setup, play, delta) = lottery_wide_ranges(false);
+        let bounds = luck_score_bounds(&master, &[], &notes, &[], params, &setup, &play, &delta).unwrap();
+        assert_eq!(bounds.ranges.len(), 3);
+        for range in &bounds.ranges {
+            assert!(range.support.lower >= 0, "{range:?}");
+        }
+        let mut gains = std::collections::BTreeSet::new();
+        for seed in -16..48 {
+            let mut native = LiveModel::new_gekisou(&master, &[], &notes, &[], params, &setup).unwrap();
+            native.set_seed(seed);
+            for (frame, &dt) in play.frames.iter().zip(&delta) {
+                native.frame_timed(frame.time_ms, &frame.judged, dt).unwrap();
+            }
+            let gk = native.gk.as_ref().unwrap();
+            for range in &bounds.ranges {
+                let gain = gk.ctrl.range_score(range.range);
+                assert!(range.support.lower <= gain && gain <= range.support.upper, "{range:?} {gain}");
+                gains.insert((range.range, gain));
+            }
+            assert!(bounds.final_support.lower <= native.score() && native.score() <= bounds.final_support.upper);
+        }
+        assert!(gains.len() > bounds.ranges.len(), "the lottery must change some range gain");
+    }
+
+    #[test]
+    fn network_range_gains_over_executed_again_frames_stay_enclosed_and_nonnegative() {
+        let (master, notes, params, setup, play, delta) = lottery_wide_ranges(true);
+        let confirmations: Vec<_> =
+            (0..3).map(|range| crate::replay::RankConfirmation { frame: 0, range, rank: 1, percent: 250 }).collect();
+        let bounds = luck_score_bounds_with_ranking(
+            &master,
+            &[],
+            &notes,
+            &[],
+            params,
+            &setup,
+            &play,
+            &delta,
+            Some(&confirmations),
+        )
+        .unwrap();
+        assert_eq!(bounds.ranges.len(), 3);
+        for range in &bounds.ranges {
+            assert!(range.support.lower >= 0, "{range:?}");
+        }
+        let mut gains = std::collections::BTreeSet::new();
+        for seed in -16..48 {
+            let mut native = LiveModel::new_gekisou_external(&master, &[], &notes, &[], params, &setup).unwrap();
+            native.set_rank_confirmation_timeline(&confirmations).unwrap();
+            native.set_seed(seed);
+            for (frame, &dt) in play.frames.iter().zip(&delta) {
+                native.frame_timed(frame.time_ms, &frame.judged, dt).unwrap();
+            }
+            let gk = native.gk.as_ref().unwrap();
+            for range in &bounds.ranges {
+                let gain = gk.ctrl.range_score(range.range);
+                assert!(range.support.lower <= gain && gain <= range.support.upper, "{range:?} {gain}");
+                gains.insert((range.range, gain));
+            }
+            assert!(bounds.final_support.lower <= native.score() && native.score() <= bounds.final_support.upper);
+        }
+        assert!(gains.len() > bounds.ranges.len(), "the lottery must change some range gain");
     }
 
     #[test]
