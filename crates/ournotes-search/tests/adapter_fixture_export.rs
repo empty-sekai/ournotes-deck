@@ -34,6 +34,8 @@ mod numeric_domain;
 mod proof_telemetry;
 #[path = "fixtures/scenario_completion.rs"]
 mod scenario_completion;
+#[path = "fixtures/score_paths.rs"]
+mod score_paths;
 #[path = "fixtures/sustained_combo.rs"]
 mod sustained_combo;
 
