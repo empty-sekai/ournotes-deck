@@ -31,6 +31,9 @@ fn joint_request(mode: &str, gekisou: bool, metric: Value) -> ournotes_search::t
     serde_json::from_value(joint_request_json(mode, gekisou, metric)).unwrap()
 }
 
+#[path = "fixtures/conversion_regimes.rs"]
+mod conversion_regimes;
+
 fn joint_request_json(mode: &str, gekisou: bool, metric: Value) -> Value {
     json!({"format":"ournotes-deck.search-request/1",
         "execution":{"kind":"live","scoreId":SCORE_ID,"gekisou":gekisou,"play":{"kind":"theoreticalBest"}},

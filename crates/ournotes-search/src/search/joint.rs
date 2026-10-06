@@ -652,6 +652,11 @@ impl JointBounds {
         self.carrier_levels.as_ref().map_or(0, |l| l.at.iter().flatten().count())
     }
 
+    /// Snaps whose compiled per-entry reach supplies useful conversion partition boundaries.
+    pub(crate) fn conversion_snaps(&self, domain: &CandidateDomain) -> Vec<usize> {
+        self.fine.as_ref().map_or_else(Vec::new, |fine| fine.conversion_snaps(domain.members(), domain.snaps()))
+    }
+
     /// Restrict the choices of physical slots for the following traversal (`None` lifts the rules).
     pub(crate) fn set_rules(&mut self, pool: &Pool, domain: &CandidateDomain, rules: Option<SlotRules>) {
         if let Some(levels) = &mut self.carrier_levels {
