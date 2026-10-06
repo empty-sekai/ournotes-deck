@@ -2,6 +2,22 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.2](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.1...v0.0.2) - 2026-10-06
+
+### Bug fixes
+
+- **sim:** Cancel unchanged notes between LUCK rank snapshots ([25c7a55](https://github.com/empty-sekai/ournotes-deck/commit/25c7a5525177d103ac4de839a646b6ef43d5d5f1))
+
+### Performance
+
+- **sim:** Enclose LUCK factor states with a binary32 endpoint replay ([c50e783](https://github.com/empty-sekai/ournotes-deck/commit/c50e7830fb52e75ce953e6b9bb863a05c74cfe33))
+- **sim:** Pair LUCK replay undos with the last execution of the latest frame ([8d96708](https://github.com/empty-sekai/ournotes-deck/commit/8d96708fcd367f070e038f6b9b8e9b04b50d5c82))
+- **sim:** Reuse certified LUCK lottery curves across equal recordings ([7c2bc93](https://github.com/empty-sekai/ournotes-deck/commit/7c2bc93d725c7359d0f78a91046de2541182b054))
+- **sim:** Reuse frame buffers in the LUCK recording pass ([648342c](https://github.com/empty-sekai/ournotes-deck/commit/648342cd8ffd1753dcdf422559d8135348ea2f1c))
+- **search:** Cap score and life targets by the final life of each order ([d2c4fee](https://github.com/empty-sekai/ournotes-deck/commit/d2c4feebeed5fd4842c5e9ca39903e86eb8a866b))
+- **search:** Bound event bonuses by the largest bonus of any team ([c5dc074](https://github.com/empty-sekai/ournotes-deck/commit/c5dc074824e3cf25ab021fe8e148c4cf298e19cb))
+- **search:** Drop composition nodes whose teams cannot reach the final life ([31ca2a3](https://github.com/empty-sekai/ournotes-deck/commit/31ca2a37698fdcae259ebd853b43d6f94eea6a86))
+
 ## [0.0.1](https://github.com/empty-sekai/ournotes-deck/releases/tag/v0.0.1) - 2026-10-06
 
 ### Features
