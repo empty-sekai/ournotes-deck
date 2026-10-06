@@ -50,7 +50,7 @@ jobs:
       - run: python3 -m unittest discover -s tools/search-harness -p 'test_*.py'
       - name: Export synthetic search inputs
         env:
-          BDON_HARNESS_OUT: work/corpus
+          BDON_HARNESS_OUT: ${{ github.workspace }}/work/corpus
         run: cargo test --release --locked --test adapter_fixture_export export_search_harness_inputs -- --ignored
       - run: cargo build --release --locked --manifest-path tools/search-harness/Cargo.toml --bin ournotes-search-harness
       - name: Compare independent team enumeration
