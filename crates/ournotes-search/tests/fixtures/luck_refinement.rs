@@ -86,3 +86,42 @@ fn exact_nominal_refinement_settles_the_remaining_threshold_witness_without_a_ca
         assert!(probability.lower_f64() < probability.upper_f64());
     }
 }
+
+#[test]
+fn long_stream_refinement_materializes_the_boundary_candidate() {
+    let (data, roster, _) = inputs(610_000, 1, 0);
+    let mut wire = super::joint_request_json("mission", true, json!({"kind":"scoreAtLeast","threshold":610_000}));
+    wire["k"] = json!(1);
+    wire["strategy"] = json!({"kind":"exhaustive"});
+    wire["execution"]["play"] = json!({"kind":"stream","stream":{
+        "frames":(0..=2000).step_by(20).collect::<Vec<_>>(),
+        "judged":(1..=12).map(|id| json!([id*5,id,5,id*100])).collect::<Vec<_>>()
+    }});
+    let short = engine::recommend(&data, &roster, &serde_json::from_value(wire.clone()).unwrap()).unwrap();
+    assert_eq!(short.completion, Completion::Complete);
+    wire["execution"]["play"]["stream"]["frames"] = json!((0..=10400).step_by(20).collect::<Vec<_>>());
+    let long = engine::recommend(&data, &roster, &serde_json::from_value(wire).unwrap()).unwrap();
+    assert_eq!(long.completion, Completion::RefinementRequired);
+    assert_eq!(long.optimality, ournotes_search::types::Optimality::Unproven);
+    assert_eq!(long.telemetry.leaves.visited, 31);
+    let counters = &long.telemetry.lottery_refinement;
+    assert!(counters.installed_orders > 0);
+    assert_eq!(counters.completed_orders, counters.installed_orders);
+    assert!(counters.declined_orders > 0);
+    assert_eq!(counters.frames, ournotes_sim::live::full::LuckExactBudget::default().remaining_frames);
+    // The finite work allowance preserves the ambiguous frontier and the true winning candidate.
+    let expected = &short.results[0];
+    let actual = long
+        .results
+        .iter()
+        .find(|row| row.members == expected.members && row.snaps == expected.snaps)
+        .expect("the certified short-schedule winner remains represented");
+    assert_eq!(actual.power, expected.power);
+    let a = actual.payoff_interval.as_ref().unwrap();
+    let b = expected.payoff_interval.as_ref().unwrap();
+    assert!(a.lower_f64() <= b.upper_f64() && b.lower_f64() <= a.upper_f64());
+    for row in &long.results {
+        let p = row.payoff_interval.as_ref().unwrap();
+        assert!(p.lower_f64() >= 0.0 && p.upper_f64() <= 1.0);
+    }
+}

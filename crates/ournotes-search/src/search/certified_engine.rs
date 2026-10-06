@@ -103,8 +103,8 @@ pub(super) struct CertifiedState {
     score_cache: BTreeMap<(Vec<u8>, i32), CertifiedEvaluation>,
     /// Refinement can hit its deadline after the physical traversal already closed the domain.
     domain_exhausted: bool,
-    /// Fixed on the first scored leaf; retention follows the default refinement frame allowance.
-    refinement_admitted: Option<bool>,
+    /// Small charts retain order state eagerly; other charts materialize one boundary candidate at a time.
+    retain_refinement: Option<bool>,
     /// The master's lottery-related skills, classified once per request.
     luck_skills: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
     /// Certified lottery curves of this request, shared by every performance order and team.
@@ -122,7 +122,7 @@ impl CertifiedState {
             cutoff: None,
             score_cache: BTreeMap::new(),
             domain_exhausted: false,
-            refinement_admitted: None,
+            retain_refinement: None,
             luck_skills: None,
             luck_curves: ournotes_sim::live::full::LuckDpCache::new(curve_bytes),
         })
@@ -145,6 +145,11 @@ impl CertifiedState {
     }
 }
 
+/// Storage policy for eagerly retained order rows. Other charts use boundary materialization.
+fn retain_order_state(notes: usize, frames: usize) -> bool {
+    notes <= 32 && frames <= 512
+}
+
 /// A completed certificate starts no further work and therefore does not open a new stop reason.
 fn pending_refinement(proof: RankingProof, stopped: impl FnOnce() -> bool) -> Option<RankingProof> {
     if proof.complete || stopped() { None } else { Some(proof) }
@@ -155,8 +160,8 @@ impl Engine<'_, '_> {
         self.certified
             .as_mut()
             .expect("certified request")
-            .refinement_admitted
-            .get_or_insert(ournotes_sim::live::full::LuckExactBudget::admits_chart(notes, frames));
+            .retain_refinement
+            .get_or_insert(retain_order_state(notes, frames));
     }
 
     pub(super) fn certified_luck_skills(
@@ -219,7 +224,7 @@ impl Engine<'_, '_> {
             });
         }
         let id = self.tel.leaves.visited;
-        let retained_program = (state.refinement_admitted == Some(true)).then(|| program_identity.clone());
+        let retained_program = (state.retain_refinement == Some(true)).then(|| program_identity.clone());
         let equality = state.frontier.certify_equal_program(program_identity, power, payoff_identity);
         state.frontier.insert(CandidateInterval {
             id,
@@ -235,7 +240,7 @@ impl Engine<'_, '_> {
         let exact = state.frontier.get(id).map_or(evaluation.exact_payoff, |c| c.exact_payoff);
         self.offered = Some(super::Offered { payoff: exact.map(|x| (x.numerator, x.denominator)), power, score: None });
         let refinement = RetainedRefinement::new(
-            state.refinement_admitted == Some(true) && state.frontier.get(id).is_some(),
+            state.retain_refinement == Some(true) && state.frontier.get(id).is_some(),
             evaluation,
             map,
             retained_program.unwrap_or_default(),
@@ -256,11 +261,9 @@ impl Engine<'_, '_> {
         use ournotes_sim::live::full::{LuckExactBudget, LuckExactDecline, luck_exact_law_with_ranking};
         let state = self.certified.as_mut().expect("certified request");
         state.domain_exhausted = true;
-        if state.refinement_admitted != Some(true) {
-            return Ok(());
-        }
         let mut work = LuckExactBudget::default();
         let mut attempted = std::collections::BTreeSet::<(u64, usize)>::new();
+        let mut materialized = std::collections::BTreeSet::new();
         loop {
             let state = self.certified.as_ref().expect("certified request");
             let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
@@ -299,7 +302,23 @@ impl Engine<'_, '_> {
                     .then(|| (id, entry.physical, retained.program.clone(), retained.map.clone(), indices))
             });
             let Some((id, physical, program, map, indices)) = selected else {
-                return Ok(());
+                let next = proof
+                    .ambiguous
+                    .iter()
+                    .copied()
+                    .find(|id| state.entries[id].refinement.is_none() && !materialized.contains(id));
+                let Some(id) = next else { return Ok(()) };
+                materialized.insert(id);
+                // Installed frontier intervals survive releasing the detailed order rows.
+                // Only the selected boundary candidate requires full per-order storage.
+                let state = self.certified.as_mut().expect("certified request");
+                for entry in state.entries.values_mut() {
+                    entry.refinement = None;
+                }
+                if !self.materialize_certified_refinement(id)? {
+                    return Ok(());
+                }
+                continue;
             };
             let mut input = expectation::context(self.pool, &physical, &self.request.objective)?;
             if let Some(value) = self.simulation.music_length_ms {
@@ -408,6 +427,67 @@ impl Engine<'_, '_> {
         }
     }
 
+    /// Reconstruct the fixed candidate's complete order enclosures from immutable request data.
+    fn materialize_certified_refinement(&mut self, id: u64) -> Result<bool, Error> {
+        let entry = &self.certified.as_ref().expect("certified request").entries[&id];
+        let (physical, power) = (entry.physical, entry.power);
+        let mut input = expectation::context(self.pool, &physical, &self.request.objective)?;
+        if let Some(value) = self.simulation.music_length_ms {
+            input.params.music_length_ms = value;
+        }
+        if let Some(value) = self.simulation.score_music_length_ms {
+            input.params.score_music_length_ms = Some(value);
+        }
+        if !ournotes_sim::live::full::LuckExactBudget::admits_chart(input.notes.len(), input.play.frames.len()) {
+            return Ok(false);
+        }
+        let program = canonicalize_performers(&mut input);
+        let score = if let Some(cached) = self.cached_certified_score(&program, power) {
+            cached
+        } else {
+            let skills = self.certified_luck_skills()?;
+            let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
+            let master = self.pool.master;
+            let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+            let result = crate::search::certified_search::evaluate_luck_context(
+                master,
+                &skills,
+                &input,
+                &PayoffMap::Score,
+                Some(&mut curves),
+                || self.expired(),
+            );
+            self.rec.clock.lap(resume);
+            self.tel.caches.luck_curves.record(curves.stats());
+            self.certified.as_mut().expect("certified request").luck_curves = curves;
+            let Some(score) = result? else { return Ok(false) };
+            self.tel.leaves.simulations += ORDERS as u64;
+            score
+        };
+        let support = (
+            score.orders.iter().map(|order| order.support.0).min().expect("complete order set"),
+            score.orders.iter().map(|order| order.support.1).max().expect("complete order set"),
+        );
+        let map = crate::search::certified_payoff::payoff_map(
+            self.pool,
+            self.request,
+            self.metric,
+            self.event_input,
+            &physical,
+            power,
+            support,
+        )?;
+        let evaluation = aggregate_orders(score.orders, &map)?;
+        self.certified
+            .as_mut()
+            .expect("certified request")
+            .entries
+            .get_mut(&id)
+            .expect("boundary candidate")
+            .refinement = RetainedRefinement::new(true, evaluation, map, program);
+        Ok(true)
+    }
+
     pub(super) fn certified_results(&self, exhausted: bool) -> Result<(Vec<RecommendedDeck>, RankingProof), Error> {
         let state = self.certified.as_ref().expect("certified request");
         let upper = if self.rec.bounded {
@@ -475,11 +555,10 @@ mod refinement_tests {
     }
 
     #[test]
-    fn refinement_state_admission_follows_the_frame_allowance() {
+    fn eager_order_storage_is_independent_of_long_chart_refinement() {
         use crate::search::certified_search::OrderScoreInterval;
         use ournotes_sim::live::full::LuckExactBudget;
-        for (notes, frames, expected) in [(33, 193, true), (1067, 8000, true), (12, 8_000_001, false), (12, 193, true)]
-        {
+        for (notes, frames, expected) in [(33, 193, false), (12, 513, false), (12, 193, true)] {
             let orders = uniform::all_orders()
                 .into_iter()
                 .map(|order| OrderScoreInterval {
@@ -499,12 +578,13 @@ mod refinement_tests {
                 snaps: [None; 5],
                 power: 1,
                 refinement: RetainedRefinement::new(
-                    LuckExactBudget::admits_chart(notes, frames),
+                    retain_order_state(notes, frames),
                     evaluation,
                     PayoffMap::Score,
                     vec![1, 2, 3],
                 ),
             };
+            assert!(LuckExactBudget::admits_chart(notes, frames));
             assert_eq!(entry.refinement.is_some(), expected);
             if let Some(retained) = entry.refinement {
                 assert_eq!(retained.evaluation.orders.len(), ORDERS);
