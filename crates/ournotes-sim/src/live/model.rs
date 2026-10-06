@@ -589,23 +589,102 @@ impl LiveModel {
         crate::live::skill::score_with_factors(&mut calc, &play.notes, commands, self.max_frame)
     }
 
+    /// Certifies the nonnegative, finite, nonwrapping score domain used by a search with fixed combo, luck and
+    /// power. Every possible score-up factor must lie in the supplied positive interval. Positive intermediate
+    /// values are normal even at power one, so the search's relative rounding bound applies throughout the domain.
+    #[doc(hidden)]
+    pub fn prove_search_domain(
+        &self,
+        power_upper_bound: i64,
+        score_up: [f32; 2],
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<bool, Error> {
+        let unsupported = || Error::Domain("live search requires a finite nonnegative nonwrapping score chain".into());
+        let nonnegative = |v: f32| v.is_finite() && v >= 0.0;
+        let power = i32::try_from(power_upper_bound).ok().filter(|p| *p >= 0).ok_or_else(unsupported)?;
+        let adj = self.settings.score_adjustment_factor;
+        let cnc = self.converted_note_count as f32;
+        if ![adj, self.difficulty, self.assist_factor, score_up[0], score_up[1]].into_iter().all(nonnegative)
+            || score_up[0] <= 0.0
+            || score_up[1] < score_up[0]
+            || !cnc.is_finite()
+            || cnc <= 0.0
+        {
+            return Err(unsupported());
+        }
+        let chain = |p: f32, factor: f32, n: &PreNote| {
+            let adjusted = adj * p;
+            let t = adjusted * self.difficulty;
+            let a = n.note_pct * t;
+            let b = n.judge_pct * a;
+            let c = b * n.combo_base;
+            let d = c * factor;
+            [adjusted, t, a, b, c, d, d / cnc]
+        };
+        let normal_product = |a: f32, b: f32| {
+            let v = a * b;
+            nonnegative(v) && (a == 0.0 || b == 0.0 || v.is_normal())
+        };
+        let mut total = 0i64;
+        for n in &self.notes {
+            if cancelled() {
+                return Ok(false);
+            }
+            if ![n.note_pct, n.judge_pct, n.combo_base, n.life].into_iter().all(nonnegative) {
+                return Err(unsupported());
+            }
+            let lower = chain(1.0, score_up[0], n);
+            let upper = chain(power as f32, score_up[1], n);
+            if !upper.into_iter().all(nonnegative)
+                || !normal_product(adj, 1.0)
+                || !normal_product(lower[0], self.difficulty)
+                || !normal_product(lower[1], n.note_pct)
+                || !normal_product(lower[2], n.judge_pct)
+                || !normal_product(lower[3], n.combo_base)
+                || !normal_product(lower[4], score_up[0])
+                || (lower[5] > 0.0 && !lower[6].is_normal())
+                || !normal_product(n.life, 1.0)
+                || !normal_product(self.assist_factor, n.life)
+            {
+                return Err(unsupported());
+            }
+            // This is the finite branch of the native conversion. Its result,
+            // and both multiplications after it, remain monotone on the interval.
+            let y = trunc_to_i32(upper[6].floor()) as f32;
+            let life_scaled = n.life * y;
+            let z = self.assist_factor * life_scaled;
+            if !nonnegative(life_scaled) || !nonnegative(z) {
+                return Err(unsupported());
+            }
+            total = total.checked_add(i64::from(floor_to_i32(z))).ok_or_else(unsupported)?;
+            if total > i64::from(i32::MAX) {
+                return Err(unsupported());
+            }
+        }
+        Ok(true)
+    }
+
     /// Per-note upper bound data: for each note (processing order) its time, judgement and the real-valued score
     /// per unit of power and per unit of score-up factor.
     #[doc(hidden)]
     pub fn note_coefficients(&self) -> Vec<(i32, i32, f64)> {
         let adj = self.settings.score_adjustment_factor as f64;
-        let cnc = self.converted_note_count as f64;
+        let cnc = self.converted_note_count as f32 as f64;
         self.notes
             .iter()
             .map(|n| {
-                let k = self.assist_factor as f64
-                    * n.life as f64
-                    * n.judge_pct as f64
-                    * n.note_pct as f64
-                    * adj
-                    * self.difficulty as f64
-                    * n.combo_base as f64
-                    / cnc;
+                let k = [
+                    self.assist_factor as f64,
+                    n.life as f64,
+                    n.judge_pct as f64,
+                    n.note_pct as f64,
+                    adj,
+                    self.difficulty as f64,
+                    n.combo_base as f64,
+                ]
+                .into_iter()
+                .fold(1.0, |a, b| if a == 0.0 || b == 0.0 { 0.0 } else { (a * b).next_up() });
+                let k = if k == 0.0 { 0.0 } else { (k / cnc).next_up() };
                 (n.time_ms, n.score_type, k)
             })
             .collect()

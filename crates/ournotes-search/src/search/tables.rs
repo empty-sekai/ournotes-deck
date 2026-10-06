@@ -241,7 +241,7 @@ impl<'m> Tables<'m> {
                 + fixed.iter().map(|&m| lower[m].expect("required member checked")).sum::<i64>()
                 + remaining[..picks].iter().sum::<i64>();
             if bound < 0 {
-                return Err(Error::Domain("skip cannot prove nonnegative power for every feasible deck".into()));
+                return Err(Error::Domain("search cannot prove nonnegative power for every feasible deck".into()));
             }
         }
         Ok(true)
