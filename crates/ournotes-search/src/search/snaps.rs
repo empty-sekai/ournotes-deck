@@ -23,7 +23,7 @@ use std::rc::Rc;
 use crate::search::matching::constrained_assignment;
 use crate::search::power::PowerStats;
 use crate::search::tables::Tables;
-use crate::search::topk::NO_SNAP;
+use crate::search::topk::SnapKey;
 use ournotes_sim::cards::{MemberView, SnapView};
 use ournotes_sim::error::Error;
 use ournotes_sim::live::full::{GekisouSetup, LiveModel, LiveNote, LiveParams, LivePlay, Performer};

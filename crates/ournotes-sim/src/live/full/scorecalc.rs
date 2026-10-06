@@ -168,7 +168,8 @@ impl IncrementalCalculator {
     /// to such a frame; frames only ever join the settled prefix.
     pub(crate) fn settle(&mut self, frame: usize) -> (i64, i64) {
         let executed = if self.prev < 0 { 0 } else { self.prev as usize + 1 };
-        let mut to = frame.min(executed).min(self.notes.len());
+        // Later commands clamp to the last addressable frame, so that frame remains open.
+        let mut to = frame.min(executed).min(self.notes.len().saturating_sub(1));
         // A pending fixed score files at its frame with the next calculation.
         if let Some((t, _)) = self.pending_fixed {
             to = to.min(get_frame(t).max(0) as usize);

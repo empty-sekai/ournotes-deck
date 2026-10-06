@@ -1,6 +1,37 @@
 //! Score-frame geometry, factor windows and frame execution counts.
 use super::*;
 
+/// The scorer's binary32 time mapping, clamped to its allocated score frames.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ScoreFrames {
+    last: i32,
+}
+
+impl ScoreFrames {
+    pub(super) fn new(params: &LiveParams) -> Self {
+        let length = params.score_music_length_ms.filter(|&l| l != 0).unwrap_or(params.music_length_ms);
+        Self { last: get_frame(length).wrapping_add(50).max(1) - 1 }
+    }
+
+    pub(super) fn last(self) -> i32 {
+        self.last
+    }
+
+    #[inline]
+    pub(super) fn at(self, time: i64) -> i32 {
+        get_frame(time.clamp(i32::MIN as i64, i32::MAX as i64) as i32).clamp(0, self.last)
+    }
+
+    /// Closed endpoints include transient commands whose start and end coincide.
+    pub(super) fn closed(self, start: i64, end: i64) -> Option<(i64, i64)> {
+        (start <= end).then(|| (self.at(start) as i64, self.at(end) as i64))
+    }
+
+    pub(super) fn meets(self, start: i64, end: i64, frame: i32) -> bool {
+        self.closed(start, end).is_some_and(|(lo, hi)| lo <= frame as i64 && frame as i64 <= hi)
+    }
+}
+
 /// Frame and entry times the windows read.
 pub(super) struct Geo<'g> {
     /// Frame times, non-decreasing.
@@ -312,6 +343,30 @@ mod lifetime_command_tests {
     use ournotes_sim::live::skill::{FactorCommand, apply_factor};
 
     #[test]
+    fn score_frame_mapping_and_execution_limits_use_the_scoring_clock() {
+        for (score_music_length_ms, length) in [(None, 1000), (Some(0), 1000), (Some(200), 200)] {
+            let params = LiveParams {
+                skill_target_music_type: 0,
+                total_power: 1,
+                music_level: 1,
+                converted_note_count: 1,
+                music_length_ms: 1000,
+                score_music_length_ms,
+                assist_factor: 1.0,
+            };
+            let frames = ScoreFrames::new(&params);
+            let count = get_frame(length) + 50;
+            assert_eq!(frames.last(), count - 1);
+            assert_eq!(frames.at(i64::MIN), 0);
+            assert_eq!(frames.at(i64::MAX), count - 1);
+            assert_eq!(frames.closed(i64::MAX, i64::MAX), Some(((count - 1) as i64, (count - 1) as i64)));
+            let setup =
+                FullSetup { notes: Vec::new(), events: Vec::new(), play: LivePlay::default(), params, gk: None };
+            assert_eq!(Exec::new(&setup, &[], None, &[]).max_frame, count);
+        }
+    }
+
+    #[test]
     fn snapshot_windows_include_the_end_score_frame() {
         let times = [360, 380, 390, 400, 401, 420];
         let exec = Exec { e: Vec::new(), max: 2, max_frame: 100, sparse: Vec::new() };
@@ -367,10 +422,46 @@ mod lifetime_command_tests {
     }
 }
 
+/// Times representing lower score-frame bounds for timer commands, one per play frame. A compact floor requires exact i32
+/// elapsed times in binary32, nondecreasing durations, and an update of every active timer in every play frame.
+/// A release checker skips the elapsed-time check in ExecuteFrame; gated sustained updaters may pause while their
+/// mission gate is closed. Such a timer still admits the compact floor when its finite binary32 duration is at least
+/// the final play-frame time: execution timestamps are nonnegative, so every elapsed time is at most that horizon.
+/// Nonnegative extensions preserve this inequality, and the timed-end comparison is strict. Release and forced
+/// finishes use the current time. Other timers use frame zero without these premises. The music-length clamp applies
+/// to released and timed finishes independently.
+pub(super) fn command_floor_times<'r>(setup: &FullSetup, mut rows: impl Iterator<Item = &'r Row>) -> Vec<i32> {
+    let exact_clock = |t: i32| (0..=1 << 24).contains(&t);
+    let horizon = setup.play.frames.last().map_or(0.0, |frame| frame.time_ms as f32);
+    let compact = setup.play.frames.iter().all(|f| exact_clock(f.time_ms))
+        && setup.play.frames.windows(2).all(|w| w[0].time_ms <= w[1].time_ms)
+        && setup.notes.iter().all(|n| exact_clock(n.time_ms))
+        && setup.events.iter().all(|&(_, t)| exact_clock(t))
+        && setup.gk.as_ref().is_none_or(|g| g.setup.fevers.iter().all(|&(a, b)| exact_clock(a) && exact_clock(b)))
+        && rows.all(|r| {
+            // 15000 adds the row's raw value to live-effect durations; cumulative counts do not scale it.
+            let duration = r.act * 1000f32;
+            let covers_play = duration.is_finite() && duration >= horizon;
+            let may_expire = r.act > 0.0 && !covers_play;
+            !(r.effect_type == 15000 && r.value < 0 || may_expire && (r.release != 0 || r.gk && r.trigger_type == 2))
+        });
+    setup
+        .play
+        .frames
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let previous = if compact && i > 0 { setup.play.frames[i - 1].time_ms } else { 0 };
+            let length = setup.params.music_length_ms;
+            if length > 0 { previous.min(length) } else { previous }
+        })
+        .collect()
+}
+
 /// How many times each 40 ms score frame up to the last judged note can be executed (its first run and the re-runs
 /// after a command lands in it or before it), from the frame schedule and the notes judged in each play frame: in a
 /// play frame, both recalculations re-execute score frames only from the earliest frame a command filed in that play
-/// frame can land in (the previous play frame's frame for skill commands, the chart time of each judged note) up to
+/// frame can land in (the certified timer floor and the chart time of each judged note) up to
 /// the current one. Commands that land after the last note cannot change a note's score and count as none.
 pub(super) struct Exec {
     pub(super) e: Vec<u32>,
@@ -381,23 +472,19 @@ pub(super) struct Exec {
 }
 
 impl Exec {
-    pub(super) fn new(setup: &FullSetup, times: &[i32], gk: Option<&GkFactors>) -> Exec {
-        let ml = setup.params.music_length_ms;
-        let max_frame = get_frame(ml).wrapping_add(50).max(1);
+    pub(super) fn new(setup: &FullSetup, times: &[i32], gk: Option<&GkFactors>, command_floors: &[i32]) -> Exec {
+        let score_frames = ScoreFrames::new(&setup.params);
+        let max_frame = score_frames.last() + 1;
         let Some(&last_note) = times.last() else {
             return Exec { e: Vec::new(), max: 2, max_frame, sparse: Vec::new() };
         };
-        let clamp = |t: i32| {
-            let g = get_frame(t);
-            if g >= max_frame { max_frame - 1 } else { g.max(0) }
-        };
+        let clamp = |t: i32| score_frames.at(t as i64);
         let g_last = clamp(last_note);
         let notes: HashMap<i32, i32> = setup.notes.iter().map(|n| (n.note_id, n.time_ms)).collect();
         let mut diff = vec![0i64; g_last as usize + 2];
-        let mut prev_to = 0;
         for (i, f) in setup.play.frames.iter().enumerate() {
             let to = clamp(f.time_ms);
-            let mut lo = if i == 0 { 0 } else { prev_to };
+            let mut lo = command_floors.get(i).copied().map(clamp).unwrap_or(0);
             for j in &f.judged {
                 if let Some(&t) = notes.get(&j.note_id) {
                     lo = lo.min(clamp(t));
@@ -411,7 +498,6 @@ impl Exec {
                 diff[lo as usize] += 2;
                 diff[hi as usize + 1] -= 2;
             }
-            prev_to = to;
         }
         // confirming a rank bonus undoes the score frames after the range start and executes them again
         for &(a, b) in gk.map_or(&[][..], |g| &g.confirm[..]) {
@@ -442,11 +528,8 @@ impl Exec {
     /// Executions of the worst score frame a command in chart-time range `[a, b]` can land in (0 past the last
     /// note).
     pub(super) fn over(&self, a: i64, b: i64) -> f64 {
-        let clamp = |t: i64| {
-            let t = t.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-            let g = get_frame(t);
-            (if g >= self.max_frame { self.max_frame - 1 } else { g.max(0) }) as usize
-        };
+        let score_frames = ScoreFrames { last: self.max_frame - 1 };
+        let clamp = |t: i64| score_frames.at(t) as usize;
         let (ga, gb) = (clamp(a), clamp(b));
         if ga >= self.e.len() {
             return 0.0;
