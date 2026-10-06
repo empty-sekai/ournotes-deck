@@ -154,8 +154,10 @@ A Gekisou conversion partition retains its member domain and permitted Snap choi
 Each rule set owns one traversal. These traversals are disjoint and their union is the requested team domain.
 
 The envelope for a partition is prepared immediately before its first traversal. Traversals of the same partition
-share that envelope; its final traversal releases it. The incumbent-first order and the static order enumerate the
-same rule sets and use the same canonical Top-K comparison. Preparation changes the lifetime of compiled tables,
+share that envelope; its final traversal releases it. Each partition's traversals are consecutive, so only one
+partition envelope is retained in addition to the pool-wide envelope. The incumbent-first schedule prioritizes
+each partition by its best evaluated incumbent, then orders that partition's rules by their incumbents. The
+incumbent-first order and the static order enumerate the same rule sets and use the same canonical Top-K comparison. Preparation changes the lifetime of compiled tables,
 not the set of candidate teams or the meaning of a bound.
 
 A stop before preparation or before a traversal leaves the remaining partitions covered by the pool-wide root

@@ -18,6 +18,8 @@ const EVENT_ID: i64 = 7;
 
 #[path = "fixtures/combo_integer.rs"]
 mod combo_integer;
+#[path = "fixtures/conversion_partitions.rs"]
+mod conversion_partitions;
 #[path = "fixtures/effect_identity.rs"]
 mod effect_identity;
 #[path = "fixtures/luck_refinement.rs"]
