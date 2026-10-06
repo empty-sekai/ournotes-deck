@@ -2,6 +2,20 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.3](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.2...v0.0.3) - 2026-10-06
+
+### Features
+
+- **sim:** Expose the SHA-256 of the model sources ([f0ae9fb](https://github.com/empty-sekai/ournotes-deck/commit/f0ae9fbf7e3e4aed048dcf8b34dc84e8591a1bb5))
+
+### Bug fixes
+
+- **search:** Bound retained network score snapshots ([ffde1b2](https://github.com/empty-sekai/ournotes-deck/commit/ffde1b2b5d14afa47f6c980530134abad1f2d4b9))
+
+### CI
+
+- Run each commit once and the diagnostics tests in parallel ([8cdbd03](https://github.com/empty-sekai/ournotes-deck/commit/8cdbd03554a8d034dbd380c180ba1ebd2c51f1a0))
+
 ## [0.0.2](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.1...v0.0.2) - 2026-10-06
 
 ### Bug fixes
