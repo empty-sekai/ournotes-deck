@@ -38,7 +38,8 @@ pub fn brute_force_best_order_diagnostic(pool: &Pool, req: &SearchRequest) -> Re
     let mut live_cache: HashMap<(i32, Vec<(i64, i64)>), i32> = HashMap::new();
     // key: (objective, power, sorted ids, leader id, snap ids) with "better" = larger objective and power, then
     // smaller ids / leader / snaps
-    type Key = (i64, i64, [i64; 5], i64, [i64; 5], [usize; 5]);
+    // Snap keys sort real IDs ascending, then empty slots.
+    type Key = (i64, i64, [i64; 5], i64, [(bool, i64); 5], [usize; 5]);
     type Candidate = (Key, Deck, i32, Option<i32>, Option<Vec<i32>>);
     let better = |a: &Key, b: &Key| (b.0, b.1, a.2, a.3, a.4, a.5) < (a.0, a.1, b.2, b.3, b.4, b.5);
     let mut best: HashMap<[i64; 5], Candidate> = HashMap::new();
@@ -150,7 +151,7 @@ pub fn brute_force_best_order_diagnostic(pool: &Pool, req: &SearchRequest) -> Re
                         p as i64,
                         ids,
                         pool.members[leader].id,
-                        a.map(|s| s.map_or(i64::MAX, |i| pool.snaps[i].id)),
+                        a.map(|s| (s.is_none(), s.map_or(0, |i| pool.snaps[i].id))),
                         order,
                     );
                     let replace = match best.get(&ids) {

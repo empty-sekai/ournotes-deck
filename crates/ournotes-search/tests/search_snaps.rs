@@ -78,6 +78,7 @@ fn variants(rng: &mut Rng, nm: i64, ns: i64) -> Vec<Constraints> {
 fn run(stream_kind: u64, kinds: &[i64], tag: u64) {
     let (nm, ns) = size();
     let mut total = (0usize, 0u64);
+    let (mut admitted, mut rejected_early) = (0u64, 0u64);
     for seed in seed0()..seed0() + cases() {
         let mut rng = Rng::new(seed ^ tag);
         let s = synth_snaps(&mut rng, nm, ns, kinds);
@@ -92,6 +93,11 @@ fn run(stream_kind: u64, kinds: &[i64], tag: u64) {
             _ => {
                 let fps = [30, 60][rng.below(2) as usize];
                 let mut s = random_stream(&mut rng, &chart, fps);
+                // The diagnostic's score proof starts at time zero. Preserve
+                // every generated frame and judgement while admitting its tail.
+                for time in &mut s.frames {
+                    *time = (*time).max(0);
+                }
                 if stream_kind == 2 {
                     // half of the notes missed: the life runs out
                     for r in s.judged.iter_mut() {
@@ -116,6 +122,10 @@ fn run(stream_kind: u64, kinds: &[i64], tag: u64) {
                 s
             }
         };
+        let has_early_note = stream.judged.iter().any(|row| {
+            let note = chart.notes.iter().find(|note| note.id == row[1]).expect("generated note id");
+            note.time_ms > stream.frames[row[0] as usize]
+        });
         let score_id = [1004, 2003, 3001][rng.below(3) as usize];
         let objective = Objective::LiveScore {
             score_id,
@@ -125,6 +135,20 @@ fn run(stream_kind: u64, kinds: &[i64], tag: u64) {
             exclude_snap_skills: false,
             gekisou: None,
         };
+        if has_early_note {
+            assert_eq!(stream_kind, 3, "ordinary random streams must be causal");
+            for constraints in variants(&mut rng, nm, ns) {
+                let request = SearchRequest { objective: objective.clone(), k: 1, constraints, time_limit: None };
+                let result = search(&pool, &request);
+                assert!(
+                    matches!(result, Err(Error::Domain(message)) if message.contains("before its chart time")),
+                    "seed {seed}: early note must be outside the diagnostic proof domain"
+                );
+            }
+            rejected_early += 1;
+            continue;
+        }
+        admitted += 1;
         let t0 = std::time::Instant::now();
         let mut case = (0usize, 0u64);
         for c in variants(&mut rng, nm, ns) {
@@ -141,8 +165,12 @@ fn run(stream_kind: u64, kinds: &[i64], tag: u64) {
         total.0 += case.0;
         total.1 += case.1;
     }
+    assert_eq!(admitted + rejected_early, cases());
+    if stream_kind != 3 {
+        assert_eq!(admitted, cases(), "causal generators must retain the optimizer-oracle coverage");
+    }
     eprintln!(
-        "snaps oracle (stream {stream_kind}, kinds {kinds:?}): {} rows compared, {} deck-orders simulated",
+        "snaps oracle (stream {stream_kind}, kinds {kinds:?}): {admitted} admitted, {rejected_early} early-note refusals, {} rows compared, {} deck-orders simulated",
         total.0, total.1
     );
 }
@@ -174,8 +202,8 @@ fn life_zero_matches_oracle() {
     run(2, &[1, 3, 4, 6, 9, 11], 0x11f1);
 }
 
-/// Life recovery at skill events with the life running out, under early and late judgements (the life frame cache
-/// folds some frames twice), with and without guards.
+/// Life recovery at skill events with the life running out, with and without guards. Causal judgements retain
+/// optimizer-oracle comparisons; generated early judgements must receive the explicit domain refusal.
 #[test]
 fn recovery_with_early_and_late_judgements_matches_oracle() {
     run(3, &[5, 1, 3, 11], 0x2ec0);
