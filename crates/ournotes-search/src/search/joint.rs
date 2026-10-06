@@ -2291,7 +2291,10 @@ impl PointBound {
         if !(0..=i32::MAX as i64).contains(&rate) || values.iter().any(|v| !(0..=i32::MAX as i64).contains(v)) {
             return Err(unavailable("PT rate/value outside nonwrapping domain"));
         }
-        let maximum_bonus = 5 * (member.iter().copied().max().unwrap_or(0) + snap.iter().copied().max().unwrap_or(0));
+        let maximum_bonus = super::team_power::largest_team_bonus(
+            domain.members().iter().map(|&m| (pool.members[m].character_id, member[m])),
+            &snap,
+        );
         let multiplier = rate
             .checked_mul(values.iter().copied().max().unwrap_or(0))
             .ok_or_else(|| unavailable("PT product overflow"))?;

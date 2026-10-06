@@ -15,7 +15,7 @@
 use super::{
     Objective, Pool, SearchRequest,
     expectation::PhysicalDeck,
-    team_power::{SLOTS, TeamPowerBounds, candidates, sum_rows},
+    team_power::{SLOTS, TeamPowerBounds, candidates, largest_team_bonus, sum_rows},
 };
 use crate::{domain::CandidateDomain, types::Metric};
 use ournotes_sim::{
@@ -329,9 +329,10 @@ impl DeckPayoffBounds {
                 card_bonus(&effects, EventCard::Snap(&ournotes_sim::bonus::event_snap(&pool.snaps[s])), bonus_type)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let maximum_bonus = nonnegative_i32(
-            5 * (member_bonus.iter().copied().max().unwrap_or(0) + snap_bonus.iter().copied().max().unwrap_or(0)),
-        )?;
+        let maximum_bonus = nonnegative_i32(largest_team_bonus(
+            domain.members().iter().map(|&m| (pool.members[m].character_id, member_bonus[m])),
+            &snap_bonus,
+        ))?;
         // Prove bonus + 10000 and every product safe up to the largest bonus, independently of a zero factor.
         point_product(0, maximum_bonus, 0)?;
         let root = PhysicalDeck { members: [0; 5], snaps: [None; 5] };

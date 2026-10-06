@@ -496,7 +496,9 @@ and mean gain, which may come from different cards; this only enlarges the compl
 
 For normal-played PT with exactly one held target event, member and Snap bonuses are additive. Preparation requires
 nonnegative resolved per-card bonuses, rate and reachable rank values. It checks `bonus + 10000`, its product with
-rate, and the complete point product against `i32::MAX`. The reward of one order is a step function of its score,
+rate, and the complete point product against `i32::MAX`, with `bonus` the largest event bonus of any team: the five
+largest per-character maxima of the member bonuses plus the five largest Snap bonuses (a team's members have distinct
+characters and its Snaps are distinct). The reward of one order is a step function of its score,
 not necessarily increasing. Its prefix maximum over reachable thresholds is at least the reward, and the concave
 majorant of that prefix maximum (the upper concave hull of its corners, flat after the last one) is a concave,
 nondecreasing function above it. The mean reward over the orders is then at most the majorant at the mean score

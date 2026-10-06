@@ -53,6 +53,22 @@ pub(crate) fn candidates(
     Some((available, required.iter().map(|&m| pool.members[m].character_id).collect()))
 }
 
+/// The largest event bonus of any team of five `members` (character, bonus) and up to five of the `snap` bonuses:
+/// the five largest per-character maxima of the member bonuses plus the five largest Snap bonuses. A team's members
+/// have distinct characters and its Snaps are distinct, so no team sums more. Every bonus is nonnegative.
+pub(crate) fn largest_team_bonus(members: impl IntoIterator<Item = (i64, i64)>, snap: &[i64]) -> i64 {
+    let mut rows = HashMap::<i64, i64>::new();
+    for (character, bonus) in members {
+        let best = rows.entry(character).or_insert(0);
+        *best = (*best).max(bonus);
+    }
+    let top = |mut values: Vec<i64>| {
+        values.sort_unstable_by(|a, b| b.cmp(a));
+        values.into_iter().take(5).sum::<i64>()
+    };
+    top(rows.into_values().collect()) + top(snap.to_vec())
+}
+
 pub(crate) fn sum_rows(rows: &HashMap<i64, i64>, required: &HashSet<i64>, count: usize) -> i64 {
     let fixed: i64 = required.iter().map(|c| rows[c]).sum();
     let mut optional: Vec<_> = rows.iter().filter(|(c, _)| !required.contains(c)).map(|(_, &v)| v).collect();
@@ -291,5 +307,59 @@ impl TeamPowerBounds {
             seeds.extend(self.frontier(domain, &p, 1));
         }
         seeds
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::largest_team_bonus;
+
+    /// Every team of five distinct-character members and at most five distinct Snaps, by enumeration.
+    fn enumerated(members: &[(i64, i64)], snaps: &[i64]) -> Option<i64> {
+        let n = members.len();
+        let mut best_members = None;
+        for mask in 0u32..1 << n {
+            if mask.count_ones() != 5 {
+                continue;
+            }
+            let chosen: Vec<_> = (0..n).filter(|&i| mask & (1 << i) != 0).map(|i| members[i]).collect();
+            let mut characters: Vec<_> = chosen.iter().map(|&(c, _)| c).collect();
+            characters.sort_unstable();
+            characters.dedup();
+            if characters.len() == 5 {
+                let sum = chosen.iter().map(|&(_, b)| b).sum::<i64>();
+                best_members = Some(best_members.map_or(sum, |b: i64| b.max(sum)));
+            }
+        }
+        let mut best_snaps = 0;
+        for mask in 0u32..1 << snaps.len() {
+            if mask.count_ones() <= 5 {
+                let sum = (0..snaps.len()).filter(|&j| mask & (1 << j) != 0).map(|j| snaps[j]).sum::<i64>();
+                best_snaps = best_snaps.max(sum);
+            }
+        }
+        best_members.map(|m| m + best_snaps)
+    }
+
+    #[test]
+    fn largest_team_bonus_equals_the_best_enumerated_team() {
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut next = |n: u64| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x % n
+        };
+        let mut checked = 0;
+        for _ in 0..400 {
+            let n = 5 + next(8) as usize;
+            let characters = 3 + next(6) as i64;
+            let members: Vec<_> = (0..n).map(|_| (next(characters as u64) as i64, next(4) as i64 * 2500)).collect();
+            let snaps: Vec<_> = (0..next(9)).map(|_| next(5) as i64 * 700).collect();
+            let Some(expected) = enumerated(&members, &snaps) else { continue };
+            assert_eq!(largest_team_bonus(members.iter().copied(), &snaps), expected, "{members:?} {snaps:?}");
+            checked += 1;
+        }
+        assert!(checked > 100);
     }
 }

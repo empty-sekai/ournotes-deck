@@ -2,7 +2,7 @@
 #[path = "../../ournotes-sim/tests/common/mod.rs"]
 mod common;
 
-use common::{Rng, Synth, replace_table, roster, set_column, short_chart, synth_snaps};
+use common::{Rng, Synth, extend_table, replace_table, roster, set_column, short_chart, synth_snaps};
 use ournotes_search::search::{Completion, Constraints, Objective, PlayInput, SearchRequest, solve_physical};
 use ournotes_search::types::{Limits, Metric, Optimality, RecommendationOutcome, SimulationInput, Strategy};
 use ournotes_sim::cards::Roster;
@@ -322,4 +322,25 @@ fn challenge_wrapping_reward_falls_back_and_matches_full_exhaustive_without_clai
         compare_full_k5(&synth, Scenario::Challenge(CHALLENGE), Metric::ClientEventPoints { event_id: EVENT }, false);
     assert!(!result.telemetry.environment.bounds.compiled);
     assert!(result.telemetry.environment.bounds.fallback.is_some());
+}
+
+#[test]
+fn challenge_bonus_domain_is_the_largest_team_bonus() {
+    let mut synth = calibrated_fixture();
+    extend_table(
+        &mut synth,
+        "MasterEventEffect",
+        vec![json!({"_id":3,"_eventId":EVENT,"_eventBonusType":0,"_resourceTypeConstraint":2,"_memberCardId":1,
+             "_rank1EffectValue":100_000,"_rank2EffectValue":100_000,"_rank3EffectValue":100_000,
+             "_rank4EffectValue":100_000,"_rank5EffectValue":100_000})],
+    );
+    set_column(&mut synth, "MasterChallengeLiveEventPoint", &mut |row| {
+        if row["_scoreRank"] == 3 {
+            row["_value"] = json!(3000);
+        }
+    });
+    // The largest team bonus is 4 * 750 + 100750 + 500 = 104250, and 3 * 3000 * (104250 + 10000) fits in i32.
+    let result =
+        compare_full_k5(&synth, Scenario::Challenge(CHALLENGE), Metric::ClientEventPoints { event_id: EVENT }, true);
+    assert!(result.results.iter().any(|team| team.order_outcomes.iter().any(|&(_, _, payoff)| payoff > 9000)));
 }
