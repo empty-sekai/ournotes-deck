@@ -822,8 +822,10 @@ mod timer_floor_tests {
         let mut sustained = ordinary_row.clone();
         sustained.gk = true;
         sustained.trigger_type = 2;
+        sustained.act = 0.08;
         let mut released = ordinary_row.clone();
         released.release = 1;
+        released.act = 0.08;
         for (s, r) in [
             (&long, &ordinary_row),
             (&negative_frame, &ordinary_row),
@@ -838,6 +840,70 @@ mod timer_floor_tests {
         }
         sustained.act = 0.0;
         assert_eq!(command_floor_times(&ordinary, [&sustained].into_iter()), [0, 0, 40, 80]);
+    }
+
+    #[test]
+    fn timers_covering_the_play_horizon_keep_compact_floors() {
+        let s = setup();
+        for (release, gk, trigger_type) in [(1, false, 1), (0, true, 2), (1, true, 2)] {
+            let mut r = row();
+            r.release = release;
+            r.gk = gk;
+            r.trigger_type = trigger_type;
+            for act in [0.12f32, 0.12f32.next_up(), 1.0] {
+                r.act = act;
+                assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+            }
+            for act in [0.12f32.next_down(), f32::MAX, f32::INFINITY] {
+                r.act = act;
+                assert_eq!(command_floor_times(&s, [&r].into_iter()), [0; 4]);
+            }
+            for act in [0.0, -1.0, f32::NEG_INFINITY, f32::NAN] {
+                r.act = act;
+                assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+            }
+        }
+    }
+
+    #[test]
+    fn timer_horizon_uses_native_binary32_duration_and_the_play_clock() {
+        let mut s = setup();
+        let mut r = row();
+        r.release = 1;
+        assert!((r.act as f64) * 1000.0 < 120.0);
+        assert_eq!(r.act * 1000f32, 120.0);
+        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+        s.params.music_length_ms = 50;
+        s.params.score_music_length_ms = Some(40);
+        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 50]);
+        s.play.frames[3].time_ms = 121;
+        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0; 4]);
+        s.play.frames[0].time_ms = 20;
+        s.events[0].1 = 0;
+        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0; 4]);
+    }
+
+    #[test]
+    fn horizon_timer_certificate_retains_clock_and_extension_requirements() {
+        let s = setup();
+        let mut r = row();
+        r.release = 1;
+        r.act = 1.0;
+        let mut extension = row();
+        extension.effect_type = 15000;
+        extension.value = 1000;
+        assert_eq!(command_floor_times(&s, [&r, &extension].into_iter()), [0, 0, 40, 80]);
+        extension.value = -1;
+        assert_eq!(command_floor_times(&s, [&r, &extension].into_iter()), [0; 4]);
+        let mut negative = s.clone();
+        negative.play.frames[0].time_ms = -1;
+        let mut decreasing = s.clone();
+        decreasing.play.frames[2].time_ms = 121;
+        let mut large = s.clone();
+        large.play.frames[3].time_ms = (1 << 24) + 1;
+        for setup in [&negative, &decreasing, &large] {
+            assert_eq!(command_floor_times(setup, [&r].into_iter()), [0; 4]);
+        }
     }
 
     #[test]

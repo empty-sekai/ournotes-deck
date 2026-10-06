@@ -425,10 +425,14 @@ mod lifetime_command_tests {
 /// Times representing lower score-frame bounds for timer commands, one per play frame. A compact floor requires exact i32
 /// elapsed times in binary32, nondecreasing durations, and an update of every active timer in every play frame.
 /// A release checker skips the elapsed-time check in ExecuteFrame; gated sustained updaters may pause while their
-/// mission gate is closed. Without these premises, frame zero is the conservative floor. The music-length clamp
-/// applies to released and timed finishes independently.
+/// mission gate is closed. Such a timer still admits the compact floor when its finite binary32 duration is at least
+/// the final play-frame time: execution timestamps are nonnegative, so every elapsed time is at most that horizon.
+/// Nonnegative extensions preserve this inequality, and the timed-end comparison is strict. Release and forced
+/// finishes use the current time. Other timers use frame zero without these premises. The music-length clamp applies
+/// to released and timed finishes independently.
 pub(super) fn command_floor_times<'r>(setup: &FullSetup, mut rows: impl Iterator<Item = &'r Row>) -> Vec<i32> {
     let exact_clock = |t: i32| (0..=1 << 24).contains(&t);
+    let horizon = setup.play.frames.last().map_or(0.0, |frame| frame.time_ms as f32);
     let compact = setup.play.frames.iter().all(|f| exact_clock(f.time_ms))
         && setup.play.frames.windows(2).all(|w| w[0].time_ms <= w[1].time_ms)
         && setup.notes.iter().all(|n| exact_clock(n.time_ms))
@@ -436,7 +440,10 @@ pub(super) fn command_floor_times<'r>(setup: &FullSetup, mut rows: impl Iterator
         && setup.gk.as_ref().is_none_or(|g| g.setup.fevers.iter().all(|&(a, b)| exact_clock(a) && exact_clock(b)))
         && rows.all(|r| {
             // 15000 adds the row's raw value to live-effect durations; cumulative counts do not scale it.
-            !(r.effect_type == 15000 && r.value < 0 || r.act > 0.0 && (r.release != 0 || r.gk && r.trigger_type == 2))
+            let duration = r.act * 1000f32;
+            let covers_play = duration.is_finite() && duration >= horizon;
+            let may_expire = r.act > 0.0 && !covers_play;
+            !(r.effect_type == 15000 && r.value < 0 || may_expire && (r.release != 0 || r.gk && r.trigger_type == 2))
         });
     setup
         .play
