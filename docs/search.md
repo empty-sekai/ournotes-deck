@@ -416,8 +416,8 @@ on the queries). A row is
   never starts, and checking it changes nothing;
 - *inert*: it can start but cannot reach the score, and none of its trigger, reset, condition and release checkers
   is impure and its cumulative condition is valid: life recovery, guard and damage reduction when life is rigid;
-  a judgement conversion
-  when no raw judgement of the stream is one of its targets other than the one it converts to (a conversion that
+  a judgement conversion when no raw judgement of the stream is one of its targets other than the one it converts to
+  (a conversion that
   never converts changes neither the judgement nor the order of the other conversions);
 - *active*: anything else (score factors, extensions of the member's live skill, and every row with an impure
   checker).
@@ -474,9 +474,9 @@ reachable judgements of its own conversions, and the combo breaks that follow fr
 pool-wide ones, so the candidate's combo counts and percentages are never larger.
 
 Ordinary life damage. For a candidate whose life state consists of base life and judgement damage, a note reads
-at most `max(0, base - filed minimum damage)`. The filed damage comes from entries judged in earlier frames, or earlier in
-the same frame, the note itself included, with chart times up to the
-note's: damage only lowers the life and floors at 0, and a life query folds every filed command up to its time at
+at most `max(0, base - filed damage)`. The filed damage comes from entries judged in earlier frames, or earlier in
+the same frame, the note itself included, with chart times up to the note's: damage only lowers the life and
+floors at 0, and a life query folds every filed command up to its time at
 least once (with the frame cache, some of them twice). The damage of an entry is at least the smallest damage of its
 reachable judgements. Where this bound is 0 the note's life is 0, and `Z_e` is the assist factor times the life-zero
 factor. When all allowed cards have this life behavior, the pool-wide coefficients use it too.
@@ -509,13 +509,13 @@ and every chart time outside the runs is one slot. A computed life is then a fol
 with some of them repeated inside their slots, and possibly with commands of a slot's later frames folded before its
 earlier ones. Within a slot the fold uses `clamp(x + r - d, 0, 2 * base)` when it has both damage `d` and recovery `r`
 (each recovery counted as many times as it can be applied): whatever the order and the repetitions, the result is 0
-when the life starts at 0, and otherwise at most `x + r - d` (a fold that never reaches 0 adds at most the recoveries
-and subtracts at least the damage; one that reaches 0 stays there) and at most `2 * base`. Repeated damage only lowers
-the result.
+when the life starts at 0. With positive starting life, a fold that reaches 0 ends at 0; an always-positive fold
+adds at most the counted recoveries and subtracts at least the required damage, so it is at most `x + r - d` and
+at most `2 * base`. Both cases are bounded by `min(2 * base, max(0, x + r - d))`. Repeated damage only lowers the result.
 
 For a candidate whose life-raising rows consist entirely of such recoveries, the search folds, slot by slot,
-every entry's smallest damage and the candidate's recoveries at their
-events, and takes the end `t0` of the first slot at which this fold is 0. An entry at chart time `t_e` reads life 0
+every entry's smallest damage and the candidate's recoveries at their events, and takes the end `t0` of the first
+slot at which this fold is 0. An entry at chart time `t_e` reads life 0
 when `t0 <= t_e` and every entry at a chart time up to `t0` is judged no later than it: its query folds all those
 damages and only recoveries this fold contains, at most as often, so the life it reads is at most the fold's value at
 `t0`, which is 0, and the later commands keep it 0.
@@ -564,16 +564,23 @@ that scored prefix.
 The timer floor is a separate certificate in
 [`command_floor_times`](../crates/ournotes-search/src/search/snaps/score_windows.rs). It uses the previous play-frame
 time only when frame times are nondecreasing; frame, chart-note, skill-event and Gekisou range times all lie in
-`[0, 2^24]`; extension rows are nonnegative; and positive-duration rows have neither a release checker nor a gated
-Gekisou sustained updater. The interval makes every elapsed integer exactly representable in binary32.
-An execution that survives the previous update has `d_previous >= previous_time - exec` (strictly greater on its
-first update). A nonnegative extension keeps `d` from decreasing, so a later timed finish satisfies
-`exec + ceil(d) >= previous_time`. Its successful current strict end test also keeps that timestamp within the
-current nonwrapping clock range. A release checker can skip the first elapsed check, and a gated sustained updater
-can skip a previous update entirely; neither supplies this premise. Without the compact certificate the timer
-floor is score frame zero. Every case also includes the positive music-length finish clamp. This same floor feeds
-the execution counts and the network snapshot cancellation bounds. A wider replay interval can increase the
-rounding allowance or make the optional cap unavailable; it does not change the scorer.
+`[0, 2^24]`; extension rows are nonnegative; and every positive-duration row satisfies either of two sufficient
+conditions. The first is that it has neither a release checker nor a gated Gekisou sustained updater. The interval
+makes every elapsed integer exactly representable in binary32. An execution that survives the previous update
+has `d_previous >= previous_time - exec` (strictly greater on its first update). A nonnegative extension keeps `d`
+from decreasing, so a later timed finish satisfies `exec + ceil(d) >= previous_time`. Its successful current strict
+end test also keeps that timestamp within the current nonwrapping clock range. The second condition is that the
+native binary32 product `d0 = act * 1000f32` is finite and `d0 >= H as f32`, where `H` is the absolute music time of
+the final supplied play frame. Every execution timestamp is nonnegative, so every elapsed time is at most `H`.
+Nonnegative extensions preserve `d >= d0`, making the strict timed-end predicate `d < elapsed` false throughout
+the play, including when `d0 == H as f32`. This admits release checkers and gated sustained updaters even when
+their updates skip elapsed-time checks. Release, forced-finish and first post-start checks file their end
+commands at the current frame time, before the music-length clamp. The product and comparison use native binary32
+rounding. Other pools use the conservative score-frame-zero floor.
+Every case also includes the positive music-length finish clamp, independently of the play horizon and scoring
+clock limits. This same floor feeds the execution counts and the network snapshot cancellation bounds. A wider
+replay interval can increase the rounding allowance or make the optional cap unavailable; it does not change the
+scorer.
 
 Frame geometry is a separate obligation. `ScoreFrames` projects a possible factor span `[a,b]` onto the closed
 native frame interval `[frame(a),frame(b)]`, using binary32 time conversion and the last-addressable-frame clamp
@@ -1458,6 +1465,20 @@ With at most two free Snap slots, the same argument retains two choices per row,
 choice. At most one real Snap is blocked by the other row. These arguments prove numeric optimum values; their
 tie choices do not certify a physical Top-K representative.
 
+For position-mean gains, the resource and character prefix compilers verify equal binary64 values at all five
+positions and store one shared column per profile and correlation scale. Each edge retains its upward rounding,
+and each row receives edges in member order (then Snap choice order for a character row). Every position reads
+the same exact quantized maxima of the relaxation. Requests with differing position gains retain the other
+applicable bounds.
+
+The resource relaxation's free slots have identical rows. Its optimum is the repeatable empty-choice value for
+every slot plus the largest positive increments from distinct available Snaps. For identical character rows,
+the optimum is the sum of the largest available distinct-character values. These formulas solve the respective
+assignment relaxations exactly, with checked integer sums of the quantized edges.
+
+Sources: [resource prefix tables](../crates/ournotes-search/src/search/joint/prefix_resource.rs),
+[character prefix tables](../crates/ournotes-search/src/search/joint/prefix_character.rs).
+
 Implementation: [relaxation tables](../crates/ournotes-search/src/search/joint/relax_tables.rs),
 [residual character solver](../crates/ournotes-search/src/search/joint/prefix_character.rs),
 [small Snap assignment](../crates/ournotes-search/src/search/matching.rs).
@@ -1591,35 +1612,43 @@ an entry keeps its raw judgement. The windows come from the conversion analysis 
 whole-pool closure), so they only over-approximate. Until the windows are known, the whole-pool closure remains
 the fallback.
 
-Gekisou score selects partition boundaries from the compiled per-member conversion masks. A Snap is selected when
-its mask adds a judgement beyond that member's own conversion reach at some entry and performance position.
-These masks include the mission gates, condition reach and registration windows. All permitted choices remain in
-the candidate domain; the selected set determines how the solver groups them:
+Let $C$ be the set of allowed Snaps selected from the compiled per-member conversion masks. A Snap is selected
+when its mask adds a judgement beyond that member's own conversion reach at some entry and performance position.
+The masks include mission gates, condition reach and registration windows. Every allowed choice remains in the
+candidate domain; $C$ selects partition boundaries. A legal team belongs to exactly one of these cases:
 
-- no selected Snap: an envelope compiled for all choices outside the selected set;
-- exactly one, `c` in physical slot `s`: the sub-domain keeps `c` as its only selected Snap, slot `s` must take
-  `c` and every other slot excludes it;
-- two or more: split by the first two slots in search order that hold selected Snaps; both must take selected
-  Snaps and the other earlier slots exclude them.
+1. It contains no Snap in $C$.
+2. It contains exactly one Snap $c\in C$. In the total choice order of the domain admitting $c$ and the
+   Snaps outside $C$, its unique traversal layout places $c$ in exactly one slot $s$.
+3. It contains at least two Snaps in $C$. In the full domain's unique traversal layout, let $i<j$ be the
+   first two positions occupied by Snaps in $C$ in search-slot order.
 
-The parts are disjoint and cover the domain (a team's selected Snaps do not depend on its layout); they share one
-Top-K with canonical order and tie handling. A forced slot is charged in the cheap relaxation only with its allowed choices; excluded masks filter
-enumeration only. All other bounds remain valid unforced relaxations. A failed part compile falls back to one
-pool-wide search. An empty selected set uses the prepared whole-domain envelope directly.
+Case 1 uses the domain excluding $C$. Case 2 retains only $c$ from $C$, forces $c$ in $s$, and excludes
+it elsewhere. Case 3 forces choices from $C$ at $i,j$, excludes choices from $C$ at earlier positions other
+than $i$, and leaves positions after $j$ free. These cases are disjoint and exhaustive.
+The count and identity of selected Snaps are layout invariant; the slot predicates use the
+particular traversal's deterministic layout. Each part retains all compatible member/Snap pairings.
+A forced slot is charged in the cheap relaxation only with its allowed choices; excluded masks filter enumeration
+only. All other bounds remain valid unforced relaxations.
 
-The resource and character prefix tables read position-mean gains. Their compiler verifies that each gain row
-has identical binary64 values at all five positions and stores one shared column per profile and correlation
-scale. Each edge uses the same upward rounding, and each retained row receives edges in member order (then Snap
-choice order for a character row). Every prefix position therefore reads the exact quantized maxima of its
-position-mean relaxation. Other applicable bounds cover a request whose gain rows differ across positions.
-The residual resource relaxation has identical rows for its free slots: it uses the largest positive increments
-of distinct available Snaps over the repeatable empty choice. The residual character relaxation uses the largest
-available distinct-character values. Both are exact assignment optima for the shared rows, with checked integer
-sums of their quantized edges. Conversion telemetry reports the selected Snap count, the slot-rule part count and
-the number of domain envelopes prepared. A budget stop between preparations retains the prepared whole-domain
-bound for every remaining part. Parts sharing an envelope are traversed together, and the next group's envelope
-is prepared after those traversals finish. At most one additional group envelope is resident alongside the
-whole-domain envelope.
+All parts share the result collector. Parts with the same candidate domain share a compiled envelope and are
+traversed together. The solver prepares a group's envelope immediately before its traversals and releases it
+before preparing the next group. The whole-domain envelope remains available alongside at most one additional
+group envelope. Available incumbents can prioritize groups and their slot rules; this work order
+preserves the disjoint cover and canonical result ordering.
+
+When a specialized compilation is unavailable, the whole-domain envelope supplies a complete traversal with the
+same result collector and candidate deduplication. A stop before or between preparations retains a whole-domain
+cap. A stop during a traversal retains its open-prefix caps and includes the whole-domain cap while later parts
+remain. An empty selected set uses the prepared whole-domain envelope directly. This establishes coverage
+independently of the tightness of conversion reach estimates.
+
+Conversion telemetry reports the selected Snap count, the slot-rule part count and the number of additional
+domain envelopes successfully prepared. Multiple slot rules using one envelope contribute one prepared domain.
+
+Sources: [conversion classification](../crates/ournotes-search/src/search/snaps/conversion.rs),
+[partition construction and execution](../crates/ournotes-search/src/search/physical.rs),
+[slot predicates](../crates/ournotes-search/src/search/joint.rs).
 
 ### COMBO
 
@@ -1706,6 +1735,35 @@ The reported probability-law field is `"lottery":"certifiedNativeLotteryInterval
 all positive-mass paths of an admitted order, or retains the earlier enclosure. Conditional uncertainty over a
 lottery remains separate from the uniform distribution over member orders.
 
+#### Evaluation sessions and cancellation
+
+`LuckScoreSession` fixes the master, classified LUCK skills, notes, events, parameters, Gekisou setup, play frames,
+delta times and rank arrivals. Within that context, a recorder cache identifies the compiled effect rows,
+resolved checkers, performer positions, effect order, activation bit patterns, life-interpreter inputs and probe
+flags. Equal recorder keys reuse a complete lottery curve. Each summary still evaluates the requested deck's
+complete score command schedule. Recorder-key storage is bounded by the optional curve-cache capacity, at most
+one MiB and 32 entries.
+
+The request's `LuckDpCache` separately identifies a curve by its complete transcript: range templates, lottery
+tables, probes, frame transitions, judged notes, gauge speeds, chance actions and pending draws. Integer words
+and floating bit patterns preserve exact key equality. Cache insertion requires a completed recording and
+propagation. The recommendation engine enables a 32 MiB curve-key allowance when `cacheEntries` is positive;
+zero disables this reuse. Completed team score evaluations use their canonical performer program and power as
+keys, within the fixed request, with at most `min(cacheEntries, 64)` entries.
+
+Cancellation is checked during recording, probability propagation, score playback and score-bound processing,
+as well as between performance orders. An interrupted summary returns no completed value; aggregation requires
+all 120 distinct orders. Completed cache entries remain valid for later evaluations in the same context.
+For a request with a time limit, certified warm seeding starts new proposals within the first quarter of the time
+remaining at entry to that phase. An evaluation already in progress retains the full request deadline.
+The subsequent traversal retains the complete domain.
+
+Sources: [score sessions](../crates/ournotes-sim/src/live/full/luck_score_bounds.rs),
+[recorder and curve keys](../crates/ournotes-sim/src/live/full/luck_dp.rs),
+[team score cache](../crates/ournotes-search/src/search/certified_engine.rs),
+[order cancellation](../crates/ournotes-search/src/search/certified_search.rs),
+[seeding allocation](../crates/ournotes-search/src/search/warm.rs).
+
 #### Order and payoff enclosures
 
 For each performance order `sigma`, the admitted scorer supplies score support and an outward interval containing
@@ -1728,10 +1786,39 @@ truncated expectations, and score/life conjunctions require a joint-event certif
 inequalities retain conservative bounds where refined tails are unavailable. These transforms are in
 [`certified_search.rs`](../crates/ournotes-search/src/search/certified_search.rs).
 
-Exact refinement replays each prefix in a fresh model and branches over every admitted positive-weight outcome.
-A complete law is installed only when every branch terminates and exact rational terminal masses sum to 1.
-Unsupported draws, resource limits or an interrupted branch retain the previous sound enclosure. A partial tree
-is not a probability law of total mass 1.
+#### Complete-law replay and reuse
+
+The exact tree branches over all positive-weight base-point and bonus LUCK outcomes. A pending branch contains
+its selected outcome prefix, exact rational mass, complete model checkpoint and next frame index. Checkpoints
+are taken before a frame after 256 completed frames. Sibling branches share an immutable checkpoint and clone
+it for execution. Extending the outcome prefix preserves its consumed-choice cursor and draw counters; frames
+before the checkpoint therefore retain the state of that prefix. An interrupted frame is replayed from the latest
+complete checkpoint, including the actions before its next draw.
+
+Each draw partitions the incoming branch mass among its possible outcomes. Terminal paths with equal score and
+final life combine their exact rational masses. A complete law is installed only when every branch terminates
+and the exact rational terminal masses sum to 1. Unsupported draws, resource limits or an interrupted branch
+retain the previous sound enclosure. A partial tree is not a probability law of total mass 1.
+
+`LuckExactSession` fixes the master, notes, events, parameters, Gekisou setup, frame schedule, delta times and rank
+arrivals. Each performer order builds a complete initialized model. Under these fixed inputs, equal initialized
+states encounter equal conditional draw partitions and successor states, so they have the same terminal law.
+The session can therefore reuse a completed law for an equal initialized state.
+
+The identity contains the complete derived model state, including resolved formation predicates and cumulative
+counts. The two score lookup tables are ordered by key, and other model maps have deterministic hashing. Finite
+floating values retain a round-tripping representation including signed zero. Identity construction admits at
+most 512 KiB; NaN-bearing, opaque or oversized states use independent evaluation. A session retains at most 64
+complete laws and 32 MiB of identity and atom payload, evicting the oldest entries at capacity.
+
+Every retained law satisfies the complete-tree and mass-one checks. A hit consumes no replay segments or frames
+and remains available after the execution allowance is exhausted. Cancellation is checked before reuse and replay.
+Zero session capacity evaluates each order independently. The search creates a session for the selected
+candidate's orders with at most `min(cacheEntries, 64)` entries. A request with zero cache entries evaluates
+each exact order independently.
+
+Implementation: [checkpoint replay and initialized-state identity](../crates/ournotes-sim/src/live/full/luck_exact.rs),
+[session use and frontier refinement](../crates/ournotes-search/src/search/certified_engine.rs).
 
 #### LUCK ranking certificate
 
@@ -1783,11 +1870,31 @@ certificate. This is the distinction made by `IntervalTopK::grid_cutoff`.
 
 After candidate-domain exhaustion, an unresolved frontier returns `RefinementRequired` unless a time or candidate
 stop takes precedence. A deadline during refinement returns `TimedOut` even when the candidate domain is exhausted.
-An unlimited wall-clock setting does not remove the exact refinement provider's own admission and work limits.
-Its current limits include 32 notes, 512 frames, branch depth 32 and 32,768 replay runs per order, with a shared
-240,000-run/8,000,000-frame work budget. A declined or interrupted refinement preserves its previous interval.
-Consequently, domain exhaustion, availability of an exact expectation, and certified ranking are separate
-observable states.
+After domain exhaustion the provider checks the ranking certificate before starting more work. Candidate
+intervals, exact values and equality certificates remain on the frontier independently of detailed order storage.
+Charts with at most 32 notes and 512 play frames retain per-order refinement state eagerly. Other charts
+reconstruct one ambiguous candidate's complete order enclosures and payoff map from the immutable request when
+that candidate reaches the ranking boundary. Reconstruction can reuse a complete cached score evaluation.
+Releasing detailed order rows preserves the intervals already installed on the frontier. Each completed exact
+order is aggregated and intersected with the current certificates, retaining any restriction established by an
+equal-program candidate.
+
+Among overlapping candidates, refinement first selects contenders with smaller payoff upper bounds.
+Within a selected candidate, refinement first evaluates orders with wider payoff enclosures. Every performance
+order has equal weight in the target; canonical order indices break priority ties. This is a work schedule:
+the interval frontier supplies every returned ranking certificate independently of the selected order.
+
+Chart admission requires one complete playback to fit the default 8,000,000-frame request allowance; note density
+is independent of this condition. Each order admits at most 32 nontrivial outcome choices along a path and
+32,768 replay segments. At most 32,768 pending paths are retained, and stochastic depth bounds their ancestor
+checkpoints. All attempted orders share 240,000 replay segments, 8,000,000 executed frames and the request's
+cooperative deadline. These work limits also apply to a request with unlimited wall-clock time. A declined or
+interrupted refinement preserves its previous interval. Domain exhaustion, availability of an exact expectation,
+and certified ranking are separate observable states.
+
+Implementation: [refinement storage and scheduling](../crates/ournotes-search/src/search/certified_engine.rs),
+[payoff enclosure width](../crates/ournotes-search/src/search/certified_search.rs),
+[admission and work limits](../crates/ournotes-sim/src/live/full/luck_exact.rs).
 
 When an exact fraction is available, integer display bounds are its mathematical floor and ceiling with the
 entire unsigned denominator preserved. Probability display bounds use outward rational-to-binary64 conversion.
