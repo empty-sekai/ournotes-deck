@@ -2319,6 +2319,139 @@ mod tests {
     }
 
     #[test]
+    fn fixed_rank_solo_timestamp_bounds_and_programs_match_complete_runs() {
+        let (master, mut notes, mut params, mut setup, _, _) = fixture();
+        setup.fevers = vec![(105, 255), (1205, 1455), (2505, 2855)];
+        params.music_length_ms = 4000;
+        let mut frames: Vec<_> = (0..=40).map(|i| PlayFrame { time_ms: i * 100, judged: Vec::new() }).collect();
+        for (note, time_ms) in notes.iter_mut().zip([100, 110, 120, 200, 260, 1250, 1310, 1400, 2600, 2800]) {
+            note.time_ms = time_ms;
+            frames.iter_mut().find(|frame| frame.time_ms >= time_ms).unwrap().judged.push(JudgedNote {
+                note_id: note.note_id,
+                judgement: 5,
+                judgement_time_ms: time_ms,
+            });
+        }
+        let delta = vec![0.1; frames.len()];
+        let play = LivePlay { frames, base_seed: 7 };
+        let confirmations = [
+            crate::replay::RankConfirmation { frame: 0, range: 0, rank: 5, percent: 137 },
+            crate::replay::RankConfirmation { frame: 35, range: 1, rank: 3, percent: 43 },
+            crate::replay::RankConfirmation { frame: 0, range: 2, rank: 2, percent: 211 },
+        ];
+        let skills = luck_skills(&master).unwrap();
+        for mission in [2, 3] {
+            setup.missions = vec![mission; 3];
+            let model_at = |power| {
+                let mut model = LiveModel::new_gekisou_ranked(
+                    &master,
+                    &[],
+                    &notes,
+                    &[],
+                    LiveParams { total_power: power, ..params },
+                    &setup,
+                )
+                .unwrap();
+                model.set_rank_confirmation_timeline(&confirmations).unwrap();
+                model.track_score_up_factors();
+                model
+            };
+            let mut origin = model_at(params.total_power);
+            origin.score.begin_bounds(Vec::new(), mission == 2);
+            let (program, terminal) = origin.compile_score_program(&play, &delta, LiveRandom::new(7)).unwrap();
+            let trace = terminal.score.bounds_trace.as_ref().unwrap();
+            let query_times: Vec<_> = trace
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    BoundsEvent::Query { time_ms, .. } => Some(*time_ms),
+                    _ => None,
+                })
+                .collect();
+            let rank_queries: Vec<_> = trace
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    BoundsEvent::Rank { range, time_ms, percent, start, end } => {
+                        Some((*range, *time_ms, *percent, start.unwrap(), end.unwrap()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(query_times.len(), 2 * play.frames.len() + 2 * setup.fevers.len());
+            assert_eq!(rank_queries.len(), setup.fevers.len());
+            let mut ranked_ranges: Vec<_> = rank_queries.iter().map(|row| row.0).collect();
+            ranked_ranges.sort_unstable();
+            assert_eq!(ranked_ranges, vec![0, 1, 2]);
+            for &(range, time_ms, percent, start, end) in &rank_queries {
+                assert_eq!((query_times[start], query_times[end]), setup.fevers[range]);
+                assert_eq!(time_ms, setup.fevers[range].1);
+                assert_eq!(percent, confirmations[range].percent);
+                assert!(start < end);
+            }
+
+            for power in [i32::MIN, -123_457, -1, 0, 1, 1000, 123_457, 16_777_217, i32::MAX] {
+                let mut native = model_at(power);
+                let score = native.run_with_random(&play, &delta, LiveRandom::new(7)).unwrap();
+                assert_eq!(program.evaluate(power), score, "mission={mission} power={power}");
+                assert_eq!(terminal.current_life(), native.current_life());
+                assert_eq!(terminal.minimum_score_up(), native.minimum_score_up());
+                for (range, confirmation) in native.gekisou_ranges().iter().zip(&confirmations) {
+                    let gain = range.end_score.wrapping_sub(range.start_score);
+                    let bonus = (i128::from(gain) * i128::from(confirmation.percent) / 100) as i32;
+                    assert_eq!(range.rank_bonus, Some(bonus));
+                }
+                if !(1..=123_457).contains(&power) {
+                    continue;
+                }
+                let bounds = luck_score_bounds_internal(
+                    &master,
+                    &skills,
+                    &[],
+                    &notes,
+                    &[],
+                    LiveParams { total_power: power, ..params },
+                    &setup,
+                    &play,
+                    &delta,
+                    Some(&confirmations),
+                    true,
+                    None,
+                    None,
+                    &mut || false,
+                    true,
+                    None,
+                )
+                .unwrap()
+                .unwrap();
+                assert_eq!(bounds.actual_queries, query_times.len());
+                assert_eq!(bounds.queries.iter().map(|q| q.time_ms).collect::<Vec<_>>(), query_times);
+                assert_eq!(bounds.ranges.len(), setup.fevers.len());
+                for range in &bounds.ranges {
+                    let native_range = native.gekisou_ranges()[range.range];
+                    assert_eq!(
+                        (bounds.queries[range.start_query.unwrap()].time_ms, bounds.queries[range.end_query].time_ms),
+                        setup.fevers[range.range]
+                    );
+                    assert_eq!(range.percent, confirmations[range.range].percent);
+                    let score = native_range.end_score.wrapping_sub(native_range.start_score);
+                    let bonus = native_range.rank_bonus.unwrap();
+                    assert!(range.support.lower <= score && score <= range.support.upper);
+                    assert!(range.mean.lower <= f64::from(score) && f64::from(score) <= range.mean.upper);
+                    assert!(range.bonus_support.lower <= bonus && bonus <= range.bonus_support.upper);
+                    assert!(range.bonus_mean.lower <= f64::from(bonus) && f64::from(bonus) <= range.bonus_mean.upper);
+                }
+                assert!(bounds.final_support.lower <= score && score <= bounds.final_support.upper);
+                assert!(bounds.final_mean.lower <= f64::from(score) && f64::from(score) <= bounds.final_mean.upper);
+                if mission == 3 {
+                    assert_eq!((bounds.final_support.lower, bounds.final_support.upper), (score, score));
+                    assert_eq!(bounds.probability_transitions, 0);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn terminal_probability_link_requires_a_finished_native_schedule() {
         let (master, notes, params, setup, mut play, mut delta) = fixture();
         play.frames.truncate(6);
