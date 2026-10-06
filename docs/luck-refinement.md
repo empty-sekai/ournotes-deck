@@ -26,3 +26,17 @@ cargo test --release --locked --test adapter_fixture_export luck_refinement
 ```
 
 The Cartesian tests compare all terminal score/life atoms and exact masses, including a long deterministic prefix, separated draws with intermediate checkpoints, external rank confirmations, partial-work interruption and draw-counter preservation.
+
+## Boundary-candidate order storage
+
+The ranking frontier retains certified score and payoff intervals for every relevant candidate. Small charts
+retain detailed order state eagerly. For other charts, refinement reconstructs that state for one ambiguous
+boundary candidate at a time from the immutable request and complete performer identities.
+
+Each completed order law narrows its payoff and the aggregate expectation. Installed frontier bounds survive
+releasing detailed order rows. A stopped probability tree preserves the previous certificate. Canonical ties
+and the complete-domain ranking certificate determine the returned order independently of this storage policy.
+
+The synthetic `long_stream_refinement_materializes_the_boundary_candidate` test exercises this path through
+the public recommendation entry point. The storage-policy unit test distinguishes eager storage from backend
+admission and checks that the ordinary long-chart domain remains eligible for bounded refinement.
