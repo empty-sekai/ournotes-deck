@@ -273,7 +273,43 @@ pub(crate) struct LotteryMachine {
     last_consumed: FxHashMap<i32, i32>,
 }
 
+fn push_items(out: &mut Vec<u64>, items: &[Item]) {
+    out.push(items.len() as u64);
+    for &(weight, result) in items {
+        out.extend([weight as u64, result as u64]);
+    }
+}
+
 impl LotteryMachine {
+    /// Every field as words (binary32 by bit pattern, every list after its length): equal words mean equal machines.
+    pub(super) fn push_words(&self, out: &mut Vec<u64>) {
+        let Self { good, great, perfect, hold, tables, minimum, minimum_counter, last_consumed } = self;
+        for items in [good, great, perfect] {
+            match items {
+                None => out.push(0),
+                Some(items) => {
+                    out.push(1);
+                    push_items(out, items);
+                }
+            }
+        }
+        push_items(out, hold);
+        out.push(tables.len() as u64);
+        for LuckSkillTable { items, buff, total_weight } in tables {
+            push_items(out, items);
+            out.extend([u64::from(buff.to_bits()), u64::from(*total_weight as u32)]);
+        }
+        out.push(minimum.len() as u64);
+        for &(id, result, remaining) in minimum {
+            out.extend([u64::from(id as u32), result as u64, remaining as u64]);
+        }
+        out.push(u64::from(*minimum_counter as u32));
+        let mut consumed: Vec<_> = last_consumed.iter().map(|(&id, &frame)| (id, frame)).collect();
+        consumed.sort_unstable();
+        out.push(consumed.len() as u64);
+        out.extend(consumed.into_iter().map(|(id, frame)| u64::from(id as u32) << 32 | u64::from(frame as u32)));
+    }
+
     /// Nominal independent draw probabilities, with `|r| % total` treated as uniform. This is not a
     /// distribution over the correlated output of every possible seeded System.Random instance.
     pub(super) fn bonus_probabilities(
@@ -502,6 +538,25 @@ impl Default for LuckScore {
 }
 
 impl LuckScore {
+    /// Every field as words: equal words mean equal states.
+    pub(super) fn push_words(&self, out: &mut Vec<u64>) {
+        let Self {
+            total_bonus_point,
+            gauge,
+            lot_count,
+            rush_combo,
+            results,
+            next,
+            gauge_max,
+            gauge_max_default,
+            gauge_max_rush,
+        } = self;
+        for value in [*total_bonus_point, *gauge, *lot_count, *rush_combo].into_iter().chain(*results) {
+            out.push(u64::from(value as u32));
+        }
+        out.extend([*next as u64, *gauge_max as u64, *gauge_max_default as u64, *gauge_max_rush as u64]);
+    }
+
     pub(super) fn add_gauge(&mut self, v: i32) -> Result<(), Error> {
         let g = self.gauge.wrapping_add(v) as i64;
         let m = self.gauge_max;

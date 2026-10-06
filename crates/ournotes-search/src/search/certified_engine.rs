@@ -107,10 +107,15 @@ pub(super) struct CertifiedState {
     refinement_admitted: Option<bool>,
     /// The master's lottery-related skills, classified once per request.
     luck_skills: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
+    /// Certified lottery curves of this request, shared by every performance order and team.
+    pub(super) luck_curves: ournotes_sim::live::full::LuckDpCache,
 }
 
+/// Key bytes the request's lottery-curve cache may hold.
+pub(super) const LUCK_CURVE_CACHE_BYTES: usize = 32 * 1024 * 1024;
+
 impl CertifiedState {
-    pub(super) fn new(k: usize) -> Result<Self, Error> {
+    pub(super) fn new(k: usize, curve_bytes: usize) -> Result<Self, Error> {
         Ok(Self {
             frontier: IntervalTopK::new(k)?,
             entries: BTreeMap::new(),
@@ -119,6 +124,7 @@ impl CertifiedState {
             domain_exhausted: false,
             refinement_admitted: None,
             luck_skills: None,
+            luck_curves: ournotes_sim::live::full::LuckDpCache::new(curve_bytes),
         })
     }
     pub(super) fn contains(&self, p: &PhysicalDeck) -> bool {
@@ -448,7 +454,7 @@ mod refinement_tests {
     use super::*;
 
     fn frontier(k: usize) -> CertifiedState {
-        let mut state = CertifiedState::new(k).unwrap();
+        let mut state = CertifiedState::new(k, 0).unwrap();
         for (id, lo, hi) in [(1, 10.0, 11.0), (2, 3.0, 5.0), (3, 4.0, 6.0)] {
             let bounds = F64Interval::new(lo, hi).unwrap();
             state

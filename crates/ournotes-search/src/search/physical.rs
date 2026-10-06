@@ -971,7 +971,10 @@ pub(crate) fn solve_physical_impl(
         order_steps: Default::default(),
         top: Vec::new(),
         certified: if lottery == certified_engine::LotteryMode::Certified {
-            Some(CertifiedState::new(request.k)?)
+            Some(CertifiedState::new(
+                request.k,
+                if limits.cache_entries == 0 { 0 } else { certified_engine::LUCK_CURVE_CACHE_BYTES },
+            )?)
         } else {
             None
         },

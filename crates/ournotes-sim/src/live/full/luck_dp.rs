@@ -134,6 +134,8 @@ trait Mass: Copy {
     fn merge(self, other: Self) -> Self;
     fn complement(self) -> Self;
     fn possible(self) -> bool;
+    /// The value's bit pattern; equal patterns mean equal values.
+    fn bits(self) -> [u64; 2];
     fn bonus(machine: &LotteryMachine, kind: usize, buff: i32, minimum: i8) -> Result<Vec<(Self, i64)>, Error>;
     fn base(machine: &LotteryMachine, note_type: i32, judgement: i32) -> Result<Vec<(Self, i64)>, Error>;
     fn weights(dist: &Distribution<Self>, probes: &[bool], at_frame: bool) -> Self::Weights;
@@ -162,6 +164,10 @@ impl Mass for f64 {
 
     fn possible(self) -> bool {
         self > 0.0
+    }
+
+    fn bits(self) -> [u64; 2] {
+        [self.to_bits(), 0]
     }
 
     fn bonus(machine: &LotteryMachine, kind: usize, buff: i32, minimum: i8) -> Result<Vec<(Self, i64)>, Error> {
@@ -233,6 +239,10 @@ impl Mass for ProbabilityMass {
 
     fn possible(self) -> bool {
         self.interval().upper() > 0.0
+    }
+
+    fn bits(self) -> [u64; 2] {
+        [self.interval().lower().to_bits(), self.interval().upper().to_bits()]
     }
 
     fn bonus(machine: &LotteryMachine, kind: usize, buff: i32, minimum: i8) -> Result<Vec<(Self, i64)>, Error> {
@@ -1082,6 +1092,215 @@ fn run<M: Mass>(
     probes: Option<&[Option<usize>]>,
     ranking: Option<&[crate::replay::RankConfirmation]>,
 ) -> Result<DpResult<M::Weights>, Error> {
+    propagate(&record::<M>(
+        master,
+        skills,
+        notes,
+        skill_events,
+        params,
+        setup,
+        play,
+        delta_times,
+        deck,
+        probes,
+        ranking,
+    )?)
+}
+
+/// Everything the lottery-state propagation reads, recorded from the reduced native interpreter and the optional
+/// deterministic life recorder. [`propagate`] is a function of this value alone: equal transcripts give the same
+/// curve, bit for bit.
+struct Transcript<M> {
+    templates: Vec<LuckScore>,
+    machine: LotteryMachine,
+    /// One flag per range: whether it is a Luck range.
+    luck: Vec<bool>,
+    probes: Vec<bool>,
+    /// Whether the plan has a Miss gauge row. Their used flags are committed after every gated frame.
+    miss_rows: bool,
+    frames: Vec<Frame>,
+    notes: Vec<Judged>,
+    hits: Vec<Hit>,
+    actions: Vec<Action<M>>,
+    /// `(range, lot buff at the frame time)` of every playing Luck range, in range order.
+    pending: Vec<(usize, i32)>,
+    /// A recording failure after the last recorded frame. It is reported once the recorded frames propagate, in
+    /// the order the interleaved computation meets the two kinds of failure.
+    failure: Option<Error>,
+}
+
+/// One frame, or `repeat` consecutive quiet frames (no note, no Luck range transition) with equal records.
+#[derive(Clone, Copy, Debug)]
+struct Frame {
+    time_ms: i32,
+    repeat: u32,
+    /// The Luck range that starts in this frame.
+    start: Option<usize>,
+    complete: bool,
+    finish: bool,
+    gate: bool,
+    /// Whether the current playing range is a Luck range.
+    current_luck: bool,
+    target: i32,
+    /// Exclusive ends of the frame's entries in the note, action and pending lists.
+    notes: usize,
+    actions: usize,
+    pending: usize,
+}
+
+impl Frame {
+    fn quiet(&self, notes_from: usize) -> bool {
+        self.notes == notes_from && self.start.is_none() && !self.complete && !self.finish
+    }
+}
+
+/// A judged note in chart-time order, with its judgement after any deterministic conversion.
+#[derive(Clone, Copy, Debug)]
+struct Judged {
+    time_ms: i32,
+    note_type: i32,
+    judgement: i32,
+    /// Exclusive end of the note's entries in the hit list.
+    hits: usize,
+}
+
+/// A Luck range containing a note, with the lot buff and gauge speed filed at the note time.
+#[derive(Clone, Copy, Debug)]
+struct Hit {
+    range: usize,
+    buff: i32,
+    speed: f32,
+    consumes: bool,
+}
+
+fn push_i32(out: &mut Vec<u64>, value: i32) {
+    out.push(u64::from(value as u32));
+}
+
+fn action_words<M: Mass>(action: &Action<M>) -> [u64; 4] {
+    match *action {
+        Action::StartGauge { value, chance } => {
+            let [lower, upper] = chance.bits();
+            [0, value as u64, lower, upper]
+        }
+        Action::StartMinimum { result, chance } => {
+            let [lower, upper] = chance.bits();
+            [1, u64::from(result as u8), lower, upper]
+        }
+        Action::MissGauge { value } => [2, value as u64, 0, 0],
+    }
+}
+
+fn same_actions<M: Mass>(a: &[Action<M>], b: &[Action<M>]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| action_words(a) == action_words(b))
+}
+
+impl<M: Mass> Transcript<M> {
+    /// Append a recorded frame, merged into the previous frame when both are quiet with equal records. The merged
+    /// frame's later times are never read: a quiet frame files no weights.
+    fn push_frame(&mut self, frame: Frame) {
+        let n = self.frames.len();
+        let notes_from = self.frames.last().map_or(0, |f| f.notes);
+        if n > 0 && frame.quiet(notes_from) {
+            let from = |i: usize| {
+                if i == 0 {
+                    (0, 0, 0)
+                } else {
+                    (self.frames[i - 1].notes, self.frames[i - 1].actions, self.frames[i - 1].pending)
+                }
+            };
+            let previous = self.frames[n - 1];
+            let (previous_notes, previous_actions, previous_pending) = from(n - 1);
+            if previous.quiet(previous_notes)
+                && previous.repeat < u32::MAX
+                && (previous.gate, previous.current_luck, previous.target)
+                    == (frame.gate, frame.current_luck, frame.target)
+                && same_actions(
+                    &self.actions[previous_actions..previous.actions],
+                    &self.actions[previous.actions..frame.actions],
+                )
+                && self.pending[previous_pending..previous.pending] == self.pending[previous.pending..frame.pending]
+            {
+                self.actions.truncate(previous.actions);
+                self.pending.truncate(previous.pending);
+                self.frames[n - 1].repeat += 1;
+                return;
+            }
+        }
+        self.frames.push(frame);
+    }
+
+    /// Every field as words (binary32 and binary64 values by bit pattern, every list after its length), or None
+    /// for a failed recording. Equal words mean equal transcripts.
+    fn key(&self) -> Option<Vec<u64>> {
+        let Self { templates, machine, luck, probes, miss_rows, frames, notes, hits, actions, pending, failure } = self;
+        if failure.is_some() {
+            return None;
+        }
+        let mut out = Vec::with_capacity(64 + 4 * frames.len() + 4 * notes.len() + 4 * hits.len() + 4 * actions.len());
+        out.push(templates.len() as u64);
+        templates.iter().for_each(|template| template.push_words(&mut out));
+        machine.push_words(&mut out);
+        out.push(luck.len() as u64);
+        out.extend(luck.iter().map(|&flag| u64::from(flag)));
+        out.push(probes.len() as u64);
+        out.extend(probes.iter().map(|&flag| u64::from(flag)));
+        out.push(u64::from(*miss_rows));
+        out.push(frames.len() as u64);
+        for frame in frames {
+            let Frame { time_ms, repeat, start, complete, finish, gate, current_luck, target, notes, actions, pending } =
+                *frame;
+            push_i32(&mut out, time_ms);
+            out.push(u64::from(repeat));
+            out.push(start.map_or(0, |range| range as u64 + 1));
+            out.push(
+                u64::from(complete) | u64::from(finish) << 1 | u64::from(gate) << 2 | u64::from(current_luck) << 3,
+            );
+            push_i32(&mut out, target);
+            out.extend([notes as u64, actions as u64, pending as u64]);
+        }
+        out.push(notes.len() as u64);
+        for &Judged { time_ms, note_type, judgement, hits } in notes {
+            push_i32(&mut out, time_ms);
+            push_i32(&mut out, note_type);
+            push_i32(&mut out, judgement);
+            out.push(hits as u64);
+        }
+        out.push(hits.len() as u64);
+        for &Hit { range, buff, speed, consumes } in hits {
+            out.push(range as u64);
+            push_i32(&mut out, buff);
+            out.push(u64::from(speed.to_bits()));
+            out.push(u64::from(consumes));
+        }
+        out.push(actions.len() as u64);
+        actions.iter().for_each(|action| out.extend(action_words(action)));
+        out.push(pending.len() as u64);
+        for &(range, buff) in pending {
+            out.push(range as u64);
+            push_i32(&mut out, buff);
+        }
+        Some(out)
+    }
+}
+
+/// Run the reduced native interpreter (and the deterministic life recorder when a retained row reads life or a
+/// judgement can convert) and record the propagation's inputs. Failures before the first frame return at once; a
+/// failure inside the frame loop ends the transcript (see [`Transcript::failure`]).
+#[allow(clippy::too_many_arguments)]
+fn record<M: Mass>(
+    master: &Master,
+    skills: &LuckSkills,
+    notes: &[LiveNote],
+    skill_events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    deck: &[Performer],
+    probes: Option<&[Option<usize>]>,
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+) -> Result<Transcript<M>, Error> {
     // Initial/precomputed draws choose `next` without adding score. Each consumed result calls add_score
     // once; non-overlapping Luck ranges consume at most once per note plus one pending result per frame.
     // Thus saturation at four Criticals cannot hide a later native i32 wrap back to zero.
@@ -1126,201 +1345,421 @@ fn run<M: Mass>(
     let templates = gk.ctrl.states.iter().map(|state| state.luck.clone()).collect();
     let machine = gk.ctrl.machine.clone();
     gk.ctrl.luck_weighted = true;
-    let mut dp = Dp::<M>::new(templates, &machine);
     let note_map: FxHashMap<_, _> = notes.iter().map(|note| (note.note_id, note)).collect();
-    let mut steps = Vec::new();
+    let Plan { actions, probes: probe_flags } = plan;
+    let mut transcript = Transcript {
+        templates,
+        machine,
+        luck: ranges.iter().map(|range| range.2 == M_LUCK).collect(),
+        probes: probe_flags,
+        miss_rows: actions.iter().any(|(_, action, _)| matches!(action, Action::MissGauge { .. })),
+        frames: Vec::new(),
+        notes: Vec::new(),
+        hits: Vec::new(),
+        actions: Vec::new(),
+        pending: Vec::new(),
+        failure: None,
+    };
     let mut previous_frame = i32::MIN;
-    let mut previous_lot = false;
-    let mut queued = vec![false; ranges.len()];
     for (frame, &delta) in play.frames.iter().zip(delta_times) {
-        if frame.time_ms <= previous_frame || !delta.is_finite() || delta < 0.0 {
-            return Err(Error::Input("LUCK DP needs increasing frames and finite nonnegative deltas".into()));
+        let recorded = record_frame(
+            &mut model,
+            life.as_mut(),
+            &actions,
+            &ranges,
+            &note_map,
+            frame,
+            delta,
+            previous_frame,
+            &mut transcript,
+        );
+        if let Err(error) = recorded {
+            transcript.failure = Some(error);
+            break;
         }
-        let mut judged = Vec::with_capacity(frame.judged.len());
-        let mut previous_note = previous_frame;
-        for judgement in &frame.judged {
-            let note = note_map
-                .get(&judgement.note_id)
-                .ok_or_else(|| Error::Input(format!("unknown note {}", judgement.note_id)))?;
-            if note.time_ms <= previous_frame
-                || note.time_ms > frame.time_ms
-                || note.time_ms < previous_note
-                || judgement.judgement_time_ms != note.time_ms
-            {
-                return Err(Error::Unsupported(
-                    "LUCK DP requires notes in their first chart-time frame, in chart-time order".into(),
-                ));
-            }
-            if luck::luck_judgement_class(judgement.judgement).is_none() {
-                return Err(Error::Unsupported(format!("LUCK DP judgement {}", judgement.judgement)));
-            }
-            previous_note = note.time_ms;
-            judged.push((note.note_id, note.note_operate_type, note.time_ms, judgement.judgement));
-        }
-        let phase_life = if let Some(life) = &mut life {
-            life.frame_timed(frame.time_ms, &frame.judged, delta)?;
-            if life.draws() != 0 {
-                return Err(Error::Unsupported("LUCK life recorder consumed a random value".into()));
-            }
-            for (judged, &(_, converted, _)) in judged.iter_mut().zip(life.frame_judgements()) {
-                judged.3 = converted;
-            }
-            life.phase_life.expect("life recorder phase trace")
-        } else {
-            [model.life.current_life; 2]
-        };
-        record_before(&mut model, frame.time_ms, delta)?;
-        let controller = &model.gk.as_ref().expect("Gekisou checked").ctrl;
-        let states: Vec<_> = controller.states.iter().map(|state| state.state).collect();
-        let updates = controller.state_updates.clone();
-        let current = controller.current_playing_index;
-        let target = controller.dp_playing_range_index();
-        let gate =
-            updates.iter().any(|&i| ranges[i].2 == M_LUCK) || (current >= 0 && ranges[current as usize].2 == M_LUCK);
-        let active: Vec<_> = states
-            .iter()
-            .enumerate()
-            .filter(|&(_, &state)| (S_START..S_FINISH).contains(&state))
-            .map(|(i, _)| i)
-            .collect();
-        if active.len() > 1 && active.iter().any(|&i| ranges[i].2 == M_LUCK) {
-            return Err(Error::Unsupported("LUCK DP: a Luck range overlaps another active range".into()));
-        }
-        let start = updates.iter().any(|&i| ranges[i].2 == M_LUCK && states[i] == S_START);
-        let complete = updates.iter().any(|&i| ranges[i].2 == M_LUCK && states[i] == S_COMPLETE);
-        let finish = updates.iter().any(|&i| ranges[i].2 == M_LUCK && states[i] == S_FINISH);
-        if finish && updates.iter().any(|&i| states[i] == S_START) {
-            // The old rush is closed at frame time, while a new range's note can file a command at
-            // an EARLIER chart time. That needs overlapping historical span state, outside this prototype.
-            return Err(Error::Unsupported("LUCK DP: another range starts in a Luck finish frame".into()));
-        }
-        let pending =
-            states.iter().enumerate().any(|(i, &state)| state == S_PLAYING && ranges[i].2 == M_LUCK && queued[i]);
-        if judged.is_empty() && !start && !complete && !finish && !previous_lot && !pending {
-            // No lottery or dependent skill state can change here. The native interpreter still advances
-            // every range/effect frame, including installing a backdated gauge-speed finish command. A
-            // consumed lot forces the FOLLOWING frame through the DP for 7021 and previous-frame 7000.
-            record_after(&mut model, frame.time_ms, &judged)?;
-            previous_frame = frame.time_ms;
-            continue;
-        }
-        let starting_chain =
-            updates.iter().find_map(|&range| (ranges[range].2 == M_LUCK && states[range] == S_START).then_some(range));
-        if let Some(range) = starting_chain {
-            debug_assert!(dp.active_range.is_none());
-            dp.active_range = Some(range);
-        }
-        let starting_chain = starting_chain.map(|range| Chain::of(&dp.templates[range]));
-        dp.map(|mut state| {
-            if let Some(chain) = starting_chain {
-                state.chain = chain;
-            }
-            state.query_rush = state.rush;
-            state.score_before = state.score;
-            state.frame_lot = false;
-            state.frame_miss = false;
-            if finish {
-                state.rush = false;
-            }
-            if gate {
-                if current >= 0 && ranges[current as usize].2 == M_LUCK {
-                    state.score = state.chain.rush != 0;
-                }
-                if complete || finish {
-                    state.score = false;
-                }
-            }
-            if complete {
-                state.minimum = 0;
-                state.miss_used = false;
-            }
-            Ok(state)
-        })?;
-        if gate && target >= 0 {
-            for (phase, action, condition) in &plan.actions {
-                let mass = condition
-                    .as_ref()
-                    .map_or(Some(M::ONE), |checker| chance::<M>(checker, phase_life[(*phase - 1) as usize]))
-                    .expect("compiled start condition");
-                let action = match *action {
-                    Action::StartGauge { value, .. } => Action::StartGauge { value, chance: mass },
-                    Action::StartMinimum { result, .. } => Action::StartMinimum { result, chance: mass },
-                    action => action,
-                };
-                match action {
-                    Action::StartGauge { .. } | Action::StartMinimum { .. } if start => {
-                        dp.action(action, target as usize)?
-                    }
-                    Action::MissGauge { .. } => {
-                        dp.action(action, target as usize)?;
-                    }
-                    _ => {}
-                }
-            }
-            if plan.actions.iter().any(|(_, action, _)| matches!(action, Action::MissGauge { .. })) {
-                dp.map(|mut state| {
-                    state.miss_used |= state.previous_miss;
-                    Ok(state)
-                })?;
-            }
-        }
-        let mut i = 0;
-        while i < judged.len() {
-            let time = judged[i].2;
-            let mut end = i + 1;
-            while end < judged.len() && judged[end].2 == time {
-                end += 1;
-            }
-            for &(_, note_type, note_time, judgement) in &judged[i..end] {
-                for (range, &(start, finish, mission)) in ranges.iter().enumerate() {
-                    if mission == M_LUCK && start <= note_time && note_time <= finish {
-                        let (buff, speed) = controller.dp_factors_at(note_time);
-                        dp.note(range, note_type, judgement, buff, speed, states[range] <= S_END)?;
-                    }
-                }
-            }
-            if time < frame.time_ms {
-                let values = dp.weights(&plan.probes, false);
-                if steps.last().is_none_or(|last: &(i32, M::Weights)| last.1 != values) {
-                    steps.push((time, values));
-                }
-            }
-            i = end;
-        }
-        for (range, &state) in states.iter().enumerate() {
-            if ranges[range].2 == M_LUCK && state == S_PLAYING {
-                dp.pending(range, controller.dp_factors_at(frame.time_ms).0)?;
-            }
-        }
-        if judged.last().is_some_and(|note| note.2 == frame.time_ms) {
-            let values = dp.weights(&plan.probes, true);
-            if steps.last().is_none_or(|last| last.1 != values) {
-                steps.push((frame.time_ms, values));
-            }
-        }
-        previous_lot = dp.dist.keys().any(|state| state.frame_lot);
-        dp.map(|mut state| {
-            state.previous_miss = state.frame_miss;
-            state.query_rush = state.rush;
-            state.score_before = state.score;
-            state.frame_miss = false;
-            state.frame_lot = false;
-            if finish {
-                state.chain = Chain::default();
-            }
-            Ok(state)
-        })?;
-        if finish {
-            dp.active_range = None;
-        }
-        queued.fill(false);
-        if let Some(range) = dp.active_range {
-            queued[range] = dp.dist.keys().any(|state| state.chain.lots > 0);
-        }
-        record_after(&mut model, frame.time_ms, &judged)?;
         previous_frame = frame.time_ms;
     }
-    Ok(DpResult { steps, probes: plan.probes, peak_states: dp.peak, transitions: dp.transitions })
+    Ok(transcript)
+}
+
+/// Record one frame. Every check that precedes the frame's propagation fails before the frame is appended; the
+/// native AFTER phase runs once it is appended, as in the interleaved computation.
+#[allow(clippy::too_many_arguments)]
+fn record_frame<M: Mass>(
+    model: &mut LiveModel,
+    life: Option<&mut LiveModel>,
+    actions: &[(i64, Action<M>, Option<Checker>)],
+    ranges: &[(i32, i32, i64)],
+    note_map: &FxHashMap<i32, &LiveNote>,
+    frame: &PlayFrame,
+    delta: f32,
+    previous_frame: i32,
+    out: &mut Transcript<M>,
+) -> Result<(), Error> {
+    if frame.time_ms <= previous_frame || !delta.is_finite() || delta < 0.0 {
+        return Err(Error::Input("LUCK DP needs increasing frames and finite nonnegative deltas".into()));
+    }
+    let mut judged = Vec::with_capacity(frame.judged.len());
+    let mut previous_note = previous_frame;
+    for judgement in &frame.judged {
+        let note = note_map
+            .get(&judgement.note_id)
+            .ok_or_else(|| Error::Input(format!("unknown note {}", judgement.note_id)))?;
+        if note.time_ms <= previous_frame
+            || note.time_ms > frame.time_ms
+            || note.time_ms < previous_note
+            || judgement.judgement_time_ms != note.time_ms
+        {
+            return Err(Error::Unsupported(
+                "LUCK DP requires notes in their first chart-time frame, in chart-time order".into(),
+            ));
+        }
+        if luck::luck_judgement_class(judgement.judgement).is_none() {
+            return Err(Error::Unsupported(format!("LUCK DP judgement {}", judgement.judgement)));
+        }
+        previous_note = note.time_ms;
+        judged.push((note.note_id, note.note_operate_type, note.time_ms, judgement.judgement));
+    }
+    let phase_life = if let Some(life) = life {
+        life.frame_timed(frame.time_ms, &frame.judged, delta)?;
+        if life.draws() != 0 {
+            return Err(Error::Unsupported("LUCK life recorder consumed a random value".into()));
+        }
+        for (judged, &(_, converted, _)) in judged.iter_mut().zip(life.frame_judgements()) {
+            judged.3 = converted;
+        }
+        life.phase_life.expect("life recorder phase trace")
+    } else {
+        [model.life.current_life; 2]
+    };
+    record_before(model, frame.time_ms, delta)?;
+    let controller = &model.gk.as_ref().expect("Gekisou checked").ctrl;
+    let states: Vec<_> = controller.states.iter().map(|state| state.state).collect();
+    let updates = &controller.state_updates;
+    let current = controller.current_playing_index;
+    let target = controller.dp_playing_range_index();
+    let current_luck = current >= 0 && ranges[current as usize].2 == M_LUCK;
+    let gate = updates.iter().any(|&i| ranges[i].2 == M_LUCK) || current_luck;
+    let active: Vec<_> =
+        states.iter().enumerate().filter(|&(_, &state)| (S_START..S_FINISH).contains(&state)).map(|(i, _)| i).collect();
+    if active.len() > 1 && active.iter().any(|&i| ranges[i].2 == M_LUCK) {
+        return Err(Error::Unsupported("LUCK DP: a Luck range overlaps another active range".into()));
+    }
+    let start =
+        updates.iter().find_map(|&range| (ranges[range].2 == M_LUCK && states[range] == S_START).then_some(range));
+    let complete = updates.iter().any(|&i| ranges[i].2 == M_LUCK && states[i] == S_COMPLETE);
+    let finish = updates.iter().any(|&i| ranges[i].2 == M_LUCK && states[i] == S_FINISH);
+    if finish && updates.iter().any(|&i| states[i] == S_START) {
+        // The old rush is closed at frame time, while a new range's note can file a command at
+        // an EARLIER chart time. That needs overlapping historical span state, outside this prototype.
+        return Err(Error::Unsupported("LUCK DP: another range starts in a Luck finish frame".into()));
+    }
+    for &(_, note_type, note_time, judgement) in &judged {
+        for (range, &(begin, end, mission)) in ranges.iter().enumerate() {
+            if mission == M_LUCK && begin <= note_time && note_time <= end {
+                let (buff, speed) = controller.dp_factors_at(note_time);
+                out.hits.push(Hit { range, buff, speed, consumes: states[range] <= S_END });
+            }
+        }
+        out.notes.push(Judged { time_ms: note_time, note_type, judgement, hits: out.hits.len() });
+    }
+    if gate && target >= 0 {
+        for (phase, action, condition) in actions {
+            let mass = condition
+                .as_ref()
+                .map_or(Some(M::ONE), |checker| chance::<M>(checker, phase_life[(*phase - 1) as usize]))
+                .expect("compiled start condition");
+            match *action {
+                Action::StartGauge { value, .. } if start.is_some() => {
+                    out.actions.push(Action::StartGauge { value, chance: mass })
+                }
+                Action::StartMinimum { result, .. } if start.is_some() => {
+                    out.actions.push(Action::StartMinimum { result, chance: mass })
+                }
+                Action::MissGauge { value } => out.actions.push(Action::MissGauge { value }),
+                _ => {}
+            }
+        }
+    }
+    for (range, &state) in states.iter().enumerate() {
+        if ranges[range].2 == M_LUCK && state == S_PLAYING {
+            out.pending.push((range, controller.dp_factors_at(frame.time_ms).0));
+        }
+    }
+    let recorded = Frame {
+        time_ms: frame.time_ms,
+        repeat: 1,
+        start,
+        complete,
+        finish,
+        gate,
+        current_luck,
+        target,
+        notes: out.notes.len(),
+        actions: out.actions.len(),
+        pending: out.pending.len(),
+    };
+    out.push_frame(recorded);
+    record_after(model, frame.time_ms, &judged)
+}
+
+/// Propagate the lottery-state distribution through a transcript.
+fn propagate<M: Mass>(transcript: &Transcript<M>) -> Result<DpResult<M::Weights>, Error> {
+    let t = transcript;
+    let mut dp = Dp::<M>::new(t.templates.clone(), &t.machine);
+    let mut steps: Vec<(i32, M::Weights)> = Vec::new();
+    let mut previous_lot = false;
+    let mut queued = vec![false; t.luck.len()];
+    let (mut notes_from, mut actions_from, mut pending_from) = (0usize, 0usize, 0usize);
+    for frame in &t.frames {
+        let hits_from = notes_from.checked_sub(1).map_or(0, |i| t.notes[i].hits);
+        let notes = &t.notes[notes_from..frame.notes];
+        let actions = &t.actions[actions_from..frame.actions];
+        let pending = &t.pending[pending_from..frame.pending];
+        (notes_from, actions_from, pending_from) = (frame.notes, frame.actions, frame.pending);
+        let (finish, complete, gate, current_luck) = (frame.finish, frame.complete, frame.gate, frame.current_luck);
+        for _ in 0..frame.repeat {
+            if notes.is_empty()
+                && frame.start.is_none()
+                && !complete
+                && !finish
+                && !previous_lot
+                && !pending.iter().any(|&(range, _)| queued[range])
+            {
+                // No lottery or dependent skill state can change here. A consumed lot forces the FOLLOWING
+                // frame through the DP for 7021 and previous-frame 7000.
+                continue;
+            }
+            if let Some(range) = frame.start {
+                debug_assert!(dp.active_range.is_none());
+                dp.active_range = Some(range);
+            }
+            let starting_chain = frame.start.map(|range| Chain::of(&dp.templates[range]));
+            dp.map(|mut state| {
+                if let Some(chain) = starting_chain {
+                    state.chain = chain;
+                }
+                state.query_rush = state.rush;
+                state.score_before = state.score;
+                state.frame_lot = false;
+                state.frame_miss = false;
+                if finish {
+                    state.rush = false;
+                }
+                if gate {
+                    if current_luck {
+                        state.score = state.chain.rush != 0;
+                    }
+                    if complete || finish {
+                        state.score = false;
+                    }
+                }
+                if complete {
+                    state.minimum = 0;
+                    state.miss_used = false;
+                }
+                Ok(state)
+            })?;
+            if gate && frame.target >= 0 {
+                for &action in actions {
+                    dp.action(action, frame.target as usize)?;
+                }
+                if t.miss_rows {
+                    dp.map(|mut state| {
+                        state.miss_used |= state.previous_miss;
+                        Ok(state)
+                    })?;
+                }
+            }
+            let mut hit = hits_from;
+            let mut i = 0;
+            while i < notes.len() {
+                let time = notes[i].time_ms;
+                let mut end = i + 1;
+                while end < notes.len() && notes[end].time_ms == time {
+                    end += 1;
+                }
+                for note in &notes[i..end] {
+                    for h in &t.hits[hit..note.hits] {
+                        dp.note(h.range, note.note_type, note.judgement, h.buff, h.speed, h.consumes)?;
+                    }
+                    hit = note.hits;
+                }
+                if time < frame.time_ms {
+                    let values = dp.weights(&t.probes, false);
+                    if steps.last().is_none_or(|last| last.1 != values) {
+                        steps.push((time, values));
+                    }
+                }
+                i = end;
+            }
+            for &(range, buff) in pending {
+                dp.pending(range, buff)?;
+            }
+            if notes.last().is_some_and(|note| note.time_ms == frame.time_ms) {
+                let values = dp.weights(&t.probes, true);
+                if steps.last().is_none_or(|last| last.1 != values) {
+                    steps.push((frame.time_ms, values));
+                }
+            }
+            previous_lot = dp.dist.keys().any(|state| state.frame_lot);
+            dp.map(|mut state| {
+                state.previous_miss = state.frame_miss;
+                state.query_rush = state.rush;
+                state.score_before = state.score;
+                state.frame_miss = false;
+                state.frame_lot = false;
+                if finish {
+                    state.chain = Chain::default();
+                }
+                Ok(state)
+            })?;
+            if finish {
+                dp.active_range = None;
+            }
+            queued.fill(false);
+            if let Some(range) = dp.active_range {
+                queued[range] = dp.dist.keys().any(|state| state.chain.lots > 0);
+            }
+        }
+    }
+    if let Some(failure) = &t.failure {
+        return Err(failure.clone());
+    }
+    Ok(DpResult { steps, probes: t.probes.clone(), peak_states: dp.peak, transitions: dp.transitions })
+}
+
+/// Certified curves reused within one request, across performance orders and decks.
+///
+/// A curve is keyed by the complete transcript its propagation reads: the reduced native recording (range
+/// templates, lottery tables, probes, every frame's range transitions, judged notes with their lot buffs and
+/// binary32 gauge speeds, start-row chances and pending lots) encoded word for word. A hit compares the whole key,
+/// so it returns exactly the curve [`luck_rush_dp_certified_with_ranking`] computes for the same arguments. The
+/// recording itself runs on every call; failed recordings and failed propagations are never stored. Entries are
+/// dropped oldest first once the keys exceed the byte capacity.
+#[derive(Default)]
+pub struct LuckDpCache {
+    entries: FxHashMap<std::sync::Arc<[u64]>, std::sync::Arc<LuckDpCertifiedResult>>,
+    order: std::collections::VecDeque<std::sync::Arc<[u64]>>,
+    words: usize,
+    capacity_words: usize,
+    stats: LuckDpCacheStats,
+}
+
+/// Use of a [`LuckDpCache`]. Timings are filled only in diagnostic builds.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LuckDpCacheStats {
+    pub lookups: u64,
+    pub hits: u64,
+    pub evictions: u64,
+    pub peak_entries: usize,
+    /// The largest total key size held, in bytes.
+    pub peak_key_bytes: usize,
+    pub record_ms: f64,
+    pub propagate_ms: f64,
+}
+
+impl LuckDpCache {
+    /// A cache holding keys of at most `capacity_bytes` in total; zero stores nothing.
+    pub fn new(capacity_bytes: usize) -> Self {
+        Self { capacity_words: capacity_bytes / std::mem::size_of::<u64>(), ..Default::default() }
+    }
+
+    pub fn stats(&self) -> LuckDpCacheStats {
+        self.stats
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// [`luck_rush_dp_certified_with_ranking`] of the same arguments, from the cache when an equal transcript was
+    /// propagated before.
+    #[allow(clippy::too_many_arguments)]
+    pub fn certified(
+        &mut self,
+        master: &Master,
+        skills: &LuckSkills,
+        notes: &[LiveNote],
+        skill_events: &[(i32, i32)],
+        params: LiveParams,
+        setup: &GekisouSetup,
+        play: &LivePlay,
+        delta_times: &[f32],
+        deck: &[Performer],
+        probes: Option<&[Option<usize>]>,
+        ranking: Option<&[crate::replay::RankConfirmation]>,
+    ) -> Result<std::sync::Arc<LuckDpCertifiedResult>, Error> {
+        #[cfg(feature = "search-diagnostics")]
+        let started = std::time::Instant::now();
+        let transcript = record::<ProbabilityMass>(
+            master,
+            skills,
+            notes,
+            skill_events,
+            params,
+            setup,
+            play,
+            delta_times,
+            deck,
+            probes,
+            ranking,
+        );
+        let key = transcript.as_ref().ok().and_then(|transcript| transcript.key());
+        #[cfg(feature = "search-diagnostics")]
+        {
+            self.stats.record_ms += started.elapsed().as_secs_f64() * 1e3;
+        }
+        let transcript = transcript?;
+        if let Some(key) = &key {
+            self.stats.lookups += 1;
+            if let Some(found) = self.entries.get(&key[..]) {
+                self.stats.hits += 1;
+                return Ok(found.clone());
+            }
+        }
+        #[cfg(feature = "search-diagnostics")]
+        let started = std::time::Instant::now();
+        let result = propagate(&transcript);
+        #[cfg(feature = "search-diagnostics")]
+        {
+            self.stats.propagate_ms += started.elapsed().as_secs_f64() * 1e3;
+        }
+        let result = result?;
+        let result = std::sync::Arc::new(LuckDpCertifiedResult {
+            steps: result.steps,
+            probes: result.probes,
+            peak_states: result.peak_states,
+            transitions: result.transitions,
+        });
+        if let Some(key) = key {
+            self.insert(key, result.clone());
+        }
+        Ok(result)
+    }
+
+    fn insert(&mut self, key: Vec<u64>, value: std::sync::Arc<LuckDpCertifiedResult>) {
+        if key.len() > self.capacity_words {
+            return;
+        }
+        while self.words + key.len() > self.capacity_words {
+            let oldest = self.order.pop_front().expect("held keys account for the held words");
+            self.words -= oldest.len();
+            self.entries.remove(&oldest[..]);
+            self.stats.evictions += 1;
+        }
+        let key: std::sync::Arc<[u64]> = key.into();
+        self.words += key.len();
+        self.order.push_back(key.clone());
+        self.entries.insert(key, value);
+        self.stats.peak_entries = self.stats.peak_entries.max(self.entries.len());
+        self.stats.peak_key_bytes = self.stats.peak_key_bytes.max(self.words * std::mem::size_of::<u64>());
+    }
 }
 
 #[cfg(test)]
@@ -1860,5 +2299,132 @@ mod tests {
             luck::luck_rush_samples(&master, &skills, &notes, params, &setup, &play, &delta, &deck, None, &[0, 1, 7])
                 .unwrap();
         assert_eq!(dp.steps, samples);
+    }
+
+    fn curve_words(curve: &LuckDpCertifiedResult) -> Vec<u64> {
+        let mut out = Vec::new();
+        for (time, joint) in &curve.steps {
+            out.push(u64::from(*time as u32));
+            joint.iter().for_each(|mass| out.extend(mass.bits()));
+        }
+        out.extend(curve.probes.iter().map(|&probe| u64::from(probe)));
+        out.extend([curve.peak_states as u64, curve.transitions]);
+        out
+    }
+
+    /// A chance-gated start gauge and a 2:1 Critical table: the curve carries many inexact masses.
+    fn random_fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
+        let (mut master, notes, params, setup, play, delta) = fixture(0, 60);
+        master.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap().condition_values = vec![25];
+        for kind in 0..5 {
+            master.gekisou_luck_bonus_lots.push(crate::master::LuckBonusLotRow {
+                id: 100 + kind,
+                chance_lot_type: kind,
+                lot_result: 3,
+                weight: 2,
+            });
+        }
+        (master, notes, params, setup, play, delta)
+    }
+
+    #[test]
+    fn curve_cache_reuses_equal_recordings_and_returns_the_computed_curve() {
+        let (master, notes, params, setup, play, delta) = random_fixture();
+        let skills = luck_skills(&master).unwrap();
+        let holder = Performer {
+            gekisou_skill: Some((2, 1)),
+            gekisou_support_skills: vec![(31, 1), (96, 1)],
+            ..Default::default()
+        };
+        let speed = Performer { gekisou_skill: Some((1, 1)), ..Default::default() };
+        let decks = [
+            vec![holder.clone(), Performer::default()],
+            // The same members in another order: the recording is the same.
+            vec![Performer::default(), holder.clone()],
+            // A timed gauge-speed holder changes the binary32 speed of the range's first notes.
+            vec![holder.clone(), speed.clone()],
+            vec![speed, holder],
+        ];
+        let mut cache = LuckDpCache::new(1 << 24);
+        let mut direct = Vec::new();
+        for (i, deck) in decks.iter().enumerate() {
+            let expected =
+                luck_rush_dp_certified(&master, &skills, &notes, params, &setup, &play, &delta, deck, None).unwrap();
+            let cached = cache
+                .certified(&master, &skills, &notes, &[], params, &setup, &play, &delta, deck, None, None)
+                .unwrap();
+            assert_eq!(curve_words(&cached), curve_words(&expected), "deck {i}");
+            direct.push(curve_words(&expected));
+        }
+        assert_ne!(direct[0], direct[2]);
+        let stats = cache.stats();
+        assert_eq!((stats.lookups, stats.hits, cache.len()), (4, 2, 2));
+        let again = cache
+            .certified(&master, &skills, &notes, &[], params, &setup, &play, &delta, &decks[2], None, None)
+            .unwrap();
+        assert_eq!(curve_words(&again), direct[2]);
+        assert_eq!(cache.stats().hits, 3);
+    }
+
+    #[test]
+    fn curve_cache_misses_on_any_recorded_input_change() {
+        let (master, notes, params, setup, play, delta) = random_fixture();
+        let deck = [Performer {
+            gekisou_skill: Some((2, 1)),
+            gekisou_support_skills: vec![(31, 1), (96, 1)],
+            ..Default::default()
+        }];
+        let mut later = setup.clone();
+        later.fevers[0] = (200, 500);
+        let mut chance = master.clone();
+        chance.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap().condition_values = vec![50];
+        let mut weights = master.clone();
+        weights.gekisou_luck_bonus_lots.iter_mut().filter(|row| row.id >= 100).for_each(|row| row.weight = 3);
+        let cases: [(&Master, &GekisouSetup); 4] =
+            [(&master, &setup), (&master, &later), (&chance, &setup), (&weights, &setup)];
+        let mut cache = LuckDpCache::new(1 << 24);
+        for (i, &(master, setup)) in cases.iter().enumerate() {
+            let skills = luck_skills(master).unwrap();
+            let expected =
+                luck_rush_dp_certified(master, &skills, &notes, params, setup, &play, &delta, &deck, None).unwrap();
+            let cached =
+                cache.certified(master, &skills, &notes, &[], params, setup, &play, &delta, &deck, None, None).unwrap();
+            assert_eq!(curve_words(&cached), curve_words(&expected), "case {i}");
+            assert_eq!(cache.stats().hits, 0, "case {i}");
+        }
+        assert_eq!(cache.len(), cases.len());
+    }
+
+    #[test]
+    fn curve_cache_capacity_bounds_the_held_keys() {
+        let (master, notes, params, setup, play, delta) = random_fixture();
+        let skills = luck_skills(&master).unwrap();
+        let decks: Vec<_> = [(2, vec![(31, 1), (96, 1)]), (2, vec![(31, 1)]), (3, vec![(31, 1)])]
+            .into_iter()
+            .map(|(skill, supports)| {
+                [Performer { gekisou_skill: Some((skill, 1)), gekisou_support_skills: supports, ..Default::default() }]
+            })
+            .collect();
+        let mut empty = LuckDpCache::new(0);
+        for deck in &decks {
+            let expected =
+                luck_rush_dp_certified(&master, &skills, &notes, params, &setup, &play, &delta, deck, None).unwrap();
+            let cached = empty
+                .certified(&master, &skills, &notes, &[], params, &setup, &play, &delta, deck, None, None)
+                .unwrap();
+            assert_eq!(curve_words(&cached), curve_words(&expected));
+        }
+        assert!(empty.is_empty() && empty.stats().hits == 0);
+        // Room for the first key only: a later key replaces it or, when larger, is not held.
+        let mut one = LuckDpCache::new(usize::MAX);
+        one.certified(&master, &skills, &notes, &[], params, &setup, &play, &delta, &decks[0], None, None).unwrap();
+        let capacity = one.stats().peak_key_bytes;
+        assert!(capacity > 0);
+        let mut small = LuckDpCache::new(capacity);
+        for deck in &decks {
+            small.certified(&master, &skills, &notes, &[], params, &setup, &play, &delta, deck, None, None).unwrap();
+            assert_eq!(small.len(), 1);
+            assert!(small.stats().peak_key_bytes <= capacity);
+        }
     }
 }

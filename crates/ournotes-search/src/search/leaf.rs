@@ -93,15 +93,19 @@ impl Engine<'_, '_> {
             } else {
                 self.tel.leaves.started += 1;
                 let skills = self.certified_luck_skills()?;
+                let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
                 let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
                 let result = crate::search::certified_search::evaluate_luck_context(
                     master,
                     &skills,
                     &input,
                     &crate::search::certified_search::PayoffMap::Score,
+                    Some(&mut curves),
                     || self.expired(),
                 );
                 self.rec.clock.lap(resume);
+                self.tel.caches.luck_curves.record(curves.stats());
+                self.certified.as_mut().expect("certified request").luck_curves = curves;
                 let Some(score) = result? else {
                     return Ok(Leaf::Stopped);
                 };

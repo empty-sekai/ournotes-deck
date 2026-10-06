@@ -858,6 +858,12 @@ pub fn luck_orders_profile(
     let skills = ournotes_sim::live::full::luck_skills(master)?;
     let mut curves: Vec<String> = Vec::new();
     let mut rows = Vec::new();
+    // One cache for the curves alone and one for the summaries, as the search shares it across orders.
+    let mut cache = ournotes_sim::live::full::LuckDpCache::new(usize::MAX);
+    let mut summary_cache = ournotes_sim::live::full::LuckDpCache::new(usize::MAX);
+    let curve_text = |result: &ournotes_sim::live::full::LuckDpCertifiedResult| {
+        format!("{:?}{:?}{}/{}", result.steps, result.probes, result.peak_states, result.transitions)
+    };
     for order in uniform::all_orders() {
         let performers: Vec<_> = order.iter().map(|&slot| input.performers[slot].clone()).collect();
         let started = std::time::Instant::now();
@@ -875,6 +881,26 @@ pub fn luck_orders_profile(
             input.rank_confirmations.as_deref(),
         );
         let dp_ms = started.elapsed().as_secs_f64() * 1e3;
+        let started = std::time::Instant::now();
+        let cached = cache.certified(
+            master,
+            &skills,
+            &input.notes,
+            &input.events,
+            input.params,
+            &setup,
+            &input.play,
+            &input.delta_times,
+            &performers,
+            None,
+            input.rank_confirmations.as_deref(),
+        );
+        let cached_ms = started.elapsed().as_secs_f64() * 1e3;
+        let same_curve = match (&dp, &cached) {
+            (Ok(a), Ok(b)) => curve_text(a) == curve_text(b),
+            (Err(a), Err(b)) => a == b,
+            _ => false,
+        };
         let (curve, states, transitions) = match &dp {
             Ok(result) => (format!("{:?}{:?}", result.steps, result.probes), result.peak_states, result.transitions),
             Err(error) => (format!("error {error}"), 0, 0),
@@ -897,12 +923,30 @@ pub fn luck_orders_profile(
             input.rank_confirmations.as_deref(),
         );
         let summary_ms = started.elapsed().as_secs_f64() * 1e3;
-        rows.push(serde_json::json!({"order":order,"dpMs":dp_ms,"summaryMs":summary_ms,"curve":index,
+        let started = std::time::Instant::now();
+        let summary_cached = ournotes_sim::live::full::luck_score_summary_with_curves(
+            master,
+            &skills,
+            &performers,
+            &input.notes,
+            &input.events,
+            input.params,
+            &setup,
+            &input.play,
+            &input.delta_times,
+            input.rank_confirmations.as_deref(),
+            Some(&mut summary_cache),
+        );
+        let summary_cached_ms = started.elapsed().as_secs_f64() * 1e3;
+        let same_summary = format!("{summary:?}") == format!("{summary_cached:?}");
+        rows.push(serde_json::json!({"order":order,"dpMs":dp_ms,"cachedMs":cached_ms,"sameCurve":same_curve,
+            "summaryMs":summary_ms,"summaryCachedMs":summary_cached_ms,"sameSummary":same_summary,"curve":index,
             "peakStates":states,"transitions":transitions,
             "mean":summary.as_ref().ok().map(|s| [s.final_mean.lower, s.final_mean.upper]),
             "error":summary.err().map(|e| e.to_string())}));
     }
-    Ok(serde_json::json!({"members":members,"snaps":snaps,"curves":curves.len(),"orders":rows}))
+    Ok(serde_json::json!({"members":members,"snaps":snaps,"curves":curves.len(),"cache":cache.stats(),
+        "summaryCache":summary_cache.stats(),"orders":rows}))
 }
 
 /// Benchmark the production summary for exactly the same supplied physical performance order.

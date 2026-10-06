@@ -610,7 +610,20 @@ pub fn luck_score_bounds_with_ranking(
     ranking: Option<&[crate::replay::RankConfirmation]>,
 ) -> Result<LuckScoreBounds, Error> {
     let skills = luck_skills(master)?;
-    luck_score_bounds_internal(master, &skills, deck, notes, events, params, setup, play, delta_times, ranking, true)
+    luck_score_bounds_internal(
+        master,
+        &skills,
+        deck,
+        notes,
+        events,
+        params,
+        setup,
+        play,
+        delta_times,
+        ranking,
+        true,
+        None,
+    )
 }
 
 /// The same arithmetic and native snapshot proof without retaining diagnostic query/note reports. `skills` is
@@ -628,6 +641,24 @@ pub fn luck_score_summary_with_ranking(
     delta_times: &[f32],
     ranking: Option<&[crate::replay::RankConfirmation]>,
 ) -> Result<LuckScoreSummary, Error> {
+    luck_score_summary_with_curves(master, skills, deck, notes, events, params, setup, play, delta_times, ranking, None)
+}
+
+/// [`luck_score_summary_with_ranking`] whose lottery curve comes from, and enters, `curves` when given.
+#[allow(clippy::too_many_arguments)]
+pub fn luck_score_summary_with_curves(
+    master: &Master,
+    skills: &LuckSkills,
+    deck: &[Performer],
+    notes: &[LiveNote],
+    events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+    curves: Option<&mut LuckDpCache>,
+) -> Result<LuckScoreSummary, Error> {
     let bounds = luck_score_bounds_internal(
         master,
         skills,
@@ -640,6 +671,7 @@ pub fn luck_score_summary_with_ranking(
         delta_times,
         ranking,
         false,
+        curves,
     )?;
     Ok(LuckScoreSummary {
         final_mean: bounds.final_mean,
@@ -684,6 +716,7 @@ fn luck_score_bounds_internal(
     delta_times: &[f32],
     ranking: Option<&[crate::replay::RankConfirmation]>,
     details: bool,
+    curves: Option<&mut LuckDpCache>,
 ) -> Result<LuckScoreBounds, Error> {
     #[cfg(feature = "search-diagnostics")]
     let phase_start = std::time::Instant::now();
@@ -706,14 +739,16 @@ fn luck_score_bounds_internal(
     // false. Consequently these draws cannot reach score, judgements, life or fixed rank arrivals; this is a
     // deterministic score law even when native.draws() > 0. It is not a fixed-seed approximation.
     let probability = if !has_luck {
-        LuckDpCertifiedResult {
+        std::sync::Arc::new(LuckDpCertifiedResult {
             steps: Vec::new(),
             probes: vec![false; skills.shapes.len()],
             peak_states: 1,
             transitions: 0,
-        }
+        })
+    } else if let Some(curves) = curves {
+        curves.certified(master, skills, notes, events, params, setup, play, delta_times, deck, None, ranking)?
     } else {
-        luck_rush_dp_certified_with_ranking(
+        std::sync::Arc::new(luck_rush_dp_certified_with_ranking(
             master,
             skills,
             notes,
@@ -725,7 +760,7 @@ fn luck_score_bounds_internal(
             deck,
             None,
             ranking,
-        )?
+        )?)
     };
     #[cfg(feature = "search-diagnostics")]
     let curve_dp_ms = phase_start.elapsed().as_secs_f64() * 1e3;
@@ -1232,9 +1267,21 @@ mod tests {
         let (master, notes, params, setup, play, delta) = fixture();
         let full = luck_score_bounds(&master, &[], &notes, &[], params, &setup, &play, &delta).unwrap();
         let skills = luck_skills(&master).unwrap();
-        let compact =
-            luck_score_bounds_internal(&master, &skills, &[], &notes, &[], params, &setup, &play, &delta, None, false)
-                .unwrap();
+        let compact = luck_score_bounds_internal(
+            &master,
+            &skills,
+            &[],
+            &notes,
+            &[],
+            params,
+            &setup,
+            &play,
+            &delta,
+            None,
+            false,
+            None,
+        )
+        .unwrap();
         assert!(compact.queries.is_empty() && compact.final_notes.is_empty());
         assert_eq!(compact.final_mean.lower, full.final_mean.lower);
         assert_eq!(compact.final_mean.upper, full.final_mean.upper);

@@ -649,6 +649,37 @@ pub struct Caches {
     pub bonus_rows_refused: u64,
     /// Rush entry windows by (spec, masks).
     pub rush_windows: CacheUse,
+    /// Certified lottery curves of LUCK lives, shared across performance orders and teams.
+    pub luck_curves: LuckCurves,
+}
+
+/// Use of the certified lottery-curve cache.
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LuckCurves {
+    pub usage: CacheUse,
+    /// The largest total key size held.
+    pub peak_key_bytes: usize,
+    /// Diagnostic builds only: the reduced native recordings (run for every lookup) and the propagations of the
+    /// curves that missed.
+    pub record_ms: f64,
+    pub propagate_ms: f64,
+}
+
+impl LuckCurves {
+    pub(crate) fn record(&mut self, stats: ournotes_sim::live::full::LuckDpCacheStats) {
+        *self = Self {
+            usage: CacheUse {
+                lookups: stats.lookups,
+                hits: stats.hits,
+                evictions: stats.evictions,
+                peak_entries: stats.peak_entries,
+            },
+            peak_key_bytes: stats.peak_key_bytes,
+            record_ms: stats.record_ms,
+            propagate_ms: stats.propagate_ms,
+        };
+    }
 }
 
 /// Memory of the running program when the document was written.

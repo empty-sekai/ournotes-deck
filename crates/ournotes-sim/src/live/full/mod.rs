@@ -58,9 +58,9 @@ mod luck;
 mod luck_dp;
 mod luck_exact;
 pub use luck_dp::{
-    LuckDpCertifiedResult, LuckDpResult, luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified,
-    luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events,
-    luck_rush_dp_with_ranking,
+    LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, luck_has_judgement_conversion, luck_rush_dp,
+    luck_rush_dp_certified, luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_ranking,
+    luck_rush_dp_with_events, luck_rush_dp_with_ranking,
 };
 pub use luck_exact::{
     LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactStats,
@@ -69,7 +69,7 @@ pub use luck_exact::{
 mod luck_score_bounds;
 pub use luck_score_bounds::{
     LuckScoreBounds, LuckScoreSummary, luck_score_bounds, luck_score_bounds_with_ranking,
-    luck_score_summary_with_ranking, prepare_lottery_free,
+    luck_score_summary_with_curves, luck_score_summary_with_ranking, prepare_lottery_free,
 };
 #[cfg(feature = "search-diagnostics")]
 pub use luck_score_bounds::{LuckScoreProfile, take_luck_score_profile};

@@ -525,11 +525,13 @@ pub fn evaluate_orders(
 
 /// The actual all-path LUCK scorer in a normal native or WASM build. Performers are permuted before constructing
 /// the model; external rank arrivals, clock data and every other live parameter remain the declared context.
+/// `curves` shares lottery curves across the orders and with other calls.
 pub fn evaluate_luck_context(
     master: &ournotes_sim::master::Master,
     skills: &ournotes_sim::live::full::LuckSkills,
     input: &super::expectation::FiniteSeedContext,
     map: &PayoffMap,
+    mut curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
     cancelled: impl FnMut() -> bool,
 ) -> Result<Option<CertifiedEvaluation>, Error> {
     let setup = input.gekisou.as_ref().ok_or_else(|| invalid("LUCK requires Gekisou context"))?;
@@ -537,7 +539,7 @@ pub fn evaluate_luck_context(
         map,
         |order| {
             let performers = order.map(|slot| input.performers[slot].clone());
-            let summary = ournotes_sim::live::full::luck_score_summary_with_ranking(
+            let summary = ournotes_sim::live::full::luck_score_summary_with_curves(
                 master,
                 skills,
                 &performers,
@@ -548,6 +550,7 @@ pub fn evaluate_luck_context(
                 &input.play,
                 &input.delta_times,
                 input.rank_confirmations.as_deref(),
+                curves.as_deref_mut(),
             )?;
             let support = (summary.final_support.lower, summary.final_support.upper);
             let mean = F64Interval::new(summary.final_mean.lower, summary.final_mean.upper)?
