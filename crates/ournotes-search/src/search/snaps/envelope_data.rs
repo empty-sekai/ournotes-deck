@@ -37,6 +37,8 @@ pub(super) struct Coef {
 /// judgement percents are those of that reach, never above the pool-wide ones of `Coef`.
 #[derive(Clone, Debug)]
 pub(super) struct Fine {
+    /// Native frame mapping shared by candidate and compiled factor-overlap bounds.
+    pub(super) score_frames: ScoreFrames,
     /// Every possible conversion preserves the LUCK input class in all LUCK ranges.
     pub(super) rush_eligible: bool,
     /// Raw judgement of each entry.

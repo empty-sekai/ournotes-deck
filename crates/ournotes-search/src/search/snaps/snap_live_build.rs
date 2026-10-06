@@ -623,6 +623,7 @@ impl<'a> SnapLive<'a> {
             }
         }
         let mut fine = Fine {
+            score_frames: ScoreFrames::new(&setup.params),
             rush_eligible: rush::eligible(&env, &entries),
             raw: order.iter().map(|&i| entries[i].2 as u8).collect(),
             group: Vec::with_capacity(ne),
@@ -905,10 +906,7 @@ impl<'a> SnapLive<'a> {
         {
             fine.exec_profile = exec.e.clone();
         }
-        let snapshot_frame_limit = fine.network_ranking.then(|| {
-            let length = setup.params.score_music_length_ms.filter(|&l| l != 0).unwrap_or(setup.params.music_length_ms);
-            get_frame(length).wrapping_add(50).max(1) - 1
-        });
+        let snapshot_frame_limit = fine.network_ranking.then_some(fine.score_frames.last());
         let geo = Geo { frames: &frames, times: &coef.times, exec: &exec, snapshot_frame_limit };
         let mut contrib: Vec<Vec<[Contrib; 5]>> = vec![Vec::new(); n];
         // command and factor totals for the drift margin: per position, the largest over members and classes
