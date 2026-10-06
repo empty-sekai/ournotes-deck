@@ -600,7 +600,7 @@ fn compacted_note_factors_keep_native_rounding_for_every_joint_bucket() {
     calc.combo_table = Some(
         crate::live::score::ComboTable::build([
             (crate::live::score::COMBO as i64, 0, 0.29999998),
-            (crate::live::score::GEKISOU_COMBO as i64, 0, 0.69999999),
+            (crate::live::score::GEKISOU_COMBO as i64, 0, f32::from_bits(0x3f33_3333)),
         ])
         .unwrap(),
     );
