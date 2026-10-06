@@ -69,6 +69,24 @@ impl Default for EffectState {
     }
 }
 
+impl EffectState {
+    /// A timed finish that a later update can file at an earlier music time.
+    /// The elapsed-time comparison rounds to binary32 before deciding whether
+    /// this timestamp has passed. Its unwrapped value is nondecreasing in
+    /// nonnegative extensions.
+    pub(super) fn pending_finish_ms(&self, act: f32) -> Option<i32> {
+        if !matches!(self.state, EXECUTE_FRAME | EXECUTING) || act.is_nan() || act <= 0.0 {
+            return None;
+        }
+        let duration = act * 1000f32 + self.extended_ms;
+        // No rounded i32 elapsed time is strictly above this duration.
+        if duration.is_nan() || duration >= i32::MAX as f32 {
+            return None;
+        }
+        Some(self.execute_ms.wrapping_add(ceil_to_i32(duration)))
+    }
+}
+
 /// The frame values the updaters read.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FrameInput {
@@ -407,6 +425,8 @@ impl ConditionSkillUpdater {
                 c.move_positions(map);
             }
         }
+        // The position shift can cross the signed boundary of a wrapped effect key.
+        self.sorted.sort_by_key(|&e| self.effects[e].effect_id);
         for u in &mut self.updaters {
             if let Some(c) = u.release.as_mut() {
                 c.move_positions(map);

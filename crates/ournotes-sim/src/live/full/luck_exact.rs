@@ -4,12 +4,19 @@
 //! A law is returned after every positive-mass branch has terminated and its masses sum to one.
 use super::{GekisouSetup, LiveModel, LiveNote, LiveParams, LivePlay, Performer};
 use crate::{Error, live::random::LiveRandom, master::Master, replay::RankConfirmation};
-use std::{collections::BTreeMap, rc::Rc};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    fmt::{self, Write},
+    rc::Rc,
+};
 
 /// Distance between complete frame checkpoints. An interrupted frame is replayed from the latest checkpoint.
 const CHECKPOINT_FRAMES: usize = 256;
 const MAX_BRANCH_DEPTH: usize = 32;
 const MAX_ORDER_RUNS: u64 = 32_768;
+const MAX_CACHED_LAWS: usize = 64;
+const MAX_CACHED_BYTES: usize = 32 * 1024 * 1024;
+const MAX_IDENTITY_BYTES: usize = 512 * 1024;
 
 /// A request shares this work allowance across all candidate orders. Work exhaustion is not a proof.
 #[derive(Clone, Debug)]
@@ -129,13 +136,157 @@ fn declined(stats: LuckExactStats, why: LuckExactDecline) -> LuckExactAttempt {
     LuckExactAttempt { law: None, stats, decline: Some(why) }
 }
 
-/// Enumerate the full nominal law of ONE specified performer order within an explicit finite work allowance.
+struct CachedLaw {
+    identity: String,
+    law: LuckExactLaw,
+    bytes: usize,
+}
+
+/// Complete nominal laws for orders of one immutable simulation context.
 ///
-/// Only the native base-point and bonus LUCK draws are intercepted. Any other random draw, including a
-/// probability skill that happens to return a constant, declines this backend. Lottery probabilities come
-/// from the actual native binary32-buffed integer tables at each draw, independently conditional on the past.
-/// Unsupported or over-budget orders publish no atoms. Ordinary invalid input/native execution errors remain
-/// errors; failing paths are never discarded and the surviving mass is never renormalized.
+/// Orders share a law only when their fully initialized models have equal state. The context borrows
+/// every input that can affect subsequent frames. Entry and payload limits bound retained laws; a
+/// capacity of zero evaluates each order independently. Cache hits execute no frames or replay segments.
+pub struct LuckExactSession<'a> {
+    master: &'a Master,
+    notes: &'a [LiveNote],
+    events: &'a [(i32, i32)],
+    params: LiveParams,
+    setup: &'a GekisouSetup,
+    play: &'a LivePlay,
+    delta_times: &'a [f32],
+    ranking: Option<&'a [RankConfirmation]>,
+    capacity: usize,
+    cached_bytes: usize,
+    laws: VecDeque<CachedLaw>,
+}
+
+impl<'a> LuckExactSession<'a> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        master: &'a Master,
+        notes: &'a [LiveNote],
+        events: &'a [(i32, i32)],
+        params: LiveParams,
+        setup: &'a GekisouSetup,
+        play: &'a LivePlay,
+        delta_times: &'a [f32],
+        ranking: Option<&'a [RankConfirmation]>,
+        cache_entries: usize,
+    ) -> Result<Self, Error> {
+        if delta_times.len() != play.frames.len() {
+            return Err(Error::Input("one delta time per frame".into()));
+        }
+        Ok(Self {
+            master,
+            notes,
+            events,
+            params,
+            setup,
+            play,
+            delta_times,
+            ranking,
+            capacity: cache_entries.min(MAX_CACHED_LAWS),
+            cached_bytes: 0,
+            laws: VecDeque::new(),
+        })
+    }
+
+    pub fn law(
+        &mut self,
+        deck: &[Performer],
+        budget: &mut LuckExactBudget,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<LuckExactAttempt, Error> {
+        let stats = LuckExactStats::default();
+        if cancelled() {
+            return Ok(declined(stats, LuckExactDecline::Cancelled));
+        }
+        if self.laws.is_empty()
+            && (budget.exhausted() || self.play.frames.len() as u128 > budget.remaining_frames as u128)
+        {
+            return Ok(declined(stats, LuckExactDecline::WorkBudget));
+        }
+        let mut fresh = if let Some(ranking) = self.ranking {
+            let mut model =
+                LiveModel::new_gekisou_external(self.master, deck, self.notes, self.events, self.params, self.setup)?;
+            model.set_rank_confirmation_timeline(ranking)?;
+            model
+        } else {
+            LiveModel::new_gekisou(self.master, deck, self.notes, self.events, self.params, self.setup)?
+        };
+        if fresh.draws() != 0 {
+            return Ok(declined(stats, LuckExactDecline::UnhandledRandom));
+        }
+        // These constructors compile owned condition checkers and initialize score recording to None.
+        // Their complete derived Debug state includes resolved formation predicates and cumulative
+        // counts. Finite float formatting is round-tripping and preserves signed zero. The identity is
+        // local to this context and executable; no hash or persistent representation establishes equality.
+        let identity = (self.capacity != 0).then(|| initialized_identity(&mut fresh)).flatten();
+        if cancelled() {
+            return Ok(declined(stats, LuckExactDecline::Cancelled));
+        }
+        if let Some(identity) = &identity
+            && let Some(cached) = self.laws.iter().find(|cached| &cached.identity == identity)
+        {
+            return Ok(LuckExactAttempt { law: Some(cached.law.clone()), stats, decline: None });
+        }
+        let result = enumerate_law(fresh, self.play, self.delta_times, budget, &mut cancelled)?;
+        if let (Some(identity), Some(law)) = (identity, &result.law) {
+            let bytes = identity.len() + law.atoms.len() * std::mem::size_of::<LuckExactAtom>();
+            if bytes <= MAX_CACHED_BYTES {
+                while self.laws.len() >= self.capacity || self.cached_bytes + bytes > MAX_CACHED_BYTES {
+                    self.cached_bytes -= self.laws.pop_front().expect("retained law").bytes;
+                }
+                self.cached_bytes += bytes;
+                self.laws.push_back(CachedLaw { identity, law: law.clone(), bytes });
+            }
+        }
+        Ok(result)
+    }
+}
+
+fn initialized_identity(model: &mut LiveModel) -> Option<String> {
+    // These two lookup tables use randomized hash iteration. Include all entries in sorted order and
+    // retain their original storage for execution. All other model maps use deterministic hashing.
+    let notes = std::mem::take(&mut model.score.calc.note_factor_percent);
+    let judgements = std::mem::take(&mut model.score.calc.judgement_score_factor_percent);
+    let ordered_notes: BTreeMap<_, _> = notes.iter().collect();
+    let ordered_judgements: BTreeMap<_, _> = judgements.iter().collect();
+    let identity = state_identity(&(&*model, ordered_notes, ordered_judgements));
+    model.score.calc.note_factor_percent = notes;
+    model.score.calc.judgement_score_factor_percent = judgements;
+    identity
+}
+
+// Every reachable model type derives Debug. Oversized and opaque states simply use independent replay.
+fn state_identity(state: &impl fmt::Debug) -> Option<String> {
+    struct Bounded(String);
+    impl Write for Bounded {
+        fn write_str(&mut self, value: &str) -> fmt::Result {
+            if self.0.len().saturating_add(value.len()) > MAX_IDENTITY_BYTES {
+                return Err(fmt::Error);
+            }
+            self.0.push_str(value);
+            Ok(())
+        }
+    }
+    let mut identity = Bounded(String::new());
+    write!(identity, "{state:?}").ok()?;
+    // NaN formatting omits payload and sign; a borrowed RefCell omits its value.
+    (!identity.0.contains("NaN") && !identity.0.contains("<borrowed>")).then_some(identity.0)
+}
+
+/// Enumerate the full nominal law of one specified performer order within an explicit work allowance.
+///
+/// Lottery probabilities use the current binary32-buffed integer tables, independently conditional on
+/// the past. Base-point and bonus LUCK draws provide the semantic event partition. A checkpoint retains
+/// every controller, score command, life value, condition updater and random draw count at a completed
+/// frame. Sibling outcomes share that checkpoint and replay its suffix with the complete selected
+/// outcome prefix. Deterministic stretches can contain any number of notes or frames within the work allowance.
+///
+/// A complete law accounts for every positive-mass path. Unsupported draws, arithmetic exhaustion and
+/// interrupted work produce a declined attempt; ordinary input or simulation errors remain errors.
 #[allow(clippy::too_many_arguments)]
 pub fn luck_exact_law_with_ranking(
     master: &Master,
@@ -148,27 +299,25 @@ pub fn luck_exact_law_with_ranking(
     delta_times: &[f32],
     ranking: Option<&[RankConfirmation]>,
     budget: &mut LuckExactBudget,
+    cancelled: impl FnMut() -> bool,
+) -> Result<LuckExactAttempt, Error> {
+    LuckExactSession::new(master, notes, events, params, setup, play, delta_times, ranking, 0)?
+        .law(deck, budget, cancelled)
+}
+
+fn enumerate_law(
+    mut fresh: LiveModel,
+    play: &LivePlay,
+    delta_times: &[f32],
+    budget: &mut LuckExactBudget,
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<LuckExactAttempt, Error> {
     let mut stats = LuckExactStats::default();
-    if delta_times.len() != play.frames.len() {
-        return Err(Error::Input("one delta time per frame".into()));
-    }
     if cancelled() {
         return Ok(declined(stats, LuckExactDecline::Cancelled));
     }
-    if budget.exhausted() {
+    if budget.exhausted() || play.frames.len() as u128 > budget.remaining_frames as u128 {
         return Ok(declined(stats, LuckExactDecline::WorkBudget));
-    }
-    let mut fresh = if let Some(ranking) = ranking {
-        let mut model = LiveModel::new_gekisou_external(master, deck, notes, events, params, setup)?;
-        model.set_rank_confirmation_timeline(ranking)?;
-        model
-    } else {
-        LiveModel::new_gekisou(master, deck, notes, events, params, setup)?
-    };
-    if fresh.draws() != 0 {
-        return Ok(declined(stats, LuckExactDecline::UnhandledRandom));
     }
     fresh.set_random(LiveRandom::with_nominal_prefix(Vec::new()));
     let mut pending = vec![(Vec::<usize>::new(), LuckExactMass::ONE, 0usize, Rc::new(fresh))];
@@ -215,6 +364,9 @@ pub fn luck_exact_law_with_ranking(
             }
             if prefix.len() >= MAX_BRANCH_DEPTH {
                 return Ok(declined(stats, LuckExactDecline::BranchDepth));
+            }
+            if branch.len().saturating_add(pending.len()) > MAX_ORDER_RUNS as usize {
+                return Ok(declined(stats, LuckExactDecline::WorkBudget));
             }
             // Branches are disjoint and exhaustive by nominal_lottery's exact partition check. Push in
             // reverse so replay order is stable in the original semantic table order.
@@ -291,15 +443,26 @@ mod tests {
             "MasterLiveJudgementTiming":[{"_id":1,"_noteJudgementType":1,"_noteSimulateJudgement":5,"_afterMs":0}],
             "MasterLiveGekisouLuckBasePoint":[{"_id":1,"_noteCategory":0,"_noteSimulateJudgement":5,"_weight":1,"_basePoint":10}],
             "MasterLiveGekisouLuckBonusLot":lots,
-            // Only the late-SKILL test equips this support. Parse these rows with the master so its
-            // lookup indexes include them; mutating the public row vectors would not rebuild indexes.
+            // Each support's conditions are parsed with the master and its lookup indexes.
             "MasterSkillCondition":[
                 {"_id":1,"_conditionType":7000,"_conditionValues":[0]},
-                {"_id":2,"_conditionType":4011,"_conditionValues":[50]}],
-            "MasterSkillConditionSet":[{"_id":1,"_group":1,"_conditionIds":[1,2]}],
-            "MasterSupportSkillEffect":[{"_id":1,"_supportSkillID":1,"_level":1,
-                "_skillTriggerType":1,"_skillTriggerConditionGroup":1,"_skillEffectType":2001,
-                "_activationTimeSecond":1,"_effectValue":0}]
+                {"_id":2,"_conditionType":4011,"_conditionValues":[50]},
+                {"_id":3,"_conditionType":5000,"_conditionTargetIDs":[1]}],
+            "MasterSkillTarget":[{"_id":1,"_characterID":7}],
+            "MasterSkillConditionSet":[
+                {"_id":1,"_group":1,"_conditionIds":[1,2]},
+                {"_id":2,"_group":2,"_conditionIds":[1]},
+                {"_id":3,"_group":3,"_conditionIds":[3]}],
+            "MasterSupportSkillEffect":[
+                {"_id":1,"_supportSkillID":1,"_level":1,
+                    "_skillTriggerType":1,"_skillTriggerConditionGroup":1,"_skillEffectType":2001,
+                    "_activationTimeSecond":1,"_effectValue":0},
+                {"_id":2,"_supportSkillID":2,"_level":1,
+                    "_skillTriggerType":1,"_skillTriggerConditionGroup":2,"_skillEffectType":2000,
+                    "_activationTimeSecond":1,"_effectValue":5000},
+                {"_id":3,"_supportSkillID":3,"_level":1,
+                    "_skillTriggerType":1,"_skillTriggerConditionGroup":3,"_skillEffectType":2000,
+                    "_activationTimeSecond":1,"_effectValue":5000}]
         });
         let texts: Vec<_> = tables
             .as_object()
@@ -454,6 +617,117 @@ mod tests {
     }
 
     #[test]
+    fn initialized_identity_preserves_float_bits_and_complete_lookup_tables() {
+        let (master, notes, params, setup, _, _) = fixture();
+        let mut model = LiveModel::new_gekisou(&master, &[], &notes, &[], params, &setup).unwrap();
+        let values32 = [
+            0.0f32,
+            -0.0,
+            f32::from_bits(1),
+            f32::MIN_POSITIVE,
+            1.0,
+            f32::from_bits(1.0f32.to_bits() + 1),
+            f32::MAX,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
+        let mut keys = std::collections::BTreeSet::new();
+        for value in values32 {
+            model.score.calc.assist_factor = value;
+            assert!(keys.insert(initialized_identity(&mut model).unwrap()));
+            assert_eq!(state_identity(&value).unwrap().parse::<f32>().unwrap().to_bits(), value.to_bits());
+        }
+        for bits in [0x7fc00000, 0x7fc00001, 0xffc00001] {
+            model.score.calc.assist_factor = f32::from_bits(bits);
+            assert!(initialized_identity(&mut model).is_none());
+        }
+        let values64 = [
+            0.0f64,
+            -0.0,
+            f64::from_bits(1),
+            f64::MIN_POSITIVE,
+            1.0,
+            f64::from_bits(1.0f64.to_bits() + 1),
+            f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        let keys: std::collections::BTreeSet<_> = values64
+            .iter()
+            .map(|value| {
+                let key = state_identity(value).unwrap();
+                assert_eq!(key.parse::<f64>().unwrap().to_bits(), value.to_bits());
+                key
+            })
+            .collect();
+        assert_eq!(keys.len(), values64.len());
+        assert!(state_identity(&f64::from_bits(0xfff8000000000001)).is_none());
+        assert!(state_identity(&vec![0; MAX_IDENTITY_BYTES]).is_none());
+        model.score.calc.assist_factor = 1.0;
+        model.score.calc.note_factor_percent.extend([(2, 90), (3, 80)]);
+        let key = initialized_identity(&mut model).unwrap();
+        let entries: Vec<_> = model.score.calc.note_factor_percent.drain().collect();
+        model.score.calc.note_factor_percent.extend(entries.into_iter().rev());
+        assert_eq!(initialized_identity(&mut model).unwrap(), key);
+        model.score.calc.note_factor_percent.insert(2, 91);
+        assert_ne!(initialized_identity(&mut model).unwrap(), key);
+        let value = std::cell::RefCell::new(1);
+        let _borrow = value.borrow_mut();
+        assert!(state_identity(&value).is_none());
+    }
+
+    #[test]
+    fn complete_laws_share_only_equal_initialized_models_in_their_fixed_context() {
+        let (master, notes, params, setup, play, delta) = fixture();
+        let mut session = LuckExactSession::new(&master, &notes, &[], params, &setup, &play, &delta, None, 1).unwrap();
+        let mut budget = LuckExactBudget::default();
+        let deck = [Performer { character_id: 1, support_skills: vec![(2, 1)], ..Default::default() }];
+        let first = session.law(&deck, &mut budget, || false).unwrap();
+        assert!(first.stats.frames > 0);
+        let mut equivalent = deck.clone();
+        equivalent[0].character_id = 2;
+        let hit = session.law(&equivalent, &mut budget, || false).unwrap();
+        assert_eq!(hit.stats, LuckExactStats::default());
+        assert_eq!(hit.law.unwrap().atoms(), first.law.as_ref().unwrap().atoms());
+        let independent = luck_exact_law_with_ranking(
+            &master,
+            &equivalent,
+            &notes,
+            &[],
+            params,
+            &setup,
+            &play,
+            &delta,
+            None,
+            &mut LuckExactBudget::default(),
+            || false,
+        )
+        .unwrap();
+        assert_eq!(independent.law.unwrap().atoms(), first.law.as_ref().unwrap().atoms());
+        let cancelled = session.law(&deck, &mut budget, || true).unwrap();
+        assert_eq!(cancelled.decline, Some(LuckExactDecline::Cancelled));
+        assert!(cancelled.law.is_none());
+        let mut empty = LuckExactBudget { remaining_runs: 0, remaining_frames: 0 };
+        assert!(session.law(&deck, &mut empty, || false).unwrap().law.is_some());
+
+        let matching = [Performer { character_id: 7, support_skills: vec![(3, 1)], ..Default::default() }];
+        let mut other = matching.clone();
+        other[0].character_id = 8;
+        let matched = session.law(&matching, &mut budget, || false).unwrap();
+        let unmatched = session.law(&other, &mut budget, || false).unwrap();
+        assert!(matched.stats.frames > 0 && unmatched.stats.frames > 0);
+        assert_ne!(matched.law.unwrap().atoms(), unmatched.law.unwrap().atoms());
+        assert_eq!(session.laws.len(), 1);
+        assert!(session.cached_bytes <= MAX_CACHED_BYTES);
+        let evicted = session.law(&deck, &mut empty, || false).unwrap();
+        assert_eq!(evicted.decline, Some(LuckExactDecline::WorkBudget));
+        assert!(evicted.law.is_none());
+        assert_eq!(session.laws.len(), 1);
+        let mut separate = LuckExactSession::new(&master, &notes, &[], params, &setup, &play, &delta, None, 1).unwrap();
+        assert_eq!(separate.law(&other, &mut empty, || false).unwrap().decline, Some(LuckExactDecline::WorkBudget));
+    }
+
+    #[test]
     fn complete_two_draw_law_matches_the_full_cartesian_oracle_with_rank_arrival() {
         let (master, notes, params, setup, play, delta) = fixture();
         let ranking = [RankConfirmation { frame: 0, range: 0, rank: 1, percent: 23 }];
@@ -473,7 +747,6 @@ mod tests {
         .unwrap();
         let law = result.law.expect("finite two-draw law");
         assert_eq!(result.stats.terminal_paths, 4);
-        assert_eq!(result.stats.replay_runs, 7);
         // Independent fixed Cartesian enumeration: the first bonus is consumed, the second is pre-drawn.
         // Both are fair Miss/Critical tables. No adaptive branch discovery or law accumulator is reused.
         let mut counts = BTreeMap::<(i32, i32), u128>::new();
@@ -494,6 +767,216 @@ mod tests {
         }
     }
 
+    fn cartesian_counts(
+        master: &Master,
+        notes: &[LiveNote],
+        params: LiveParams,
+        setup: &GekisouSetup,
+        play: &LivePlay,
+        delta: &[f32],
+        lottery: (u32, [u128; 2]),
+    ) -> BTreeMap<(i32, i32), u128> {
+        let (draws, weights) = lottery;
+        let mut counts = BTreeMap::new();
+        for bits in 0..1usize << draws {
+            let prefix = (0..draws).map(|index| (bits >> index) & 1).collect();
+            let weight: u128 = (0..draws).map(|index| weights[(bits >> index) & 1]).product();
+            let mut model = LiveModel::new_gekisou(master, &[], notes, &[], params, setup).unwrap();
+            model.run_with_random(play, delta, LiveRandom::with_nominal_prefix(prefix)).unwrap();
+            assert!(model.random.nominal_prefix_consumed() && model.random.nominal_covers_draws());
+            *counts.entry((model.score(), model.current_life())).or_default() += weight;
+        }
+        counts
+    }
+
+    #[test]
+    fn several_nominal_draws_in_one_frame_preserve_the_weighted_joint_law() {
+        let (mut master, mut notes, mut params, setup, mut play, delta) = fixture();
+        for row in &mut master.gekisou_luck_bonus_lots {
+            row.weight = if row.lot_result == 3 { 3 } else { 1 };
+        }
+        notes.push(LiveNote { note_id: 2, ..notes[0] });
+        play.frames[1].judged.push(JudgedNote { note_id: 2, judgement: 5, judgement_time_ms: 100 });
+        params.converted_note_count = 2;
+        let result = luck_exact_law_with_ranking(
+            &master,
+            &[],
+            &notes,
+            &[],
+            params,
+            &setup,
+            &play,
+            &delta,
+            None,
+            &mut LuckExactBudget::default(),
+            || false,
+        )
+        .unwrap();
+        let counts = cartesian_counts(&master, &notes, params, &setup, &play, &delta, (3, [3, 1]));
+        let law = result.law.expect("complete three-draw law");
+        assert_eq!(result.stats.terminal_paths, 8);
+        assert_eq!(law.atoms.len(), counts.len());
+        for atom in law.atoms() {
+            assert_eq!(atom.mass, LuckExactMass::reduced(counts[&(atom.score, atom.final_life)], 64).unwrap());
+        }
+    }
+
+    #[test]
+    fn long_schedules_follow_the_nominal_event_partition() {
+        let (master, mut notes, mut params, setup, mut play, _) = fixture();
+        notes.extend((0..40).map(|index| LiveNote {
+            note_id: index + 2,
+            note_operate_type: 1,
+            judgement_type: 1,
+            time_ms: 3300 + index * 100,
+        }));
+        params.converted_note_count = notes.len() as i32;
+        params.music_length_ms = 8200;
+        play.frames = (0..=800)
+            .map(|index| PlayFrame {
+                time_ms: index * 10,
+                judged: notes
+                    .iter()
+                    .filter(|note| note.time_ms == index * 10)
+                    .map(|note| JudgedNote { note_id: note.note_id, judgement: 5, judgement_time_ms: note.time_ms })
+                    .collect(),
+            })
+            .collect();
+        let delta = vec![0.01; play.frames.len()];
+        assert!(LuckExactBudget::admits_chart(notes.len(), play.frames.len()));
+        let mut budget = LuckExactBudget::default();
+        let initial = budget.clone();
+        let result = luck_exact_law_with_ranking(
+            &master,
+            &[],
+            &notes,
+            &[],
+            params,
+            &setup,
+            &play,
+            &delta,
+            None,
+            &mut budget,
+            || false,
+        )
+        .unwrap();
+        let counts = cartesian_counts(&master, &notes, params, &setup, &play, &delta, (2, [1, 1]));
+        let law = result.law.expect("complete long-schedule law");
+        assert_eq!(result.stats.terminal_paths, 4);
+        assert_eq!(result.stats.replay_runs, initial.remaining_runs - budget.remaining_runs);
+        assert_eq!(result.stats.frames, initial.remaining_frames - budget.remaining_frames);
+        assert_eq!(law.atoms.len(), counts.len());
+        for atom in law.atoms() {
+            assert_eq!(atom.mass, LuckExactMass::reduced(counts[&(atom.score, atom.final_life)], 4).unwrap());
+        }
+        let mut session = LuckExactSession::new(&master, &notes, &[], params, &setup, &play, &delta, None, 1).unwrap();
+        let first = session.law(&[], &mut LuckExactBudget::default(), || false).unwrap();
+        assert_eq!(first.law.unwrap().atoms(), law.atoms());
+        let mut empty = LuckExactBudget { remaining_runs: 0, remaining_frames: 0 };
+        let reused = session.law(&[], &mut empty, || false).unwrap();
+        assert_eq!(reused.law.unwrap().atoms(), law.atoms());
+        assert_eq!(reused.stats, LuckExactStats::default());
+    }
+
+    #[test]
+    fn conditional_score_state_is_local_to_each_frame_continuation() {
+        let (master, mut notes, mut params, setup, mut play, delta) = fixture();
+        notes.push(LiveNote { note_id: 2, time_ms: 200, ..notes[0] });
+        play.frames[2].judged.push(JudgedNote { note_id: 2, judgement: 5, judgement_time_ms: 200 });
+        params.converted_note_count = 2;
+        let deck = [Performer { support_skills: vec![(2, 1)], ..Default::default() }];
+        let result = luck_exact_law_with_ranking(
+            &master,
+            &deck,
+            &notes,
+            &[],
+            params,
+            &setup,
+            &play,
+            &delta,
+            None,
+            &mut LuckExactBudget::default(),
+            || false,
+        )
+        .unwrap();
+        let mut counts = BTreeMap::<(i32, i32), u128>::new();
+        for first in 0..2 {
+            for second in 0..2 {
+                let mut oracle = LiveModel::new_gekisou(&master, &deck, &notes, &[], params, &setup).unwrap();
+                oracle.run_with_random(&play, &delta, LiveRandom::with_nominal_prefix(vec![first, second])).unwrap();
+                assert!(oracle.random.nominal_prefix_consumed() && oracle.random.nominal_covers_draws());
+                *counts.entry((oracle.score(), oracle.current_life())).or_default() += 1;
+            }
+        }
+        let law = result.law.expect("complete conditional score law");
+        assert_eq!(law.atoms.len(), counts.len());
+        for atom in law.atoms() {
+            assert_eq!(atom.mass, LuckExactMass::reduced(counts[&(atom.score, atom.final_life)], 4).unwrap());
+        }
+
+        let mut checkpoint = LiveModel::new_gekisou(&master, &deck, &notes, &[], params, &setup).unwrap();
+        checkpoint.set_random(LiveRandom::with_nominal_prefix(vec![1, 0]));
+        checkpoint.play_frames(&play, &delta, 2).unwrap();
+        assert!(checkpoint.random.nominal_prefix_consumed());
+        assert!(checkpoint.factor_state().note_score_up > 0.0);
+        let state = format!("{:?}", checkpoint.cond);
+        let factors = format!("{:?}", checkpoint.factor_state());
+        let trace = checkpoint.trace().to_vec();
+        let checkpoint = Rc::new(checkpoint);
+        let mut scores = Vec::new();
+        for _ in 0..2 {
+            let mut continuation = (*checkpoint).clone();
+            continuation.random.extend_nominal_prefix(vec![1, 0]).unwrap();
+            continuation.play_frames(&play, &delta, play.frames.len()).unwrap();
+            assert_ne!(format!("{:?}", continuation.cond), state);
+            assert_eq!(format!("{:?}", checkpoint.cond), state);
+            assert_eq!(format!("{:?}", checkpoint.factor_state()), factors);
+            assert_eq!(checkpoint.trace(), trace);
+            assert_eq!(checkpoint.frames_played(), 2);
+            scores.push(continuation.score());
+        }
+        assert_eq!(scores[0], scores[1]);
+    }
+
+    #[test]
+    fn the_semantic_path_depth_bounds_retained_frame_checkpoints() {
+        let (master, _, mut params, mut setup, mut play, _) = fixture();
+        let notes: Vec<_> = (1..=40)
+            .map(|index| LiveNote { note_id: index, note_operate_type: 1, judgement_type: 1, time_ms: index * 100 })
+            .collect();
+        params.converted_note_count = notes.len() as i32;
+        params.music_length_ms = 7000;
+        setup.fevers = vec![(0, 4500)];
+        play.frames = (0..=650)
+            .map(|index| PlayFrame {
+                time_ms: index * 10,
+                judged: notes
+                    .iter()
+                    .filter(|note| note.time_ms == index * 10)
+                    .map(|note| JudgedNote { note_id: note.note_id, judgement: 5, judgement_time_ms: note.time_ms })
+                    .collect(),
+            })
+            .collect();
+        let result = luck_exact_law_with_ranking(
+            &master,
+            &[],
+            &notes,
+            &[],
+            params,
+            &setup,
+            &play,
+            &vec![0.01; play.frames.len()],
+            None,
+            &mut LuckExactBudget::default(),
+            || false,
+        )
+        .unwrap();
+        assert_eq!(result.decline, Some(LuckExactDecline::BranchDepth));
+        assert!(result.law.is_none());
+        assert_eq!(result.stats.terminal_paths, 0);
+        assert!(result.stats.replay_runs <= 2 * MAX_BRANCH_DEPTH as u64 + 1);
+    }
+
     #[test]
     fn partial_mass_budget_and_cancellation_publish_no_law() {
         let (master, notes, params, setup, play, delta) = fixture();
@@ -512,7 +995,7 @@ mod tests {
             || false,
         )
         .unwrap();
-        assert_eq!(result.stats.terminal_paths, 1, "one completed sibling is deliberately insufficient");
+        assert_eq!(result.stats.terminal_paths, 1, "completed siblings carry only part of the probability mass");
         assert_eq!(result.decline, Some(LuckExactDecline::WorkBudget));
         assert!(result.law.is_none());
         let mut checks = 0;

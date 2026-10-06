@@ -444,6 +444,7 @@ impl GkFactors {
         overrides: (bool, bool),
         current: &[Option<usize>],
         member_cb: &[Vec<Vec<ComboBonusRow>>],
+        command_floors: &[i32],
     ) -> Result<GkFactors, Error> {
         let ne = order.len();
         let times: Vec<i32> = order.iter().map(|&i| entries[i].1.time_ms).collect();
@@ -697,7 +698,7 @@ impl GkFactors {
         }
         if let Some((snapshots, reexec)) = network.filter(|_| !ablated(ablate::RANK_BONUS)) {
             let judged: Vec<usize> = order.iter().map(|&i| entries[i].0).collect();
-            let (score_frames, floors) = rerun_floors(setup, &times, &exec_lo, &reexec);
+            let (score_frames, floors) = rerun_floors(setup, &times, &exec_lo, &reexec, command_floors);
             rv = network_rank_factors(&judged, &score_frames, &floors, &snapshots);
         }
         Ok(GkFactors { g: gv, carriers, sums, l: lv, r: rv, ranks, nobreak, exec_lo, confirm, combo: gcombo })
@@ -705,19 +706,21 @@ impl GkFactors {
 }
 
 /// The score frame of each chart time and, per play frame, the first score frame its calculations can re-execute, as
-/// [`super::score_windows::Exec`] reads them: the previous play frame's frame, the chart time of each judged note,
+/// [`super::score_windows::Exec`] reads them: the certified timer floor, the chart time of each judged note,
 /// `exec_lo`, and the frame after the start of a range whose rank bonus applies in that play frame.
-fn rerun_floors(setup: &FullSetup, times: &[i32], exec_lo: &[i32], reexec: &[(usize, i32)]) -> (Vec<i32>, Vec<i32>) {
-    let max_frame = get_frame(setup.params.music_length_ms).wrapping_add(50).max(1);
-    let clamp = |t: i32| {
-        let g = get_frame(t);
-        if g >= max_frame { max_frame - 1 } else { g.max(0) }
-    };
+fn rerun_floors(
+    setup: &FullSetup,
+    times: &[i32],
+    exec_lo: &[i32],
+    reexec: &[(usize, i32)],
+    command_floors: &[i32],
+) -> (Vec<i32>, Vec<i32>) {
+    let score_frames = ScoreFrames::new(&setup.params);
+    let clamp = |t: i32| score_frames.at(t as i64);
     let notes: std::collections::HashMap<i32, i32> = setup.notes.iter().map(|n| (n.note_id, n.time_ms)).collect();
     let mut floors = Vec::with_capacity(setup.play.frames.len());
-    let mut prev_to = 0;
     for (i, f) in setup.play.frames.iter().enumerate() {
-        let mut lo = if i == 0 { 0 } else { prev_to };
+        let mut lo = command_floors.get(i).copied().map(clamp).unwrap_or(0);
         for j in &f.judged {
             if let Some(&t) = notes.get(&j.note_id) {
                 lo = lo.min(clamp(t));
@@ -733,9 +736,196 @@ fn rerun_floors(setup: &FullSetup, times: &[i32], exec_lo: &[i32], reexec: &[(us
             }
         }
         floors.push(lo);
-        prev_to = clamp(f.time_ms);
     }
     (times.iter().map(|&t| clamp(t)).collect(), floors)
+}
+
+#[cfg(test)]
+mod timer_floor_tests {
+    use super::*;
+    use ournotes_sim::live::full::PlayFrame;
+
+    fn setup() -> FullSetup {
+        FullSetup {
+            notes: vec![LiveNote { note_id: 1, time_ms: 80, note_operate_type: 1, judgement_type: 1 }],
+            events: vec![(0, 20)],
+            play: LivePlay {
+                frames: [0, 40, 80, 120].into_iter().map(|time_ms| PlayFrame { time_ms, judged: Vec::new() }).collect(),
+                base_seed: 0,
+            },
+            params: LiveParams {
+                skill_target_music_type: 0,
+                total_power: 0,
+                music_level: 1,
+                converted_note_count: 1,
+                music_length_ms: 1000,
+                score_music_length_ms: None,
+                assist_factor: 1.0,
+            },
+            gk: None,
+        }
+    }
+
+    fn row() -> Row {
+        Row {
+            identity: RowIdentity { source: RowSource::Support, index: 0, id: 0 },
+            trigger_type: 1,
+            trigger: 0,
+            condition: 0,
+            release: 0,
+            reset: 0,
+            cumulative: 0,
+            effect_type: 2000,
+            value: 1000,
+            act: 0.12,
+            limit: 0,
+            execute_limit: 0,
+            targets: Vec::new(),
+            max_value: 0,
+            gk: false,
+            gate: 0,
+        }
+    }
+
+    #[test]
+    fn compact_timer_floor_retains_ordinary_clocks_and_music_length_clamp() {
+        let mut s = setup();
+        let mut r = row();
+        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+        r.effect_type = 15000;
+        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+        s.params.music_length_ms = 50;
+        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 50]);
+    }
+
+    #[test]
+    fn uncertified_timers_allow_reexecution_from_frame_zero() {
+        let ordinary = setup();
+        let ordinary_row = row();
+        let mut long = ordinary.clone();
+        long.play.frames[3].time_ms = (1 << 24) + 1;
+        let mut negative_frame = ordinary.clone();
+        negative_frame.play.frames[0].time_ms = -1;
+        let mut old_note = ordinary.clone();
+        old_note.notes[0].time_ms = -1;
+        let mut distant_event = ordinary.clone();
+        distant_event.events[0].1 = (1 << 24) + 1;
+        let mut distant_range = ordinary.clone();
+        distant_range.set_gekisou(
+            GekisouSetup { fevers: vec![(0, (1 << 24) + 1)], missions: vec![MISSION_COMBO] },
+            vec![0.04; 4],
+            vec![0],
+        );
+        let mut shortening = ordinary_row.clone();
+        shortening.effect_type = 15000;
+        shortening.value = -1;
+        let mut sustained = ordinary_row.clone();
+        sustained.gk = true;
+        sustained.trigger_type = 2;
+        sustained.act = 0.08;
+        let mut released = ordinary_row.clone();
+        released.release = 1;
+        released.act = 0.08;
+        for (s, r) in [
+            (&long, &ordinary_row),
+            (&negative_frame, &ordinary_row),
+            (&old_note, &ordinary_row),
+            (&distant_event, &ordinary_row),
+            (&distant_range, &ordinary_row),
+            (&ordinary, &shortening),
+            (&ordinary, &sustained),
+            (&ordinary, &released),
+        ] {
+            assert_eq!(command_floor_times(s, [r].into_iter()), [0; 4]);
+        }
+        sustained.act = 0.0;
+        assert_eq!(command_floor_times(&ordinary, [&sustained].into_iter()), [0, 0, 40, 80]);
+    }
+
+    #[test]
+    fn timers_covering_the_play_horizon_keep_compact_floors() {
+        let s = setup();
+        for (release, gk, trigger_type) in [(1, false, 1), (0, true, 2), (1, true, 2)] {
+            let mut r = row();
+            r.release = release;
+            r.gk = gk;
+            r.trigger_type = trigger_type;
+            for act in [0.12f32, 0.12f32.next_up(), 1.0] {
+                r.act = act;
+                assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+            }
+            for act in [0.12f32.next_down(), f32::MAX, f32::INFINITY] {
+                r.act = act;
+                assert_eq!(command_floor_times(&s, [&r].into_iter()), [0; 4]);
+            }
+            for act in [0.0, -1.0, f32::NEG_INFINITY, f32::NAN] {
+                r.act = act;
+                assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+            }
+        }
+    }
+
+    #[test]
+    fn timer_horizon_uses_native_binary32_duration_and_the_play_clock() {
+        let mut s = setup();
+        let mut r = row();
+        r.release = 1;
+        assert!((r.act as f64) * 1000.0 < 120.0);
+        assert_eq!(r.act * 1000f32, 120.0);
+        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+        s.params.music_length_ms = 50;
+        s.params.score_music_length_ms = Some(40);
+        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 50]);
+        s.play.frames[3].time_ms = 121;
+        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0; 4]);
+        s.play.frames[0].time_ms = 20;
+        s.events[0].1 = 0;
+        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0; 4]);
+    }
+
+    #[test]
+    fn horizon_timer_certificate_retains_clock_and_extension_requirements() {
+        let s = setup();
+        let mut r = row();
+        r.release = 1;
+        r.act = 1.0;
+        let mut extension = row();
+        extension.effect_type = 15000;
+        extension.value = 1000;
+        assert_eq!(command_floor_times(&s, [&r, &extension].into_iter()), [0, 0, 40, 80]);
+        extension.value = -1;
+        assert_eq!(command_floor_times(&s, [&r, &extension].into_iter()), [0; 4]);
+        let mut negative = s.clone();
+        negative.play.frames[0].time_ms = -1;
+        let mut decreasing = s.clone();
+        decreasing.play.frames[2].time_ms = 121;
+        let mut large = s.clone();
+        large.play.frames[3].time_ms = (1 << 24) + 1;
+        for setup in [&negative, &decreasing, &large] {
+            assert_eq!(command_floor_times(setup, [&r].into_iter()), [0; 4]);
+        }
+    }
+
+    #[test]
+    fn execution_counts_and_network_snapshots_share_the_certified_floor() {
+        let s = setup();
+        let mut r = row();
+        let compact = command_floor_times(&s, [&r].into_iter());
+        r.effect_type = 15000;
+        r.value = -1;
+        let broad = command_floor_times(&s, [&r].into_iter());
+        assert_eq!(Exec::new(&s, &[80], None, &compact).e, [4, 4, 4]);
+        assert_eq!(Exec::new(&s, &[80], None, &broad).e, [8, 6, 4]);
+        let (_, compact) = rerun_floors(&s, &[0], &[i32::MAX; 4], &[], &compact);
+        let (_, broad) = rerun_floors(&s, &[0], &[i32::MAX; 4], &[], &broad);
+        assert_eq!(compact, [0, 0, 1, 2]);
+        assert_eq!(broad, [0; 4]);
+        let snapshots = [(3, 0, Some(2), Some(3), 100)];
+        let retained = network_rank_factors(&[0], &[0], &compact, &snapshots);
+        let replayed = network_rank_factors(&[0], &[0], &broad, &snapshots);
+        assert!(retained[0] < 1.000001);
+        assert!(replayed[0] >= 2.0);
+    }
 }
 
 /// A network rank bonus: (application frame, range, range start frame, range end frame, percent).

@@ -37,6 +37,8 @@ pub(super) struct Coef {
 /// judgement percents are those of that reach, never above the pool-wide ones of `Coef`.
 #[derive(Clone, Debug)]
 pub(super) struct Fine {
+    /// Native frame mapping shared by candidate and compiled factor-overlap bounds.
+    pub(super) score_frames: ScoreFrames,
     /// Every possible conversion preserves the LUCK input class in all LUCK ranges.
     pub(super) rush_eligible: bool,
     /// Raw judgement of each entry.
@@ -70,8 +72,9 @@ pub(super) struct Fine {
     pub(super) budget: Vec<Vec<(u8, f64, Vec<u32>)>>,
     /// With Gekisou on and a combo range: what the candidate's Gekisou combo factor reads (see `GkCombo`).
     pub(super) gcombo: Option<GkCombo>,
-    /// Entries whose life is 0 in every play of a candidate that neither recovers life nor guards: the damage
-    /// already filed when the entry reads its life empties it. `z_dead` is their factor after the floor.
+    /// Entries whose life is 0 under ordinary judgement damage: the damage already filed when the entry reads
+    /// its life empties it. Recovery, guard and damage reduction are classified in `life`.
+    /// `z_dead` is the factor after the floor.
     pub(super) dead: Vec<bool>,
     /// With Gekisou on (empty otherwise): the factor of each entry's floored bound for the rank bonuses whose range
     /// score contains it, and whether its combo is bounded from the first entry on (a rank bonus that reads it
@@ -99,8 +102,8 @@ pub(super) struct Fine {
     /// Per slot, the damage of its entries at chart times up to the last play frame's time: the commands the life
     /// query of the last frame, which sets the final life, folds.
     pub(super) slot_dmg_final: Vec<i64>,
-    /// Whether `life` lists every row that can raise a performer's life (false when life recovery and guard rows
-    /// are left out of the classes because no life value can change the score).
+    /// Whether `life` lists every row that can raise a performer's life. The classes retain recovery, guard and
+    /// damage reduction when the score can depend on life.
     pub(super) life_rows_listed: bool,
     pub(super) ev_slot: [Vec<(usize, i64)>; 5],
     pub(super) until: Vec<i64>,
@@ -115,7 +118,7 @@ pub(super) enum LifeKind {
     None,
     /// Only life recovery rows triggered by the performer's own skill event, recovering this much in total there.
     Recovery(i64),
-    /// Anything else (a guard, a recovery with another trigger, a live skill row).
+    /// A guard, damage reduction, recovery with another trigger, or a live skill row.
     Other,
 }
 
@@ -269,7 +272,7 @@ pub(super) struct Cand {
     pub(super) bound: i64,
     pub(super) power: i64,
     pub(super) snaps: [Option<usize>; 5],
-    pub(super) snap_ids: [i64; 5],
+    pub(super) snap_ids: [SnapKey; 5],
     pub(super) order: [usize; 5],
     pub(super) classes: [usize; 5],
 }

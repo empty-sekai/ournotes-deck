@@ -171,3 +171,128 @@ fn live_model_matches_general_calculator() {
         assert_eq!(model.score(p, &cmds), model.score_reference(p, &pl, &cmds).unwrap(), "seed {seed}");
     }
 }
+
+fn per_order_numeric_fixture(
+    adjustment: &str,
+) -> (ournotes_sim::master::Master, ournotes_sim::cards::Roster, SearchRequest) {
+    use common::set_column;
+    use ournotes_sim::live::model::Play;
+    use ournotes_sim::live::score::PERFECT;
+    use ournotes_sim::live::skill::NotePlay;
+    use ournotes_sim::live::skip::{Chart, ChartNote};
+    use serde_json::json;
+
+    let mut rng = Rng::new(1);
+    let mut data = synth(&mut rng, 5, 1);
+    set_column(&mut data, "MasterMemberCard", &mut |row| {
+        row["_characterID"] = row["_id"].clone();
+        row["_leaderSkillID"] = json!(0);
+        for stat in ["_performancePowerMax", "_technicPowerMax", "_visualPowerMax"] {
+            row[stat] = json!(10_000);
+        }
+    });
+    set_column(&mut data, "MasterLiveSettings", &mut |row| {
+        if row["_key"] == "note_score_adjustment_factor" {
+            row["_value"] = json!(adjustment);
+        }
+    });
+    let master = data.master();
+    let mut owned = roster(&mut rng, &master);
+    owned.player = Default::default();
+    for member in &mut owned.members {
+        member.level = Some(40);
+        member.awake = 1;
+        member.rank = 1;
+    }
+    let notes =
+        vec![ChartNote { id: 1, time_ms: 1000, note_type: 1 }, ChartNote { id: 2, time_ms: 2000, note_type: 1 }];
+    let play = Play {
+        notes: notes
+            .iter()
+            .map(|note| NotePlay {
+                note_id: note.id,
+                time_ms: note.time_ms,
+                note_type: note.note_type,
+                score_type: PERFECT,
+                life: 1000,
+                combo: 0,
+            })
+            .collect(),
+        life_at_event: vec![],
+        assist: false,
+    };
+    let objective = Objective::LiveScore {
+        score_id: 1004,
+        chart: Chart { converted_note_count: 2, last_timing_note_ms: 2000, notes, skill_events: vec![] },
+        play: PlayInput::Notes(play),
+        event: false,
+        exclude_snap_skills: true,
+        gekisou: None,
+    };
+    let request = SearchRequest {
+        objective,
+        k: 1,
+        constraints: Constraints { leader: Some(1), ..Default::default() },
+        time_limit: None,
+    };
+    (master, owned, request)
+}
+
+#[test]
+fn per_order_search_rejects_negative_and_wrapping_power_rank_reversals() {
+    use ournotes_sim::error::Error;
+    for (adjustment, best_score, higher_power_score) in
+        [("-1", -166_564, -168_244), ("12800", 2_132_001_792, -2_141_451_008)]
+    {
+        let (master, owned, request) = per_order_numeric_fixture(adjustment);
+        let pool = Pool::new(&master, &owned).unwrap();
+        let (expected, evaluated) = brute_force(&pool, &request).unwrap();
+        assert_eq!(evaluated, 720);
+        assert_eq!(expected[0].snaps, [None; 5]);
+        assert_eq!((expected[0].power, expected[0].score), (152_112, Some(best_score)));
+        let higher = pool.deck([2, 3, 1, 4, 5], [Some(1), None, None, None, None], [0, 1, 2, 3, 4]).unwrap();
+        assert_eq!(evaluate(&pool, &higher, &request.objective).unwrap(), (153_647, Some(higher_power_score)));
+        assert!(higher_power_score < best_score);
+        assert!(matches!(search(&pool, &request), Err(Error::Domain(_))));
+    }
+}
+
+#[test]
+fn per_order_search_requires_a_finite_normal_score_chain() {
+    use ournotes_sim::error::Error;
+    for adjustment in ["NaN", "inf", "3e38", "1e-45"] {
+        let (master, owned, request) = per_order_numeric_fixture(adjustment);
+        let pool = Pool::new(&master, &owned).unwrap();
+        assert!(matches!(search(&pool, &request), Err(Error::Domain(_))), "adjustment {adjustment}");
+    }
+    let (master, owned, mut request) = per_order_numeric_fixture("2.5");
+    let pool = Pool::new(&master, &owned).unwrap();
+    let (expected, _) = brute_force(&pool, &request).unwrap();
+    let actual = search(&pool, &request).unwrap();
+    assert_eq!(actual.completion, Completion::Complete);
+    assert_eq!(actual.results, expected);
+    if let Objective::LiveScore { chart, .. } = &mut request.objective {
+        chart.converted_note_count = 0;
+    }
+    assert!(matches!(search(&pool, &request), Err(Error::Domain(_))));
+}
+
+#[test]
+fn per_order_search_requires_nonnegative_forward_factor_windows() {
+    use ournotes_sim::error::Error;
+    use ournotes_sim::live::skip::SkillEvent;
+    for (effect_value, duration) in [(-20_000, 5.0), (1_000, -1.0)] {
+        let (mut master, owned, mut request) = per_order_numeric_fixture("2.5");
+        for row in &mut master.live_skill_effects {
+            row.skill_condition_group = 0;
+            row.effect_value = effect_value;
+            row.activation_time_second = duration;
+        }
+        if let Objective::LiveScore { chart, play: PlayInput::Notes(play), .. } = &mut request.objective {
+            chart.skill_events.push(SkillEvent { index: 0, time_ms: 500 });
+            play.life_at_event = vec![1000; 5];
+        }
+        let pool = Pool::new(&master, &owned).unwrap();
+        assert!(matches!(search(&pool, &request), Err(Error::Domain(_))));
+    }
+}

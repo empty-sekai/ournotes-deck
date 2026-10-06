@@ -451,6 +451,12 @@ fn order_payoff(order: &OrderScoreInterval, map: &PayoffMap) -> Result<OrderPayo
     }
 }
 
+/// Work priority for one uniform-order enclosure; ranking is certified separately by the frontier.
+pub(super) fn refinement_uncertainty(order: &OrderScoreInterval, map: &PayoffMap) -> Result<f64, Error> {
+    let bounds = order_payoff(order, map)?.bounds;
+    Ok(bounds.upper() - bounds.lower())
+}
+
 pub fn aggregate_orders(mut orders: Vec<OrderScoreInterval>, map: &PayoffMap) -> Result<CertifiedEvaluation, Error> {
     if orders.len() != uniform::ORDERS {
         return Err(invalid("all 120 performance orders required"));
