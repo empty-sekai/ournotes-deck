@@ -16,6 +16,8 @@ const EVENT_ID: i64 = 7;
 
 #[path = "fixtures/luck_refinement.rs"]
 mod luck_refinement;
+#[path = "fixtures/network_snapshots.rs"]
+mod network_snapshots;
 #[path = "fixtures/numeric_domain.rs"]
 mod numeric_domain;
 #[path = "fixtures/proof_telemetry.rs"]

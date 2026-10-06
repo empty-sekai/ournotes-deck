@@ -905,7 +905,11 @@ impl<'a> SnapLive<'a> {
         {
             fine.exec_profile = exec.e.clone();
         }
-        let geo = Geo { frames: &frames, times: &coef.times, exec: &exec };
+        let snapshot_frame_limit = fine.network_ranking.then(|| {
+            let length = setup.params.score_music_length_ms.filter(|&l| l != 0).unwrap_or(setup.params.music_length_ms);
+            get_frame(length).wrapping_add(50).max(1) - 1
+        });
+        let geo = Geo { frames: &frames, times: &coef.times, exec: &exec, snapshot_frame_limit };
         let mut contrib: Vec<Vec<[Contrib; 5]>> = vec![Vec::new(); n];
         // command and factor totals for the drift margin: per position, the largest over members and classes
         let mut cmd_k = [0f64; 5];
