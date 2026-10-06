@@ -77,9 +77,13 @@ with request cache capacities of zero and 64.
 
 ## Initial proposals
 
-A certified request evaluates at most `min(K, 3)` proposals during warm start. The subsequent traversal retains
-the complete requested domain and uses the certified lower cutoff when enough candidates are available.
+A certified request evaluates at most `min(K, 3)` proposals during warm start when Snaps are available. A domain
+with a single empty Snap binding admits up to 16 proposals. Capped-score and score/life threshold targets admit
+up to 16 proposals. The subsequent traversal retains the complete requested domain and uses the
+certified lower cutoff when enough candidates are available.
 This proposal allowance controls search order, independently of the request's total work and time limits.
+The bounded targets' finite shortlist uses the request's full deadline; other certified score targets begin
+new seed proposals only in the first quarter of the remaining time.
 
 The `certified_seed_budget_preserves_the_complete_canonical_ranking` test checks the canonical result against
 exhaustive score search at several K and cache capacities, including the full candidate count.

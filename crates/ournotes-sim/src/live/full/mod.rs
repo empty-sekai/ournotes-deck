@@ -1341,6 +1341,19 @@ impl LiveModel {
         self.score.score
     }
 
+    /// Enables observation of the score-up factor used by each subsequent note
+    /// execution, including executions after an undo. Repeated calls keep prior observations.
+    pub fn track_score_up_factors(&mut self) {
+        self.score.minimum_score_up.get_or_insert(f32::INFINITY);
+    }
+
+    /// The least observed score-up factor, or `None` when observation is disabled.
+    /// An enabled calculator with no note executions returns positive infinity;
+    /// a NaN observation remains NaN across later executions and model clones.
+    pub fn minimum_score_up(&self) -> Option<f32> {
+        self.score.minimum_score_up
+    }
+
     /// The lottery-dependent note score-ups of this live's Gekisou (support) skills ([`luck_skills`]).
     pub(crate) fn luck_score_rows(&self, skills: &LuckSkills) -> Vec<LuckScoreRow> {
         let mut out = Vec::new();

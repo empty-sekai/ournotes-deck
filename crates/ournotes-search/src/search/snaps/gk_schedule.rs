@@ -791,11 +791,11 @@ mod timer_floor_tests {
     fn compact_timer_floor_retains_ordinary_clocks_and_music_length_clamp() {
         let mut s = setup();
         let mut r = row();
-        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| false), [0, 0, 40, 80]);
         r.effect_type = 15000;
-        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| false), [0, 0, 40, 80]);
         s.params.music_length_ms = 50;
-        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 50]);
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| false), [0, 0, 40, 50]);
     }
 
     #[test]
@@ -836,10 +836,10 @@ mod timer_floor_tests {
             (&ordinary, &sustained),
             (&ordinary, &released),
         ] {
-            assert_eq!(command_floor_times(s, [r].into_iter()), [0; 4]);
+            assert_eq!(command_floor_times(s, [r].into_iter(), |_| false), [0; 4]);
         }
         sustained.act = 0.0;
-        assert_eq!(command_floor_times(&ordinary, [&sustained].into_iter()), [0, 0, 40, 80]);
+        assert_eq!(command_floor_times(&ordinary, [&sustained].into_iter(), |_| false), [0, 0, 40, 80]);
     }
 
     #[test]
@@ -852,15 +852,15 @@ mod timer_floor_tests {
             r.trigger_type = trigger_type;
             for act in [0.12f32, 0.12f32.next_up(), 1.0] {
                 r.act = act;
-                assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+                assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| false), [0, 0, 40, 80]);
             }
             for act in [0.12f32.next_down(), f32::MAX, f32::INFINITY] {
                 r.act = act;
-                assert_eq!(command_floor_times(&s, [&r].into_iter()), [0; 4]);
+                assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| false), [0; 4]);
             }
             for act in [0.0, -1.0, f32::NEG_INFINITY, f32::NAN] {
                 r.act = act;
-                assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+                assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| false), [0, 0, 40, 80]);
             }
         }
     }
@@ -872,15 +872,49 @@ mod timer_floor_tests {
         r.release = 1;
         assert!((r.act as f64) * 1000.0 < 120.0);
         assert_eq!(r.act * 1000f32, 120.0);
-        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 80]);
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| false), [0, 0, 40, 80]);
         s.params.music_length_ms = 50;
         s.params.score_music_length_ms = Some(40);
-        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0, 0, 40, 50]);
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| false), [0, 0, 40, 50]);
         s.play.frames[3].time_ms = 121;
-        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0; 4]);
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| false), [0; 4]);
         s.play.frames[0].time_ms = 20;
         s.events[0].1 = 0;
-        assert_eq!(command_floor_times(&s, [&r].into_iter()), [0; 4]);
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| false), [0; 4]);
+    }
+
+    #[test]
+    fn range_start_release_timers_keep_compact_floors_when_covering_the_next_frame() {
+        let mut s = setup();
+        s.set_gekisou(GekisouSetup { fevers: vec![(30, 100)], missions: vec![MISSION_COMBO] }, vec![0.04; 4], vec![0]);
+        let mut r = row();
+        r.gk = true;
+        r.release = 1;
+        // the range starting at 30 triggers in the frame at 40; the first timed finish is filed at 120
+        r.act = 0.05;
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| true), [0, 0, 40, 80]);
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| false), [0; 4]);
+        r.trigger_type = 2;
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| true), [0; 4]);
+        r.trigger_type = 1;
+        r.act = 0.049;
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| true), [0; 4]);
+        // a start on a frame time triggers in that frame
+        s.set_gekisou(GekisouSetup { fevers: vec![(40, 100)], missions: vec![MISSION_COMBO] }, vec![0.04; 4], vec![0]);
+        r.act = 0.04;
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| true), [0, 0, 40, 80]);
+        r.act = 0.039;
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| true), [0; 4]);
+        // without a frame after the trigger frame no timed finish is filed; every range is checked
+        let fevers = vec![(30, 50), (90, 110)];
+        s.set_gekisou(GekisouSetup { fevers, missions: vec![MISSION_COMBO; 2] }, vec![0.04; 4], vec![0]);
+        r.act = 0.001;
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| true), [0; 4]);
+        r.act = 0.05;
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| true), [0, 0, 40, 80]);
+        s.set_gekisou(GekisouSetup { fevers: vec![(90, 110)], missions: vec![MISSION_COMBO] }, vec![0.04; 4], vec![0]);
+        r.act = 0.001;
+        assert_eq!(command_floor_times(&s, [&r].into_iter(), |_| true), [0, 0, 40, 80]);
     }
 
     #[test]
@@ -892,9 +926,9 @@ mod timer_floor_tests {
         let mut extension = row();
         extension.effect_type = 15000;
         extension.value = 1000;
-        assert_eq!(command_floor_times(&s, [&r, &extension].into_iter()), [0, 0, 40, 80]);
+        assert_eq!(command_floor_times(&s, [&r, &extension].into_iter(), |_| false), [0, 0, 40, 80]);
         extension.value = -1;
-        assert_eq!(command_floor_times(&s, [&r, &extension].into_iter()), [0; 4]);
+        assert_eq!(command_floor_times(&s, [&r, &extension].into_iter(), |_| false), [0; 4]);
         let mut negative = s.clone();
         negative.play.frames[0].time_ms = -1;
         let mut decreasing = s.clone();
@@ -902,7 +936,7 @@ mod timer_floor_tests {
         let mut large = s.clone();
         large.play.frames[3].time_ms = (1 << 24) + 1;
         for setup in [&negative, &decreasing, &large] {
-            assert_eq!(command_floor_times(setup, [&r].into_iter()), [0; 4]);
+            assert_eq!(command_floor_times(setup, [&r].into_iter(), |_| false), [0; 4]);
         }
     }
 
@@ -910,10 +944,10 @@ mod timer_floor_tests {
     fn execution_counts_and_network_snapshots_share_the_certified_floor() {
         let s = setup();
         let mut r = row();
-        let compact = command_floor_times(&s, [&r].into_iter());
+        let compact = command_floor_times(&s, [&r].into_iter(), |_| false);
         r.effect_type = 15000;
         r.value = -1;
-        let broad = command_floor_times(&s, [&r].into_iter());
+        let broad = command_floor_times(&s, [&r].into_iter(), |_| false);
         assert_eq!(Exec::new(&s, &[80], None, &compact).e, [4, 4, 4, 2]);
         assert_eq!(Exec::new(&s, &[80], None, &broad).e, [8, 6, 4, 2]);
         let (_, compact) = rerun_floors(&s, &[0], &[i32::MAX; 4], &[], &compact);

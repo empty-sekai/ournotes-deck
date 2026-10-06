@@ -421,6 +421,7 @@ impl JointBounds {
                     input.ok_or_else(|| unavailable("missing event input"))?,
                     *event_id,
                     matches!(metric, Metric::ClientChallengePoints { .. }),
+                    eps < 1.0,
                 )?)
             }
             _ => None,
@@ -2203,11 +2204,15 @@ impl PointBound {
         input: &EventPayoffInput,
         event_id: i64,
         challenge_points: bool,
+        nonnegative_scores: bool,
     ) -> Result<Self, Error> {
         use ournotes_sim::event::{self, EventCard};
         let context = request.objective.context().ok_or_else(|| unavailable("PT needs resolved context"))?;
         let q = context.event_request(pool.master, input, event_id)?;
         let route = point_route::PointRoute::compile(pool.master, &q, event_id, challenge_points)?;
+        if !nonnegative_scores && route.value_at_rank(pool.master, event::RANK_NONE).is_err() {
+            return Err(unavailable("signed score domain requires a defined NONE payoff"));
+        }
         let effects = [event::event_effects(pool.master, event_id)];
         let mut member = vec![0; pool.members.len()];
         for &m in domain.members() {
@@ -2289,7 +2294,7 @@ impl PointBound {
             };
             values.push(route.value_at_rank(pool.master, rank)?);
         }
-        if multiplayer {
+        if multiplayer || !nonnegative_scores {
             values.extend(signed_network_reward_values(pool.master, &route, group));
         }
         let rate = route.rate();
@@ -2312,13 +2317,12 @@ impl PointBound {
         {
             return Err(unavailable("PT intermediate wrapping requires exhaustive fallback"));
         }
-        // A negative network rank bonus can produce a negative terminal score. A concave hull built only on
-        // nonnegative score tiers cannot bound rewards at negative scores from E[S]; such a room, and a multiplayer
-        // result without a declared room score policy, keeps the maximum defined native reward over the entire i32
-        // rank domain. Every confirmed bonus nonnegative, the terminal score is nonnegative and the declared room
-        // total is nondecreasing in it, so the local-score preimages step the reward as in a solo Live.
+        // Score-tier hulls require a certified nonnegative score domain and, for
+        // multiplayer, a declared nonnegative room-score mapping. A signed score
+        // domain uses the maximum defined reward over the native rank domain.
         let signed = context.rank_confirmations.iter().flatten().any(|c| c.percent < 0);
-        let score_tiers: Option<Vec<(i64, i64)>> = (!multiplayer || (room.is_some() && !signed))
+        let score_tiers: Option<Vec<(i64, i64)>> = (nonnegative_scores
+            && (!multiplayer || (room.is_some() && !signed)))
             .then(|| scores.into_iter().zip(values).map(|(s, v)| (s, v * rate)).collect());
         let hulls = score_tiers
             .as_deref()

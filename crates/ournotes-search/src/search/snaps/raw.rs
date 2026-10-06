@@ -68,6 +68,27 @@ pub(super) fn peak(spans: &[(i64, i64, f64)], frames: Option<ScoreFrames>) -> Op
     }
     best.is_finite().then_some(best)
 }
+
+/// Closed-frame peak with an absolute binary64 allowance for endpoint grouping,
+/// prefix additions and the factor values supplied to that sweep.
+pub(super) fn certified_frame_peak(spans: &[(i64, i64, f64)], frames: ScoreFrames) -> Option<f64> {
+    let value = peak(spans, Some(frames))?;
+    let mut norm = 0.0f64;
+    for &(_, _, factor) in spans {
+        if !factor.is_finite() || factor < 0.0 {
+            return None;
+        }
+        norm = (norm + (4.0 * factor).next_up()).next_up();
+    }
+    let count = (((spans.len() as f64).next_up() * 8.0).next_up() + 8.0).next_up();
+    let alpha = (count * 2f64.powi(-53)).next_up();
+    if alpha >= 1.0 {
+        return None;
+    }
+    let gamma = (alpha / (1.0 - alpha).next_down()).next_up();
+    let result = (value + (gamma * norm).next_up()).next_up();
+    result.is_finite().then_some(result)
+}
 pub(super) struct RawEnvelope {
     base: f64,
     gains: Vec<Vec<[Packet; 5]>>,
@@ -157,6 +178,7 @@ impl RawEnvelope {
         let amplification =
             float_margin::amplification(((3.0 * ops).next_up() + representation).next_up(), 2f64.powi(-24))?;
         let drift = ((sum * 2f64.powi(-24)).next_up() * amplification).next_up();
+        let drift = float_margin::snapshot_allowance(drift, self.chain_extra > 0.0);
         // The drift is absolute in score-up units: every entry's coefficient in `base` gains at most `drift` of
         // it, the rest of the chain stays relative. The pool margin `eps` is a relative margin of its own.
         let chain = float_margin::with_chain(0.0, self.chain_extra)?;

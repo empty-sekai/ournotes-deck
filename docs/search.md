@@ -351,16 +351,27 @@ require the following certificates:
 | Score adjustment and difficulty | Adjustment is in `[2^-16, 2^16]`, difficulty in `[2^-8, 2^8]`; converted note count is positive. | Positive products and division have bounded exponents. |
 | Post-floor factors | Assist and life-zero factors are either zero or in `[2^-16, 2^16]`. | Zero stays exact; nonzero post-floor multiplication is finite and normal. |
 | Percentages and factor norm | Note and judgement percentages are integers in `[0, 10^6]`; the outward total factor norm is at most `2^16`. | Nonzero percentage factors have a positive lower bound, and intermediate upper bounds are finite. |
-| Accumulated rounding | The certified factor and chain allowance exists and `eps < 1/2`. | The rounded score-up state stays positive, not merely below an upper envelope. |
-| Power and total | The search proves the whole feasible power interval lies in nonnegative `i32`; the score envelope stays below half the `i32` range. | The power cast and the nonnegative note sum preserve order. |
+| Accumulated rounding | The certified factor and chain allowance exists. A power representative additionally has a static lower factor certificate or observes every executed note's score-up factor above `1/2`. | The representative's rounded factor state is positive throughout its exact replay. |
+| Power and total | The feasible power interval lies in nonnegative `i32`; the absolute score envelope, including floor-rounding units, stays below half the `i32` range. | Score snapshots, their differences and representative note sums are nonwrapping. |
 
-Forward nonnegative windows have ideal note-plus-judgement factor at least 1. The absolute drift certificate below
-then gives a rounded factor greater than `1/2`. For a positive input, power and the converted-note divisor are
+Forward nonnegative windows have ideal note-plus-judgement factor at least 1. A drift allowance below `1/2`
+certifies the rounded lower endpoint statically. With a larger allowance, each exact representative replay
+observes the score-up factor actually used by every note execution, including reexecutions after undo and the
+LUCK-weighted factor when applicable. Its minimum must be greater than `1/2`; NaN observations remain invalid.
+For the same members, performance order and Snap-effect classes, the command and binary32 factor state sequences
+are independent of the representative's power. The observed certificate therefore covers its entire power
+interval. A seed prefix carries its prior minimum into each independent continuation; each simulated seed must
+pass. An unsimulated seed contributes only an upper bound.
+Gekisou representatives obtained through observation also record the complete score expression and require its
+nondecreasing certificate over that power interval, including rank-snapshot differences.
+
+For a positive input, power and the converted-note divisor are
 between `1` and `2^31` after conversion to binary32; positive note and judgement percentages divided by 100 are
 between `2^-7` and `2^14`. The ordinary combo factor is in `[1,2]`, since the supported rows exclude changes to
 ordinary `combo_score_up`. With Gekisou enabled, its admitted positive combo factor is at least `2^-24` and at most
 2, and its positive luck percentage factor is greater than `2^-7` and at most 2. Disabled Gekisou factors and the
-whole-live event factor are 1. The rounded note-plus-judgement factor is below `2^17`.
+whole-live event factor are 1. The rounded note-plus-judgement factor is below `2^17`, as certified by the factor
+norm plus its absolute drift.
 
 Multiplying these exponent bounds in the native chain's order bounds every positive pre-floor intermediate by
 
@@ -564,7 +575,7 @@ that scored prefix.
 The timer floor is a separate certificate in
 [`command_floor_times`](../crates/ournotes-search/src/search/snaps/score_windows.rs). It uses the previous play-frame
 time only when frame times are nondecreasing; frame, chart-note, skill-event and Gekisou range times all lie in
-`[0, 2^24]`; extension rows are nonnegative; and every positive-duration row satisfies either of two sufficient
+`[0, 2^24]`; extension rows are nonnegative; and every positive-duration row satisfies one of three sufficient
 conditions. The first is that it has neither a release checker nor a gated Gekisou sustained updater. The interval
 makes every elapsed integer exactly representable in binary32. An execution that survives the previous update
 has `d_previous >= previous_time - exec` (strictly greater on its first update). A nonnegative extension keeps `d`
@@ -574,8 +585,15 @@ native binary32 product `d0 = act * 1000f32` is finite and `d0 >= H as f32`, whe
 the final supplied play frame. Every execution timestamp is nonnegative, so every elapsed time is at most `H`.
 Nonnegative extensions preserve `d >= d0`, making the strict timed-end predicate `d < elapsed` false throughout
 the play, including when `d0 == H as f32`. This admits release checkers and gated sustained updaters even when
-their updates skip elapsed-time checks. Release, forced-finish and first post-start checks file their end
-commands at the current frame time, before the music-length clamp. The product and comparison use native binary32
+their updates skip elapsed-time checks. The third condition admits a one-shot row with a release checker whose
+trigger group holds only at Gekisou range starts: every set that keeps a condition requires a positive range-start
+condition. Such a condition holds only in the first play frame `k` at or after a range start `s`, and the trigger
+reports `s` or the frame time, so `exec >= s`. The row's first post-start update in frame `k + 1` skips the
+elapsed-time check, and the first timed finish is filed in frame `k + 2` or later. The condition requires, for every
+range start, that no frame follows `k` or that `s + ceil(d0) >= t[k + 1]`. Then a timed finish in frame `k + 2`
+satisfies `exec + ceil(d) >= t[k + 1]`, a later timed finish follows from the surviving previous update as in the
+first condition, and a release files the current time. Release, forced-finish and first post-start checks file
+their end commands at the current frame time, before the music-length clamp. The product and comparison use native binary32
 rounding. Other pools use the conservative score-frame-zero floor.
 Every case also includes the positive music-length finish clamp, independently of the play horizon and scoring
 clock limits. This same floor feeds the execution counts and the network snapshot cancellation bounds. A wider
@@ -1193,10 +1211,14 @@ group of one set with one remaining condition can carry an earlier override time
 **Sustained windows.** A sustained Gekisou effect runs one execution at a time, each inside the span of its start
 frame (its earliest trigger time to the first later frame whose trigger fails), so its factor windows are the
 components of the union of those spans, each with the executions of its own start frames.
-For timed Gekisou and Rush rows with a release checker, nominal activation time alone supplies no upper end:
-the checker can bypass the first elapsed-time test. Their general windows retain the effect unless a separately
-proved release, such as completion of the matching range, bounds its end. Conversion registration windows use the
-same lifecycle restriction.
+For timed Gekisou and Rush rows with a release checker, the first update after the start frame `i0` skips the
+elapsed-time test. The strict timed-end test first runs in frame `i0 + 2`; when no such frame exists, or the
+activation is not positive, the window retains the effect unless a separately proved release, such as completion
+of the matching range, bounds its end. Otherwise the end is processed no later than the first frame from `i0 + 2`
+on in which the timed-end test certainly holds (the frame of the timer bound without a release, delayed to
+`i0 + 2`). A timed finish there files `exec + ceil(d)`, and a release in that frame or earlier files the current
+frame time, so the window ends at the larger of `exec + ceil(d)` and that frame's time. Conversion registration
+windows use the same frame.
 
 **Candidate suffixes.** Candidate-suffix envelopes precompute component maxima after every position in the
 ordered member/Snap choice list. For a surviving prefix, the next slot is bounded by its suffix and the other
@@ -2142,6 +2164,12 @@ can therefore be intersected with `N`, `E` and `F`, respectively. This intersect
 even when an independent positional relaxation for the prefix is looser. The additive score envelope uses the
 same `W`; the full-team and prefix certificates thus share the same arithmetic premises.
 
+For forward command windows whose play and events end by the music-length clamp, closed native-frame peaks
+also bound the ideal factor state and each partial frame difference. Independent positional maxima over those
+peaks cover every legal assignment. The compiler intersects this norm with its lifetime-factor norm. The peak
+sweep includes an outward binary64 allowance for its input factors, endpoint grouping and prefix additions.
+An inverted or uncertified clamp geometry retains the lifetime norm.
+
 The regression `late_factor_windows_retain_global_and_prefix_certificates` checks every legal fixture team,
 all 120 performance orders and each available prefix cap. Its guard timer permits historical recalculation while
 its scoring effects occupy late frames. Separate unit tests check uneven replay counts, invalid count inputs,
@@ -2159,3 +2187,32 @@ The regressions `execution_counts_include_factor_roundoff_after_the_last_note` a
 `a_settled_suffix_keeps_earlier_tail_roundoff_in_the_certificate` check both sides of that boundary, including an
 explicit add/undo pair with a nonzero residual. The sustained-COMBO fixture retains its complete class and
 per-order bound audit under the same execution geometry.
+
+### Absolute score range and observed representatives
+
+The drift allowance bounds the magnitude of a rounded factor even when its sign is unknown. A positive
+comparison chain therefore bounds the magnitude of the unrounded score. A negative first floor can add one
+unit of magnitude before the post-floor life and assist multipliers; the terminal floor can add one integer
+unit. For note `e`, let `Z_e` bound those post-floor multipliers and let `R_e` be its compiled rank multiplier,
+which also covers score snapshots and replayed rank additions. With the outward post-floor chain margin `c`,
+the absolute score guard adds
+
+    sum_e R_e * (Z_e * (1+c) + 1)
+
+to the ordinary score envelope, rounding each product and sum outward. Requiring the result below half the
+`i32` range bounds every score snapshot by the same magnitude and each snapshot difference by the full range.
+The unsigned comparison arithmetic and native integer operations consequently agree on the admitted domain.
+This range certificate applies to physical bindings pruned before simulation as well as to evaluated bindings.
+For a Gekisou snapshot expression, its negative note coefficient is at most its positive coefficient. Since the
+ideal note factor is at least one, a signed note contributes at most `(D-1)^+` through that subtraction side.
+The Gekisou score allowance therefore adds this quantity to the factor allowance `D`. Floor-rounding units in
+the signed domain use twice the positive rank multiplier, covering both sides of each snapshot difference.
+PT tier hulls additionally require a nonnegative score certificate. A factor error below one supplies that
+certificate from the ideal lower endpoint; a signed score domain uses the maximum defined reward over native
+result ranks, including a defined NONE reward.
+
+Physical team traversal consumes these upper bounds and evaluates each retained binding. Maximum-power
+representatives additionally use the positive lower-factor certificate described above. Factor observation is
+enabled only when that lower endpoint is obtained from an exact replay. The fixture
+`observed_positive_factors_certify_replayed_power_representatives` compares complete team results and the
+member-set representative with exhaustive evaluation; its diagnostic mode audits every performance-order cap.

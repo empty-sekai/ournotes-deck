@@ -168,7 +168,7 @@ impl<'a> SnapLive<'a> {
         if all_rows().any(|row| row.effect_type == 15000 && row.value < 0) {
             return Err(Error::Domain("negative live-skill duration extension".into()));
         }
-        let command_floors = command_floor_times(setup, all_rows());
+        let command_floors = command_floor_times(setup, all_rows(), |r| env.range_start_only(r.trigger));
         // A conversion can only enlarge this closure. Relax all targets/conditions/windows;
         // use a transitive closure so chains of multiple converters cannot escape it.
         for r in all_rows().filter(|r| matches!(r.effect_type, 12006 | 13005)) {
@@ -974,6 +974,10 @@ impl<'a> SnapLive<'a> {
         let mut cmd_k = [0f64; 5];
         let mut executions_k = [0f64; 5];
         let mut fac_k = [0f64; 5];
+        let mut frame_norm_k = [0f64; 5];
+        let forward_clamp = setup.params.music_length_ms > 0
+            && setup.play.frames.iter().all(|frame| frame.time_ms <= setup.params.music_length_ms)
+            && setup.events.iter().all(|&(_, time)| time <= setup.params.music_length_ms);
         // with a combo range, every deck's combo count bounds: a combo ramp window adds its factor at them
         let pool_reads = match gkf.as_ref() {
             Some(GkFactors { combo: Some(gc), sums, .. }) => {
@@ -993,6 +997,12 @@ impl<'a> SnapLive<'a> {
                     cmd_k[k] = cmd_k[k].max(cmds);
                     executions_k[k] = executions_k[k].max(if ops.is_nan() { f64::INFINITY } else { ops });
                     fac_k[k] = fac_k[k].max(fac);
+                    let frame_norm = if forward_clamp && spans.iter().all(|&(start, end, _)| start <= end) {
+                        raw::certified_frame_peak(&spans, fine.score_frames).unwrap_or(f64::INFINITY)
+                    } else {
+                        fac
+                    };
+                    frame_norm_k[k] = frame_norm_k[k].max(frame_norm);
                     let cb = if fine.gcombo.is_some() { combo_windows(&c.rows) } else { Vec::new() };
                     arr[k] = Contrib {
                         windows: w,
@@ -1114,23 +1124,17 @@ impl<'a> SnapLive<'a> {
         let e_max = exec.max as f64;
         let n_cmd = cmd_k.iter().fold(0.0f64, |sum, &x| (sum + x).next_up());
         let f_tot = fac_k.iter().fold(0.0f64, |sum, &x| (sum + x).next_up());
+        let frame_norm = frame_norm_k.iter().fold(0.0f64, |sum, &x| (sum + x).next_up()).min(f_tot);
         let executions = executions_k.iter().fold(0.0f64, |sum, &x| (sum + x).next_up()).min((e_max * n_cmd).next_up());
-        let drift = factor_drift(executions, n_cmd, f_tot)
+        let drift = factor_drift(executions, n_cmd, frame_norm)
             .ok_or_else(|| Error::Domain("factor command count has no finite drift certificate".into()))?;
         // with Gekisou on, the chain also multiplies by the Gekisou combo and luck factors, each computed in binary32
         let chain_extra = if gk_on { GK_CHAIN_EPS } else { 0.0 };
         let eps = float_margin::with_chain(drift, chain_extra)
             .ok_or_else(|| Error::Domain("nonfinite factor drift certificate".into()))?;
-        // The ideal factor at every scored note is at least one. A score upper
-        // bound alone does not establish the positive lower endpoint needed by
-        // the maximum-power representative; keep the absolute drift below it.
-        if eps >= 0.5 {
-            return Err(Error::Domain("factor drift cannot certify positive score factors".into()));
-        }
-        // Certify finite, normal float chains before either envelope or a
-        // maximum-power representative is used. With i32 power/counts,
-        // percentages <= 10^6 and factor norm <= 2^16, the pre-floor products
-        // stay inside the binary32 exponent range (zero percentages are exact).
+        // The positive comparison chain bounds either sign of the factor state.
+        // Representatives separately certify the observed lower endpoint when
+        // the pool drift does not provide it.
         let normal = |v: f32, low: f32, high: f32| v.is_finite() && low <= v && v <= high;
         let post_normal = |v: f32| v == 0.0 || normal(v, 2f32.powi(-16), 2f32.powi(16));
         let normal_chain = normal(adj, 2f32.powi(-16), 2f32.powi(16))
@@ -1139,6 +1143,7 @@ impl<'a> SnapLive<'a> {
             && post_normal(onus)
             && f_tot.is_finite()
             && (0.0..=65536.0).contains(&f_tot)
+            && ((1.0 + f_tot).next_up() + drift).next_up() < 131072.0
             && settings
                 .note_factor_percent
                 .values()
@@ -1206,7 +1211,7 @@ impl<'a> SnapLive<'a> {
                         e_max,
                         execution_limit: executions,
                         command_limit: n_cmd,
-                        factor_limit: f_tot,
+                        factor_limit: frame_norm,
                         cmd_top,
                         fac_top,
                     }
@@ -1275,14 +1280,29 @@ impl<'a> SnapLive<'a> {
             n: setup.gk.as_ref().map_or(1, |g| g.seeds.len() as i64),
             prefix_frame: first_draw,
         };
-        // the score must stay far from the 32-bit range for the per-note sum to be monotone in power
+        // Absolute scores include the asymmetric rounding of a negative note:
+        // the first floor contributes at most one post-floor unit and the final
+        // floor at most one integer unit. Rank multipliers cover these units at
+        // every score snapshot as well as at the terminal score.
         let mut u: Vec<i64> = members
             .iter()
             .map(|&m| t.a[m] + t.lead.iter().map(|row| row[m]).max().unwrap_or(0).max(0) + t.wmax[m])
             .collect();
         u.sort_unstable_by(|x, y| y.cmp(x));
         let p_max: i64 = u.iter().take(5).sum();
-        if ub(p_max, sl.global, sl.eps) >= i32::MAX as i64 / 2 {
+        let chain = float_margin::with_chain(0.0, 0.0).expect("finite post-floor chain");
+        let rounding_reserve = if sl.eps < 0.5 {
+            0.0
+        } else {
+            sl.coef.z.iter().enumerate().fold(0.0f64, |sum, (entry, &post)| {
+                let rank = sl.fine.rank.get(entry).copied().unwrap_or(1.0);
+                let rank = if gk_on && sl.eps >= 1.0 { (2.0 * rank).next_up() } else { rank };
+                let unit = ((post * (1.0 + chain).next_up()).next_up() + 1.0).next_up();
+                (sum + (unit * rank).next_up()).next_up()
+            })
+        };
+        let absolute_cap = (ub(p_max, sl.global, sl.eps) as f64 + rounding_reserve).next_up();
+        if !absolute_cap.is_finite() || absolute_cap >= (i32::MAX as f64 / 2.0).next_down() {
             return Err(Error::Domain("live score bound exceeds the 32-bit range".into()));
         }
         Ok(sl)

@@ -230,6 +230,23 @@ impl Env<'_> {
         self.master.skill_condition(items[0][0]).is_some_and(|c| c.condition_type == 4010 && c.is_positive)
     }
 
+    /// Whether a trigger group has a set that keeps a condition and every such set requires a positive Gekisou
+    /// range-start condition: it can hold only in the first play frame at or after a range's start time, and it
+    /// reports that start time or the frame time.
+    pub(super) fn range_start_only(&self, gid: i64) -> bool {
+        let Some(sets) = self.sets.get(&gid) else { return false };
+        let kept = |c: i64| self.master.skill_condition(c).is_none_or(|r| r.condition_type != 0);
+        let starts = |c: i64| self.master.skill_condition(c).is_some_and(|r| r.condition_type == 7010 && r.is_positive);
+        let mut any = false;
+        for s in sets.iter().filter(|s| s.iter().any(|&c| kept(c))) {
+            if !s.iter().any(|&c| starts(c)) {
+                return false;
+            }
+            any = true;
+        }
+        any
+    }
+
     /// Whether two condition groups are one condition each, the same except that one is negated: checked in the
     /// same frame and phase, at most one of them holds.
     pub(super) fn negations(&self, g1: i64, g2: i64) -> bool {

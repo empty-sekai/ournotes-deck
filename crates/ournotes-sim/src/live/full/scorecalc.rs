@@ -108,6 +108,7 @@ impl NoteCommand {
 
 #[derive(Clone, Debug)]
 pub(crate) struct IncrementalCalculator {
+    pub(super) minimum_score_up: Option<f32>,
     pub(super) bounds_trace: Option<BoundsTrace>,
     program: Option<Recorder>,
     pub calc: LiveScoreCalculator,
@@ -140,6 +141,7 @@ impl IncrementalCalculator {
         let max_frame = get_frame(music_length_ms) + EXTRA_FRAMES;
         let n = max_frame as usize;
         IncrementalCalculator {
+            minimum_score_up: None,
             bounds_trace: None,
             program: None,
             calc,
@@ -445,7 +447,9 @@ impl IncrementalCalculator {
             } else {
                 let n = &mut nl[self.order_n[b]];
                 let c = combo.timing_combo(n.time_ms)?;
-                let s = self.calc.note_score(c, n.life, n.time_ms, n.note_type, n.score_type, gekisou)?;
+                let (s, score_up) =
+                    self.calc.note_score_and_score_up(c, n.life, n.time_ms, n.note_type, n.score_type, gekisou)?;
+                observe_score_up(&mut self.minimum_score_up, score_up);
                 if let Some(program) = &mut self.program {
                     let kernel = Kernel::capture(
                         &self.calc,
@@ -492,6 +496,15 @@ impl IncrementalCalculator {
     }
 }
 
+fn observe_score_up(minimum: &mut Option<f32>, score_up: f32) {
+    if let Some(value) = minimum
+        && !value.is_nan()
+        && score_up.partial_cmp(value) != Some(std::cmp::Ordering::Greater)
+    {
+        *value = score_up;
+    }
+}
+
 /// The (ordinary, Gekisou) combo factors the score reads for a note at `time_ms`.
 fn combo_inputs(
     calc: &LiveScoreCalculator,
@@ -511,4 +524,24 @@ fn combo_inputs(
         return Err(Error::Unsupported("score bounds encountered nonfinite combo inputs".into()));
     }
     Ok((ordinary, gk))
+}
+
+#[cfg(test)]
+mod score_up_observation_tests {
+    use super::observe_score_up;
+
+    #[test]
+    fn observation_covers_reexecutions_and_preserves_nan() {
+        let mut minimum = None;
+        observe_score_up(&mut minimum, 0.25);
+        assert!(minimum.is_none());
+        minimum = Some(f32::INFINITY);
+        for score_up in [1.5, 0.75, 2.0, 0.5, 1.0] {
+            observe_score_up(&mut minimum, score_up);
+        }
+        assert_eq!(minimum, Some(0.5));
+        observe_score_up(&mut minimum, f32::NAN);
+        observe_score_up(&mut minimum, 0.1);
+        assert!(minimum.unwrap().is_nan());
+    }
 }

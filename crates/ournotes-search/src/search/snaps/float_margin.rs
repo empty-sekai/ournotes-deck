@@ -18,12 +18,20 @@ pub(super) fn with_chain(drift: f64, extra: f64) -> Option<f64> {
     if !drift.is_finite() || drift < 0.0 {
         return None;
     }
+    let drift = snapshot_allowance(drift, extra > 0.0);
     let mut factor = (1.0 + drift).next_up();
     for allowance in [2f64.powi(-22), super::CHAIN_EPS, 2f64.powi(-19), extra] {
         factor = (factor * (1.0 + allowance).next_up()).next_up();
     }
     let margin = (factor - 1.0).next_up();
     margin.is_finite().then_some(margin)
+}
+
+/// Signed note values can contribute through the subtraction side of a rank
+/// snapshot. Its coefficient is at most the positive coefficient. The ideal
+/// factor is at least one, so only `(drift - 1)^+` needs that additional allowance.
+pub(super) fn snapshot_allowance(drift: f64, snapshots: bool) -> f64 {
+    if snapshots && drift > 1.0 { (drift + (drift - 1.0).next_up()).next_up() } else { drift }
 }
 
 #[derive(Default)]
@@ -76,6 +84,21 @@ impl WindowRoundoff {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_allowance_covers_signed_start_and_end_values() {
+        for drift in [0.25, 0.75, 1.01, 1.2, 2.0, 10.0] {
+            let margin = with_chain(drift, super::super::GK_CHAIN_EPS).unwrap();
+            for ideal in [1.0, 2.0, 10.0] {
+                for rank in [0.1, 1.0, 20.0] {
+                    let start = ideal - drift;
+                    let end = ideal + drift;
+                    let score = end + rank * (end - start);
+                    assert!(score <= ideal * (1.0 + rank) * (1.0 + margin));
+                }
+            }
+        }
+    }
 
     #[test]
     fn fine_window_roundoff_covers_cancellation_across_many_pulses() {

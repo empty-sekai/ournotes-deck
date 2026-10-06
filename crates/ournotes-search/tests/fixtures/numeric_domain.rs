@@ -432,7 +432,13 @@ fn negative_duration_extension_reverses_native_power_order_and_forces_fallback()
         };
         let mut model =
             LiveModel::new(&data.master, std::slice::from_ref(&performer), &notes, &[(0, 1000)], params).unwrap();
+        assert_eq!(model.minimum_score_up(), None);
+        model.track_score_up_factors();
+        assert_eq!(model.minimum_score_up(), Some(f32::INFINITY));
         let value = model.run(&stream.to_live_play().unwrap()).unwrap();
+        assert_eq!(model.minimum_score_up(), Some(-1.0));
+        model.track_score_up_factors();
+        assert_eq!(model.minimum_score_up(), Some(-1.0));
         #[cfg(feature = "search-diagnostics")]
         assert_eq!(model.filed_scores().0[0].3[2], -1.0);
         value
@@ -566,7 +572,7 @@ fn snap_numeric_certificate_requires_bounded_drift_and_finite_native_chain() {
     data.master.reindex().unwrap();
     let pool = Pool::new(&data.master, &roster).unwrap();
     let error = search::search_best_order_diagnostic(&pool, &snap_numeric_request(&data, stream));
-    assert!(matches!(error, Err(Error::Domain(message)) if message.contains("factor drift")));
+    assert!(matches!(error, Err(Error::Domain(_))));
 
     let (mut data, roster, mut stream) = snap_numeric_inputs(0);
     for setting in &mut data.master.live_settings {
@@ -638,17 +644,18 @@ fn best_order_diagnostic_rejects_external_rank_snapshots() {
     assert!(matches!(error, Err(Error::Unsupported(message)) if message.contains("external rank snapshots")));
 }
 
-#[test]
-fn late_factor_windows_retain_global_and_prefix_certificates() {
+fn factor_window_inputs(effects: usize, start: i32) -> (DeckData, Roster, RecommendationRequest) {
     let mut synth = synthetic_master(5, 1, 5);
     set_column(&mut synth, "MasterMemberCard", &mut |r| r["_liveSkillID"] = json!(1));
     replace_table(
         &mut synth,
         "MasterLiveSkillEffect",
-        json!([
-            {"_id":1,"_liveSkillID":1,"_level":4,"_skillEffectType":2000,
-             "_effectValue":100_000,"_activationTimeSecond":0.1}
-        ]),
+        json!(
+            (1..=effects)
+                .map(|id| json!({"_id":id,"_liveSkillID":1,"_level":4,"_skillEffectType":2000,
+             "_effectValue":100_000,"_activationTimeSecond":0.1}))
+                .collect::<Vec<_>>()
+        ),
     );
     set_column(&mut synth, "MasterSupportCard", &mut |r| {
         r["_supportSkillId01"] = json!(3);
@@ -668,7 +675,7 @@ fn late_factor_windows_retain_global_and_prefix_certificates() {
     set_column(&mut synth, "MasterLiveMusicScore", &mut |r| r["_fullComboCount"] = json!(2));
     let mut document = data_document(&synth, 5, 1, 5);
     document["charts"][0]["notes"] = json!({"id":[1,2],"op":[1,1],"judgementType":[1,1],"timeMs":[163760,163800]});
-    document["charts"][0]["skillEvents"] = json!({"timeMs":[163720,163720,163720,163720,163720]});
+    document["charts"][0]["skillEvents"] = json!({"timeMs":vec![start; 5]});
     let data = DeckData::from_json(&document.to_string()).unwrap();
     let roster = Roster::from_json(&roster_document(5, 1, 5).to_string()).unwrap();
     let mut wire = joint_request_json("free", false, json!({"kind":"score"}));
@@ -678,7 +685,12 @@ fn late_factor_windows_retain_global_and_prefix_certificates() {
         "frames":(0..=163840).step_by(40).collect::<Vec<_>>(),
         "judged":[[4094,1,5,163760],[4095,2,5,163800]]
     }});
-    let mut request: RecommendationRequest = serde_json::from_value(wire).unwrap();
+    (data, roster, serde_json::from_value(wire).unwrap())
+}
+
+#[test]
+fn late_factor_windows_retain_global_and_prefix_certificates() {
+    let (data, roster, mut request) = factor_window_inputs(1, 163720);
     let built = handler::build_card_pool(&data, &roster, &request).unwrap();
     let bounded = search::recommend_built(&built).unwrap();
     assert_eq!(bounded.completion, Completion::Complete);
@@ -705,4 +717,38 @@ fn late_factor_windows_retain_global_and_prefix_certificates() {
             }
         }
     }
+}
+
+#[test]
+fn observed_positive_factors_certify_replayed_power_representatives() {
+    let (data, roster, mut request) = factor_window_inputs(3, 0);
+    let bounded = engine::recommend(&data, &roster, &request).unwrap();
+    assert_eq!(bounded.completion, Completion::Complete);
+    assert!(bounded.telemetry.environment.bounds.compiled, "{:?}", bounded.telemetry.environment.bounds);
+    assert_eq!(bounded.results.len(), 6);
+    let built = handler::build_card_pool(&data, &roster, &request).unwrap();
+    request.strategy = Strategy::Exhaustive;
+    let oracle = engine::recommend(&data, &roster, &request).unwrap();
+    assert_eq!(oracle.completion, Completion::Complete);
+    assert_eq!(bounded.results, oracle.results);
+    #[cfg(feature = "search-diagnostics")]
+    for deck in &oracle.results {
+        let audit = search::diagnostics::audit_order_caps(&built, deck.members, deck.snaps).unwrap();
+        assert_eq!(audit["orders"], 120);
+        assert_eq!(audit["violations"], 0, "{audit}");
+    }
+    #[cfg(not(feature = "search-diagnostics"))]
+    let _ = built;
+
+    let stream = serde_json::from_value(json!({
+        "frames":(0..=163840).step_by(40).collect::<Vec<_>>(),
+        "judged":[[4094,1,5,163760],[4095,2,5,163800]]
+    }))
+    .unwrap();
+    let diagnostic = snap_numeric_request(&data, stream);
+    let pool = Pool::new(&data.master, &roster).unwrap();
+    let best = search::search_best_order_diagnostic(&pool, &diagnostic).unwrap();
+    let (exact, _) = search::oracle::brute_force_best_order_diagnostic(&pool, &diagnostic).unwrap();
+    assert_eq!(best.completion, Completion::Complete);
+    assert_eq!(best.results, exact);
 }

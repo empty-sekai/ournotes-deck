@@ -507,23 +507,44 @@ mod lifetime_command_tests {
 /// A release checker skips the elapsed-time check in ExecuteFrame; gated sustained updaters may pause while their
 /// mission gate is closed. Such a timer still admits the compact floor when its finite binary32 duration is at least
 /// the final play-frame time: execution timestamps are nonnegative, so every elapsed time is at most that horizon.
-/// Nonnegative extensions preserve this inequality, and the timed-end comparison is strict. Release and forced
-/// finishes use the current time. Other timers use frame zero without these premises. The music-length clamp applies
-/// to released and timed finishes independently.
-pub(super) fn command_floor_times<'r>(setup: &FullSetup, mut rows: impl Iterator<Item = &'r Row>) -> Vec<i32> {
+/// Nonnegative extensions preserve this inequality, and the timed-end comparison is strict. A one-shot release
+/// timer whose trigger group (`range_start`) holds only in the first frame at or after a range start `s` starts at
+/// `s` or later; it also admits the compact floor when `s + ceil(d0)` reaches the time of the frame after that
+/// trigger frame, the previous frame of its first elapsed-time check. Release and forced finishes use the current
+/// time. Other timers use frame zero without these premises. The music-length clamp applies to released and timed
+/// finishes independently.
+pub(super) fn command_floor_times<'r>(
+    setup: &FullSetup,
+    mut rows: impl Iterator<Item = &'r Row>,
+    range_start: impl Fn(&Row) -> bool,
+) -> Vec<i32> {
     let exact_clock = |t: i32| (0..=1 << 24).contains(&t);
-    let horizon = setup.play.frames.last().map_or(0.0, |frame| frame.time_ms as f32);
-    let compact = setup.play.frames.iter().all(|f| exact_clock(f.time_ms))
-        && setup.play.frames.windows(2).all(|w| w[0].time_ms <= w[1].time_ms)
+    let frames = &setup.play.frames;
+    let horizon = frames.last().map_or(0.0, |frame| frame.time_ms as f32);
+    let fevers = setup.gk.as_ref().map_or(&[][..], |g| &g.setup.fevers[..]);
+    // Frame `k` is the trigger frame of a range starting at `s`; the first timed finish is filed in frame `k + 2`.
+    let range_starts_covered = |duration: f32| {
+        duration.is_finite()
+            && fevers.iter().all(|&(s, _)| {
+                let k = frames.partition_point(|f| f.time_ms < s);
+                frames.get(k + 1).is_none_or(|next| {
+                    s as i64 + ournotes_sim::num::ceil_to_i32(duration) as i64 >= next.time_ms as i64
+                })
+            })
+    };
+    let compact = frames.iter().all(|f| exact_clock(f.time_ms))
+        && frames.windows(2).all(|w| w[0].time_ms <= w[1].time_ms)
         && setup.notes.iter().all(|n| exact_clock(n.time_ms))
         && setup.events.iter().all(|&(_, t)| exact_clock(t))
-        && setup.gk.as_ref().is_none_or(|g| g.setup.fevers.iter().all(|&(a, b)| exact_clock(a) && exact_clock(b)))
+        && fevers.iter().all(|&(a, b)| exact_clock(a) && exact_clock(b))
         && rows.all(|r| {
             // 15000 adds the row's raw value to live-effect durations; cumulative counts do not scale it.
             let duration = r.act * 1000f32;
             let covers_play = duration.is_finite() && duration >= horizon;
             let may_expire = r.act > 0.0 && !covers_play;
-            !(r.effect_type == 15000 && r.value < 0 || may_expire && (r.release != 0 || r.gk && r.trigger_type == 2))
+            let started_release = r.trigger_type == 1 && range_start(r) && range_starts_covered(duration);
+            !(r.effect_type == 15000 && r.value < 0
+                || may_expire && (r.release != 0 && !started_release || r.gk && r.trigger_type == 2))
         });
     setup
         .play
