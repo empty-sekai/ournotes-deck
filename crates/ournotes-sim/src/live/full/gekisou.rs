@@ -1340,6 +1340,35 @@ impl Controller {
         Ok(())
     }
 
+    /// Every possible Rush filing in the next after-frame update, under a recorder-certified deterministic
+    /// range/judgement schedule. Capture before `update` takes the pending notes. Lottery-dependent gauge,
+    /// queued-lot counts and results are deliberately unread: several consumes in one frame can switch Rush
+    /// on and off even when its final value agrees with the initial one.
+    pub(super) fn bounds_rush_filings(&self, t: i32, judged: &[GkNote], mut file: impl FnMut(i32)) {
+        for (idx, state) in self.states.iter().enumerate() {
+            if state.state > S_STANDBY {
+                for &(_, time, _, _) in &self.pending[idx] {
+                    file(time);
+                }
+            }
+            if self.ranges[idx].mission != M_LUCK {
+                continue;
+            }
+            if state.state >= S_START {
+                for &(id, _, time, judgement) in judged {
+                    if judgement != J_WAIT && judgement != J_PASS && self.ranges[idx].targets.contains(&id) {
+                        file(time);
+                    }
+                }
+            }
+            // pending_lots consumes only a playing LUCK range. Do not use the weighted recorder's lot_count,
+            // lot_result or playing membership to exclude an otherwise possible branch.
+            if state.state == S_PLAYING {
+                file(t);
+            }
+        }
+    }
+
     /// The controller's update after the frame's skills and score: judged notes of the ranges, the recount, the
     /// fever-end scores and the pending lots.
     pub(crate) fn update(

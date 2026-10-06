@@ -348,6 +348,123 @@ impl Replay {
     fn paired_undo(&self, frame: usize, start: &Classes) -> Result<Classes, Error> {
         let entry = &self.frames[frame];
         let (ops, probes) = (&entry.ops, &entry.probes);
+
+        // Only a probe's note-score-up field depends on its branch. Every other field sees precisely the
+        // ordinary commands, in the same order, on every branch (including tied-owner interleavings). Follow
+        // both original start endpoints for those fields once. Their marginal endpoint hull is unchanged when
+        // the note field is projected separately: every start endpoint admits every probe branch, and the
+        // returned Classes retain per-field hulls, not correlations between different fields.
+        let mut endpoints =
+            start.map(|fields| fields.map(|fields| [fields.map(|f| f.lower()), fields.map(|f| f.upper())]));
+        let mut sum = [0.0f32; FIELDS];
+        for op in ops {
+            for (field, &delta) in op.deltas.iter().enumerate() {
+                if field != 1 && delta != 0.0 {
+                    sum[field] += delta;
+                    for states in endpoints.iter_mut().flatten() {
+                        for state in states {
+                            state[field] += delta;
+                        }
+                    }
+                }
+            }
+        }
+        let mut out: Classes = [None, None];
+        for (class, endpoints) in endpoints.into_iter().enumerate() {
+            let Some(endpoints) = endpoints else { continue };
+            let mut fields = zero();
+            for field in 0..FIELDS {
+                if field == 1 {
+                    continue;
+                }
+                let [a, b] = endpoints.map(|state| state[field] - sum[field]);
+                // Equal numerical zeros can have different bits, and native min/max need not choose the
+                // same zero for a different visitation order. Keep the original full-path order in that
+                // case. It also retains the original refusal behavior for nonfinite arithmetic.
+                if !a.is_finite() || !b.is_finite() || (a == 0.0 && b == 0.0 && a.to_bits() != b.to_bits()) {
+                    return self.paired_undo_full(frame, start);
+                }
+                fields[field] = point(a)?.hull(point(b)?);
+            }
+            out[class] = Some(fields);
+        }
+
+        let mut paths = Vec::with_capacity(4);
+        for (class, fields) in start.iter().enumerate() {
+            let Some(fields) = fields else { continue };
+            for state in [fields[1].lower(), fields[1].upper()] {
+                paths.push(PairedNotePath { start: class, class, state, sum: 0.0 });
+            }
+        }
+        dedup_note_paths(&mut paths);
+        #[cfg(feature = "search-diagnostics")]
+        self.record_paths(paths.len());
+        let (mut op, mut probe) = (0, 0);
+        loop {
+            let op_time = ops.get(op).map(|o| o.time);
+            let probe_time = probes.get(probe).copied();
+            match (op_time, probe_time) {
+                (None, None) => break,
+                (Some(a), b) if b.is_none_or(|b| a < b) => {
+                    for path in &mut paths {
+                        path.apply(&[Step::Command(ops[op].deltas)], 1.0);
+                    }
+                    op += 1;
+                }
+                (_, Some(t)) => {
+                    let end = ops[op..].partition_point(|o| o.time == t);
+                    let group = &ops[op..op + end];
+                    let variants = if group.is_empty() { None } else { Some(variants(group, &self.rows)) };
+                    let variants = variants.as_deref().unwrap_or(&self.row_steps);
+                    let stay: Vec<Step> = group.iter().map(|op| Step::Command(op.deltas)).collect();
+                    let mut next = Vec::with_capacity(paths.len() * (1 + variants.len()));
+                    for path in &paths {
+                        let mut kept = *path;
+                        kept.apply(&stay, 1.0);
+                        next.push(kept);
+                        for steps in variants {
+                            let mut switched = *path;
+                            switched.apply(steps, if path.class == 0 { 1.0 } else { -1.0 });
+                            switched.class = 1 - path.class;
+                            next.push(switched);
+                        }
+                    }
+                    dedup_note_paths(&mut next);
+                    #[cfg(feature = "search-diagnostics")]
+                    self.record_paths(next.len());
+                    paths = next;
+                    op += end;
+                    probe += 1;
+                }
+                (Some(_), None) => unreachable!("covered by the command arm"),
+            }
+        }
+        let mut notes = [None::<F32Interval>; 2];
+        let mut zeros = [0u8; 2];
+        for path in paths {
+            let value = path.state - path.sum;
+            if value == 0.0 {
+                zeros[path.start] |= if value.is_sign_negative() { 1 } else { 2 };
+            }
+            if !value.is_finite() || zeros[path.start] == 3 {
+                return self.paired_undo_full(frame, start);
+            }
+            let value = point(value)?;
+            notes[path.start] = Some(notes[path.start].map_or(value, |old| old.hull(value)));
+        }
+        for (class, fields) in out.iter_mut().enumerate() {
+            if let Some(fields) = fields {
+                fields[1] = notes[class].expect("every initial class retains its stay path");
+            }
+        }
+        Ok(out)
+    }
+
+    /// The full vector path traversal preserves native signed-zero visitation and exceptional arithmetic.
+    /// It is also an independent reference for the projected path traversal.
+    fn paired_undo_full(&self, frame: usize, start: &Classes) -> Result<Classes, Error> {
+        let entry = &self.frames[frame];
+        let (ops, probes) = (&entry.ops, &entry.probes);
         let mut paths = Vec::with_capacity(8);
         for (class, fields) in start.iter().enumerate() {
             let Some(fields) = fields else { continue };
@@ -506,6 +623,40 @@ impl Replay {
             _ => paired,
         });
     }
+}
+
+/// The exact projection of a path onto its only probe-dependent field. The start class remains part of the
+/// identity, and both state and recorded sum retain their native binary32 bits through every transition.
+#[derive(Clone, Copy)]
+struct PairedNotePath {
+    start: usize,
+    class: usize,
+    state: f32,
+    sum: f32,
+}
+
+impl PairedNotePath {
+    fn apply(&mut self, steps: &[Step], sign: f32) {
+        for step in steps {
+            let delta = match *step {
+                Step::Command(deltas) => deltas[1],
+                Step::Probe(value) => sign * value,
+            };
+            if delta != 0.0 {
+                self.state += delta;
+                self.sum += delta;
+            }
+        }
+    }
+
+    fn key(&self) -> (usize, usize, u32, u32) {
+        (self.start, self.class, self.state.to_bits(), self.sum.to_bits())
+    }
+}
+
+fn dedup_note_paths(paths: &mut Vec<PairedNotePath>) {
+    paths.sort_unstable_by_key(PairedNotePath::key);
+    paths.dedup_by_key(|path| path.key());
 }
 
 /// One path through a frame from a start endpoint: its start class, current class, binary32 state and the binary32
@@ -718,6 +869,94 @@ mod tests {
 
     fn frame_of(time: i32, frames: usize) -> usize {
         (get_frame(time).max(0) as usize).min(frames - 1)
+    }
+
+    fn class_bits(classes: Classes) -> [Option<[(u32, u32); FIELDS]>; 2] {
+        classes
+            .map(|fields| fields.map(|fields| fields.map(|value| (value.lower().to_bits(), value.upper().to_bits()))))
+    }
+
+    fn compare_paired_projection(replay: &Replay, start: &Classes) {
+        let expected = replay.paired_undo_full(0, start);
+        let actual = replay.paired_undo(0, start);
+        match (actual, expected) {
+            (Ok(actual), Ok(expected)) => assert_eq!(class_bits(actual), class_bits(expected)),
+            (Err(actual), Err(expected)) => assert_eq!(actual.to_string(), expected.to_string()),
+            (actual, expected) => panic!("projected={actual:?}, full={expected:?}"),
+        }
+    }
+
+    #[test]
+    fn projected_paired_undo_matches_full_paths_for_every_factor_field_and_probe_order() {
+        let values = [0.0, -0.0, f32::from_bits(1), -1.25, 0.12999998, 1.0, 1.0000001, 16_777_216.0];
+        let commands = [0, 12_345, -12_345, 50_000, 3_333, -7_777, i32::MAX, i32::MIN];
+        for seed in 1..=256u64 {
+            let mut rng = Rng(0x91e1_0da5_c79e_7b1d ^ seed.wrapping_mul(0x2545_f491_4f6c_dd1d));
+            let rows: Vec<_> = (0..rng.below(4))
+                .map(|_| ProbeRow {
+                    owner: rng.below(3) as i32,
+                    value: values[rng.below(values.len() as u64) as usize],
+                })
+                .collect();
+            let mut replay = Replay::new(1, &rows);
+            for _ in 0..rng.below(16) {
+                let command = FactorCommand {
+                    time_ms: rng.below(5) as i32,
+                    owner_id: rng.below(4) as i32,
+                    combo_mill: commands[rng.below(commands.len() as u64) as usize],
+                    note_mill: commands[rng.below(commands.len() as u64) as usize],
+                    judgement: 3 + rng.below(4) as i32,
+                    judge_mill: commands[rng.below(commands.len() as u64) as usize],
+                    ..Default::default()
+                };
+                replay.file_command(0, &command).unwrap();
+            }
+            for time in 0..rng.below(5) as i32 {
+                replay.probe(0, time).unwrap();
+            }
+            let start = std::array::from_fn(|class| {
+                if seed as usize % 3 == class {
+                    return None;
+                }
+                Some(std::array::from_fn(|_| {
+                    let value = values[rng.below(values.len() as u64) as usize];
+                    match rng.below(4) {
+                        0 => point(value).unwrap(),
+                        1 => F32Interval::new(-0.0, 0.0).unwrap(),
+                        2 => F32Interval::new(value.next_down(), value.next_up()).unwrap(),
+                        _ => F32Interval::new(value, value + 0.25).unwrap(),
+                    }
+                }))
+            });
+            compare_paired_projection(&replay, &start);
+        }
+    }
+
+    #[test]
+    fn projected_paired_undo_preserves_signed_zero_and_nonfinite_refusal() {
+        for field in 0..FIELDS {
+            for (lower, upper) in [(-0.0, 0.0), (0.0, -0.0), (-0.0, -0.0), (0.0, 0.0)] {
+                let mut fields = initial_state();
+                fields[field] = F32Interval::new(lower, upper).unwrap();
+                for start in [[Some(fields), None], [None, Some(fields)], [Some(fields), Some(fields)]] {
+                    let mut replay = Replay::new(1, &[ProbeRow { owner: 1, value: f32::from_bits(1) }]);
+                    replay.probe(0, 0).unwrap();
+                    replay.probe(0, 1).unwrap();
+                    compare_paired_projection(&replay, &start);
+                }
+            }
+        }
+        for field in 0..FIELDS {
+            let mut fields = initial_state();
+            fields[field] = F32Interval::new(-f32::MAX, f32::MAX).unwrap();
+            let mut replay = Replay::new(1, &[ProbeRow { owner: 1, value: f32::MAX }]);
+            replay.frames[0].ops = vec![Op { time: 0, owner: 1, deltas: [f32::MAX; FIELDS] }; 2];
+            replay.probe(0, 0).unwrap();
+            replay.probe(0, 1).unwrap();
+            let start = [Some(fields), Some(fields)];
+            assert!(replay.paired_undo_full(0, &start).is_err());
+            compare_paired_projection(&replay, &start);
+        }
     }
 
     #[test]

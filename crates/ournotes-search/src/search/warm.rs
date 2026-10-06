@@ -200,6 +200,25 @@ fn neighbours(w: &Warm<'_>, d: &PhysicalDeck, e: &Engine<'_, '_>) -> Vec<Physica
     out
 }
 
+/// The same five paired performers with another legal leader. A new leader is a distinct candidate with its own
+/// power and canonical tie; no equality of candidate values is assumed. Keeping this family adjacent can reuse
+/// a completed, power-parameterized LUCK program while filling the initial certified cutoff.
+fn paired_leaders(pool: &super::Pool, domain: &CandidateDomain, d: &PhysicalDeck) -> Vec<PhysicalDeck> {
+    if domain.leader().is_some() {
+        return Vec::new();
+    }
+    uniform::NONLEADER
+        .iter()
+        .filter_map(|&other| {
+            let mut next = *d;
+            next.members.swap(SLOTS[0], other);
+            next.snaps.swap(SLOTS[0], other);
+            let next = uniform::canonical(pool, &next);
+            domain.check_fixed(pool, &next).is_ok().then_some(next)
+        })
+        .collect()
+}
+
 /// The best distinct decks by leaf bound seen by the local search.
 struct Shortlist {
     rows: Vec<((i128, i64), PhysicalDeck)>,
@@ -334,6 +353,8 @@ impl Engine<'_, '_> {
 /// targets use the complete request deadline for their finite proposal shortlist.
 /// Certified requests allow POOL proposals for a domain with one empty Snap binding,
 /// POOL for bounded score targets, and min(K, DIVES) otherwise.
+/// Cached certified score searches try the best legal leader variants of each dive within those same
+/// proposal and time allowances. Each proposal still evaluates all orders or receives an ordinary leaf proof.
 /// The complete-domain traversal handles subsequent candidates.
 pub(super) fn seed(e: &mut Engine<'_, '_>) -> Result<(), Error> {
     let Some(w) = e.warm.take() else { return Ok(()) };
@@ -408,6 +429,27 @@ fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>, deadline: Option<Instant>) -
             return Ok(());
         }
         shortlist.offer(value, current);
+        if e.certified.is_some() && matches!(e.metric, crate::types::Metric::Score) && e.limits.cache_entries > 0 {
+            let mut family = Vec::new();
+            for next in paired_leaders(e.pool, w.domain, &current) {
+                if paused(e) {
+                    return Ok(());
+                }
+                family.push((surrogate(w, &next, e)?, next));
+            }
+            family.sort_by_key(|row| std::cmp::Reverse(row.0));
+            for (value, next) in family {
+                if certified_seed_complete(e) {
+                    return Ok(());
+                }
+                if paused(e) || !evaluate(w, value, next, false, e)? {
+                    return Ok(());
+                }
+                #[cfg(test)]
+                crate::search::budget::test_clock::stage("seed-leader-evaluated");
+                shortlist.offer(value, next);
+            }
+        }
         while checks < SURROGATE_CHECKS {
             if paused(e) {
                 return Ok(());
@@ -457,6 +499,46 @@ mod tests {
     use ournotes_sim::pool::Pool;
     use ournotes_sim::scenario::{ContextInput, PowerSnapshotInput, Scenario};
     use serde_json::json;
+
+    #[test]
+    fn leader_proposals_preserve_pairings_and_declared_constraints() {
+        let mut source = synth_snaps(&mut Rng::new(81), 5, 2, &[]);
+        set_column(&mut source, "MasterMemberCard", &mut |row| row["_characterID"] = row["_id"].clone());
+        let master = source.master();
+        let owned = roster(&mut Rng::new(82), &master);
+        let pool = Pool::new(&master, &owned).unwrap();
+        let constraints = Constraints { include_members: vec![pool.members[0].id], ..Default::default() };
+        let domain = crate::domain::CandidateDomain::build(&pool, &constraints).unwrap();
+        let physical = super::PhysicalDeck { members: [0, 1, 2, 3, 4], snaps: [Some(0), None, Some(1), None, None] };
+        let pairs = |d: &super::PhysicalDeck| {
+            let mut pairs: Vec<_> = d.members.into_iter().zip(d.snaps).collect();
+            pairs.sort_unstable();
+            pairs
+        };
+        for order in super::uniform::all_orders() {
+            let current = super::PhysicalDeck {
+                members: order.map(|slot| physical.members[slot]),
+                snaps: order.map(|slot| physical.snaps[slot]),
+            };
+            domain.check_fixed(&pool, &current).unwrap();
+            let proposals = super::paired_leaders(&pool, &domain, &current);
+            assert_eq!(proposals.len(), 4);
+            let mut leaders = std::collections::HashSet::new();
+            for next in proposals {
+                domain.check_fixed(&pool, &next).unwrap();
+                assert_eq!(pairs(&next), pairs(&physical));
+                assert_eq!(next, super::uniform::canonical(&pool, &next));
+                assert_ne!(next.members[2], current.members[2]);
+                assert!(leaders.insert(next.members[2]));
+            }
+            let fixed = Constraints { leader: Some(pool.members[current.members[2]].id), ..constraints.clone() };
+            let fixed = crate::domain::CandidateDomain::build(&pool, &fixed).unwrap();
+            assert!(super::paired_leaders(&pool, &fixed, &current).is_empty());
+        }
+        let excluded = Constraints { exclude_snaps: vec![pool.snaps[0].id], ..constraints };
+        let excluded = crate::domain::CandidateDomain::build(&pool, &excluded).unwrap();
+        assert!(super::paired_leaders(&pool, &excluded, &physical).is_empty());
+    }
 
     #[test]
     fn certified_seed_allocation_yields_to_the_complete_domain() {
@@ -543,7 +625,7 @@ mod tests {
             time_limit: None,
         };
         let limits = Limits { time_limit_ms: Some(3_000), max_candidates: None, cache_entries: 64 };
-        for (stage, completed) in [("seed-dive", 0), ("seed-evaluated", 1)] {
+        for (stage, completed) in [("seed-dive", 0), ("seed-evaluated", 1), ("seed-leader-evaluated", 2)] {
             let result = test_clock::with_expiry(stage, 1, || {
                 super::super::solve_physical_impl(
                     &pool,

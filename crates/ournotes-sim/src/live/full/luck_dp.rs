@@ -1904,6 +1904,12 @@ pub struct LuckDpCacheStats {
     pub summary_peak_bytes: usize,
     pub program_lookups: u64,
     pub program_hits: u64,
+    /// Complete deterministic replay inputs considered and reused after the recording pass.
+    pub program_recorded_lookups: u64,
+    pub program_recorded_hits: u64,
+    /// Replay identities declined by the byte bound; cancellation does not increment this count.
+    pub program_recorded_key_declines: u64,
+    pub program_recorded_peak_key_bytes: usize,
     pub program_compilations: u64,
     pub program_evictions: u64,
     pub program_peak_entries: usize,
@@ -1932,6 +1938,10 @@ impl LuckDpCache {
         let programs = self.programs.stats;
         stats.program_lookups = programs.lookups;
         stats.program_hits = programs.hits;
+        stats.program_recorded_lookups = programs.recorded_lookups;
+        stats.program_recorded_hits = programs.recorded_hits;
+        stats.program_recorded_key_declines = programs.recorded_key_declines;
+        stats.program_recorded_peak_key_bytes = programs.recorded_peak_key_bytes;
         stats.program_compilations = programs.compilations;
         stats.program_evictions = programs.evictions;
         stats.program_peak_entries = programs.peak_entries;

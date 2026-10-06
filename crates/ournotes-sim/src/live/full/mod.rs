@@ -1730,7 +1730,17 @@ impl LiveModel {
         }
         self.program_has_started = true;
         self.frame_time = t;
-        self.score.bounds_potential_rush(t);
+        if let Some(trace) = &self.score.bounds_trace
+            && (trace.filing_gate.is_none()
+                || self.gk.as_ref().is_none_or(|gk| {
+                    // before_update can disable Rush only on COMPLETE -> FINISH. Check all ranges, including
+                    // non-LUCK missions: the native controller's Rush handle is shared. Weighted range-start
+                    // commands still enter the trace through their actual Factor events.
+                    gk.ctrl.states.iter().any(|state| state.state == gekisou::S_COMPLETE)
+                }))
+        {
+            self.score.bounds_potential_rush(t);
+        }
         self.frame_rank_confirmation = self.prev_confirmed_rank.take();
         if let Some(gk) = self.gk.as_mut() {
             gk.fever.update(t, &mut gk.fever_updates);
@@ -1940,10 +1950,39 @@ impl LiveModel {
         }
         self.enabled_live.retain(|&si| self.live[si].parent_state != STAY);
         self.life.sync_current_life(t)?;
-        self.score.bounds_potential_skills(t);
-        // An untimed sustained score-up that ends at or after the music length files its end there.
-        if self.music_length_ms > 0 && self.music_length_ms < t {
-            self.score.bounds_potential_skills(self.music_length_ms);
+        if let Some(trace) = &self.score.bounds_trace
+            && !trace.probes.is_empty()
+        {
+            let possible = if let Some(gate) = trace.filing_gate {
+                let gk_view = self.gk.as_ref().map(|g| GkView {
+                    ctrl: &g.ctrl,
+                    prev_lots: &g.prev_lots,
+                    prev_lot_ms: g.prev_lot_ms,
+                });
+                let ctx = CheckCtx {
+                    life: &mut self.life,
+                    random: &mut self.random,
+                    frame_time: t,
+                    current_combo: self.current_combo,
+                    judged: &self.judged,
+                    events: &self.frame_events,
+                    gk: gk_view,
+                    prev_confirmed_rank: frame_rank_confirmation,
+                };
+                // The admitted ordinary appliers cannot change the range machine during either skill phase.
+                // Use the same gate as the updater; uncertainty keeps the unrestricted schedule. An untimed
+                // sustained instance is frozen while its gate is closed, so do not force its probe class off.
+                engine::mission_gate_open(gate, &ctx).unwrap_or(true)
+            } else {
+                true
+            };
+            if possible {
+                self.score.bounds_potential_skills(t);
+                // An untimed sustained score-up that ends at or after the music length files its end there.
+                if self.music_length_ms > 0 && self.music_length_ms < t {
+                    self.score.bounds_potential_skills(self.music_length_ms);
+                }
+            }
         }
         let info = self.gk.as_ref().map(|g| &g.ctrl as &dyn GekisouComboInfo);
         self.score.calculate(t, &self.combo, info)?;
@@ -1962,6 +2001,11 @@ impl LiveModel {
         let mut judged = std::mem::take(&mut self.scratch.gk_judged);
         judged.clear();
         judged.extend(results.iter().map(|(n, j)| (n.note_id, n.note_operate_type, n.time_ms, *j)));
+        if self.score.bounds_trace.as_ref().is_some_and(|trace| trace.filing_gate.is_some()) {
+            // Capture pending notes before update takes them. No score query occurs between these possible
+            // filings and the controller's actual commands; both precede ProbabilityReady and rank queries.
+            gk.ctrl.bounds_rush_filings(t, &judged, |time| self.score.bounds_potential_rush(time));
+        }
         let current = self.score.score;
         {
             let mut h = Handle { sc: &mut self.scorectl, score: &mut self.score };
@@ -1984,13 +2028,14 @@ impl LiveModel {
                 }
             }
         }
-        if self.score.bounds_trace.is_some() {
-            // A lottery may file Rush commands at any judged chart time, or at this frame's pending draw.
-            // These are possible filings, not observations of the recorder's particular lottery trajectory.
-            for &(_, _, time, _) in &judged {
-                self.score.bounds_potential_rush(time);
+        if let Some(trace) = &self.score.bounds_trace {
+            if trace.filing_gate.is_none() {
+                // Without the recorder admission, keep every judged chart time and the frame's pending draw.
+                for &(_, _, time, _) in &judged {
+                    self.score.bounds_potential_rush(time);
+                }
+                self.score.bounds_potential_rush(t);
             }
-            self.score.bounds_potential_rush(t);
             self.score.bounds_probability_ready(t);
         }
         self.scratch.gk_judged = judged;

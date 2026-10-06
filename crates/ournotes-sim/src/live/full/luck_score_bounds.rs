@@ -74,6 +74,9 @@ pub(super) struct BoundsTrace {
     pub probes: Vec<ProbeRow>,
     pub combo: ComboObserver,
     pub has_luck: bool,
+    /// Recorder-only admission: every direct probe has this common mission gate. None retains the unrestricted
+    /// filing schedule. This scratch is not read after the trace is taken; its resulting events are the replay input.
+    pub filing_gate: Option<Option<i64>>,
 }
 
 /// The filed notes a score query must observe again: every note whose combo inputs may have changed since the
@@ -357,7 +360,7 @@ fn fixed_predicate(checker: &Checker) -> bool {
 /// Therefore every lottery path has the recorder's identical converted judgements, life, combo inputs, ordinary
 /// command filings and effect values. The DP life recorder retains these writers and consumes the same converted
 /// results. A sampled agreement is not the authority for exact_final_life or the ordinary score command history.
-fn check_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<(), Error> {
+fn check_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<Option<i64>, Error> {
     // AddCommand invalidates all four native cache fields, so extra reads preserve the command-log
     // semantics at a constant cap. UpdateLifeMax deliberately does not invalidate: a read before a
     // max change can retain an old-cap recovery. A single reference path cannot certify that domain
@@ -423,7 +426,7 @@ fn check_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<(), Error> {
             }
         }
     }
-    Ok(())
+    Ok(probe_gate.flatten())
 }
 
 fn f32_real(value: F32Interval) -> F64Interval {
@@ -607,6 +610,54 @@ fn note_bounds_at_power(
     gekisou: F32Interval,
     rush_percent: i32,
 ) -> Result<(LuckNoteBounds, I32Interval), Error> {
+    note_bounds_with_factors(calc, power, note, rush_percent, |class| {
+        note_class_factors(note.score_type, executed[class], combo, gekisou)
+    })
+}
+
+/// The two power-independent factors in their original grouping: Gekisou * (skill combo + ordinary combo),
+/// and note score-up + the selected judgement score-up. Keeping their interval endpoints is lossless for
+/// every later operation in the native note enclosure.
+type NoteFactors = [Option<[F32Interval; 2]>; 2];
+
+fn note_class_factors(
+    score_type: i32,
+    fields: Option<replay::Fields>,
+    combo: F32Interval,
+    gekisou: F32Interval,
+) -> Result<Option<[F32Interval; 2]>, Error> {
+    let Some(fields) = fields else { return Ok(None) };
+    let combo_factor = gekisou.multiply(fields[0].add(combo)?)?;
+    let judge = match score_type {
+        1 => fields[2],
+        2 => fields[3],
+        3 => fields[4],
+        4 => fields[5],
+        _ => F32Interval::point(0.0)?,
+    };
+    Ok(Some([combo_factor, fields[1].add(judge)?]))
+}
+
+fn note_factors(
+    score_type: i32,
+    executed: Classes,
+    combo: F32Interval,
+    gekisou: F32Interval,
+) -> Result<NoteFactors, Error> {
+    let mut factors = [None; 2];
+    for (class, fields) in executed.into_iter().enumerate() {
+        factors[class] = note_class_factors(score_type, fields, combo, gekisou)?;
+    }
+    Ok(factors)
+}
+
+fn note_bounds_with_factors(
+    calc: &LiveScoreCalculator,
+    power: i32,
+    note: &NoteCommand,
+    rush_percent: i32,
+    mut factors: impl FnMut(usize) -> Result<Option<[F32Interval; 2]>, Error>,
+) -> Result<(LuckNoteBounds, I32Interval), Error> {
     let point = F32Interval::point;
     let note_percent =
         *calc.note_factor_percent.get(&note.note_type).ok_or_else(|| refuse("unknown score note type"))?;
@@ -621,20 +672,11 @@ fn note_bounds_at_power(
     let mut lower = i32::MAX;
     let mut upper = i32::MIN;
     for (bucket, out) in buckets.iter_mut().enumerate() {
-        let Some(fields) = executed[bucket & 1] else { continue };
-        let combo_factor = gekisou.multiply(fields[0].add(combo)?)?;
+        let Some([combo_factor, up]) = factors(bucket & 1)? else { continue };
         if !combo_factor.lower().is_finite() || !combo_factor.upper().is_finite() {
             return Err(refuse("nonfinite combo-factor support"));
         }
         combo_hull = Some(combo_hull.map_or(combo_factor, |h| h.hull(combo_factor)));
-        let judge = match note.score_type {
-            1 => fields[2],
-            2 => fields[3],
-            3 => fields[4],
-            4 => fields[5],
-            _ => point(0.0)?,
-        };
-        let up = fields[1].add(judge)?;
         let luck = get_luck_factor_percent(if bucket & 2 == 0 { 0 } else { rush_percent }) as f32 / 100f32;
         let x = b
             .multiply(combo_factor)?
@@ -951,7 +993,7 @@ fn luck_score_bounds_internal(
     } else {
         LiveModel::new_gekisou(master, deck, notes, events, params, setup)?
     };
-    check_recorder(&model, skills)?;
+    let probe_gate = check_recorder(&model, skills)?;
     let identity = summaries
         .as_ref()
         .filter(|cache| cache.capacity > 0 && !details)
@@ -1044,21 +1086,26 @@ fn luck_score_bounds_internal(
     if 100i32.checked_add(rush_percent).is_none() {
         return Err(refuse("Rush factor may wrap"));
     }
-    let program_capacity = if !details && has_luck && program_scope.is_some() {
-        curves.as_ref().map_or(0, |cache| cache.program_capacity())
-    } else {
-        0
-    };
-    let program_identity = (program_capacity > 0)
-        .then(|| program::identity(&mut model, program_scope.expect("program scope"), rush_percent))
-        .flatten();
+    let program_capacity =
+        if !details && has_luck { curves.as_ref().map_or(0, |cache| cache.program_capacity()) } else { 0 };
+    #[cfg(feature = "search-diagnostics")]
+    let key_start = std::time::Instant::now();
+    let program_identity = program_scope
+        .filter(|_| program_capacity > 0)
+        .and_then(|scope| program::identity(&mut model, scope, rush_percent));
+    #[cfg(feature = "search-diagnostics")]
+    let program_key_ms = key_start.elapsed().as_secs_f64() * 1e3;
     if cancelled() {
         return Ok(None);
     }
+    #[cfg(feature = "search-diagnostics")]
+    let lookup_start = std::time::Instant::now();
     let cached_program = curves.as_deref_mut().and_then(|cache| {
         cache.programs.limit(program_capacity);
         program_identity.as_ref().and_then(|identity| cache.programs.get(identity, &probability))
     });
+    #[cfg(feature = "search-diagnostics")]
+    let program_lookup_ms = lookup_start.elapsed().as_secs_f64() * 1e3;
     if let Some(program) = cached_program {
         #[cfg(feature = "search-diagnostics")]
         let program_start = std::time::Instant::now();
@@ -1068,6 +1115,8 @@ fn luck_score_bounds_internal(
             evaluations: u64::from(result.is_some()),
             model_setup_ms,
             curve_dp_ms,
+            program_key_ms,
+            program_lookup_ms,
             bound_replay_ms: program_start.elapsed().as_secs_f64() * 1e3,
             program_run_ms: program_start.elapsed().as_secs_f64() * 1e3,
             ..Default::default()
@@ -1080,12 +1129,12 @@ fn luck_score_bounds_internal(
         }
         return Ok(result);
     }
-    let mut program_builder = program_identity.as_ref().map(|_| program::Builder::new(program_capacity));
     model.set_luck_weights(skills, Vec::new())?;
     model.score.begin_bounds(
         probes,
         setup.missions.iter().take(setup.fevers.len()).any(|&mission| mission == gekisou::M_LUCK),
     );
+    model.score.certify_bounds_filings(probe_gate);
     #[cfg(feature = "search-diagnostics")]
     let phase_start = std::time::Instant::now();
     if delta_times.len() != play.frames.len() {
@@ -1118,6 +1167,71 @@ fn luck_score_bounds_internal(
     if trace.queries as u64 > query_limit {
         return Err(refuse("unaccounted native calculate entry point"));
     }
+    let final_life = model.current_life();
+    // A newly admitted model may have different inactive rows or conditions yet emit exactly the same
+    // complete replay inputs. This second identity is formed only after that model's own recording and
+    // terminal checks. No initialized-model equivalence is assumed for such a hit.
+    #[cfg(feature = "search-diagnostics")]
+    let key_start = std::time::Instant::now();
+    let recorded_identity = if program_capacity > 0 {
+        match program::recorded_identity(
+            &trace,
+            &calc,
+            rush_percent,
+            query_limit,
+            final_life,
+            program_capacity,
+            cancelled,
+        ) {
+            Ok(identity) => Some(identity),
+            Err(program::RecordedKeyError::Cancelled) => return Ok(None),
+            Err(program::RecordedKeyError::TooLarge) => {
+                if let Some(cache) = curves.as_deref_mut() {
+                    cache.programs.decline_recorded_key();
+                }
+                None
+            }
+        }
+    } else {
+        None
+    };
+    #[cfg(feature = "search-diagnostics")]
+    let program_recorded_key_ms = key_start.elapsed().as_secs_f64() * 1e3;
+    #[cfg(feature = "search-diagnostics")]
+    let lookup_start = std::time::Instant::now();
+    let cached_program = curves.as_deref_mut().and_then(|cache| {
+        recorded_identity.as_ref().and_then(|identity| cache.programs.get_recorded(identity, &probability))
+    });
+    #[cfg(feature = "search-diagnostics")]
+    let program_recorded_lookup_ms = lookup_start.elapsed().as_secs_f64() * 1e3;
+    if let Some(program) = cached_program {
+        #[cfg(feature = "search-diagnostics")]
+        let program_start = std::time::Instant::now();
+        let result = program.evaluate(calc.state.band_total_power, cancelled)?;
+        #[cfg(feature = "search-diagnostics")]
+        profile::record(LuckScoreProfile {
+            evaluations: u64::from(result.is_some()),
+            model_setup_ms,
+            curve_dp_ms,
+            recorder_run_ms,
+            program_key_ms,
+            program_lookup_ms,
+            program_recorded_key_ms,
+            program_recorded_lookup_ms,
+            bound_replay_ms: phase_start.elapsed().as_secs_f64() * 1e3,
+            program_run_ms: program_start.elapsed().as_secs_f64() * 1e3,
+            ..Default::default()
+        });
+        if let (Some(bounds), Some(cache), Some(identity)) = (&result, summaries.as_mut(), identity) {
+            cache.insert(identity, bounds);
+            if let Some(curves) = curves {
+                curves.summary_retained(cache.entries.len(), cache.bytes);
+            }
+        }
+        return Ok(result);
+    }
+    let mut program_builder =
+        (program_identity.is_some() || recorded_identity.is_some()).then(|| program::Builder::new(program_capacity));
     let mut replay = Replay::new(trace.frames, &trace.probes);
     let (mut prev, mut added) = (-1i32, None::<i32>);
     let mut mandatory_added = None::<i32>;
@@ -1426,6 +1540,10 @@ fn luck_score_bounds_internal(
         breakdown.model_setup_ms = model_setup_ms;
         breakdown.curve_dp_ms = curve_dp_ms;
         breakdown.recorder_run_ms = recorder_run_ms;
+        breakdown.program_key_ms = program_key_ms;
+        breakdown.program_lookup_ms = program_lookup_ms;
+        breakdown.program_recorded_key_ms = program_recorded_key_ms;
+        breakdown.program_recorded_lookup_ms = program_recorded_lookup_ms;
         breakdown.bound_replay_ms = phase_start.elapsed().as_secs_f64() * 1e3;
         breakdown.factor_queries = replay.work.queries;
         breakdown.factor_quiet_queries = replay.work.quiet_queries;
@@ -1439,7 +1557,7 @@ fn luck_score_bounds_internal(
     let bounds = LuckScoreBounds {
         model: "independent nominal draws; all-path native arithmetic enclosure, not an exact expectation or search completion; note probabilities link after their native lottery commands are filed",
         final_support: final_support.into(),
-        exact_final_life: Some(model.current_life()),
+        exact_final_life: Some(final_life),
         final_mean: final_mean.into(),
         final_note_mean: final_note_mean.into(),
         final_rank_mean: final_rank_mean.into(),
@@ -1451,11 +1569,10 @@ fn luck_score_bounds_internal(
         probability_peak_states: probability.peak_states,
         probability_transitions: probability.transitions,
     };
-    if let (Some(mut builder), Some(identity), Some(cache)) = (program_builder, program_identity, curves.as_deref_mut())
-    {
+    if let (Some(mut builder), Some(cache)) = (program_builder, curves.as_deref_mut()) {
         builder.final_fixed(fixed.iter().map(|&(frame, offset, _, _)| offset + u8::from(frame <= prev)).collect());
         if let Some(program) = builder.finish(calc, rush_percent, probability, &bounds) {
-            cache.programs.insert(identity, program);
+            cache.programs.insert(program_identity, recorded_identity, program);
         }
     }
     if let (Some(cache), Some(identity)) = (summaries.as_mut(), identity) {

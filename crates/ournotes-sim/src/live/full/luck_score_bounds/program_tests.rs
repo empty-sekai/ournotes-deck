@@ -1,6 +1,10 @@
 use super::*;
 use crate::live::random::LiveRandom;
 
+mod replay_program_tests {
+    include!("replay_program_tests.rs");
+}
+
 type ProgramFixture = (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>);
 
 #[derive(Clone)]
@@ -124,9 +128,8 @@ fn complete_order_cycles_reuse_programs_at_the_next_power() {
     }
     input.master.reindex().unwrap();
     input.events = [80, 120, 200, 260, 300].into_iter().enumerate().map(|(slot, time)| (slot as i32, time)).collect();
-    let performers: Vec<_> = (901..=905)
-        .map(|id| Performer { live_skill: Some((id, 1)), ..Default::default() })
-        .collect();
+    let performers: Vec<_> =
+        (901..=905).map(|id| Performer { live_skill: Some((id, 1)), ..Default::default() }).collect();
     fn extend(prefix: &mut Vec<usize>, used: u8, orders: &mut Vec<[usize; 5]>) {
         if prefix.len() == 5 {
             orders.push(prefix.as_slice().try_into().unwrap());
@@ -193,9 +196,15 @@ fn power_programs_keep_every_declared_run_input_in_the_cache_scope() {
         let before = cache.stats().program_hits;
         assert_program_summary(&input.cached(&mut cache), &input.direct());
         assert_eq!(cache.stats().program_hits, before, "changed run input {change} reused a prior program");
+        let first = cache.stats();
         input.params.total_power += 1;
         assert_program_summary(&input.cached(&mut cache), &input.direct());
-        assert_eq!(cache.stats().program_hits, before + 1, "new scope {change} did not retain its own program");
+        let second = cache.stats();
+        assert_eq!(
+            second.program_hits + second.program_recorded_hits,
+            first.program_hits + first.program_recorded_hits + 1,
+            "new scope {change} did not reuse its complete program",
+        );
     }
 }
 

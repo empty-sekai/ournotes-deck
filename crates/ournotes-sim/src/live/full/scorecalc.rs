@@ -98,6 +98,24 @@ pub(crate) struct NoteCommand {
 }
 
 impl NoteCommand {
+    /// Every input the bounds replay reads from a filed note. The native accumulator and diagnostic fields
+    /// describe a later execution; the independent replay never reads them.
+    pub(super) fn bounds_identity(&self) -> [i32; 5] {
+        let Self {
+            time_ms,
+            life,
+            note_id,
+            note_type,
+            score_type,
+            added: _,
+            #[cfg(feature = "search-diagnostics")]
+                factors: _,
+            #[cfg(test)]
+                state: _,
+        } = self;
+        [*time_ms, *life, *note_id, *note_type, *score_type]
+    }
+
     pub(crate) fn new(time_ms: i32, life: i32, note_id: i32, note_type: i32, score_type: i32) -> NoteCommand {
         NoteCommand {
             time_ms,
@@ -315,7 +333,15 @@ impl IncrementalCalculator {
             probes,
             combo: Default::default(),
             has_luck,
+            filing_gate: None,
         });
+    }
+
+    /// Call only after the recorder's deterministic dependency closure and common untimed-probe gate are proved.
+    pub(super) fn certify_bounds_filings(&mut self, gate: Option<i64>) {
+        if let Some(trace) = &mut self.bounds_trace {
+            trace.filing_gate = Some(gate);
+        }
     }
 
     pub(super) fn bounds_potential_rush(&mut self, time_ms: i32) {

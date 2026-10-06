@@ -1800,12 +1800,23 @@ power. The recorder admission proves that power and score cannot change its comm
 or fixed-rank schedule; nonzero power commands remain unsupported. A program key keeps the complete initialized
 state except power, with copied chart notes/events in an exact shared scope alongside skills, play frames,
 judgements, seed and binary32 clock bits. Reuse requires the same retained certified probability curve.
+After a model completes its own admitted recording and terminal checks, a secondary key can identify its
+complete replay inputs: every ordered event, frame/query count, probe row, calculator field except initial
+power, Rush percentage, final life and query allowance. Together with the same certified curve, these inputs
+fully determine the compact bounds replay, even when inactive source rows make initialized models distinct.
+The key uses tagged integers, list lengths and exact float bits, retaining all queries, probability-readiness
+events and zero commands. Factor commands keep their original insertion positions in the other event stream,
+which is shared only by full byte equality. Recorder-only combo observation and filing admission state, and a note's later native
+accumulator have no replay consumer and are excluded explicitly. Each secondary key admits at most 512 KiB;
+a size refusal keeps the ordinary evaluation path, and cancellation supplies no completed value.
 The cache holds at most 128 programs and 32 MiB, further limited by the configured byte allowance. Container
-capacity, identities, interned kernels and note references are counted; shared run scopes and retained curves
-are counted once. Zero capacity disables it.
+capacity, both identities, interned kernels and note references are counted; shared run scopes, recorded event
+streams and retained curves are counted once. Secondary hits create no extra aliases or program copies.
+Zero capacity disables it.
 
 Each power reevaluates the original note operations and floors, probability linkage, signed range differences
-and integer rank percentages. Kernels retain every factor/combo endpoint bit; note uses retain the original
+and integer rank percentages. Kernels retain every endpoint bit of the original grouped, power-independent
+combo and note-plus-judgement expressions; all later arithmetic reads only those expressions. Note uses retain the original
 probability-ready state. Observed-query templates preserve unchanged-prefix thresholds computed over every
 original query and fixed-bonus coefficients from actual filing queries, including overwritten pending bonuses.
 Final-note expectations retain their separate complete probability linkage. No proportional score conversion
@@ -1817,11 +1828,17 @@ no completed value; aggregation requires all 120 distinct orders. Completed cach
 evaluations in the same context.
 For a request with a time limit, certified warm seeding starts new proposals within the first quarter of the time
 remaining at entry to that phase. An evaluation already in progress retains the full request deadline.
+For cached expected-score requests, legal alternative leaders of the same paired performers are proposed next,
+in descending order of their existing whole-domain upper bound. This can reuse a retained power-parameterized
+program while establishing the initial cutoff. The proposal limit and deadline are unchanged. Each leader
+is a distinct candidate, evaluated with its own power, all 120 orders and the ordinary canonical tie rules;
+fixed-leader constraints suppress these proposals.
 The subsequent traversal retains the complete domain.
 
 Sources: [score sessions](../crates/ournotes-sim/src/live/full/luck_score_bounds.rs),
 [recorder and curve keys](../crates/ournotes-sim/src/live/full/luck_dp.rs),
 [power-parameterized factor histories](../crates/ournotes-sim/src/live/full/luck_score_bounds/program.rs),
+[complete recorded replay identity](../crates/ournotes-sim/src/live/full/luck_score_bounds/program/recorded.rs),
 [team score cache](../crates/ournotes-search/src/search/certified_engine.rs),
 [order cancellation](../crates/ournotes-search/src/search/certified_search.rs),
 [seeding allocation](../crates/ournotes-search/src/search/warm.rs).
@@ -1838,11 +1855,29 @@ premises of the enclosure. If `L_sigma <= E[Q_sigma] <= H_sigma`, then
 Aggregation checks that the input contains 120 distinct permutations and rounds outward. An unrepresentable exact
 rational aggregate can omit its exact metadata while keeping that interval certificate.
 
+The admitted recorder filters possible lottery filings using the deterministic controller phases. Before-frame
+Rush removal requires a range at `COMPLETE` entering `FINISH`, including non-LUCK missions; actual weighted
+recorder factor commands remain recorded. The after-frame opportunities retain pending target notes captured
+before the controller takes them, eligible current LUCK target judgements, and every playing LUCK pending-draw slot.
+No recorded lottery count or result excludes a filing: a frame can contain several consumes and intermediate
+Rush changes. Direct 7021 score probes retain all transitions while their common native mission gate is open,
+including frame-time starts and ends clamped to the music length. A closed gate preserves their previous class.
+The original queries and probability-readiness events are unchanged. Without recorder admission, the possible
+filing schedule remains unrestricted.
+
 The factor replay has two identity transitions. A query at its current frame with no mandatory or possible
 lottery filing leaves every replay field unchanged. A frame with no ordinary float commands and no probe
 filings leaves the factor and probe classes unchanged, records zero diffs and immediately undoes to the same
 factor values. Its notes still replace their last-execution certificate on mandatory execution or join it on
 optional execution. Later filings and rank rewinds therefore retain the ordinary replay's certificates.
+
+Its immediate paired undo projects branch enumeration onto the note-score-up field, the only field written by
+probe switches. Every other field retains the same ordinary-command order on every branch, so its native end
+state and recorded sum are evaluated once from each original start-class endpoint. A projected path still
+identifies its start class, current class and exact binary32 state and sum. Every endpoint admits every probe
+branch, and the result is a per-field hull, so this projection preserves the full traversal's endpoint enclosure.
+Mixed positive and negative zero results use the original full-vector visitation order; nonfinite results also
+use its original refusal path. The retained full traversal serves as a bitwise differential reference.
 
 For a step payoff starting at value `v0`, with thresholds `t_i` and signed value changes `delta_i`,
 

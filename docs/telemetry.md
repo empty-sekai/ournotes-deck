@@ -220,9 +220,13 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 `peakStates` 是传播期间的活跃状态数峰值，`transitions` 是实际执行的转移次数；两者均包含传播中断前的工作。缓存命中不增加传播工作量。
 `recordingLookups`、`recordingHits` 记录已编译 recorder 的查询与复用次数。`summaryLookups`、`summaryHits` 记录初始模型
 相等时完整评分摘要的查询与复用次数；`summaryPeakEntries`、`summaryPeakBytes` 记录观察到的 session 缓存条目数和字节数峰值。
-`programLookups`、`programHits` 记录仅以初始总合力为参数的因子历史程序的查询与复用次数。`programCompilations` 统计完整编译的
+`programLookups`、`programHits` 记录因子历史程序按初始模型键的查询与复用次数，总合力作为重新计算的参数。
+`programRecordedLookups`、`programRecordedHits` 记录完成自身录制和终态检查后，按完整回放输入键的查询与复用次数。
+`programRecordedKeyDeclines` 记录该键因字节上限未能构造的次数，不包括取消；`programRecordedPeakKeyBytes` 是成功构造的
+录制键字节数峰值，单键最多 512 KiB，并受配置容量限制。键构造被拒绝时继续独立评估；录制键命中不增加初始模型别名或复制程序。
+`programCompilations` 统计完整编译的
 程序，也包括随后因容量不足未被保留的程序；`programEvictions` 统计移除的条目。`programPeakEntries`、`programPeakBytes`
-记录保留条目数及其内存占用上界的峰值，包含容器容量、键、核与引用，并对共享运行上下文和概率曲线各计一次。
+记录保留条目数及其内存占用上界的峰值，包含容器容量、两类键、核与引用，并对共享运行上下文、录制事件流和概率曲线各计一次。
 程序命中会重新计算该合力下原有的浮点运算、整数取整、概率连接和排名奖金；它不会再次回放因子历史，也不直接提供精确值或排名完成证明。
 请求缓存容量为 0 时禁用这些缓存。
 

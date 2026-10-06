@@ -237,12 +237,19 @@ DP propagations; `peakStates` and `transitions` include uncached propagation wor
 no propagation work. `recordingLookups` and `recordingHits` count compiled recorder reuse. `summaryLookups` and
 `summaryHits` count complete score-summary reuse for equal initialized models; `summaryPeakEntries` and
 `summaryPeakBytes` bound the largest session cache observed. A zero request cache capacity disables these caches.
-`programLookups` and `programHits` count reuse of compiled all-path factor histories whose admitted control
-flow is independent of initial total power. Each hit reevaluates the original note arithmetic and signed rank
-operations at the requested power. `programCompilations` counts completed programs, including those refused
-retention by capacity; `programEvictions`, `programPeakEntries` and `programPeakBytes` describe the bounded
-resident cache, including its shared chart/run context and retained probability curves. This cache is separate
-from the deterministic native `ScoreProgram` cache. Reuse adds no factor-history replay work.
+`programLookups` and `programHits` count initialized-model lookups and hits for compiled all-path factor
+histories whose admitted control flow is independent of initial total power. After a new model passes its own
+complete recorder and admission checks, `programRecordedLookups` and `programRecordedHits` count a second
+lookup using all inputs consumed by bounds replay. The latter can reuse a program from a different initialized
+model only when the complete recorded inputs match and the same certified probability curve is retained.
+`programRecordedKeyDeclines` counts recorded identities refused by the key byte allowance; cancellation is
+separate. `programRecordedPeakKeyBytes` is the largest successfully constructed recorded identity observed.
+Each hit reevaluates the original note arithmetic and signed rank operations at the requested power.
+`programCompilations` counts completed programs, including those refused retention by capacity;
+`programEvictions`, `programPeakEntries` and `programPeakBytes` describe the bounded resident cache, including
+its shared chart/run context, recorded identities and retained probability curves. Both lookups refer to the
+same retained program; a recorded hit creates no initialized-model alias. This cache is separate from the
+deterministic native `ScoreProgram` cache. Reuse adds no factor-history replay work.
 `leaves.simulations` counts completed order enclosures, including those in a candidate subsequently excluded by
 remaining-order caps; summary hits still supply complete order enclosures without playback.
 `luckScoreCaps` counts reuse of certified whole-program score upper bounds retained after partial-order

@@ -12,6 +12,9 @@ use std::hash::{Hash, Hasher};
 use std::mem::size_of;
 use std::sync::Arc;
 
+mod recorded;
+pub(super) use recorded::{RecordedIdentity, RecordedKeyError, recorded_identity};
+
 const MAX_SCOPE_BYTES: usize = 512 * 1024;
 const MAX_ENTRIES: usize = 128;
 const ARC_HEADER_BYTES: usize = 2 * size_of::<usize>();
@@ -101,7 +104,8 @@ pub(super) fn identity(model: &mut LiveModel, scope: &Arc<Scope>, rush_percent: 
 }
 
 struct Entry {
-    identity: Identity,
+    identity: Option<Identity>,
+    recorded: Option<RecordedIdentity>,
     program: Arc<Program>,
 }
 
@@ -109,6 +113,10 @@ struct Entry {
 pub(in super::super) struct CacheStats {
     pub lookups: u64,
     pub hits: u64,
+    pub recorded_lookups: u64,
+    pub recorded_hits: u64,
+    pub recorded_key_declines: u64,
+    pub recorded_peak_key_bytes: usize,
     pub compilations: u64,
     pub evictions: u64,
     pub peak_entries: usize,
@@ -140,27 +148,73 @@ impl ProgramCache {
     pub(super) fn get(&mut self, identity: &Identity, curve: &Arc<LuckDpCertifiedResult>) -> Option<Arc<Program>> {
         self.stats.lookups += 1;
         let found = self.entries.iter().find(|entry| {
-            entry.identity.hash == identity.hash
-                && entry.identity.model == identity.model
-                && entry.identity.scope.bytes == identity.scope.bytes
-                && entry.identity.rush_percent == identity.rush_percent
-                && Arc::ptr_eq(&entry.program.curve, curve)
+            entry.identity.as_ref().is_some_and(|old| {
+                old.hash == identity.hash
+                    && old.model == identity.model
+                    && old.scope.bytes == identity.scope.bytes
+                    && old.rush_percent == identity.rush_percent
+            }) && Arc::ptr_eq(&entry.program.curve, curve)
         });
         self.stats.hits += u64::from(found.is_some());
         found.map(|entry| Arc::clone(&entry.program))
     }
 
-    pub(super) fn insert(&mut self, mut identity: Identity, program: Program) {
+    pub(super) fn get_recorded(
+        &mut self,
+        identity: &RecordedIdentity,
+        curve: &Arc<LuckDpCertifiedResult>,
+    ) -> Option<Arc<Program>> {
+        self.stats.recorded_lookups += 1;
+        self.stats.recorded_peak_key_bytes = self.stats.recorded_peak_key_bytes.max(identity.encoded_len());
+        let found = self.entries.iter().find(|entry| {
+            entry.recorded.as_ref().is_some_and(|old| old.same(identity)) && Arc::ptr_eq(&entry.program.curve, curve)
+        });
+        self.stats.recorded_hits += u64::from(found.is_some());
+        found.map(|entry| Arc::clone(&entry.program))
+    }
+
+    pub(super) fn decline_recorded_key(&mut self) {
+        self.stats.recorded_key_declines += 1;
+    }
+
+    pub(super) fn insert(
+        &mut self,
+        mut identity: Option<Identity>,
+        mut recorded: Option<RecordedIdentity>,
+        program: Program,
+    ) {
         self.stats.compilations += 1;
-        if let Some(old) = self.entries.iter().find(|entry| {
-            entry.identity.scope.hash == identity.scope.hash && entry.identity.scope.bytes == identity.scope.bytes
-        }) {
-            identity.scope = Arc::clone(&old.identity.scope);
+        if let Some(identity) = &mut identity
+            && let Some(old) = self
+                .entries
+                .iter()
+                .filter_map(|entry| entry.identity.as_ref())
+                .find(|old| old.scope.hash == identity.scope.hash && old.scope.bytes == identity.scope.bytes)
+        {
+            identity.scope = Arc::clone(&old.scope);
+        }
+        if let Some(recorded) = &mut recorded
+            && let Some(old) = self
+                .entries
+                .iter()
+                .filter_map(|entry| entry.recorded.as_ref())
+                .find(|old| old.shared.hash == recorded.shared.hash && old.shared.bytes == recorded.shared.bytes)
+        {
+            recorded.shared = Arc::clone(&old.shared);
         }
         let program = Arc::new(program);
-        let own = size_of::<Entry>() + identity.model.capacity() + program.allocated_bytes() + ARC_HEADER_BYTES;
-        let shared =
-            identity.scope.bytes.capacity() + size_of::<Scope>() + ARC_HEADER_BYTES + curve_bytes(&program.curve);
+        let own = size_of::<Entry>()
+            + identity.as_ref().map_or(0, |identity| identity.model.capacity())
+            + recorded.as_ref().map_or(0, |recorded| recorded.local.capacity())
+            + program.allocated_bytes()
+            + ARC_HEADER_BYTES;
+        let shared = identity
+            .as_ref()
+            .map_or(0, |identity| identity.scope.bytes.capacity() + size_of::<Scope>() + ARC_HEADER_BYTES)
+            + recorded.as_ref().map_or(0, |recorded| {
+                recorded.shared.bytes.capacity() + size_of::<recorded::SharedTrace>() + ARC_HEADER_BYTES
+            })
+            + curve_bytes(&program.curve);
         if own.saturating_add(shared) > self.capacity || self.capacity == 0 {
             return;
         }
@@ -168,7 +222,7 @@ impl ProgramCache {
             self.entries.pop_front();
             self.stats.evictions += 1;
         }
-        self.entries.push_back(Entry { identity, program });
+        self.entries.push_back(Entry { identity, recorded, program });
         while self.allocated_bytes() > self.capacity {
             self.entries.pop_front();
             self.stats.evictions += 1;
@@ -183,13 +237,23 @@ impl ProgramCache {
     fn allocated_bytes(&self) -> usize {
         let mut curves = FxHashSet::default();
         let mut scopes = FxHashSet::default();
+        let mut traces = FxHashSet::default();
         self.entries.iter().fold(self.entries.capacity() * size_of::<Entry>(), |mut bytes, entry| {
-            bytes += entry.identity.model.capacity() + entry.program.allocated_bytes() + ARC_HEADER_BYTES;
+            bytes += entry.program.allocated_bytes() + ARC_HEADER_BYTES;
             if curves.insert(Arc::as_ptr(&entry.program.curve)) {
                 bytes += curve_bytes(&entry.program.curve);
             }
-            if scopes.insert(Arc::as_ptr(&entry.identity.scope)) {
-                bytes += size_of::<Scope>() + entry.identity.scope.bytes.capacity() + ARC_HEADER_BYTES;
+            if let Some(identity) = &entry.identity {
+                bytes += identity.model.capacity();
+                if scopes.insert(Arc::as_ptr(&identity.scope)) {
+                    bytes += size_of::<Scope>() + identity.scope.bytes.capacity() + ARC_HEADER_BYTES;
+                }
+            }
+            if let Some(recorded) = &entry.recorded {
+                bytes += recorded.local.capacity();
+                if traces.insert(Arc::as_ptr(&recorded.shared)) {
+                    bytes += size_of::<recorded::SharedTrace>() + recorded.shared.bytes.capacity() + ARC_HEADER_BYTES;
+                }
             }
             bytes
         })
@@ -203,36 +267,29 @@ fn curve_bytes(curve: &LuckDpCertifiedResult) -> usize {
         + curve.probes.capacity() * size_of::<bool>()
 }
 
-/// Only inputs read by note_bounds_at_power. Note identity/time select a probability, not native note arithmetic.
+/// Power-independent factors in the original grouping. Note identity/time select a probability, not native
+/// note arithmetic. Different histories with the same endpoint bits need only one arithmetic kernel.
 struct Kernel {
     note_type: i32,
     score_type: i32,
     alive: bool,
-    executed: Classes,
-    combo: F32Interval,
-    gekisou: F32Interval,
+    factors: NoteFactors,
 }
 
 impl Kernel {
-    fn key(&self) -> [u32; 33] {
-        let mut key = [0; 33];
+    fn key(&self) -> [u32; 13] {
+        let mut key = [0; 13];
         key[..3].copy_from_slice(&[self.note_type as u32, self.score_type as u32, u32::from(self.alive)]);
-        for (class, fields) in self.executed.iter().enumerate() {
-            if let Some(fields) = fields {
-                let start = 3 + class * 13;
+        for (class, factors) in self.factors.iter().enumerate() {
+            if let Some(factors) = factors {
+                let start = 3 + class * 5;
                 key[start] = 1;
-                for (field, value) in fields.iter().enumerate() {
+                for (field, value) in factors.iter().enumerate() {
                     key[start + 1 + field * 2] = value.lower().to_bits();
                     key[start + 2 + field * 2] = value.upper().to_bits();
                 }
             }
         }
-        key[29..].copy_from_slice(&[
-            self.combo.lower().to_bits(),
-            self.combo.upper().to_bits(),
-            self.gekisou.lower().to_bits(),
-            self.gekisou.upper().to_bits(),
-        ]);
         key
     }
 }
@@ -272,8 +329,9 @@ enum Event {
 pub(super) struct Builder {
     capacity: usize,
     bytes: usize,
+    valid: bool,
     kernels: Vec<Kernel>,
-    kernel_ids: FxHashMap<[u32; 33], u32>,
+    kernel_ids: FxHashMap<[u32; 13], u32>,
     links: Vec<Link>,
     link_ids: FxHashMap<Link, u32>,
     events: Vec<Event>,
@@ -289,6 +347,7 @@ impl Builder {
         Self {
             capacity,
             bytes: 0,
+            valid: true,
             kernels: Vec::new(),
             kernel_ids: FxHashMap::default(),
             links: Vec::new(),
@@ -304,7 +363,8 @@ impl Builder {
 
     fn charge(&mut self, bytes: usize) -> bool {
         self.bytes = self.bytes.saturating_add(bytes);
-        self.bytes <= self.capacity
+        self.valid &= self.bytes <= self.capacity;
+        self.valid
     }
 
     pub(super) fn note(
@@ -316,26 +376,31 @@ impl Builder {
         probability: &LuckDpCertifiedResult,
         ready: bool,
     ) -> Option<u32> {
-        if self.bytes > self.capacity {
+        if !self.valid {
             return None;
         }
-        let kernel = Kernel {
-            note_type: note.note_type,
-            score_type: note.score_type,
-            alive: note.life > 0,
-            executed,
-            combo,
-            gekisou,
+        let factors = match note_factors(note.score_type, executed, combo, gekisou) {
+            Ok(factors) => factors,
+            Err(_) => {
+                // The preceding native enclosure normally proves these same operations. An optional
+                // compilation must still be abandoned if a future caller supplies an invalid kernel.
+                self.valid = false;
+                return None;
+            }
         };
+        let kernel = Kernel { note_type: note.note_type, score_type: note.score_type, alive: note.life > 0, factors };
         let key = kernel.key();
         let kernel_id = if let Some(&id) = self.kernel_ids.get(&key) {
             id
         } else {
             // Includes transient interning tables and geometric Vec/HashMap growth, not just retained payload.
-            if !self.charge(3 * (size_of::<Kernel>() + size_of::<([u32; 33], u32)>())) {
+            if !self.charge(3 * (size_of::<Kernel>() + size_of::<([u32; 13], u32)>())) {
                 return None;
             }
-            let id = u32::try_from(self.kernels.len()).ok()?;
+            let Ok(id) = u32::try_from(self.kernels.len()) else {
+                self.valid = false;
+                return None;
+            };
             self.kernels.push(kernel);
             self.kernel_ids.insert(key, id);
             id
@@ -348,7 +413,10 @@ impl Builder {
         if !self.charge(3 * (size_of::<Link>() + size_of::<(Link, u32)>())) {
             return None;
         }
-        let id = u32::try_from(self.links.len()).ok()?;
+        let Ok(id) = u32::try_from(self.links.len()) else {
+            self.valid = false;
+            return None;
+        };
         self.links.push(link);
         self.link_ids.insert(link, id);
         Some(id)
@@ -409,7 +477,7 @@ impl Builder {
         curve: Arc<LuckDpCertifiedResult>,
         bounds: &LuckScoreBounds,
     ) -> Option<Program> {
-        if self.bytes > self.capacity {
+        if !self.valid {
             return None;
         }
         // These fields are not read by the explicit factor/combo kernel; do not keep unrelated table storage.
@@ -428,7 +496,7 @@ impl Builder {
         } = &mut calc;
         *combo_table = None;
         *luck_weight = None;
-        Some(Program {
+        let mut program = Program {
             calc,
             rush_percent,
             curve,
@@ -441,7 +509,12 @@ impl Builder {
             final_life: bounds.exact_final_life,
             query_limit: bounds.query_limit,
             actual_queries: bounds.actual_queries,
-        })
+            allocation_bytes: 0,
+        };
+        // Program storage is immutable after construction; include this cached-size field itself through
+        // size_of::<Self>() and measure nested query vectors only once.
+        program.allocation_bytes = program.measure_allocated_bytes();
+        Some(program)
     }
 }
 
@@ -458,10 +531,15 @@ pub(super) struct Program {
     final_life: Option<i32>,
     query_limit: u64,
     actual_queries: usize,
+    allocation_bytes: usize,
 }
 
 impl Program {
     fn allocated_bytes(&self) -> usize {
+        self.allocation_bytes
+    }
+
+    fn measure_allocated_bytes(&self) -> usize {
         size_of::<Self>()
             + self.kernels.capacity() * size_of::<Kernel>()
             + self.links.capacity() * size_of::<Link>()
@@ -491,15 +569,9 @@ impl Program {
                 return Ok(None);
             }
             let note = NoteCommand::new(0, i32::from(kernel.alive), 0, kernel.note_type, kernel.score_type);
-            let (bounds, support) = note_bounds_at_power(
-                &self.calc,
-                power,
-                &note,
-                &kernel.executed,
-                kernel.combo,
-                kernel.gekisou,
-                self.rush_percent,
-            )?;
+            let (bounds, support) = note_bounds_with_factors(&self.calc, power, &note, self.rush_percent, |class| {
+                Ok(kernel.factors[class])
+            })?;
             kernels.push((bounds.buckets, support));
         }
         let mut links = Vec::with_capacity(self.links.len());

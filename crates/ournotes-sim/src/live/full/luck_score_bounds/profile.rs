@@ -13,6 +13,10 @@ pub struct LuckScoreProfile {
     pub combo_history_ms: f64,
     pub note_bounds_ms: f64,
     pub rank_bounds_ms: f64,
+    pub program_key_ms: f64,
+    pub program_lookup_ms: f64,
+    pub program_recorded_key_ms: f64,
+    pub program_recorded_lookup_ms: f64,
     pub program_run_ms: f64,
     pub factor_queries: u64,
     pub factor_quiet_queries: u64,
@@ -40,6 +44,10 @@ pub(super) fn record(value: LuckScoreProfile) {
         total.combo_history_ms += value.combo_history_ms;
         total.note_bounds_ms += value.note_bounds_ms;
         total.rank_bounds_ms += value.rank_bounds_ms;
+        total.program_key_ms += value.program_key_ms;
+        total.program_lookup_ms += value.program_lookup_ms;
+        total.program_recorded_key_ms += value.program_recorded_key_ms;
+        total.program_recorded_lookup_ms += value.program_recorded_lookup_ms;
         total.program_run_ms += value.program_run_ms;
         total.factor_queries += value.factor_queries;
         total.factor_quiet_queries += value.factor_quiet_queries;

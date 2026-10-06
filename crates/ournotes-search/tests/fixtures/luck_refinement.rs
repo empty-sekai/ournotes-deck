@@ -204,6 +204,15 @@ fn certified_score_caps_reuse_exclusion_proofs_across_equivalent_leaders() {
     assert_eq!(reference.completion, Completion::Complete);
     assert_eq!(reference.telemetry.leaves.visited, 155);
     assert_eq!(reference.results.len(), 3);
+    let paired = |deck: &ournotes_search::types::RecommendedDeck| {
+        let mut pairs: Vec<_> = deck.members.into_iter().zip(deck.snaps).collect();
+        pairs.sort_unstable();
+        pairs
+    };
+    let family = paired(&reference.results[0]);
+    assert!(reference.results.iter().all(|deck| paired(deck) == family));
+    let leaders: std::collections::HashSet<_> = reference.results.iter().map(|deck| deck.members[2]).collect();
+    assert_eq!(leaders.len(), 3, "equal programs must retain distinct canonical leader identities");
 
     request.strategy = Strategy::BranchAndBound;
     for cache_entries in [0, 64] {
@@ -228,6 +237,7 @@ fn certified_score_caps_reuse_exclusion_proofs_across_equivalent_leaders() {
         } else {
             assert!(caps.hits > 0, "equivalent leaders must reuse completed upper-bound proofs: {caps:?}");
             assert!(caps.peak_entries > 0);
+            assert_eq!(result.telemetry.incumbents.warm_start.evaluations, 3);
         }
         assert!(result.telemetry.leaves.order_bound_pruned > 0);
     }
