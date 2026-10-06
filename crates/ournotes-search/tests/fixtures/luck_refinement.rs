@@ -160,3 +160,34 @@ fn long_stream_refinement_materializes_the_boundary_candidate() {
         assert!(p.lower_f64() >= 0.0 && p.upper_f64() <= 1.0);
     }
 }
+
+#[test]
+fn certified_seed_budget_preserves_the_complete_canonical_ranking() {
+    for (k, cache) in [(1, 0), (3, 64), (31, 0)] {
+        let (data, roster, _) = inputs(610_000, k, cache);
+        let mut request = joint_request("mission", true, json!({"kind":"score"}));
+        request.k = k;
+        request.limits.cache_entries = cache;
+        request.strategy = Strategy::Exhaustive;
+        let reference = engine::recommend(&data, &roster, &request).unwrap();
+        assert_eq!(reference.completion, Completion::Complete);
+        request.strategy = Strategy::BranchAndBound;
+        let actual = engine::recommend(&data, &roster, &request).unwrap();
+        assert_eq!(actual.completion, Completion::Complete);
+        assert_eq!(actual.results.len(), reference.results.len());
+        for (a, b) in actual.results.iter().zip(&reference.results) {
+            assert_eq!((a.members, a.snaps, a.power), (b.members, b.snaps, b.power));
+            assert_eq!(a.rank_certified, Some(true));
+            let x = a.payoff_interval.as_ref().unwrap();
+            let y = b.payoff_interval.as_ref().unwrap();
+            assert!(x.lower_f64() <= y.upper_f64() && y.lower_f64() <= x.upper_f64());
+        }
+        let proposals = actual.telemetry.incumbents.warm_start.evaluations;
+        assert!(
+            proposals > 0 && proposals <= k.min(3) as u64,
+            "score k={k} proposals={proposals} bounds={:?}",
+            actual.telemetry.environment.bounds
+        );
+        assert!(actual.telemetry.phases.iter().any(|phase| phase.name == "search"));
+    }
+}

@@ -330,7 +330,8 @@ impl Engine<'_, '_> {
 /// Warm start on the whole domain with its whole-domain bounds: greedy dives from the best leader pairs, a
 /// best-improvement local search on the leaf bound, exact evaluation of the dive decks and of the best decks the
 /// local search saw, then polishing rounds around the best deck. It stops when the budget runs out; the traversal
-/// after it then stops at its first deadline check.
+/// after it then stops at its first deadline check. Certified requests evaluate at most min(K, DIVES) seed
+/// proposals; the complete-domain traversal handles subsequent candidates.
 pub(super) fn seed(e: &mut Engine<'_, '_>) -> Result<(), Error> {
     let Some(w) = e.warm.take() else { return Ok(()) };
     e.rec.begin(&mut e.tel, "seed", None);
@@ -346,6 +347,12 @@ pub(super) fn seed(e: &mut Engine<'_, '_>) -> Result<(), Error> {
 }
 
 fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>) -> Result<(), Error> {
+    let initial_evaluations = e.tel.incumbents.warm_start.evaluations;
+    let proposal_limit = e.request.k.min(DIVES) as u64;
+    let certified_seed_complete = |e: &Engine<'_, '_>| {
+        e.certified.is_some()
+            && e.tel.incumbents.warm_start.evaluations.saturating_sub(initial_evaluations) >= proposal_limit
+    };
     let root = RootOrder::new(w.domain, w.bounds, &w.orders, e)?;
     let mut leaders = Vec::new();
     for &(m, choice) in &root.children {
@@ -366,6 +373,9 @@ fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>) -> Result<(), Error> {
         let mut current = uniform::canonical(e.pool, &current);
         let mut value = surrogate(w, &current, e)?;
         if !evaluate(w, value, current, false, e)? {
+            return Ok(());
+        }
+        if certified_seed_complete(e) {
             return Ok(());
         }
         shortlist.offer(value, current);
@@ -390,6 +400,9 @@ fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>) -> Result<(), Error> {
         }
     }
     for (value, d) in shortlist.rows.clone() {
+        if certified_seed_complete(e) {
+            return Ok(());
+        }
         if !evaluate(w, value, d, false, e)? {
             return Ok(());
         }

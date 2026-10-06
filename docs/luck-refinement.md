@@ -74,3 +74,12 @@ The interval frontier establishes each returned rank from complete certificates 
 Additional synthetic checks cover several draws in one frame, conditional-state isolation, bounded stochastic
 depth, initialized-model identity, complete-law reuse, and a complete threshold ranking over a 601-frame schedule
 with request cache capacities of zero and 64.
+
+## Initial proposals
+
+A certified request evaluates at most `min(K, 3)` proposals during warm start. The subsequent traversal retains
+the complete requested domain and uses the certified lower cutoff when enough candidates are available.
+This proposal allowance controls search order, independently of the request's total work and time limits.
+
+The `certified_seed_budget_preserves_the_complete_canonical_ranking` test checks the canonical result against
+exhaustive score search at several K and cache capacities, including the full candidate count.
