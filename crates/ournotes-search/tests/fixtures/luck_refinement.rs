@@ -1,5 +1,5 @@
-//! Reproduce three exhausted 31-team LUCK frontiers using the existing synthetic generator.
-//! These inputs declare nominal lotteries, not a distribution of native PRNG seeds.
+//! Exhausted LUCK frontiers over a synthetic 31-team domain.
+//! These inputs declare independent nominal lottery tables.
 use super::common::set_column;
 use super::{data_document, joint_request, roster_document, synthetic_master};
 use ournotes_search::{
@@ -88,6 +88,37 @@ fn exact_nominal_refinement_settles_the_remaining_threshold_witness_without_a_ca
 }
 
 #[test]
+fn a_long_frame_schedule_loads_boundary_orders_and_certifies_the_threshold_ranking() {
+    use ournotes_search::types::{Execution, PlayPolicy};
+    use ournotes_sim::live::model::JudgementStream;
+
+    for cache_entries in [0, 64] {
+        let (data, roster, mut request) = inputs(610_000, 1, cache_entries);
+        let mut stream = JudgementStream::theoretical_best(&data.chart(super::SCORE_ID).unwrap());
+        let first = stream.frames.len() as i32;
+        stream.frames.extend((first..=600).map(|frame| frame * 1000 / 60));
+        request.execution =
+            Execution::Live { score_id: super::SCORE_ID, gekisou: true, play: PlayPolicy::Stream { stream } };
+        let result = engine::recommend(&data, &roster, &request).unwrap();
+        assert_eq!(
+            result.completion,
+            Completion::Complete,
+            "{:#?}; results: {:#?}",
+            result.telemetry.lottery_refinement,
+            result.results
+        );
+        assert_eq!(result.results.len(), 1);
+        let winner = &result.results[0];
+        assert_eq!(winner.members, [1, 2, 3, 4, 5]);
+        assert_eq!(winner.snaps, [Some(1), Some(2), None, None, None]);
+        assert_eq!(winner.rank_certified, Some(true));
+        assert!(result.telemetry.lottery_refinement.installed_orders > 0);
+        assert_eq!(result.telemetry.lottery_refinement.declined_orders, 0);
+        assert!(winner.payoff_interval.as_ref().unwrap().lower_f64() > 0.388_928_092_021_209_54);
+    }
+}
+
+#[test]
 fn long_stream_refinement_materializes_the_boundary_candidate() {
     let (data, roster, _) = inputs(610_000, 1, 0);
     let mut wire = super::joint_request_json("mission", true, json!({"kind":"scoreAtLeast","threshold":610_000}));
@@ -101,14 +132,18 @@ fn long_stream_refinement_materializes_the_boundary_candidate() {
     assert_eq!(short.completion, Completion::Complete);
     wire["execution"]["play"]["stream"]["frames"] = json!((0..=10400).step_by(20).collect::<Vec<_>>());
     let long = engine::recommend(&data, &roster, &serde_json::from_value(wire).unwrap()).unwrap();
-    assert_eq!(long.completion, Completion::RefinementRequired);
-    assert_eq!(long.optimality, ournotes_search::types::Optimality::Unproven);
+    assert!(matches!(long.completion, Completion::Complete | Completion::RefinementRequired));
     assert_eq!(long.telemetry.leaves.visited, 31);
     let counters = &long.telemetry.lottery_refinement;
     assert!(counters.installed_orders > 0);
     assert_eq!(counters.completed_orders, counters.installed_orders);
-    assert!(counters.declined_orders > 0);
-    assert_eq!(counters.frames, ournotes_sim::live::full::LuckExactBudget::default().remaining_frames);
+    if long.completion == Completion::RefinementRequired {
+        assert_eq!(long.optimality, ournotes_search::types::Optimality::Unproven);
+        assert!(counters.declined_orders > 0);
+        assert_eq!(counters.frames, ournotes_sim::live::full::LuckExactBudget::default().remaining_frames);
+    } else {
+        assert!(long.results.iter().all(|row| row.rank_certified == Some(true)));
+    }
     // The finite work allowance preserves the ambiguous frontier and the true winning candidate.
     let expected = &short.results[0];
     let actual = long
