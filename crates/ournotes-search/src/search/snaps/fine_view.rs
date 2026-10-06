@@ -12,7 +12,7 @@ impl FineView<'_> {
     /// (`note_score_up` and the judgement factors, summed) from this candidate's own commands. Each execution of
     /// a score frame holding one of its commands rounds the state once when applying it (including transient
     /// same-timestamp start/end pairs), once in the frame difference (below the factors of
-    /// the windows that meet one 40 ms frame) and once in the undo; `ops` counts the executions; each factor's
+    /// the windows that meet one native score frame) and once in the undo; `ops` counts the executions; each factor's
     /// binary32 representation adds two more roundings per lifetime command
     /// (integer-to-float conversion and division, including saturated mill values). Infinite without a
     /// certificate.
@@ -24,8 +24,8 @@ impl FineView<'_> {
             return f64::INFINITY;
         };
         // A start/end pair at the same timestamp can transiently change a field
-        // even when its half-open factor window contains no note. The frame
-        // neighborhood also covers those intermediate command states.
+        // even when its half-open factor window contains no note. Closed native
+        // frame spans also cover those intermediate command states.
         let state = (1.0 + peak.max(peak_frame)).next_up();
         let magnitude = ((e * ((2.0 * state).next_up() + peak_frame).next_up()).next_up()
             + (representation * state).next_up())
@@ -40,7 +40,7 @@ impl FineView<'_> {
     }
 
     /// The counts `cand_drift` reads: command executions, lifetime commands, the largest factor sum at one command
-    /// time and within one frame of it.
+    /// time and intersecting one native score frame.
     fn cand_counts(&self, parts: [&Contrib; 5], rush_masks: Option<&RushMasks>) -> (f64, f64, f64, f64) {
         let mut peak = 0f64;
         let mut peak_frame = 0f64;
@@ -55,13 +55,14 @@ impl FineView<'_> {
                 n = (n + cmds).next_up();
             }
             for &(a, _, _) in &p.spans {
+                let frame = self.fine.score_frames.at(a);
                 let (mut at, mut near) = (0f64, 0f64);
                 for q in parts {
                     for &(b0, b1, g) in &q.spans {
                         if b0 <= a && a < b1 {
                             at = (at + g).next_up();
                         }
-                        if b0 <= a.saturating_add(40) && a.saturating_sub(40) <= b1 {
+                        if self.fine.score_frames.meets(b0, b1, frame) {
                             near = (near + g).next_up();
                         }
                     }

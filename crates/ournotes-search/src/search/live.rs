@@ -19,6 +19,14 @@ use ournotes_sim::pool::Pool;
 /// Relative error bound of the per-note float chain (16 roundings of at most 2^-24 each, with margin).
 const CHAIN_EPS: f64 = 2e-6;
 
+fn add_up(a: f64, b: f64) -> f64 {
+    if a == 0.0 || b == 0.0 { a + b } else { (a + b).next_up() }
+}
+
+fn mul_up(a: f64, b: f64) -> f64 {
+    if a == 0.0 || b == 0.0 { 0.0 } else { (a * b).next_up() }
+}
+
 pub(crate) struct LiveCtx<'a> {
     pub model: &'a LiveModel,
     pub profile_of: Vec<usize>,
@@ -31,6 +39,7 @@ pub(crate) struct LiveCtx<'a> {
     /// Sum over all notes of coefficient * (1 + drift) * (1 + CHAIN_EPS).
     base: f64,
     global: f64,
+    factor_bounds: [f32; 2],
 }
 
 fn score_type_of_judgement(j: i32) -> i32 {
@@ -81,30 +90,64 @@ impl<'a> LiveCtx<'a> {
                 if c.iter().any(|x| x.combo_mill != 0 || x.luck != 0 || x.band_total_power != 0) {
                     return Err(Error::Unsupported("live skill changing combo, luck or power".into()));
                 }
+                if !c.len().is_multiple_of(2)
+                    || c.as_chunks::<2>().0.iter().any(|pair| {
+                        let (start, end) = (&pair[0], &pair[1]);
+                        start.note_mill < 0
+                            || start.judge_mill < 0
+                            || end.time_ms < start.time_ms
+                            || end.owner_id != start.owner_id
+                            || end.judgement != start.judgement
+                            || end.note_mill != -start.note_mill
+                            || end.judge_mill != -start.judge_mill
+                    })
+                {
+                    return Err(Error::Domain("live search requires paired nonnegative score-up effects".into()));
+                }
                 per.push(c);
             }
             cmds.push(per);
         }
-        // drift of the running factor state: every add rounds by at most 2^-24 of a value below 1 + sum |f|
+        // Two representation roundings and one addition per command, plus the
+        // final note/judgement field addition. gamma bounds rounding feedback.
         let mut n_max = 0usize;
         let mut f_max = 0f64;
         for per in &cmds {
-            n_max += per.iter().map(Vec::len).max().unwrap_or(0);
-            f_max += per
+            n_max = n_max
+                .checked_add(per.iter().map(Vec::len).max().unwrap_or(0))
+                .ok_or_else(|| Error::Domain("live factor command count exceeds its proof range".into()))?;
+            let f = per
                 .iter()
                 .map(|c| {
                     c.iter()
-                        .map(|x| (x.note_mill.unsigned_abs() + x.judge_mill.unsigned_abs()) as f64 / 1e5)
-                        .sum::<f64>()
+                        .map(|x| {
+                            let magnitude = f64::from(x.note_mill).abs() + f64::from(x.judge_mill).abs();
+                            if magnitude == 0.0 { 0.0 } else { (magnitude / 1e5).next_up() }
+                        })
+                        .fold(0.0, add_up)
                 })
                 .fold(0f64, f64::max);
+            f_max = add_up(f_max, f);
         }
-        let drift = (n_max as f64 + 1.0) * (1.0 + f_max) * 2f64.powi(-22);
+        let alpha = mul_up(add_up(mul_up(3.0, (n_max as f64).next_up()), 1.0), 2f64.powi(-24));
+        if !alpha.is_finite() || alpha >= 1.0 {
+            return Err(Error::Domain("live factor command count has no finite rounding certificate".into()));
+        }
+        let gamma = (alpha / (1.0 - alpha).next_down()).next_up();
+        let drift = if n_max == 0 { 0.0 } else { mul_up(gamma, add_up(1.0, f_max)) };
+        if !drift.is_finite() || drift >= 0.5 {
+            return Err(Error::Domain("live factor state has no positive finite certificate".into()));
+        }
+        let factor_bounds =
+            [((1.0 - drift).next_down() as f32).next_down(), (add_up(add_up(1.0, f_max), drift) as f32).next_up()];
         let coef = model.note_coefficients();
+        if coef.iter().any(|(_, _, k)| !k.is_finite() || *k < 0.0) {
+            return Err(Error::Domain("live search requires finite nonnegative note coefficients".into()));
+        }
         let mut base = 0f64;
         let mut inside = Vec::new();
         for &(time, st, k) in &coef {
-            base += k * (1.0 + drift) * (1.0 + CHAIN_EPS);
+            base = add_up(base, mul_up(mul_up(k, add_up(1.0, drift)), add_up(1.0, CHAIN_EPS)));
             let mut contrib = vec![vec![0f64; profiles.len()]; cmds.len()];
             let mut any = false;
             for (e, per) in cmds.iter().enumerate() {
@@ -113,9 +156,11 @@ impl<'a> LiveCtx<'a> {
                     for pair in c.chunks(2) {
                         let (s, f) = (&pair[0], &pair[1]);
                         if s.time_ms <= time && time < f.time_ms {
-                            v += s.note_mill as f64 / 1e5;
-                            if score_type_of_judgement(s.judgement) == st && st != 0 {
-                                v += s.judge_mill as f64 / 1e5;
+                            if s.note_mill != 0 {
+                                v = add_up(v, (f64::from(s.note_mill) / 1e5).next_up());
+                            }
+                            if score_type_of_judgement(s.judgement) == st && st != 0 && s.judge_mill != 0 {
+                                v = add_up(v, (f64::from(s.judge_mill) / 1e5).next_up());
                             }
                         }
                     }
@@ -129,9 +174,16 @@ impl<'a> LiveCtx<'a> {
                 inside.push((k, contrib));
             }
         }
-        let mut ctx = LiveCtx { model, profile_of, cmds, event_index, inside, base, global: 0.0 };
+        let mut ctx = LiveCtx { model, profile_of, cmds, event_index, inside, base, global: 0.0, factor_bounds };
         ctx.global = ctx.a_plus_all();
+        if !ctx.global.is_finite() {
+            return Err(Error::Domain("live score envelope has no finite coefficient".into()));
+        }
         Ok(ctx)
+    }
+
+    pub fn prove_score_domain(&self, power_upper_bound: i64, cancelled: impl FnMut() -> bool) -> Result<bool, Error> {
+        self.model.prove_search_domain(power_upper_bound, self.factor_bounds, cancelled)
     }
 
     /// Linear gains of the bound: `g[e][i]` is the extra score per unit of power when profile `ps[i]` performs the
@@ -141,13 +193,13 @@ impl<'a> LiveCtx<'a> {
         for (k, contrib) in &self.inside {
             for (e, per) in contrib.iter().enumerate() {
                 for (i, &p) in ps.iter().enumerate() {
-                    g[e][i] += k * per[p];
+                    g[e][i] = add_up(g[e][i], mul_up(*k, per[p]));
                 }
             }
         }
         for row in &mut g {
             for x in row.iter_mut() {
-                *x *= 1.0 + CHAIN_EPS;
+                *x = mul_up(*x, add_up(1.0, CHAIN_EPS));
             }
         }
         g
@@ -157,11 +209,11 @@ impl<'a> LiveCtx<'a> {
         let n = self.cmds.first().map_or(0, Vec::len);
         let all: Vec<usize> = (0..n).collect();
         let g = self.gains(&all);
-        self.base + g.iter().map(|row| row.iter().copied().fold(f64::MIN, f64::max)).sum::<f64>()
+        g.iter().map(|row| row.iter().copied().fold(0.0, f64::max)).fold(self.base, add_up)
     }
 
     fn ub(power: i64, a: f64) -> i64 {
-        let v = (power.max(0) as f64) * a * (1.0 + 1e-12);
+        let v = mul_up(power.max(0) as f64, a);
         if v >= i64::MAX as f64 { i64::MAX } else { v.ceil() as i64 }
     }
 
@@ -195,7 +247,7 @@ impl<'a> LiveCtx<'a> {
             if seen.insert(key) {
                 let mut a = self.base;
                 for (e, &idx) in self.event_index.iter().enumerate() {
-                    a += g[e][slot_of(prof[order[idx]])];
+                    a = add_up(a, g[e][slot_of(prof[order[idx]])]);
                 }
                 cands.push((Self::ub(power, a), order));
             }

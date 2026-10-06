@@ -10,7 +10,7 @@ use crate::search::live::LiveCtx;
 use crate::search::matching::best_assignment;
 use crate::search::snaps::SnapLive;
 use crate::search::tables::Tables;
-use crate::search::topk::{Entry, NO_SNAP, TopK};
+use crate::search::topk::{Entry, SnapKey, TopK};
 use ournotes_sim::error::Error;
 use ournotes_sim::pool::Pool;
 
@@ -481,7 +481,7 @@ impl<'a, 'm> PowerSearch<'a, 'm> {
             power,
             ids,
             leader_id: pool.members[l.leader].id,
-            snap_ids: snaps.map(|s| s.map_or(NO_SNAP, |i| pool.snaps[i].id)),
+            snap_ids: snaps.map(|s| SnapKey::from(s.map(|i| pool.snaps[i].id))),
             order,
             members,
             snaps,
@@ -563,7 +563,7 @@ impl<'a, 'm> PowerSearch<'a, 'm> {
             power: b.power,
             ids,
             leader_id: pool.members[leader].id,
-            snap_ids: b.snaps.map(|s| s.map_or(NO_SNAP, |i| pool.snaps[i].id)),
+            snap_ids: b.snaps.map(|s| SnapKey::from(s.map(|i| pool.snaps[i].id))),
             order: b.order,
             members,
             snaps: b.snaps,

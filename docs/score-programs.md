@@ -1,15 +1,15 @@
 # Power-parameterized score programs
 
-The `search-diagnostics` feature can record one declared solo execution as an
-exact score expression. `LiveModel::compile_score_program` consumes a fresh model,
-runs the supplied play with its complete post-shuffle random state, and returns
+`LiveModel::compile_score_program` records one declared judged-stream execution
+as an exact score expression. It consumes a fresh model, runs the supplied play
+with its complete post-shuffle random state, and returns
 the recorded `ScoreProgram` plus the normally executed terminal model.
 `ScoreProgram::evaluate` changes only initial total power.
 
-This is a separate building block for reducing repeated simulation. It does
-not participate in production search or merge deck candidates.
+Production search reuses completed lottery-free order programs at each candidate's
+actual power, retaining each team's identity and canonical rank.
 An optional checked certificate can prove nondecreasing score on a supplied
-power interval; ordinary evaluation makes no monotonicity assumption.
+power interval; exact evaluation requires only the program's execution contract.
 
 ## Control flow and identity
 
@@ -17,18 +17,20 @@ For the supported judged-stream path, total power initializes the score
 calculator. The complete `Performer` vector determines skills, their order and
 all target attributes. Conditions, conversion, life, combo and lottery updates
 cannot read total power. Score reads feed range snapshots and score reporting;
-native solo ranking confirms rank 1 independently of the score.
+native solo ranking confirms rank 1 independently of the score, and declared
+external rank confirmations are fixed execution inputs.
 
 Each program belongs to that entire model and execution context: master data,
 ordered performers, chart, play, clocks and complete native random state.
-Sharing a skill-order permutation is insufficient because the remaining random
-state can differ. Sharing a search-bound class is also insufficient. A future
-program cache must prove equality of this complete context before reuse.
+The complete random state is part of this identity even when two runs share a
+skill-order permutation. Production reuse fixes the execution context within
+one request and compares the complete performer values as described below.
 
-Recording rejects models that have started, raw input callbacks, external
-rank confirmation and externally supplied lifecycle state. The returned terminal
-model still describes the original power; its recorded numeric score snapshots
-are not the terminal model for a different power.
+Recording accepts fresh judged-stream ordinary Live and Gekisou with solo ranking
+or a declared external rank timeline. Started models, raw input callbacks and
+already-started lifecycle state return errors. The returned terminal model and its
+numeric score snapshots describe the original power; the program supplies scores
+at other powers.
 
 ## Exact arithmetic under replay
 
@@ -45,10 +47,12 @@ expression handles, then applies the native wrapping difference and integer
 percentage. Later replay does not rebind an earlier bonus to newer snapshots.
 
 The resulting directed acyclic expression has literal, note, wrapping-add,
-wrapping-subtract and rank-percentage nodes. Unreachable nodes are removed.
-Historical add/subtract pairs are not yet normalized away. Compilation checks
-that evaluating the program at its original power exactly reproduces the
-recorded terminal score.
+wrapping-subtract and rank-percentage nodes. Export normalizes additive expressions
+modulo 2^32 and removes unreachable nodes. Note kernels combine when all integer
+fields and binary32 bit patterns agree. Each rank-percentage input is normalized
+separately, preserving its integer division boundary. Compilation checks that
+evaluating the program at its original power exactly reproduces the recorded
+terminal score.
 
 ## Optional monotonicity certificate
 
@@ -76,25 +80,43 @@ Two monotone snapshot values do not make their difference monotone. Negative
 surviving coefficients, uncertain arithmetic and relevant wrapping therefore
 return None, even when the program might happen to be monotone.
 
-## Search integration still requires program identity
+## Production reuse and identity
+
+The request-local cache in `search/program_cache.rs` fixes the master, chart,
+play, events, clocks, ranking inputs and every simulator parameter except power.
+Its key contains the member identities and their complete `Performer` values,
+including vector order, in a canonical member layout. A hash selects a bucket;
+each hit compares the complete key. Order indices are relabelled bijectively
+between that layout and the candidate's slots.
+
+The cache retains completed orders with zero random draws, including completed
+orders of a tree whose remaining orders were pruned or interrupted. Each retained
+order supplies its score program and power-independent final life. On a hit,
+search evaluates the program at the current candidate's actual power and recomputes
+its payoff, including that candidate's event bonus and final-life conditions.
+Missing orders remain explicit and receive evaluation or a sound cutoff proof.
+A scalar team result enters Top-K only after all 120 order values are available.
+
+Program capture and cache retention have bounded capacity. Admission, oversized
+records and eviction determine which computations can be reused; ordinary
+evaluation supplies the missing work. Every candidate keeps its own member/Snap
+identity and canonical tie key through reuse.
 
 Within an identical program, certified monotone score plus the score
-objective's secondary descending-power order would permit power-based Top-K
-binding recovery. Physical identities, resource uniqueness and canonical ties
-must still be retained. PT additionally depends on the physical event bonus and
-must be calculated for each performance order before averaging; monotone score
-alone does not order all PT bindings.
+objective's secondary descending-power order supports power-based comparisons
+on the certified interval. This is a separate proof from the cache's exact score
+evaluation. Binding selection also preserves physical identities, resource
+uniqueness and canonical ties. PT depends on the physical event bonus and is
+calculated for each performance order before averaging, with its own payoff-order
+proof required for power-based binding selection.
 
 The `score_program` harness binary compares each recorded program against fresh
-complete runs at an explicit list of powers. Deliberate negative/overflow probes
-test expression fidelity; they are not legal-roster examples. Numerical replay
-equality is distinct from game parity, cross-deck equivalence, monotonicity and
-end-to-end search speed.
+complete runs at an explicit list of powers, including integer-boundary cases.
+The comparison checks expression fidelity for each declared execution context.
 
-`ClassKey`/`RowSig` is insufficient for this identity contract.
-Bound preparation can omit inert rows and records only fields needed by the
-relaxation. Exact execution must also preserve update phases, skill boundaries,
-effect order and conversion ownership aliases, including equality of raw effect
-IDs across skill tables. Pre-live effects with no score applier can still run
-trigger, condition, reset, release and cumulative machinery. A future compiler
-must preserve these semantics before grouping them.
+`ClassKey` and `RowSig` describe fields used by the bound relaxation.
+Execution identity preserves update phases, skill boundaries, effect order and
+conversion ownership aliases, including equality of raw effect IDs across skill
+tables. Pre-live effects also participate in trigger, condition, reset, release
+and cumulative execution. The production cache retains the complete performer
+identity under the fixed request context for these semantics.
