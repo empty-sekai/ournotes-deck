@@ -40,3 +40,18 @@ jobs:
         with:
           toolchain: "1.88.0"
       - run: cargo check --all-targets
+
+  synthetic-correctness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python3 -m unittest discover -s tools/native-validation -p 'test_*.py'
+      - run: python3 -m unittest discover -s tools/search-harness -p 'test_*.py'
+      - name: Export synthetic search inputs
+        env:
+          BDON_HARNESS_OUT: work/corpus
+        run: cargo test --release --locked --test adapter_fixture_export export_search_harness_inputs -- --ignored
+      - run: cargo build --release --locked --manifest-path tools/search-harness/Cargo.toml --bin ournotes-search-harness
+      - name: Compare independent team enumeration
+        run: python3 tools/search-harness/run.py run --binary tools/search-harness/target/release/ournotes-search-harness --suite work/corpus/suite.json --out work/corpus-results
