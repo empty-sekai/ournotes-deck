@@ -61,7 +61,11 @@ The synthetic `long_stream_refinement_materializes_the_boundary_candidate` test 
 the public recommendation entry point. The storage-policy unit test distinguishes eager storage from backend
 admission and checks that the ordinary long-chart domain remains eligible for bounded refinement.
 
-## Order scheduling
+## Refinement scheduling
+
+Ambiguous candidates with smaller current certified payoff upper bounds receive refinement first, with
+candidate identifiers breaking ties. Their upper bounds are closer to exclusion by a competitor's proved
+lower bound. This priority uses the complete frontier and preserves every existing certificate.
 
 Among the orders requiring refinement, the search first evaluates those with the widest payoff enclosure.
 Every order has the same weight in the uniform-order objective. Canonical order indices break priority ties.

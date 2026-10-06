@@ -272,9 +272,20 @@ impl Engine<'_, '_> {
                 return Ok(());
             };
             let state = self.certified.as_ref().expect("certified request");
-            // proof.ambiguous is scheduled by its upper/lower payoff bounds and canonical ties. It is
-            // only a work priority: the frontier alone establishes every returned rank.
-            let selected = proof.ambiguous.iter().find_map(|&id| {
+            let mut candidates = proof.ambiguous.clone();
+            // Smaller upper bounds identify contenders closer to exclusion by a proved lower bound.
+            // This is a work priority; the frontier alone establishes every returned rank.
+            candidates.sort_by(|a, b| {
+                state
+                    .frontier
+                    .get(*a)
+                    .expect("live candidate")
+                    .payoff
+                    .upper()
+                    .total_cmp(&state.frontier.get(*b).expect("live candidate").payoff.upper())
+                    .then(a.cmp(b))
+            });
+            let selected = candidates.iter().find_map(|&id| {
                 let entry = &state.entries[&id];
                 let retained = entry.refinement.as_ref()?;
                 let mut indices: Vec<_> = if matches!(retained.map, PayoffMap::Score) {
@@ -303,8 +314,7 @@ impl Engine<'_, '_> {
                     .then(|| (id, entry.physical, retained.program.clone(), retained.map.clone(), indices))
             });
             let Some((id, physical, program, map, indices)) = selected else {
-                let next = proof
-                    .ambiguous
+                let next = candidates
                     .iter()
                     .copied()
                     .find(|id| state.entries[id].refinement.is_none() && !materialized.contains(id));

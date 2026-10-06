@@ -458,10 +458,10 @@ mod tests {
                     "_skillTriggerType":1,"_skillTriggerConditionGroup":1,"_skillEffectType":2001,
                     "_activationTimeSecond":1,"_effectValue":0},
                 {"_id":2,"_supportSkillID":2,"_level":1,
-                    "_skillTriggerType":1,"_skillTriggerConditionGroup":2,"_skillEffectType":2001,
+                    "_skillTriggerType":1,"_skillTriggerConditionGroup":2,"_skillEffectType":2000,
                     "_activationTimeSecond":1,"_effectValue":5000},
                 {"_id":3,"_supportSkillID":3,"_level":1,
-                    "_skillTriggerType":1,"_skillTriggerConditionGroup":3,"_skillEffectType":2001,
+                    "_skillTriggerType":1,"_skillTriggerConditionGroup":3,"_skillEffectType":2000,
                     "_activationTimeSecond":1,"_effectValue":5000}]
         });
         let texts: Vec<_> = tables
@@ -918,6 +918,7 @@ mod tests {
         checkpoint.set_random(LiveRandom::with_nominal_prefix(vec![1, 0]));
         checkpoint.play_frames(&play, &delta, 2).unwrap();
         assert!(checkpoint.random.nominal_prefix_consumed());
+        assert!(checkpoint.factor_state().note_score_up > 0.0);
         let state = format!("{:?}", checkpoint.cond);
         let factors = format!("{:?}", checkpoint.factor_state());
         let trace = checkpoint.trace().to_vec();
