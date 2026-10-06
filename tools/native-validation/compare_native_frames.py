@@ -37,13 +37,31 @@ def float_detail(a, b):
             'ulpDistance': abs(ordered(a) - ordered(b))}
 
 
-def compare(native, rust, contract):
-    integer = contract['integerFields']
+def validate_contract(contract):
+    if not isinstance(contract, dict):
+        raise ValueError('contract must be an object')
+    integer = contract.get('integerFields')
     floating = contract.get('float32BitFields', [])
+    for name, fields in (('integerFields', integer), ('float32BitFields', floating)):
+        if not isinstance(fields, list) or any(not isinstance(field, str) or not field for field in fields):
+            raise ValueError(f'{name} must be an array of nonempty field strings')
     if not integer or not {'frame', 'timeMs'} <= set(integer):
         raise ValueError('contract must include frame and timeMs')
     if len(set(integer + floating)) != len(integer + floating):
         raise ValueError('duplicate contract fields')
+    lengths = contract.get('arrayLengths', {})
+    if not isinstance(lengths, dict):
+        raise ValueError('arrayLengths must be an object')
+    for field, expected in lengths.items():
+        if not isinstance(field, str) or not field:
+            raise ValueError('arrayLengths keys must be nonempty field strings')
+        if type(expected) is not int or expected < 0:
+            raise ValueError('expected array lengths must be nonnegative integers')
+    return integer, floating, lengths
+
+
+def compare(native, rust, contract):
+    integer, floating, lengths = validate_contract(contract)
     if native['chartId'] != rust['chartId']:
         raise ValueError('chart identity mismatch')
     nf, rf = native['frames'], rust['frames']
@@ -54,9 +72,7 @@ def compare(native, rust, contract):
     if len(nf) != len(rf):
         differences.append({'kind': 'frameCount', 'native': len(nf), 'rust': len(rf)})
     for index, (a, b) in enumerate(zip(nf, rf)):
-        for field, expected in contract.get('arrayLengths', {}).items():
-            if type(expected) is not int or expected < 0:
-                raise ValueError('expected array lengths must be nonnegative integers')
+        for field, expected in lengths.items():
             for role, row in (('native', a), ('rust', b)):
                 try:
                     values = resolve(row, field.split('.'))
