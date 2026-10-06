@@ -63,8 +63,8 @@ The transformed coefficient is `A + D*B`, followed by the separate multiplicativ
 chain allowance. This changes the prepared base and global coefficient; per-pair
 gains and the existing assignment machinery remain valid. Outward arithmetic,
 a rounding-amplification check, a positive-factor check and finite normal-range
-guards restrict applicability. Other cases retain the original envelope. The
-fine/raw candidate caps and original scorer overflow guard remain unchanged.
+guards restrict applicability. Other cases retain the enclosing envelope.
+The fine/raw candidate caps and scorer overflow checks apply independently.
 
 The harness separately reports candidate-specific margin and a zero-margin
 diagnostic. The latter is never an admissible cap. Candidate margin, the
@@ -94,8 +94,8 @@ possible starts remain separate optimistic executions.
 This refinement applies only to the finite-start timing representation, currently
 at most eight possible starts. Own-event rows, sustained rows, other cumulative
 conditions and unsupported numerical cases retain their existing conservative
-envelopes. The original command-count, factor-peak and undo/replay drift bounds
-remain in force. A counter ramp is not an exact simulation trace.
+envelopes. The command-count, factor-peak and undo/replay drift bounds also
+apply. A counter ramp encloses the count of every admitted execution.
 
 ## Constant-cost bounds when judgements cannot change
 
@@ -111,15 +111,25 @@ factors. Each prefix sum stores both a lower and an upper endpoint, so an interv
 uses `upper[end] - lower[start]`; subtracting two rounded-up prefixes would not
 be a safe upper bound. Card/class/position gains are then constant-size lookups.
 
-The floating-state margin is also compiled into per-slot statistics: factor
-command executions, the maximum active factor sum, the maximum sum intersecting
-a 40 ms neighborhood, and the factor-window count. Since a maximum of a sum is
-no greater than the sum of the individual maxima, five packets bound the existing
-candidate-specific drift calculation in constant work. Neighborhood intervals
-are closed; the implementation handles their integer-time boundaries explicitly.
-The cap intersects this margin with the original pool-wide margin and rounds
-arithmetic outward. It does not substitute ordinary integer arithmetic for the
-scorer's binary32 calculations.
+The floating-state margin is also compiled into per-slot statistics: lifetime
+factor commands, their execution count including replays, the maximum active
+factor sum, and the maximum sum intersecting one native score frame. A factor
+span `[a,b]` projects to the closed interval `[frame(a),frame(b)]` using the
+scorer's binary32 time calculation and final-frame clamping. The frame limit
+uses a nonzero `score_music_length_ms` when supplied, otherwise `music_length_ms`.
+Closed endpoints retain transient start/end pairs and clamped final-frame terms.
+The compiled sweep uses the equivalent half-open integer interval
+`[frame(a),frame(b)+1)` and outward accumulation. Its maximum bounds every
+projected frame's factor sum. Since a maximum of a sum is no greater than the
+sum of the individual maxima, five packets bound the candidate-specific drift
+calculation in constant work. Lifetime commands contribute two representation
+roundings each, for the integer-to-binary32 conversion and division.
+The cap intersects this margin with the prepared pool-wide margin, using outward
+arithmetic while retaining the scorer's binary32 calculations.
+
+Sources: [`ScoreFrames`](../crates/ournotes-search/src/search/snaps/score_windows.rs),
+[`FineView::cand_counts`](../crates/ournotes-search/src/search/snaps/fine_view.rs),
+[`RawEnvelope`](../crates/ournotes-search/src/search/snaps/raw.rs).
 
 If any selected program can change a judgement, search proceeds to the existing
 per-note envelope. Every surviving candidate still receives full evaluation.
@@ -136,5 +146,29 @@ member-order target. Agreement of the model with the game is a separate question
 
 [Exact score programs](score-programs.md) record one execution as a
 power-parameterized expression with optional checked monotonicity certificates.
-They do not replace physical search or establish equality between different deck
-programs.
+Their execution-context identity governs reuse within physical search.
+
+## Conversion partition preparation
+
+A Gekisou conversion partition retains its member domain and permitted Snap choices together with its slot rules.
+Each rule set owns one traversal. These traversals are disjoint and their union is the requested team domain.
+
+The envelope for a partition is prepared immediately before its first traversal. Traversals of the same partition
+share that envelope; its final traversal releases it. Each partition's traversals are consecutive, so only one
+partition envelope is retained in addition to the pool-wide envelope. The incumbent-first schedule prioritizes
+each partition by its best evaluated incumbent, then orders that partition's rules by their incumbents. The
+incumbent-first order and the static order enumerate the same rule sets and use the same canonical Top-K comparison. Preparation changes the lifetime of compiled tables,
+not the set of candidate teams or the meaning of a bound.
+
+A stop before preparation or before a traversal leaves the remaining partitions covered by the pool-wide root
+bound. A stop inside a traversal combines that traversal's open-prefix bounds with the pool-wide bound for later
+partitions. The maximum also includes retained incumbents when the final whole-domain bound is reported.
+If a partition cannot compile, a traversal using the pool-wide envelope covers the outstanding domain.
+
+The synthetic regression `conversion_envelopes_are_prepared_between_traversals_and_stops_cover_later_parts`
+checks preparation order, canonical results against exhaustive search, and whole-domain bounds at deterministic
+candidate-budget stops. Run it with:
+
+```sh
+cargo test --release --test adapter_fixture_export conversion_envelopes
+```

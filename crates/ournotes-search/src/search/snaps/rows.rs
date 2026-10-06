@@ -293,9 +293,26 @@ impl Env<'_> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum RowSource {
+    Live,
+    Support,
+    Gekisou,
+    GekisouSupport,
+}
+
+/// The actual source row, independent of how many allowed cards reference it.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RowIdentity {
+    pub(super) source: RowSource,
+    pub(super) index: usize,
+    pub(super) id: i64,
+}
+
 /// An effect row of a live skill or a snap skill, as the classification and the bounds read it.
 #[derive(Clone, Debug)]
 pub(super) struct Row {
+    pub(super) identity: RowIdentity,
     pub(super) trigger_type: i64,
     pub(super) trigger: i64,
     pub(super) condition: i64,
@@ -315,19 +332,69 @@ pub(super) struct Row {
     pub(super) gate: i64,
 }
 
+/// Every condition key `100 * id + 10 * kind + position`, for kinds 3..=5
+/// and positions 0..=4, preserves the raw row order without integer wrapping.
+fn check_condition_key(id: i64) -> Result<(), Error> {
+    if id.checked_mul(100).and_then(|base| base.checked_add(54)).is_none() {
+        return Err(Error::Domain("condition effect key outside the certified integer range".into()));
+    }
+    Ok(())
+}
+
+/// One Snap's skills of a kind have no separate native key namespace per skill
+/// slot. Every effect identity must occur only once in that performer's program.
+pub(super) fn check_snap_program_identities<'r>(rows: impl Iterator<Item = &'r Row>) -> Result<(), Error> {
+    let mut identities = std::collections::HashSet::new();
+    for row in rows {
+        if !identities.insert((row.identity.source, row.identity.id)) {
+            return Err(Error::Domain("a Snap skill program repeats a native effect identity".into()));
+        }
+    }
+    Ok(())
+}
+
+/// Row IDs identify native effect states within a source, and conversion target
+/// caches across sources. Repeated references to the same source row are valid.
+pub(super) fn check_row_identities<'r>(rows: impl Iterator<Item = &'r Row>) -> Result<(), Error> {
+    let mut sources = HashMap::new();
+    let mut conversions = HashMap::<i64, &'r [i64]>::new();
+    for row in rows {
+        let RowIdentity { source, index, id } = row.identity;
+        if let Some(previous) = sources.insert((source, id), index)
+            && previous != index
+        {
+            return Err(Error::Domain("distinct skill effect rows share a native identity".into()));
+        }
+        if matches!(row.effect_type, 12006 | 13005)
+            && let Some(previous) = conversions.insert(id, &row.targets)
+            && previous != row.targets.as_slice()
+        {
+            return Err(Error::Domain("conversion effect ID has inconsistent native targets".into()));
+        }
+    }
+    Ok(())
+}
+
 /// The rows of a support skill at a level, by id.
 pub(super) fn support_rows(env: &Env, id: i64, level: i64) -> Result<Vec<Row>, Error> {
-    let mut rows: Vec<_> =
-        env.master.support_skill_effects.iter().filter(|r| r.support_skill_id == id && r.level == level).collect();
-    rows.sort_by_key(|r| r.id);
+    let mut rows: Vec<_> = env
+        .master
+        .support_skill_effects
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.support_skill_id == id && r.level == level)
+        .collect();
+    rows.sort_by_key(|(_, r)| r.id);
     rows.iter()
-        .map(|r| {
+        .map(|&(index, r)| {
+            check_condition_key(r.id)?;
             let targets = if matches!(r.skill_effect_type, 2004 | 12006 | 13005) {
                 env.targets(&r.skill_target_ids)?
             } else {
                 Vec::new()
             };
             Ok(Row {
+                identity: RowIdentity { source: RowSource::Support, index, id: r.id },
                 trigger_type: r.skill_trigger_type,
                 trigger: r.skill_trigger_condition_group,
                 condition: r.skill_condition_group,
@@ -352,20 +419,23 @@ pub(super) fn support_rows(env: &Env, id: i64, level: i64) -> Result<Vec<Row>, E
 pub(super) fn gekisou_rows(
     env: &Env,
     table: &[GekisouSkillEffectRow],
+    source: RowSource,
     id: i64,
     level: i64,
     gate: i64,
 ) -> Result<Vec<Row>, Error> {
-    let mut rows: Vec<_> = table.iter().filter(|r| r.skill_id == id && r.level == level).collect();
-    rows.sort_by_key(|r| r.id);
+    let mut rows: Vec<_> = table.iter().enumerate().filter(|(_, r)| r.skill_id == id && r.level == level).collect();
+    rows.sort_by_key(|(_, r)| r.id);
     rows.iter()
-        .map(|r| {
+        .map(|&(index, r)| {
+            check_condition_key(r.id)?;
             let targets = if matches!(r.skill_effect_type, 2004 | 12006 | 13005) {
                 env.targets(&r.skill_target_ids)?
             } else {
                 Vec::new()
             };
             Ok(Row {
+                identity: RowIdentity { source, index, id: r.id },
                 trigger_type: r.skill_trigger_type,
                 trigger: r.skill_trigger_condition_group,
                 condition: r.skill_condition_group,
@@ -388,11 +458,16 @@ pub(super) fn gekisou_rows(
 
 /// The rows of a live skill at a level, by id, checked the way the simulation checks them.
 pub(super) fn live_rows(env: &Env, id: i64, level: i64) -> Result<Vec<Row>, Error> {
-    let mut rows: Vec<_> =
-        env.master.live_skill_effects.iter().filter(|r| r.live_skill_id == id && r.level == level).collect();
-    rows.sort_by_key(|r| r.id);
+    let mut rows: Vec<_> = env
+        .master
+        .live_skill_effects
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.live_skill_id == id && r.level == level)
+        .collect();
+    rows.sort_by_key(|(_, r)| r.id);
     rows.iter()
-        .map(|r| {
+        .map(|&(index, r)| {
             if r.skill_release_condition_group != 0 || r.skill_cumulative_condition_id != 0 || r.effect_limit_count != 0
             {
                 return Err(Error::Unsupported(format!(
@@ -400,7 +475,7 @@ pub(super) fn live_rows(env: &Env, id: i64, level: i64) -> Result<Vec<Row>, Erro
                     r.id
                 )));
             }
-            if !matches!(r.skill_effect_type, 2000 | 2004 | 3001 | 3003 | 12006 | 13005 | 15000) {
+            if !matches!(r.skill_effect_type, 2000 | 2004 | 3001 | 3003 | 3004 | 12006 | 13005 | 15000) {
                 return Err(Error::Unsupported(format!("skill effect type {}", r.skill_effect_type)));
             }
             let targets = if matches!(r.skill_effect_type, 2004 | 12006 | 13005) {
@@ -409,6 +484,7 @@ pub(super) fn live_rows(env: &Env, id: i64, level: i64) -> Result<Vec<Row>, Erro
                 Vec::new()
             };
             Ok(Row {
+                identity: RowIdentity { source: RowSource::Live, index, id: r.id },
                 trigger_type: 0,
                 trigger: 0,
                 condition: r.skill_condition_group,
@@ -505,9 +581,9 @@ pub(super) struct LiveRow {
 }
 
 /// Effect types a Gekisou or Gekisou support row may have.
-pub(super) const GK_TYPES: [i64; 18] = [
-    2000, 2001, 2004, 3001, 3003, 4004, 11000, 11001, 11002, 11003, 11005, 12000, 12004, 12006, 13000, 13002, 13005,
-    15000,
+pub(super) const GK_TYPES: [i64; 19] = [
+    2000, 2001, 2004, 3001, 3003, 3004, 4004, 11000, 11001, 11002, 11003, 11005, 12000, 12004, 12006, 13000, 13002,
+    13005, 15000,
 ];
 
 /// Classification of one row for a member.
@@ -532,11 +608,13 @@ pub(super) fn support_status(env: &Env, r: &Row, a: Attr<'_>) -> Result<(Status,
     let release = env.group(r.release, a)?;
     let fails = env.cumulative_fails(r.cumulative)?;
     let can_start = trig.is_some_and(|t| t.yes) && cond.is_none_or(|c| c.yes);
-    let event_bound = env.event_only(r.trigger);
+    // A release checker skips the first elapsed-time check and can retain a zero-duration effect. The compact
+    // own-event window requires the ordinary timer transition; other rows keep the full-stream envelope.
+    let event_bound = r.release == 0 && env.event_only(r.trigger);
     let modelled = if r.gk {
         GK_TYPES.contains(&r.effect_type)
     } else {
-        matches!(r.effect_type, 2000 | 2004 | 3001 | 3003 | 12006 | 13005 | 15000)
+        matches!(r.effect_type, 2000 | 2004 | 3001 | 3003 | 3004 | 12006 | 13005 | 15000)
     };
     if !modelled && can_start {
         return Err(Error::Unsupported(format!("skill effect type {}", r.effect_type)));
@@ -585,7 +663,7 @@ pub(super) fn support_status(env: &Env, r: &Row, a: Attr<'_>) -> Result<(Status,
                 Status::Inert
             }
         }
-        3001 | 3003 => {
+        3001 | 3003 | 3004 => {
             if env.life_rigid {
                 Status::Inert
             } else {

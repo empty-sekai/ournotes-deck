@@ -36,6 +36,36 @@ struct Row {
     tail: Vec<f64>,
 }
 
+/// Upper endpoints of arithmetic on finite nonnegative terms. Exact zeros remain zero.
+fn add_up(a: f64, b: f64) -> f64 {
+    if a == 0.0 {
+        b
+    } else if b == 0.0 {
+        a
+    } else {
+        (a + b).next_up()
+    }
+}
+
+fn mul_up(a: f64, b: f64) -> f64 {
+    if a == 0.0 || b == 0.0 { 0.0 } else { (a * b).next_up() }
+}
+
+fn div_up(a: f64, b: f64) -> f64 {
+    if a == 0.0 { 0.0 } else { (a / b).next_up() }
+}
+
+/// Removing an exact heap entry from an upper sum preserves an upper endpoint.
+fn sub_up(a: f64, b: f64) -> f64 {
+    if a == b {
+        0.0
+    } else if b == 0.0 {
+        a
+    } else {
+        (a - b).next_up()
+    }
+}
+
 /// The sum of the `n` largest values (all of them when fewer).
 fn top_sum(v: &mut [f64], n: usize) -> f64 {
     let n = n.min(v.len());
@@ -45,7 +75,7 @@ fn top_sum(v: &mut [f64], n: usize) -> f64 {
     if n < v.len() {
         v.select_nth_unstable_by(n - 1, |a, b| b.total_cmp(a));
     }
-    v[..n].iter().sum()
+    v[..n].iter().fold(0.0, |sum, &v| add_up(sum, v))
 }
 
 impl CutoffTable {
@@ -69,7 +99,7 @@ impl CutoffTable {
                 continue;
             }
             for &e in entries.iter().filter(|&&e| (e as usize) < i) {
-                rest += self.z[e as usize] * pct;
+                rest = add_up(rest, mul_up(self.z[e as usize], *pct));
                 live.push((e, *pct));
             }
         }
@@ -78,22 +108,24 @@ impl CutoffTable {
         live.dedup_by(|b, a| {
             let same = a.0 == b.0;
             if same {
-                a.1 += b.1;
+                a.1 = add_up(a.1, b.1);
             }
             same
         });
         let mut gains = Vec::new();
         for row in &self.rows {
-            rest += row.tail[i];
+            rest = add_up(rest, row.tail[i]);
             if !live.is_empty() {
                 gains.clear();
                 gains.extend(
-                    live.iter().map(|&(e, pct)| row.gain[e as usize] * pct / self.rk[e as usize]).filter(|&g| g > 0.0),
+                    live.iter()
+                        .map(|&(e, pct)| div_up(mul_up(row.gain[e as usize], pct), self.rk[e as usize]))
+                        .filter(|&g| g > 0.0),
                 );
-                rest += top_sum(&mut gains, row.count);
+                rest = add_up(rest, top_sum(&mut gains, row.count));
             }
         }
-        let rest = (rest * (1.0 + 1e-9)).ceil();
+        let rest = mul_up(rest, (1.0f64 + 1e-9).next_up()).ceil();
         if !rest.is_finite() || rest >= i64::MAX as f64 {
             return None;
         }
@@ -129,7 +161,10 @@ impl CutoffTable {
         let rk: Vec<f64> = order.iter().map(|&e| entries[e].2).collect();
         let mut suffix = vec![0.0; n + 1];
         for k in (0..n).rev() {
-            suffix[k] = suffix[k + 1] + z[k] * rk[k];
+            suffix[k] = add_up(suffix[k + 1], mul_up(z[k], rk[k]));
+        }
+        if !suffix[0].is_finite() {
+            return None;
         }
         let mut cut_ranges = Vec::with_capacity(ranges.len());
         for (end, pct, members) in ranges {
@@ -146,7 +181,11 @@ impl CutoffTable {
             let count = if *budget >= gains.len() as f64 { gains.len() } else { budget.max(0.0) as usize };
             let mut gain = vec![0.0; n];
             for &(e, g) in gains {
-                gain[at[e as usize] as usize] += g;
+                let value = &mut gain[at[e as usize] as usize];
+                *value = add_up(*value, g);
+                if !value.is_finite() {
+                    return None;
+                }
             }
             // the largest `count` gains of each suffix: a min-heap of the kept ones (bits order non-negative floats)
             let mut tail = vec![0.0; n + 1];
@@ -155,11 +194,14 @@ impl CutoffTable {
             for k in (0..n).rev() {
                 if gain[k] > 0.0 && count > 0 {
                     heap.push(std::cmp::Reverse(gain[k].to_bits()));
-                    sum += gain[k];
+                    sum = add_up(sum, gain[k]);
+                    if !sum.is_finite() {
+                        return None;
+                    }
                     if heap.len() > count
                         && let Some(std::cmp::Reverse(b)) = heap.pop()
                     {
-                        sum -= f64::from_bits(b);
+                        sum = sub_up(sum, f64::from_bits(b));
                     }
                 }
                 tail[k] = f64::max(sum, 0.0);
@@ -212,6 +254,35 @@ mod tests {
 
     // entries at chart times in score frames 1, 2, 2 and 5 (40 ms frames) with terms 100, 50, 30 and 20
     const TIMES: [i32; 4] = [40, 80, 80, 200];
+
+    #[test]
+    fn suffix_and_conversion_caps_cover_exact_dyadic_sums() {
+        // Every input is an exact integer multiple of 2^-24. Integer sums preserve
+        // the low bits after the binary64 sum grows beyond its exact integer range.
+        const SCALE: u128 = 1 << 24;
+        let units: Vec<u128> = (0..12).map(|i| (1u128 << 52) + (i * 17 + 3) as u128).collect();
+        let ranks: Vec<u128> = (0..units.len()).map(|i| 1 + (i % 3) as u128).collect();
+        let value = |v: u128| v as f64 / SCALE as f64;
+        let entries: Vec<_> =
+            units.iter().zip(&ranks).enumerate().map(|(i, (&u, &rk))| ((40 * i) as i32, value(u), rk as f64)).collect();
+        let gains: Vec<_> = units.iter().rev().enumerate().map(|(i, &u)| (i as u32, value(u))).collect();
+        let gain_units: Vec<_> = units.iter().copied().rev().collect();
+        let scaled = |v: f64| (v * SCALE as f64) as u128;
+        for count in 0..=units.len() {
+            let table = CutoffTable::new(&entries, &[], &[(count as f64, gains.clone())], None).unwrap();
+            for k in 0..=units.len() {
+                let exact_suffix: u128 = units[k..].iter().zip(&ranks[k..]).map(|(&u, &rk)| u * rk).sum();
+                let mut remaining = gain_units[k..].to_vec();
+                remaining.sort_unstable_by(|a, b| b.cmp(a));
+                let exact_gain: u128 = remaining.iter().take(count).sum();
+                assert!(scaled(table.suffix[k]) >= exact_suffix, "suffix {k}");
+                assert!(scaled(table.rows[0].tail[k]) >= exact_gain, "budget {count}, suffix {k}");
+                let cap = table.score_cap(Settled { frame: k as i32, total: 0, fixed: 0 }).unwrap();
+                assert!(cap >= (exact_suffix + exact_gain).div_ceil(SCALE) as i128);
+            }
+        }
+        assert_eq!(mul_up(add_up(0.0, 0.0), 1.0), 0.0);
+    }
 
     #[test]
     fn unsettled_entries_keep_their_terms_and_gains() {

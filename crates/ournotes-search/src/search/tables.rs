@@ -151,6 +151,12 @@ impl<'m> Tables<'m> {
                     if prof.max_abs_value() >= (1 << 28) {
                         return Err(Error::Domain(format!("leader skill {}: oversized effect value", k.0)));
                     }
+                    if prof.absolute_sum_bound().is_none() {
+                        return Err(Error::Domain(format!(
+                            "leader skill {}: percentage accumulation exceeds the proven i64 range",
+                            k.0
+                        )));
+                    }
                     profiles.push(prof);
                     key.insert(k, profiles.len() - 1);
                     profiles.len() - 1
@@ -241,7 +247,7 @@ impl<'m> Tables<'m> {
                 + fixed.iter().map(|&m| lower[m].expect("required member checked")).sum::<i64>()
                 + remaining[..picks].iter().sum::<i64>();
             if bound < 0 {
-                return Err(Error::Domain("skip cannot prove nonnegative power for every feasible deck".into()));
+                return Err(Error::Domain("search cannot prove nonnegative power for every feasible deck".into()));
             }
         }
         Ok(true)
