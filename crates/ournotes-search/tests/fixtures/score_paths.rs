@@ -14,6 +14,18 @@ pub(super) fn inputs(
     long: bool,
     luck: bool,
 ) -> (Value, Value) {
+    inputs_with_tiers(members, snaps, characters, skewed, long, luck, false)
+}
+
+fn inputs_with_tiers(
+    members: i64,
+    snaps: i64,
+    characters: i64,
+    skewed: bool,
+    long: bool,
+    luck: bool,
+    tiered: bool,
+) -> (Value, Value) {
     let mut master = synthetic_master(members, snaps, characters);
     extend_table(
         &mut master,
@@ -64,17 +76,44 @@ pub(super) fn inputs(
     set_column(&mut master, "MasterLiveSkillEffect", &mut |row| {
         let skill = row["_liveSkillID"].as_i64().unwrap();
         row["_effectValue"] = json!(4000 + 2000 * skill + 500 * row["_level"].as_i64().unwrap());
-        row["_activationTimeSecond"] = json!(if long { 6.0 } else { 0.4 });
+        row["_activationTimeSecond"] = json!(if long { 6.0 } else { 1.2 });
     });
     set_column(&mut master, "MasterGekisouSkillEffect", &mut |row| {
         row["_effectValue"] = json!(8000);
-        row["_activationTimeSecond"] = json!(if long { 4.0 } else { 0.3 });
+        row["_activationTimeSecond"] = json!(if long { 4.0 } else { 0.9 });
     });
     set_column(&mut master, "MasterLiveSettings", &mut |row| {
         if matches!(row["_key"].as_str(), Some("gekisou_luck_gauge_max" | "gekisou_luck_gauge_max_rush")) {
             row["_value"] = json!("20");
         }
     });
+    if tiered {
+        let thresholds = if skewed {
+            [0, 300_000, 450_000, 600_000]
+        } else if long {
+            [0, 600_000, 650_000, 700_000]
+        } else {
+            [0, 450_000, 550_000, 650_000]
+        };
+        set_column(&mut master, "MasterLiveScoreRank", &mut |row| {
+            let index = row["_liveScoreRank"].as_u64().unwrap() as usize - 2;
+            row["_requiredScore"] = json!(thresholds[index]);
+            row["_battleLiveRequiredScore"] = json!(thresholds[index]);
+        });
+        extend_table(
+            &mut master,
+            "MasterEventEffect",
+            (1..=members)
+                .map(|id| {
+                    let value = 100 * (1 + ((id + 1) / 2) % 5);
+                    json!({"_id":1000+id,"_eventId":EVENT_ID,"_eventBonusType":0,
+                        "_resourceTypeConstraint":2,"_memberCardId":id,
+                        "_rank1EffectValue":value,"_rank2EffectValue":value,"_rank3EffectValue":value,
+                        "_rank4EffectValue":value,"_rank5EffectValue":value})
+                })
+                .collect(),
+        );
+    }
     let n = if long { 256 } else { 12 };
     set_column(&mut master, "MasterLiveMusicScore", &mut |row| row["_fullComboCount"] = json!(n));
     let mut document = data_document(&master, members, snaps, characters);
@@ -82,11 +121,14 @@ pub(super) fn inputs(
     document["charts"][0]["asset"]["key"] = json!(format!("SYNTHETIC-score-path-{n}"));
     document["charts"][0]["notes"] = json!({
         "id":(1..=n).collect::<Vec<_>>(), "op":vec![1;n as usize],
-        "judgementType":vec![1;n as usize], "timeMs":(1..=n).map(|i|i*100).collect::<Vec<_>>()
+        "judgementType":vec![1;n as usize], "timeMs":(1..=n).map(|i|i*if long {100} else {300}).collect::<Vec<_>>()
     });
     if long {
         document["charts"][0]["skillEvents"] = json!({"timeMs":[0,5000,10000,15000,20000]});
         document["charts"][0]["fevers"] = json!({"startMs":[150,9800,18400],"endMs":[400,17000,25000]});
+    } else {
+        document["charts"][0]["skillEvents"] = json!({"timeMs":[0,600,1200,1800,2400]});
+        document["charts"][0]["fevers"] = json!({"startMs":[150,1600,2800],"endMs":[700,2000,3200]});
     }
     let mut roster = roster_document(members, snaps, characters);
     roster["player"]["vipRank"] = json!(1);
@@ -119,9 +161,9 @@ pub(super) fn request(metric: Value, timed: bool) -> Value {
 pub(super) fn rank_skewed(request: &mut Value, long: bool) {
     request["scenario"]["kind"] = json!("battle");
     request["networkConfirmations"] = json!([
-        {"frame":30,"range":0,"rank":1,"percent":10},
-        {"frame":if long {1027} else {55},"range":1,"rank":3,"percent":4},
-        {"frame":if long {1507} else {76},"range":2,"rank":5,"percent":1}
+        {"frame":if long {30} else {50},"range":0,"rank":1,"percent":10},
+        {"frame":if long {1027} else {128},"range":1,"rank":3,"percent":4},
+        {"frame":if long {1507} else {200},"range":2,"rank":5,"percent":1}
     ]);
     request["context"]["eventPayoff"]["multiplayerScorePolicy"] =
         json!({"kind":"fixedOthersAverage","players":3,"score":150000});
@@ -150,10 +192,44 @@ fn snapshot(data: &DeckData, roster: &Value) -> Value {
 }
 
 #[test]
+fn nominal_luck_score_paths_complete_fixed_decks() {
+    use ournotes_search::{auxiliary::evaluate_fixed, search::Completion, types::RecommendationRequest};
+    for skewed in [false, true] {
+        for long in [false, true] {
+            let (document, roster) = inputs(5, 3, 5, skewed, long, true);
+            let data = DeckData::from_json(&document.to_string()).unwrap();
+            let roster = Roster::from_json(&roster.to_string()).unwrap();
+            let mut wire = request(json!({"kind":"score"}), false);
+            if skewed {
+                rank_skewed(&mut wire, long);
+            }
+            let request: RecommendationRequest = serde_json::from_value(wire).unwrap();
+            let outcome =
+                evaluate_fixed(&data, &roster, &request, [1, 2, 3, 4, 5], [Some(1), Some(2), None, None, Some(3)])
+                    .unwrap();
+            assert_eq!(outcome.completion, Completion::Complete, "skewed={skewed} long={long}");
+            assert_eq!(outcome.results.len(), 1);
+            assert_eq!(outcome.probability_law["lottery"], "certifiedNativeLotteryIntervals");
+            assert!(outcome.results[0].score_interval.is_some());
+        }
+    }
+}
+
+#[test]
 #[ignore = "export synthetic score-path matrix to OURNOTES_SCORE_PATH_OUT"]
 fn export_score_path_matrix() {
     let directory = std::env::var_os("OURNOTES_SCORE_PATH_OUT").expect("OURNOTES_SCORE_PATH_OUT");
-    let out = Path::new(&directory);
+    export_matrix(Path::new(&directory), false);
+}
+
+#[test]
+#[ignore = "export synthetic payoff-tier matrix to OURNOTES_SCORE_PATH_TIER_OUT"]
+fn export_score_path_tier_matrix() {
+    let directory = std::env::var_os("OURNOTES_SCORE_PATH_TIER_OUT").expect("OURNOTES_SCORE_PATH_TIER_OUT");
+    export_matrix(Path::new(&directory), true);
+}
+
+fn export_matrix(out: &Path, tiered: bool) {
     fs::create_dir_all(out).unwrap();
     let mut pressure = Vec::new();
     let mut oracle = Vec::new();
@@ -164,8 +240,9 @@ fn export_score_path_matrix() {
                     let family = if skewed { "rank-skewed" } else { "low-power-strong-skill" };
                     let length = if long { "long" } else { "short" };
                     let law = if luck { "luck" } else { "no-luck" };
-                    let id = format!("{size}-{family}-{length}-{law}");
-                    let (document, roster) = inputs(members, snaps, characters, skewed, long, luck);
+                    let prefix = if tiered { "tiers-" } else { "" };
+                    let id = format!("{prefix}{size}-{family}-{length}-{law}");
+                    let (document, roster) = inputs_with_tiers(members, snaps, characters, skewed, long, luck, tiered);
                     let data_name = format!("{id}-data.json");
                     let roster_name = format!("{id}-roster.json");
                     let snapshot_name = format!("{id}-snapshot.json");
@@ -209,7 +286,7 @@ fn export_score_path_matrix() {
                                 &json!({"id":name,"data":data_name,"roster":roster_name,
                                 "request":request_name,"oracleMaxCandidates":candidates,"experiments":[
                                     {"name":"exhaustive","patch":{"strategy":{"kind":"exhaustive"}},"repeats":1},
-                                    {"name":"joint-bnb","patch":{},"repeats":2}]}),
+                                    {"name":"joint-bnb","patch":{"strategy":{"kind":"branchAndBound"}},"repeats":2}]}),
                             );
                             oracle.push(case_name);
                         }

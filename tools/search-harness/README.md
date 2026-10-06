@@ -226,8 +226,9 @@ python3 tools/search-harness/run.py run \
 
 The exporter crosses low member growth with strong skills or band-rank-skewed
 growth, 12-note or 256-note charts, and LUCK or lottery-free play.
-The LUCK range stays at 150–400 ms for both chart lengths. Subsequent ranges use
-Just and COMBO missions. All inputs include their complete optional Snap domain.
+The first range spans 150–700 ms in the short chart and 150–400 ms in the long
+chart. Subsequent ranges use Just and COMBO missions and start after the first
+range's completion delay. All inputs include their complete optional Snap domain.
 The low-growth family uses Solo Mission. The skewed family uses Battle with
 delayed range confirmations at ranks 1, 3, and 5 and a declared room-score policy.
 
@@ -244,6 +245,20 @@ The harness's deterministic oracle requires exact payoff fractions. General
 nominal-LUCK interval results use the nominal LUCK integration matrix and the
 separate exact-law tests. A deterministic oracle report does not certify the
 nominal-LUCK cases or the larger domain.
+
+`export_score_path_tier_matrix` writes a separate corpus to
+`OURNOTES_SCORE_PATH_TIER_OUT`. It retains these physical domains, requests,
+charts, and cultivation profiles and supplies explicit PT-tier controls.
+The short and long Mission score thresholds are `[0,450000,550000,650000]` and
+`[0,600000,650000,700000]`; Battle retains `[0,300000,450000,600000]` under its
+declared room-score policy. Per-member card event-point additions range from
+100 to 500 in the table's 10,000-scale bonus units. The existing event power
+and item effects retain their specified values. Its own `suite.json` and
+`matrix.json` use `tiers-` case names.
+
+The ordinary integration tests also fixed-evaluate decks using three Snaps on
+the four growth/length combinations with nominal LUCK and require complete certified
+score intervals.
 
 ### Exported corpus
 
