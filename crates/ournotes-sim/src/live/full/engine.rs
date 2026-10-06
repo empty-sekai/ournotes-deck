@@ -393,7 +393,6 @@ impl ConditionSkillUpdater {
         &self.effects[index]
     }
 
-    #[cfg(test)]
     pub(crate) fn gate_mission(&self) -> Option<i64> {
         self.gate
     }

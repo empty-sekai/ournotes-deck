@@ -1,26 +1,26 @@
-//! Diagnostic all-path enclosures for the native solo score calculator.
+//! All-path enclosures for the native solo score calculator.
 //!
-//! The recorder supplies only a proved deterministic command/query schedule. Optional direct-7021 commands
-//! and every possible Rush filing are added to its scheduling envelope. A missing optional filing may avoid
-//! a rewind, so this envelope is used to COUNT operations, never as an alternative native execution.
-//! A note links its chart-time joint masses once the native frame has filed its lottery-dependent commands.
-//! Earlier queries keep support bounds. Combo histories retain every possible prior execution, replacing
-//! their hull only on a proved mandatory replay. This is not an exact expectation or search completion.
+//! The recorder supplies a proved deterministic command/query schedule. Possible direct-7021 probe filings and
+//! Rush filings are added to it, and [`replay`] encloses the native binary32 factor state of every path through
+//! that schedule. A note links its chart-time joint masses once the native frame has filed its lottery-dependent
+//! commands. Earlier queries keep support bounds. Combo histories retain every possible prior execution,
+//! replacing their hull only on a proved mandatory replay. This is not an exact expectation or search completion.
 
 use super::*;
 use crate::live::certified::{F32Interval, F64Interval, I32Interval, ProbabilityMass, rank_mean_bounds};
 use crate::live::score::get_luck_factor_percent;
 use serde::Serialize;
 
-mod factor_prefix;
 #[cfg(feature = "search-diagnostics")]
 mod profile;
+mod replay;
 #[cfg(feature = "search-diagnostics")]
 pub use profile::{LuckScoreProfile, take_luck_score_profile};
 
 const FIELDS: usize = 6;
-const UNIT: f64 = 1.0 / 16_777_216.0;
-const TINY: f64 = 7.006_492_321_624_085e-46; // half the least positive binary32 subnormal
+
+pub(super) use replay::ProbeRow;
+use replay::{Classes, Replay};
 
 #[derive(Clone, Debug)]
 pub(super) enum BoundsEvent {
@@ -33,9 +33,14 @@ pub(super) enum BoundsEvent {
         frame: usize,
         command: FactorCommand,
     },
+    /// A possible Rush filing in this frame.
     Potential {
         frame: usize,
-        note_abs: f64,
+    },
+    /// A possible probe filing at this frame time: every probe row may switch on or off here.
+    Probe {
+        frame: usize,
+        time_ms: i32,
     },
     Query {
         time_ms: i32,
@@ -64,7 +69,7 @@ pub(super) struct BoundsTrace {
     pub events: Vec<BoundsEvent>,
     pub queries: usize,
     pub frames: usize,
-    pub optional_note_factors: Vec<f32>,
+    pub probes: Vec<ProbeRow>,
     pub combo: ComboObserver,
     pub has_luck: bool,
 }
@@ -209,8 +214,9 @@ pub struct LuckNoteBounds {
     pub note_id: i32,
     pub time_ms: i32,
     pub life: i32,
-    /// Conditional integer supports for the factors visible on the note's last execution: 00/01/10/11.
-    pub buckets: [IntegerBounds; 4],
+    /// Conditional integer supports for the factors visible on the note's last execution: 00/01/10/11 (probe
+    /// bit 0, Rush bit 1); None when no path reaches the bucket's probe class.
+    pub buckets: [Option<IntegerBounds>; 4],
     pub combo: RealBounds,
     /// Present once all lottery-dependent commands at this note's chart time have been filed.
     pub probability: Option<[RealBounds; 4]>,
@@ -225,9 +231,8 @@ pub struct LuckScoreQueryBounds {
     /// Probability-linked notes and the support bounds of notes whose lottery filing is still pending.
     pub mean: RealBounds,
     pub support: IntegerBounds,
-    /// [combo, note, Just, Perfect, Great, Good], covering all possible prior apply/diff/undo paths.
-    pub factor_error: [f64; FIELDS],
-    pub factor_operations: [u64; FIELDS],
+    /// [combo, note, Just, Perfect, Great, Good]: the widest enclosure of a measured note's factor over all paths.
+    pub factor_width: [f64; FIELDS],
     pub note_count: usize,
     /// Detailed cells are retained only for actual range snapshot queries; other queries keep aggregates.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -374,9 +379,14 @@ fn check_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<(), Error> {
             check(&model.rows[effect.row], effect.cumulative.as_ref(), &[&effect.condition, &effect.release])?;
         }
     }
+    // The probe rows switch together: one trigger, one gate, fixed conditions (the replay's two classes).
+    let mut probe_gate = None;
     for skill in &model.cond {
         for (effect_index, effect) in skill.updater.effects().iter().enumerate() {
             if related.contains(&effect.row) {
+                if *probe_gate.get_or_insert(skill.updater.gate_mission()) != skill.updater.gate_mission() {
+                    return Err(refuse("score probes need one common Gekisou gate"));
+                }
                 if !matches!(effect.trigger, Some(Checker::LuckRushPlaying(_)))
                     || effect.trigger_type != SUSTAINED
                     || effect.act != 0.0
@@ -412,128 +422,6 @@ fn check_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<(), Error> {
         }
     }
     Ok(())
-}
-
-fn deltas(command: &FactorCommand) -> [f64; FIELDS] {
-    let mill = |value| f64::from(if value == 0 { 0.0 } else { value as f32 / 100000f32 });
-    let mut out = [mill(command.combo_mill), mill(command.note_mill), 0.0, 0.0, 0.0, 0.0];
-    if (3..=6).contains(&command.judgement) {
-        out[8 - command.judgement as usize] = mill(command.judge_mill);
-    }
-    out
-}
-
-fn add_up(a: f64, b: f64) -> f64 {
-    if b == 0.0 { a } else { (a + b).next_up() }
-}
-
-fn mul_up(a: f64, b: f64) -> f64 {
-    if a == 0.0 || b == 0.0 { 0.0 } else { (a * b).next_up() }
-}
-
-fn round_error(operations: u64, magnitude: f64, inherited: f64) -> Result<f64, Error> {
-    if operations == 0 {
-        return Ok(inherited);
-    }
-    let n = F64Interval::integer(i128::from(operations)).upper();
-    let nu = mul_up(n, UNIT);
-    if nu >= 1.0 {
-        return Err(refuse("all-path floating-operation count needs tighter refinement (n*u >= 1)"));
-    }
-    let numerator = add_up(inherited, add_up(mul_up(nu, magnitude), mul_up(n, TINY)));
-    let bound = (numerator / (1.0 - nu).next_down()).next_up();
-    if !bound.is_finite() {
-        return Err(refuse("all-path float error is not finite"));
-    }
-    Ok(bound)
-}
-
-struct Cost {
-    count: Vec<[u64; FIELDS]>,
-    diff_error: Vec<[f64; FIELDS]>,
-    ideal_bound: [f64; FIELDS],
-    operand_bound: [f64; FIELDS],
-}
-
-impl Cost {
-    fn compile(trace: &BoundsTrace) -> Result<Self, Error> {
-        let mut count = vec![[0u64; FIELDS]; trace.frames];
-        let mut absolute = vec![[0f64; FIELDS]; trace.frames];
-        let mut ideal_bound = factor_prefix::fixed_magnitudes(trace)?;
-        for &value in &trace.optional_note_factors {
-            // A direct untimed 7021 row has at most one active signed pair at any chart time.
-            ideal_bound[1] = add_up(ideal_bound[1], f64::from(value.abs()));
-        }
-        for event in &trace.events {
-            let (frame, delta) = match event {
-                BoundsEvent::Factor { frame, command } => (*frame, deltas(command)),
-                BoundsEvent::Potential { frame, note_abs } => (*frame, [0.0, *note_abs, 0.0, 0.0, 0.0, 0.0]),
-                _ => continue,
-            };
-            for field in 0..FIELDS {
-                let value = delta[field].abs();
-                if value == 0.0 {
-                    continue;
-                }
-                count[frame][field] = count[frame][field]
-                    .checked_add(1)
-                    .ok_or_else(|| Error::Capacity("score command count overflow".into()))?;
-                absolute[frame][field] = add_up(absolute[frame][field], value);
-            }
-        }
-        let mut diff_error = vec![[0.0; FIELDS]; trace.frames];
-        let mut operand_bound = [0f64; FIELDS];
-        for frame in 0..trace.frames {
-            for field in 0..FIELDS {
-                let error = round_error(count[frame][field], absolute[frame][field], 0.0)?;
-                if add_up(absolute[frame][field], error) > f64::from(f32::MAX) {
-                    return Err(refuse("a frame difference may overflow binary32"));
-                }
-                diff_error[frame][field] = error;
-                operand_bound[field] = operand_bound[field].max(add_up(absolute[frame][field], error));
-            }
-        }
-        Ok(Self { count, diff_error, ideal_bound, operand_bound })
-    }
-}
-
-#[derive(Default)]
-struct Operations {
-    count: [u64; FIELDS],
-    inherited: [f64; FIELDS],
-}
-
-impl Operations {
-    fn add(&mut self, cost: &Cost, lo: i32, hi: i32, undo: bool) -> Result<(), Error> {
-        for frame in lo.max(0)..=hi {
-            for field in 0..FIELDS {
-                let n = cost.count[frame as usize][field];
-                self.count[field] = self.count[field]
-                    .checked_add(if undo { u64::from(n > 0) } else { n })
-                    .ok_or_else(|| Error::Capacity("native score operation count overflow".into()))?;
-                if undo {
-                    self.inherited[field] = add_up(self.inherited[field], cost.diff_error[frame as usize][field]);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn error(&self, cost: &Cost) -> Result<[f64; FIELDS], Error> {
-        let mut out = [0.0; FIELDS];
-        for field in 0..FIELDS {
-            // E <= inherited + n*(u*(ideal_bound + E + operand_bound) + eta).
-            out[field] = round_error(
-                self.count[field],
-                add_up(cost.ideal_bound[field], cost.operand_bound[field]),
-                self.inherited[field],
-            )?;
-            if add_up(add_up(cost.ideal_bound[field], cost.operand_bound[field]), out[field]) > f64::from(f32::MAX) {
-                return Err(refuse("a factor-state operation may overflow binary32"));
-            }
-        }
-        Ok(out)
-    }
 }
 
 fn f32_real(value: F32Interval) -> F64Interval {
@@ -594,8 +482,16 @@ fn link_note_probability(
     let mut mean = F64Interval::ZERO;
     let (mut lower, mut upper) = (i32::MAX, i32::MIN);
     for (bucket, probability) in note.buckets.iter().zip(mass) {
+        let possible = probability.interval().upper() > 0.0;
+        // No native path reaches this probe class at the note, so its true mass is zero.
+        let Some(bucket) = bucket else {
+            if probability.interval().lower() > 0.0 {
+                return Err(refuse("a lottery state has no path through the native factor schedule"));
+            }
+            continue;
+        };
         mean = mean.add(probability.interval().multiply(I32Interval::new(bucket.lower, bucket.upper)?.as_real()));
-        if probability.interval().upper() > 0.0 {
+        if possible {
             lower = lower.min(bucket.lower);
             upper = upper.max(bucket.upper);
         }
@@ -607,31 +503,14 @@ fn link_note_probability(
     Ok((mean, support))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn note_bounds(
     calc: &LiveScoreCalculator,
     note: &NoteCommand,
-    ideal: [F64Interval; FIELDS],
-    errors: [f64; FIELDS],
-    optional: F64Interval,
+    executed: &Classes,
     combo: F32Interval,
     gekisou: F32Interval,
     rush_percent: i32,
 ) -> Result<(LuckNoteBounds, I32Interval), Error> {
-    let widened = |value: F64Interval, field: usize| -> Result<F32Interval, Error> {
-        Ok(F32Interval::from_real(value.add(F64Interval::new(-errors[field], errors[field])?)))
-    };
-    let combo = gekisou.multiply(widened(ideal[0], 0)?.add(combo)?)?;
-    if !combo.lower().is_finite() || !combo.upper().is_finite() {
-        return Err(refuse("nonfinite combo-factor support"));
-    }
-    let judge = match note.score_type {
-        1 => widened(ideal[2], 2)?,
-        2 => widened(ideal[3], 3)?,
-        3 => widened(ideal[4], 4)?,
-        4 => widened(ideal[5], 5)?,
-        _ => F32Interval::point(0.0)?,
-    };
     let point = F32Interval::point;
     let note_percent =
         *calc.note_factor_percent.get(&note.note_type).ok_or_else(|| refuse("unknown score note type"))?;
@@ -641,15 +520,28 @@ fn note_bounds(
         .multiply(point(calc.state.band_total_power as f32)?)?
         .multiply(point(calc.music_difficulty_factor)?)?;
     let b = point(note_percent as f32 / 100f32)?.multiply(t)?.multiply(point(judge_percent as f32 / 100f32)?)?;
-    let mut buckets = [IntegerBounds { lower: 0, upper: 0 }; 4];
+    let mut buckets = [None; 4];
+    let mut combo_hull = None::<F32Interval>;
     let mut lower = i32::MAX;
     let mut upper = i32::MIN;
     for (bucket, out) in buckets.iter_mut().enumerate() {
-        let up = if bucket & 1 == 0 { ideal[1] } else { ideal[1].add(optional) };
-        let up = widened(up, 1)?.add(judge)?;
+        let Some(fields) = executed[bucket & 1] else { continue };
+        let combo_factor = gekisou.multiply(fields[0].add(combo)?)?;
+        if !combo_factor.lower().is_finite() || !combo_factor.upper().is_finite() {
+            return Err(refuse("nonfinite combo-factor support"));
+        }
+        combo_hull = Some(combo_hull.map_or(combo_factor, |h| h.hull(combo_factor)));
+        let judge = match note.score_type {
+            1 => fields[2],
+            2 => fields[3],
+            3 => fields[4],
+            4 => fields[5],
+            _ => point(0.0)?,
+        };
+        let up = fields[1].add(judge)?;
         let luck = get_luck_factor_percent(if bucket & 2 == 0 { 0 } else { rush_percent }) as f32 / 100f32;
         let x = b
-            .multiply(combo)?
+            .multiply(combo_factor)?
             .multiply(up)?
             .multiply(point(luck)?)?
             .divide(point(calc.converted_note_count as f32)?)?;
@@ -659,8 +551,9 @@ fn note_bounds(
             .native_floor();
         lower = lower.min(integer.lower());
         upper = upper.max(integer.upper());
-        *out = integer.into();
+        *out = Some(integer.into());
     }
+    let combo = combo_hull.ok_or_else(|| refuse("a filed note has no native execution"))?;
     Ok((
         LuckNoteBounds {
             note_id: note.note_id,
@@ -675,19 +568,13 @@ fn note_bounds(
     ))
 }
 
-fn initial_note_factors() -> [F64Interval; FIELDS] {
-    let mut ideal = [F64Interval::ZERO; FIELDS];
-    ideal[1] = F64Interval::ONE;
-    ideal
-}
-
-fn append_note_factor(ideal: &mut [F64Interval; FIELDS], command: &FactorCommand) -> Result<(), Error> {
-    // Do not reorder, regroup, or omit zero additions: outward binary64 endpoints must equal the
-    // original full filing-order fold. Only move this identical work from each Query to its Factor.
-    for (field, value) in deltas(command).into_iter().enumerate() {
-        ideal[field] = ideal[field].add(F64Interval::point(value)?);
+/// The widest field enclosure of a note's last execution over its classes.
+fn factor_widths(executed: &Classes, widths: &mut [f64; FIELDS]) {
+    for fields in executed.iter().flatten() {
+        for (width, field) in widths.iter_mut().zip(fields) {
+            *width = width.max(f64::from(field.upper()) - f64::from(field.lower()));
+        }
     }
-    Ok(())
 }
 
 /// Run a diagnostic certificate of native score expectations under the independent nominal lottery law.
@@ -842,14 +729,15 @@ fn luck_score_bounds_internal(
     };
     #[cfg(feature = "search-diagnostics")]
     let curve_dp_ms = phase_start.elapsed().as_secs_f64() * 1e3;
-    let optional: Vec<_> =
-        model.luck_score_rows(skills).into_iter().filter(|row| row.may_hold).map(|row| row.value).collect();
-    if optional.iter().any(|value| !value.is_finite() || *value <= i32::MIN as f32 / 100000f32) {
+    let probes: Vec<_> = model
+        .luck_score_rows(skills)
+        .into_iter()
+        .filter(|row| row.may_hold)
+        .map(|row| ProbeRow { owner: row.owner, value: row.value })
+        .collect();
+    if probes.iter().any(|row| !row.value.is_finite() || row.value <= i32::MIN as f32 / 100000f32) {
         return Err(refuse("a direct score command cannot be safely paired with its signed inverse"));
     }
-    let optional_sum = optional
-        .iter()
-        .try_fold(F64Interval::ZERO, |sum, &value| Ok::<_, Error>(sum.add(F64Interval::point(f64::from(value))?)))?;
     let calc = model.score.calc.clone();
     if calc.converted_note_count <= 0
         || ![
@@ -871,7 +759,7 @@ fn luck_score_bounds_internal(
     }
     model.set_luck_weights(skills, Vec::new())?;
     model.score.begin_bounds(
-        optional,
+        probes,
         setup.missions.iter().take(setup.fevers.len()).any(|&mission| mission == gekisou::M_LUCK),
     );
     #[cfg(feature = "search-diagnostics")]
@@ -895,17 +783,16 @@ fn luck_score_bounds_internal(
     if trace.queries as u64 > query_limit {
         return Err(refuse("unaccounted native calculate entry point"));
     }
-    let cost = Cost::compile(&trace)?;
-    let mut operations = Operations::default();
+    let mut replay = Replay::new(trace.frames, &trace.probes);
     let (mut prev, mut added) = (-1i32, None::<i32>);
     let mut mandatory_added = None::<i32>;
     let mut probability_ready = i32::MIN;
-    let mut filed = Vec::<(usize, usize, NoteCommand, [F64Interval; FIELDS])>::new();
+    // (frame, index in the frame, note, index in `replay.notes`)
+    let mut filed = Vec::<(usize, usize, NoteCommand, usize)>::new();
     // (frame, position in `filed`) by ascending frame: a query's combo window is a contiguous run.
     let mut by_frame = Vec::<(usize, usize)>::new();
     let mut current_combos = FxHashMap::<(usize, usize), (F32Interval, F32Interval)>::default();
     let mut retained_combos = FxHashMap::<(usize, usize), (F32Interval, F32Interval)>::default();
-    let mut commands = Vec::new();
     let mut queries = Vec::<LuckScoreQueryBounds>::new();
     let detailed_queries: FxHashSet<usize> = trace
         .events
@@ -927,12 +814,9 @@ fn luck_score_bounds_internal(
     for event in &trace.events {
         match event {
             BoundsEvent::Note { frame, index, note } => {
-                let mut ideal = initial_note_factors();
-                for command in commands.iter().filter(|command: &&FactorCommand| command.time_ms <= note.time_ms) {
-                    append_note_factor(&mut ideal, command)?;
-                }
+                let at = replay.file_note(*frame, note.time_ms, note.note_id)?;
                 by_frame.insert(by_frame.partition_point(|&(f, _)| f <= *frame), (*frame, filed.len()));
-                filed.push((*frame, *index, *note, ideal));
+                filed.push((*frame, *index, *note, at));
                 added = Some(added.map_or(*frame as i32, |old| old.min(*frame as i32)));
                 mandatory_added = Some(mandatory_added.map_or(*frame as i32, |old| old.min(*frame as i32)));
             }
@@ -940,18 +824,18 @@ fn luck_score_bounds_internal(
                 if command.band_total_power != 0 {
                     return Err(refuse("recorder produced an unproved power command"));
                 }
-                for (_, _, note, ideal) in &mut filed {
-                    if command.time_ms <= note.time_ms {
-                        append_note_factor(ideal, command)?;
-                    }
-                }
-                commands.push(*command);
+                replay.file_command(*frame, command)?;
                 added = Some(added.map_or(*frame as i32, |old| old.min(*frame as i32)));
                 if command.luck == 0 {
                     mandatory_added = Some(mandatory_added.map_or(*frame as i32, |old| old.min(*frame as i32)));
                 }
             }
-            BoundsEvent::Potential { frame, .. } => {
+            BoundsEvent::Potential { frame } => {
+                replay.potential(*frame);
+                added = Some(added.map_or(*frame as i32, |old| old.min(*frame as i32)));
+            }
+            BoundsEvent::Probe { frame, time_ms } => {
+                replay.probe(*frame, *time_ms)?;
                 added = Some(added.map_or(*frame as i32, |old| old.min(*frame as i32)));
             }
             BoundsEvent::Combo { frame, index, ordinary, gekisou } => {
@@ -1002,19 +886,12 @@ fn luck_score_bounds_internal(
                 // Thus production need not re-enclose every note thousands of unused times.
                 let measure =
                     details || detailed_queries.contains(&query_means.len()) || query_means.len() + 1 == trace.queries;
+                replay.query(*to)?;
                 let u = added.map_or(*to, |frame| (*to).min(frame - 1));
-                let start = if u < prev {
-                    operations.add(&cost, u + 1, prev, true)?;
-                    u + 1
-                } else {
-                    prev + 1
-                };
-                operations.add(&cost, start, *to, false)?;
+                let start = if u < prev { u + 1 } else { prev + 1 };
                 let mandatory_u = mandatory_added.map_or(*to, |frame| (*to).min(frame - 1));
                 let mandatory_start = if mandatory_u < prev { mandatory_u + 1 } else { prev + 1 };
-                // The operation counts only grow and the error refusals are monotone in them, so an unmeasured
-                // query defers its error to the terminal query, which is always measured.
-                let error = if measure { operations.error(&cost)? } else { [0.0; FIELDS] };
+                let mut factor_width = [0.0; FIELDS];
                 let mut measured = Vec::new();
                 let retain_notes = details && detailed_queries.contains(&query_means.len());
                 let mut note_count = 0;
@@ -1041,14 +918,16 @@ fn luck_score_bounds_internal(
                 }
                 // Measured sums keep the filing order of their outward-rounded additions.
                 let measured_notes: &[_] = if measure { &filed } else { &[] };
-                for &(frame, index, ref note, ideal) in
+                for &(frame, index, ref note, at) in
                     measured_notes.iter().filter(|(frame, _, _, _)| *frame as i32 <= *to)
                 {
                     let key = (frame, index);
                     let (combo, gekisou_combo) =
                         *retained_combos.get(&key).ok_or_else(|| refuse("note has no possible execution"))?;
+                    let executed = &replay.notes[at].executed;
+                    factor_widths(executed, &mut factor_width);
                     let (mut bounds, mut support) =
-                        note_bounds(&calc, note, ideal, error, optional_sum, combo, gekisou_combo, rush_percent)?;
+                        note_bounds(&calc, note, executed, combo, gekisou_combo, rush_percent)?;
                     mean = mean.add(if note.time_ms <= probability_ready {
                         let (mean, linked_support) = link_note_probability(&mut bounds, &probability)?;
                         support = linked_support;
@@ -1086,8 +965,7 @@ fn luck_score_bounds_internal(
                         score_frame: *to,
                         mean: mean.into(),
                         support: support.into(),
-                        factor_error: error,
-                        factor_operations: operations.count,
+                        factor_width,
                         note_count,
                         notes: measured,
                     });
@@ -1101,13 +979,12 @@ fn luck_score_bounds_internal(
     if pending.is_some() || query_means.is_empty() {
         return Err(refuse("terminal query has not filed every rank bonus"));
     }
-    let error = operations.error(&cost)?;
     let mut final_mean = F64Interval::ZERO;
     let mut final_notes = Vec::new();
-    for &(frame, index, ref note, ideal) in filed.iter().filter(|(frame, _, _, _)| *frame as i32 <= prev) {
+    for &(frame, index, ref note, at) in filed.iter().filter(|(frame, _, _, _)| *frame as i32 <= prev) {
         let (combo, gekisou_combo) =
             *retained_combos.get(&(frame, index)).ok_or_else(|| refuse("final note combo is missing"))?;
-        let (mut bounds, _) = note_bounds(&calc, note, ideal, error, optional_sum, combo, gekisou_combo, rush_percent)?;
+        let (mut bounds, _) = note_bounds(&calc, note, &replay.notes[at].executed, combo, gekisou_combo, rush_percent)?;
         if note.time_ms > probability_ready {
             return Err(refuse("final note has pending lottery commands"));
         }
@@ -1160,39 +1037,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn incrementally_filed_note_factors_match_full_ordered_fold_bit_for_bit() {
-        let times = [-40, 0, 80, 91, 140, 190];
-        let mut cached = times.map(|_| initial_note_factors());
-        let mut commands = Vec::new();
-        for index in 0..513 {
-            // Non-monotonic filing times exercise retroactive commands and exact cancellation;
-            // small deltas mixed with large values make outward-addition order observable.
-            let command = FactorCommand {
-                time_ms: ((index * 79) % 240) - 40,
-                note_mill: [1, -1, 67_108_863, -67_108_863, 12345, 0][index as usize % 6],
-                combo_mill: (index % 5) - 2,
-                judgement: 5,
-                judge_mill: (index % 7) - 3,
-                ..Default::default()
-            };
-            commands.push(command);
-            for (slot, &time) in times.iter().enumerate() {
-                if command.time_ms <= time {
-                    append_note_factor(&mut cached[slot], &command).unwrap();
-                }
-                let mut reference = [F64Interval::ZERO; FIELDS];
-                reference[1] = F64Interval::ONE;
-                for old in commands.iter().filter(|old| old.time_ms <= time) {
-                    for (field, delta) in deltas(old).into_iter().enumerate() {
-                        reference[field] = reference[field].add(F64Interval::point(delta).unwrap());
-                    }
-                }
-                assert_eq!(cached[slot], reference, "after filing {index}, note time {time}");
-            }
-        }
-    }
-
-    #[test]
     fn snapshot_difference_cancels_only_shared_fixed_bonus_coefficients() {
         let fixed = [
             (1, 1, F64Interval::new(-1000.0, 2000.0).unwrap(), I32Interval::new(-1000, 2000).unwrap()),
@@ -1223,66 +1067,7 @@ mod tests {
     }
 
     #[test]
-    fn frame_diff_undo_error_covers_every_repeated_native_replay() {
-        let commands: Vec<_> = [10_000, 20_000, -30_000]
-            .into_iter()
-            .map(|note_mill| FactorCommand { note_mill, ..Default::default() })
-            .collect();
-        let trace = BoundsTrace {
-            events: commands.iter().map(|&command| BoundsEvent::Factor { frame: 0, command }).collect(),
-            queries: 0,
-            frames: 1,
-            optional_note_factors: Vec::new(),
-            combo: Default::default(),
-            has_luck: true,
-        };
-        let cost = Cost::compile(&trace).unwrap();
-        let mut operations = Operations::default();
-        let mut state = 1.0f32;
-        for _ in 0..1000 {
-            let mut difference = 0.0f32;
-            let mut ideal = 1.0f64;
-            for command in &commands {
-                let value = command.note_mill as f32 / 100000f32;
-                state += value;
-                difference += value;
-                ideal += f64::from(value);
-            }
-            operations.add(&cost, 0, 0, false).unwrap();
-            assert!((f64::from(state) - ideal).abs() <= operations.error(&cost).unwrap()[1]);
-            state -= difference;
-            operations.add(&cost, 0, 0, true).unwrap();
-            assert!((f64::from(state) - 1.0).abs() <= operations.error(&cost).unwrap()[1]);
-        }
-        assert_eq!(operations.count[1], 4000);
-        assert!(operations.inherited[1] > 0.0);
-    }
-
-    #[test]
-    fn unobserved_optional_commands_are_counted_in_every_reachable_score_frame() {
-        let trace = BoundsTrace {
-            events: vec![
-                BoundsEvent::Potential { frame: 2, note_abs: 0.3 },
-                BoundsEvent::Potential { frame: 2, note_abs: 0.6 },
-            ],
-            queries: 0,
-            frames: 4,
-            optional_note_factors: vec![0.3, 0.6],
-            combo: Default::default(),
-            has_luck: true,
-        };
-        let cost = Cost::compile(&trace).unwrap();
-        let mut operations = Operations::default();
-        operations.add(&cost, 0, 3, false).unwrap();
-        operations.add(&cost, 2, 3, true).unwrap();
-        operations.add(&cost, 2, 3, false).unwrap();
-        assert_eq!(operations.count[1], 5);
-        assert!(operations.error(&cost).unwrap()[1] > 0.0);
-        assert_eq!(operations.error(&cost).unwrap()[0], 0.0);
-    }
-
-    #[test]
-    fn recorder_refuses_hidden_random_checks_and_unbounded_error_counts() {
+    fn recorder_refuses_hidden_random_checks() {
         let condition = Checker::And {
             items: vec![Checker::Fixed(false), Checker::Probability(0.25)],
             resettable: vec![false, false],
@@ -1290,7 +1075,6 @@ mod tests {
         assert!(!deterministic(&condition));
         assert!(!deterministic(&Checker::LuckRushPlaying(false)));
         assert!(deterministic(&Checker::LifeAtLeast(Some(700))));
-        assert!(round_error(1 << 24, 1.0, 0.0).is_err());
     }
 
     fn fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
@@ -1829,7 +1613,6 @@ mod tests {
         }];
         let events = [(0, 80)];
         let bounds = luck_score_bounds(&master, &deck, &notes, &events, params, &setup, &play, &delta).unwrap();
-        assert!(bounds.queries.iter().any(|query| query.factor_operations[0] > 0), "combo commands must be certified");
         let mut reference = None;
         for seed in -16..32 {
             let mut native = LiveModel::new_gekisou(&master, &deck, &notes, &events, params, &setup).unwrap();

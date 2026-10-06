@@ -832,11 +832,11 @@ pub fn luck_score_bounds_replay(
     let ms = started.elapsed().as_secs_f64() * 1e3;
     Ok(match result {
         Ok(bounds) => {
-            let max_drift = bounds.queries.iter().flat_map(|query| query.factor_error).fold(0.0f64, f64::max);
+            let max_width = bounds.queries.iter().flat_map(|query| query.factor_width).fold(0.0f64, f64::max);
             let rank_width =
                 bounds.ranges.iter().map(|range| range.bonus_mean.upper - range.bonus_mean.lower).sum::<f64>();
             serde_json::json!({"status":"bounded","members":members,"snaps":snaps,"ms":ms,
-                "width":bounds.final_mean.upper-bounds.final_mean.lower,"maxFactorDrift":max_drift,
+                "width":bounds.final_mean.upper-bounds.final_mean.lower,"maxFactorWidth":max_width,
                 "noteWidth":bounds.final_note_mean.upper-bounds.final_note_mean.lower,
                 "rankWidth":bounds.final_rank_mean.upper-bounds.final_rank_mean.lower,
                 "rankBonusWidthSum":rank_width,"bounds":bounds})

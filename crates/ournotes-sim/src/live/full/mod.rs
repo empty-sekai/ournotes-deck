@@ -608,6 +608,8 @@ pub(crate) struct LuckScoreRow {
     /// The effect row.
     pub row: usize,
     pub member: usize,
+    /// The owner id of the row's score commands.
+    pub owner: i32,
     /// The shape index in [`LuckSkills::shapes`].
     pub shape: usize,
     /// The note score-up.
@@ -1313,9 +1315,9 @@ impl LiveModel {
     pub(crate) fn luck_score_rows(&self, skills: &LuckSkills) -> Vec<LuckScoreRow> {
         let mut out = Vec::new();
         for c in &self.cond {
-            let source = match c.skill_type {
-                SKILL_TYPE_GEKISOU => LuckSource::Gekisou,
-                SKILL_TYPE_GEKISOU_SUPPORT => LuckSource::GekisouSupport,
+            let (source, owner_type) = match c.skill_type {
+                SKILL_TYPE_GEKISOU => (LuckSource::Gekisou, OWNER_MEMBER),
+                SKILL_TYPE_GEKISOU_SUPPORT => (LuckSource::GekisouSupport, OWNER_SNAP),
                 _ => continue,
             };
             for e in c.updater.effects() {
@@ -1326,6 +1328,7 @@ impl LiveModel {
                 out.push(LuckScoreRow {
                     row: e.row,
                     member: c.member,
+                    owner: (c.member as i32).wrapping_mul(100).wrapping_add(owner_type),
                     shape,
                     value: if m != 0 { m as f32 / 100000f32 } else { 0f32 },
                     may_hold: [&e.trigger, &e.condition].into_iter().flatten().all(Checker::may_hold),
@@ -1895,6 +1898,10 @@ impl LiveModel {
         self.enabled_live.retain(|&si| self.live[si].parent_state != STAY);
         self.life.sync_current_life(t)?;
         self.score.bounds_potential_skills(t);
+        // An untimed sustained score-up that ends at or after the music length files its end there.
+        if self.music_length_ms > 0 && self.music_length_ms < t {
+            self.score.bounds_potential_skills(self.music_length_ms);
+        }
         let info = self.gk.as_ref().map(|g| &g.ctrl as &dyn GekisouComboInfo);
         self.score.calculate(t, &self.combo, info)?;
         self.frame_score = self.score.score;

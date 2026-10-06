@@ -9,7 +9,7 @@
 //! the score at once; when that frame is undone and executed again, it is also counted as rank bonus score.
 
 use super::combo::ComboCounter;
-use super::luck_score_bounds::{BoundsEvent, BoundsTrace};
+use super::luck_score_bounds::{BoundsEvent, BoundsTrace, ProbeRow};
 use super::score_program::{Kernel, Recorder, ScoreProgram, ValueId};
 use crate::error::Error;
 use crate::live::score::{GekisouComboInfo, LiveScoreCalculator, ScoreFactorState, get_frame};
@@ -84,6 +84,9 @@ pub(crate) struct NoteCommand {
     /// Diagnostics only: the last execution's Gekisou combo factor, combo factor and score-up factor.
     #[cfg(feature = "search-diagnostics")]
     factors: [f32; 3],
+    /// Tests only: the factor state of the last execution [combo, note, Just, Perfect, Great, Good].
+    #[cfg(test)]
+    state: [f32; 6],
 }
 
 impl NoteCommand {
@@ -97,6 +100,8 @@ impl NoteCommand {
             added: 0,
             #[cfg(feature = "search-diagnostics")]
             factors: [0.0; 3],
+            #[cfg(test)]
+            state: [0.0; 6],
         }
     }
 }
@@ -213,12 +218,12 @@ impl IncrementalCalculator {
         self.factors[f].push(cmd);
     }
 
-    pub(super) fn begin_bounds(&mut self, optional_note_factors: Vec<f32>, has_luck: bool) {
+    pub(super) fn begin_bounds(&mut self, probes: Vec<ProbeRow>, has_luck: bool) {
         self.bounds_trace = Some(BoundsTrace {
             events: Vec::new(),
             queries: 0,
             frames: self.notes.len(),
-            optional_note_factors,
+            probes,
             combo: Default::default(),
             has_luck,
         });
@@ -230,7 +235,7 @@ impl IncrementalCalculator {
         }
         let frame = get_frame(time_ms).min(self.max_frame - 1) as usize;
         if let Some(trace) = &mut self.bounds_trace {
-            trace.events.push(BoundsEvent::Potential { frame, note_abs: 0.0 });
+            trace.events.push(BoundsEvent::Potential { frame });
         }
     }
 
@@ -239,10 +244,10 @@ impl IncrementalCalculator {
             return;
         }
         let frame = get_frame(time_ms).min(self.max_frame - 1) as usize;
-        if let Some(trace) = &mut self.bounds_trace {
-            for &value in &trace.optional_note_factors {
-                trace.events.push(BoundsEvent::Potential { frame, note_abs: f64::from(value.abs()) });
-            }
+        if let Some(trace) = &mut self.bounds_trace
+            && !trace.probes.is_empty()
+        {
+            trace.events.push(BoundsEvent::Probe { frame, time_ms });
         }
     }
 
@@ -321,6 +326,15 @@ impl IncrementalCalculator {
     pub(crate) fn filed_scores(&self) -> (Vec<FiledNote>, Vec<(i32, i32)>) {
         let notes = self.notes.iter().flatten().map(|n| (n.time_ms, n.note_id, n.added, n.factors)).collect();
         (notes, self.fixed.clone())
+    }
+
+    /// Tests only: the number of score frames, and every note of the executed frames with its last execution's
+    /// factor state.
+    #[cfg(test)]
+    pub(crate) fn executed_states(&self) -> (usize, Vec<(i32, [f32; 6])>) {
+        let executed = (self.prev + 1).max(0) as usize;
+        let notes = self.notes.iter().take(executed).flatten().map(|n| (n.note_id, n.state)).collect();
+        (self.notes.len(), notes)
     }
 
     fn fixed_at(&self, f: i32) -> Option<i32> {
@@ -455,6 +469,11 @@ impl IncrementalCalculator {
                         self.calc.state.combo_score_up + (crate::num::min_ignoring_nan(cum, 1f32) + 1f32),
                         self.calc.state.note_score_up + self.calc.state.judgement_factor(n.score_type),
                     ];
+                }
+                #[cfg(test)]
+                {
+                    let st = &self.calc.state;
+                    n.state = [st.combo_score_up, st.note_score_up, st.just, st.perfect, st.great, st.good];
                 }
                 n.added = s;
                 self.score = self.score.wrapping_add(s);
