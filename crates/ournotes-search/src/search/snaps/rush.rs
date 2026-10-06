@@ -149,11 +149,9 @@ impl RushSpec {
                 // false. Conditions/releases can only remove activity earlier.
                 next_false[f].map_or(i64::MAX, |i| g.times[i] as i64)
             } else {
-                let timed = if self.act > 0.0 || self.act.is_nan() || self.release == 0 {
-                    frame_end(&g.times, g.times[f], f, self.act)
-                } else {
-                    i64::MAX
-                };
+                // A release checker skips the first elapsed-time check, so its nominal timer is not a bound on
+                // the active span without a separate lifecycle certificate.
+                let timed = if self.release == 0 { frame_end(&g.times, g.times[f], f, self.act) } else { i64::MAX };
                 if self.release != 0 && self.released_on_complete {
                     // Release is first queried in the second frame after start.
                     timed.min(g.completion_from(f + 2).map_or(i64::MAX, |i| g.times[i] as i64))

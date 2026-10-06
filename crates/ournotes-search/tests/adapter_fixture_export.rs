@@ -14,6 +14,10 @@ const FIXTURE_SEED: u64 = 20_261_001;
 const SCORE_ID: i64 = 1004;
 const EVENT_ID: i64 = 7;
 
+#[path = "fixtures/combo_integer.rs"]
+mod combo_integer;
+#[path = "fixtures/effect_identity.rs"]
+mod effect_identity;
 #[path = "fixtures/luck_refinement.rs"]
 mod luck_refinement;
 #[path = "fixtures/network_snapshots.rs"]

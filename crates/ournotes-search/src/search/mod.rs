@@ -554,6 +554,11 @@ pub fn search_best_order_diagnostic(pool: &Pool, req: &SearchRequest) -> Result<
     if budget.expired() {
         return Ok(preparation_timeout(t0));
     }
+    if setup.as_ref().and_then(|s| s.gk.as_ref()).is_some_and(|g| g.confirmations.is_some()) {
+        return Err(Error::Unsupported(
+            "best-order diagnostic cannot prove monotonicity of external rank snapshots".into(),
+        ));
+    }
     let snap_live = match &setup {
         None => None,
         Some(s) => Some(snaps::SnapLive::new(pool, &t, &allowed.members, s)?),
@@ -571,7 +576,7 @@ pub fn search_best_order_diagnostic(pool: &Pool, req: &SearchRequest) -> Result<
     if !(0..=i64::from(i32::MAX)).contains(&power_upper_bound) {
         return Err(Error::Domain("search power upper bound is outside nonnegative i32".into()));
     }
-    if !t.prove_nonnegative_power(pool, &s.prepared_leaders(), &allowed, budget)? {
+    if !t.prove_nonnegative_power(pool, &s.prepared_leaders(), &allowed, budget)? || budget.expired() {
         return Ok(preparation_timeout(t0));
     }
     if let Some(skip) = &skip

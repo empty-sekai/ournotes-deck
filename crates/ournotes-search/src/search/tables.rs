@@ -151,6 +151,12 @@ impl<'m> Tables<'m> {
                     if prof.max_abs_value() >= (1 << 28) {
                         return Err(Error::Domain(format!("leader skill {}: oversized effect value", k.0)));
                     }
+                    if prof.absolute_sum_bound().is_none() {
+                        return Err(Error::Domain(format!(
+                            "leader skill {}: percentage accumulation exceeds the proven i64 range",
+                            k.0
+                        )));
+                    }
                     profiles.push(prof);
                     key.insert(k, profiles.len() - 1);
                     profiles.len() - 1
