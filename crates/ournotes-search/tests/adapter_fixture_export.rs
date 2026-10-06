@@ -1,6 +1,8 @@
 //! Explicitly synthetic UTF-8 transport corpus input; no game assets or native truth.
 #[path = "../../ournotes-sim/tests/common/mod.rs"]
 mod common;
+#[path = "fixtures/damage_reduction.rs"]
+mod damage_reduction;
 use common::{Rng, Synth, extend_table, replace_table, set_column, synth_snaps};
 use ournotes_search::types::{DeckInput, Limits, Metric, SimulationInput, Strategy};
 use ournotes_sim::{cards::Roster, data::DeckData};
@@ -14,6 +16,10 @@ const FIXTURE_SEED: u64 = 20_261_001;
 const SCORE_ID: i64 = 1004;
 const EVENT_ID: i64 = 7;
 
+#[path = "fixtures/combo_integer.rs"]
+mod combo_integer;
+#[path = "fixtures/effect_identity.rs"]
+mod effect_identity;
 #[path = "fixtures/luck_refinement.rs"]
 mod luck_refinement;
 #[path = "fixtures/network_snapshots.rs"]

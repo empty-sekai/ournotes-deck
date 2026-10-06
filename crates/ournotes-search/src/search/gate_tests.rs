@@ -1,4 +1,4 @@
-//! Adversarial synthetic search-guard regressions, not latest-JP model evidence.
+//! Synthetic regressions for search input, arithmetic and completion contracts.
 
 #[path = "../../../ournotes-sim/tests/common/mod.rs"]
 pub(super) mod common;
@@ -42,6 +42,32 @@ fn one_note(master: &Master) -> Chart {
         &LiveScoreSettings::from_master(master).unwrap(),
     )
     .unwrap()
+}
+
+fn single_note_live_request(master: &Master) -> SearchRequest {
+    let mut req = request(1);
+    req.constraints.no_snaps = false;
+    req.constraints.leader = Some(1);
+    req.objective = Objective::LiveScore {
+        score_id: 1004,
+        chart: one_note(master),
+        play: PlayInput::Notes(Play {
+            notes: vec![ournotes_sim::live::skill::NotePlay {
+                note_id: 1,
+                time_ms: 100,
+                note_type: 1,
+                score_type: ournotes_sim::live::score::PERFECT,
+                life: 1000,
+                combo: 0,
+            }],
+            life_at_event: vec![],
+            assist: false,
+        }),
+        event: false,
+        exclude_snap_skills: true,
+        gekisou: None,
+    };
+    req
 }
 
 #[test]
@@ -116,6 +142,113 @@ fn minimum_signed_leader_value_is_outside_the_proven_domain() {
 }
 
 #[test]
+fn live_search_requires_nonnegative_score_multipliers() {
+    let mut data = distinct(5, 1);
+    set_adjustment(&mut data, "-2.5");
+    let master = data.master();
+    let pool = Pool::new(&master, &roster(&mut Rng::new(739), &master)).unwrap();
+    let req = single_note_live_request(&master);
+    let (oracle, count) = oracle::brute_force_best_order_diagnostic(&pool, &req).unwrap();
+    assert_eq!(count, 720);
+    assert_eq!(oracle[0].snaps, [None; 5]);
+    let actual = search_best_order_diagnostic(&pool, &req);
+    assert!(matches!(actual, Err(Error::Domain(_))), "oracle={oracle:?}, actual={actual:?}");
+}
+
+#[test]
+fn live_search_certifies_finite_intermediates_across_all_snap_powers() {
+    let mut data = distinct(5, 1);
+    set_column(&mut data, "MasterLiveMusicScore", &mut |row| {
+        if row["_id"] == 1004 {
+            row["_musicScoreLevel"] = json!(5);
+        }
+    });
+    let master = data.master();
+    let owned = roster(&mut Rng::new(739), &master);
+    let pool = Pool::new(&master, &owned).unwrap();
+    let req = single_note_live_request(&master);
+    let (song, _, _) = objective_song(&pool, &req.objective).unwrap();
+    let mut deck = Deck { members: [1, 2, 0, 3, 4], snaps: [None; 5], performance_order: [0, 1, 2, 3, 4] };
+    let low = pool.deck_power(&deck, song.as_ref(), false).unwrap().power();
+    let high = (0..5)
+        .map(|slot| {
+            deck.snaps = [None; 5];
+            deck.snaps[slot] = Some(0);
+            pool.deck_power(&deck, song.as_ref(), false).unwrap().power()
+        })
+        .max()
+        .unwrap();
+    assert!(high > low);
+    let adjustment = f32::MAX / ((low as f32 + high as f32) / 2.0);
+    set_adjustment(&mut data, &format!("{adjustment:e}"));
+    let master = data.master();
+    let pool = Pool::new(&master, &owned).unwrap();
+    let req = single_note_live_request(&master);
+    let (oracle, count) = oracle::brute_force_best_order_diagnostic(&pool, &req).unwrap();
+    assert_eq!(count, 720);
+    assert_eq!(oracle[0].score, Some(i32::MAX));
+    assert!(oracle[0].power < high);
+    assert!(matches!(search_best_order_diagnostic(&pool, &req), Err(Error::Domain(_))));
+}
+
+#[test]
+fn power_search_certifies_every_feasible_deck_before_pruning() {
+    let mut data = distinct(6, 0);
+    set_column(&mut data, "MasterMemberCard", &mut |row| {
+        let id = row["_id"].as_i64().unwrap();
+        row["_characterID"] = json!(id.min(5));
+        row["_leaderSkillID"] = json!(if id == 1 { 1 } else { 0 });
+        row["_cardType"] = json!(if id == 6 { 2 } else { 1 });
+        let points = match id {
+            5 => 101_000_000,
+            6 => 100_000_000,
+            _ => 1000,
+        };
+        for stat in ["_performancePowerMax", "_technicPowerMax", "_visualPowerMax"] {
+            row[stat] = json!(points);
+        }
+    });
+    set_column(&mut data, "MasterMemberCardLevel", &mut |row| {
+        for stat in ["_performanceRate", "_technicRate", "_visualRate"] {
+            row[stat] = json!(10_000);
+        }
+    });
+    extend_table(&mut data, "MasterSkillTarget", vec![json!({"_id":14,"_skillTargetType":3,"_characterID":5})]);
+    common::replace_table(
+        &mut data,
+        "MasterSkillCondition",
+        json!([{"_id":1,"_conditionType":3000,"_conditionValues":[],"_isPositive":true,"_conditionTargetIDs":[5]}]),
+    );
+    common::replace_table(&mut data, "MasterSkillConditionSet", json!([{"_id":1,"_group":1,"_conditionIds":[1]}]));
+    common::replace_table(
+        &mut data,
+        "MasterLeaderSkillEffect",
+        json!([{
+            "_id":1,"_leaderSkillID":1,"_level":1,"_skillConditionGroup":1,
+            "_skillTargetIDs":[14],"_skillEffectType":1000,"_effectValue":-100_000,
+            "_skillCumulativeConditionID":0
+        }]),
+    );
+    let master = data.master();
+    let mut owned = roster(&mut Rng::new(739), &master);
+    owned.player = Default::default();
+    for member in &mut owned.members {
+        member.awake = 1;
+        member.rank = 1;
+    }
+    let pool = Pool::new(&master, &owned).unwrap();
+    let mut req = request(1);
+    req.constraints.leader = Some(1);
+    req.constraints.include_members = vec![1, 2, 3, 4];
+    let (oracle, count) = oracle::brute_force(&pool, &req).unwrap();
+    assert_eq!(count, 2);
+    assert_eq!(oracle[0].members, [2, 3, 1, 4, 6]);
+    assert_eq!(oracle[0].power, 1_594_979_296);
+    let actual = search(&pool, &req);
+    assert!(matches!(actual, Err(Error::Domain(_))), "oracle={oracle:?}, actual={actual:?}");
+}
+
+#[test]
 fn native_infinity_conversion_is_preserved_but_not_proven_monotone() {
     let mut data = distinct(5, 0);
     set_adjustment(&mut data, "3e38");
@@ -127,7 +260,7 @@ fn native_infinity_conversion_is_preserved_but_not_proven_monotone() {
         Objective::SkipScore { score_id, chart } => SkipModel::new(&master, *score_id, chart).unwrap(),
         _ => unreachable!(),
     };
-    // Regular/native arithmetic remains MIN, rather than a fabricated clamp.
+    // The native positive-infinity conversion produces i32::MIN.
     assert_eq!(model.score_reference(94_037).unwrap(), i32::MIN);
     assert_eq!(model.fast.score(94_037), (i32::MIN, i32::MIN as i64));
     assert!(matches!(search(&pool, &req), Err(Error::Domain(_))));

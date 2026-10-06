@@ -320,10 +320,19 @@ impl CarrierSplit {
     }
 }
 
-/// The index `j` of the weight `WEIGHT_STEP^j` nearest `√(q/power)`, the weight at which `(λ·power + q/λ)²/4` equals
-/// `power·q`.
-fn weight(q: f64, power: i64) -> i32 {
-    ((q / power as f64).sqrt().ln() / WEIGHT_STEP.ln()).round() as i32
+/// The index `j` of a finite positive weight `WEIGHT_STEP^j` nearest `√(q/power)`, the weight at which
+/// `(λ·power + q/λ)²/4` equals `power·q`. Degenerate terms retain the uncoupled cap.
+fn weight(q: f64, power: i64) -> Option<i32> {
+    if power <= 0 || !q.is_finite() || q <= 0.0 {
+        return None;
+    }
+    let index = ((q / power as f64).sqrt().ln() / WEIGHT_STEP.ln()).round();
+    if !index.is_finite() || index < i32::MIN as f64 || index > i32::MAX as f64 {
+        return None;
+    }
+    let index = index as i32;
+    let lambda = WEIGHT_STEP.powi(index);
+    (lambda.is_finite() && lambda > 0.0).then_some(index)
 }
 
 /// Every multiset of at most `r` of `0..lists`, as nondecreasing sequences.
@@ -475,8 +484,9 @@ impl JointBounds {
             }
             let level = self.carrier_level(ids.len());
             let mut numerator = level.payoff_cap_from(a0, power, gain, 0, f64::INFINITY).checked_mul(mass)?;
-            if numerator > couple_above {
-                let j = weight(add_up(a0, gain), power);
+            if numerator > couple_above
+                && let Some(j) = weight(add_up(a0, gain), power)
+            {
                 let lambda = WEIGHT_STEP.powi(j);
                 let c = split.coupled(self, &e, k, profile, j);
                 // the prefix's terms, then the slots to fill (one value per pair)
@@ -658,11 +668,23 @@ mod tests {
     #[test]
     fn the_nearest_weight_meets_the_product_within_its_step() {
         for (q, power) in [(1387.0, 290_825i64), (2.5, 7), (0.01, 1_000_000)] {
-            let lambda = WEIGHT_STEP.powi(weight(q, power));
+            let lambda = WEIGHT_STEP.powi(weight(q, power).unwrap());
             let bound = (lambda * power as f64 + q / lambda).powi(2) / 4.0;
             let product = q * power as f64;
             assert!(bound >= product * (1.0 - 1e-12));
             assert!(bound <= product * 1.001);
+        }
+    }
+
+    #[test]
+    fn coupled_weights_have_a_finite_positive_scale() {
+        for (q, power) in [(1.0, 0), (0.0, 1), (f64::INFINITY, 1), (f64::NAN, 1), (f64::from_bits(1), 2)] {
+            assert_eq!(weight(q, power), None);
+        }
+        for (q, power) in [(f64::MIN_POSITIVE, 1), (1.0, 1), (1e100, i32::MAX as i64)] {
+            let lambda = WEIGHT_STEP.powi(weight(q, power).unwrap());
+            assert!(lambda.is_finite() && lambda > 0.0);
+            assert!((lambda * power as f64 + q / lambda).is_finite());
         }
     }
 
