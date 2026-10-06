@@ -903,6 +903,9 @@ fn record_before(model: &mut LiveModel, time: i32, delta: f32) -> Result<(), Err
     for condition in &mut model.cond {
         condition.updater.begin_frame();
     }
+    // The live's per-frame buffers: no model frame is open while the recorder runs its phases.
+    let mut listed = std::mem::take(&mut model.scratch.listed);
+    let mut updated = std::mem::take(&mut model.scratch.updated);
     for phase in PHASES {
         let gk =
             model.gk.as_ref().map(|g| GkView { ctrl: &g.ctrl, prev_lots: &g.prev_lots, prev_lot_ms: g.prev_lot_ms });
@@ -916,18 +919,20 @@ fn record_before(model: &mut LiveModel, time: i32, delta: f32) -> Result<(), Err
             gk,
             prev_confirmed_rank: None,
         };
-        let mut listed = Vec::new();
+        listed.clear();
         for (updater, condition) in model.cond.iter_mut().enumerate() {
-            for u in condition.updater.update(phase, input, &mut context)? {
+            condition.updater.update_into(phase, input, &mut context, &mut updated)?;
+            for &u in &updated {
                 if condition.updater.updaters[u].state.state != STAY {
                     listed.push(Listed::Cond { updater, u });
                 }
             }
         }
-        for item in listed {
+        for &item in &listed {
             model.apply(item)?;
         }
     }
+    (model.scratch.listed, model.scratch.updated) = (listed, updated);
     Ok(())
 }
 
@@ -1284,11 +1289,87 @@ impl<M: Mass> Transcript<M> {
     }
 }
 
+/// Diagnostic totals of the recording pass of the calling thread (diagnostic builds only; zero elsewhere).
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LuckRecordProfile {
+    pub calls: u64,
+    /// Recordings whose reduced model kept no condition skill, and recordings that ran the life recorder.
+    pub without_skills: u64,
+    pub with_life: u64,
+    pub total_ms: f64,
+    pub life_setup_ms: f64,
+    pub life_frames_ms: f64,
+    pub before_ms: f64,
+    pub after_ms: f64,
+}
+
+#[cfg(feature = "search-diagnostics")]
+thread_local! {
+    static RECORD_PROFILE: std::cell::RefCell<LuckRecordProfile> = std::cell::RefCell::new(LuckRecordProfile::default());
+}
+
+#[cfg(feature = "search-diagnostics")]
+fn timed<T>(slot: fn(&mut LuckRecordProfile) -> &mut f64, run: impl FnOnce() -> T) -> T {
+    let started = std::time::Instant::now();
+    let out = run();
+    let ms = started.elapsed().as_secs_f64() * 1e3;
+    RECORD_PROFILE.with(|profile| *slot(&mut profile.borrow_mut()) += ms);
+    out
+}
+
+#[cfg(feature = "search-diagnostics")]
+fn count(slot: fn(&mut LuckRecordProfile) -> &mut u64) {
+    RECORD_PROFILE.with(|profile| *slot(&mut profile.borrow_mut()) += 1);
+}
+
+#[cfg(not(feature = "search-diagnostics"))]
+#[inline(always)]
+fn count(_: fn(&mut LuckRecordProfile) -> &mut u64) {}
+
+#[cfg(not(feature = "search-diagnostics"))]
+#[inline(always)]
+fn timed<T>(_: fn(&mut LuckRecordProfile) -> &mut f64, run: impl FnOnce() -> T) -> T {
+    run()
+}
+
+/// Return and reset the calling thread's recording totals. These are measurements only.
+pub fn take_luck_record_profile() -> LuckRecordProfile {
+    #[cfg(feature = "search-diagnostics")]
+    {
+        RECORD_PROFILE.with(|profile| std::mem::take(&mut *profile.borrow_mut()))
+    }
+    #[cfg(not(feature = "search-diagnostics"))]
+    {
+        LuckRecordProfile::default()
+    }
+}
+
 /// Run the reduced native interpreter (and the deterministic life recorder when a retained row reads life or a
 /// judgement can convert) and record the propagation's inputs. Failures before the first frame return at once; a
 /// failure inside the frame loop ends the transcript (see [`Transcript::failure`]).
 #[allow(clippy::too_many_arguments)]
 fn record<M: Mass>(
+    master: &Master,
+    skills: &LuckSkills,
+    notes: &[LiveNote],
+    skill_events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    deck: &[Performer],
+    probes: Option<&[Option<usize>]>,
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+) -> Result<Transcript<M>, Error> {
+    timed(
+        |p| &mut p.total_ms,
+        || record_frames(master, skills, notes, skill_events, params, setup, play, delta_times, deck, probes, ranking),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_frames<M: Mass>(
     master: &Master,
     skills: &LuckSkills,
     notes: &[LiveNote],
@@ -1333,10 +1414,18 @@ fn record<M: Mass>(
         model.set_rank_confirmation_timeline(ranking)?;
     }
     let plan = compile::<M>(master, &mut model, skills, probes)?;
+    count(|p| &mut p.calls);
+    if model.cond.is_empty() {
+        count(|p| &mut p.without_skills);
+    }
     let mut life = if plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life))
         || luck_has_judgement_conversion(master, deck)
     {
-        Some(life_recorder(master, deck, notes, skill_events, params, setup, ranking)?)
+        count(|p| &mut p.with_life);
+        Some(timed(
+            |p| &mut p.life_setup_ms,
+            || life_recorder(master, deck, notes, skill_events, params, setup, ranking),
+        )?)
     } else {
         None
     };
@@ -1421,7 +1510,7 @@ fn record_frame<M: Mass>(
         judged.push((note.note_id, note.note_operate_type, note.time_ms, judgement.judgement));
     }
     let phase_life = if let Some(life) = life {
-        life.frame_timed(frame.time_ms, &frame.judged, delta)?;
+        timed(|p| &mut p.life_frames_ms, || life.frame_timed(frame.time_ms, &frame.judged, delta))?;
         if life.draws() != 0 {
             return Err(Error::Unsupported("LUCK life recorder consumed a random value".into()));
         }
@@ -1432,24 +1521,29 @@ fn record_frame<M: Mass>(
     } else {
         [model.life.current_life; 2]
     };
-    record_before(model, frame.time_ms, delta)?;
+    timed(|p| &mut p.before_ms, || record_before(model, frame.time_ms, delta))?;
     let controller = &model.gk.as_ref().expect("Gekisou checked").ctrl;
-    let states: Vec<_> = controller.states.iter().map(|state| state.state).collect();
+    let states = |range: usize| controller.states[range].state;
     let updates = &controller.state_updates;
     let current = controller.current_playing_index;
     let target = controller.dp_playing_range_index();
     let current_luck = current >= 0 && ranges[current as usize].2 == M_LUCK;
     let gate = updates.iter().any(|&i| ranges[i].2 == M_LUCK) || current_luck;
-    let active: Vec<_> =
-        states.iter().enumerate().filter(|&(_, &state)| (S_START..S_FINISH).contains(&state)).map(|(i, _)| i).collect();
-    if active.len() > 1 && active.iter().any(|&i| ranges[i].2 == M_LUCK) {
+    let (mut active, mut active_luck) = (0usize, false);
+    for (range, state) in controller.states.iter().enumerate() {
+        if (S_START..S_FINISH).contains(&state.state) {
+            active += 1;
+            active_luck |= ranges[range].2 == M_LUCK;
+        }
+    }
+    if active > 1 && active_luck {
         return Err(Error::Unsupported("LUCK DP: a Luck range overlaps another active range".into()));
     }
     let start =
-        updates.iter().find_map(|&range| (ranges[range].2 == M_LUCK && states[range] == S_START).then_some(range));
-    let complete = updates.iter().any(|&i| ranges[i].2 == M_LUCK && states[i] == S_COMPLETE);
-    let finish = updates.iter().any(|&i| ranges[i].2 == M_LUCK && states[i] == S_FINISH);
-    if finish && updates.iter().any(|&i| states[i] == S_START) {
+        updates.iter().find_map(|&range| (ranges[range].2 == M_LUCK && states(range) == S_START).then_some(range));
+    let complete = updates.iter().any(|&i| ranges[i].2 == M_LUCK && states(i) == S_COMPLETE);
+    let finish = updates.iter().any(|&i| ranges[i].2 == M_LUCK && states(i) == S_FINISH);
+    if finish && updates.iter().any(|&i| states(i) == S_START) {
         // The old rush is closed at frame time, while a new range's note can file a command at
         // an EARLIER chart time. That needs overlapping historical span state, outside this prototype.
         return Err(Error::Unsupported("LUCK DP: another range starts in a Luck finish frame".into()));
@@ -1458,7 +1552,7 @@ fn record_frame<M: Mass>(
         for (range, &(begin, end, mission)) in ranges.iter().enumerate() {
             if mission == M_LUCK && begin <= note_time && note_time <= end {
                 let (buff, speed) = controller.dp_factors_at(note_time);
-                out.hits.push(Hit { range, buff, speed, consumes: states[range] <= S_END });
+                out.hits.push(Hit { range, buff, speed, consumes: states(range) <= S_END });
             }
         }
         out.notes.push(Judged { time_ms: note_time, note_type, judgement, hits: out.hits.len() });
@@ -1481,8 +1575,8 @@ fn record_frame<M: Mass>(
             }
         }
     }
-    for (range, &state) in states.iter().enumerate() {
-        if ranges[range].2 == M_LUCK && state == S_PLAYING {
+    for (range, state) in controller.states.iter().enumerate() {
+        if ranges[range].2 == M_LUCK && state.state == S_PLAYING {
             out.pending.push((range, controller.dp_factors_at(frame.time_ms).0));
         }
     }
@@ -1500,7 +1594,7 @@ fn record_frame<M: Mass>(
         pending: out.pending.len(),
     };
     out.push_frame(recorded);
-    record_after(model, frame.time_ms, &judged)
+    timed(|p| &mut p.after_ms, || record_after(model, frame.time_ms, &judged))
 }
 
 /// Propagate the lottery-state distribution through a transcript.

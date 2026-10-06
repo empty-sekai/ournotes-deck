@@ -1,6 +1,9 @@
 //! One native request followed by the calling thread's LUCK certificate phase totals (diagnostic builds only).
 use ournotes_search::engine::recommend_snapshot;
-use ournotes_sim::{data::DeckData, live::full::take_luck_score_profile};
+use ournotes_sim::{
+    data::DeckData,
+    live::full::{take_luck_record_profile, take_luck_score_profile},
+};
 use std::{env, fs, time::Instant};
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,12 +15,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let snapshot = fs::read_to_string(&args[1])?;
     let request = fs::read_to_string(&args[2])?;
     take_luck_score_profile();
+    take_luck_record_profile();
     let started = Instant::now();
     let answer = recommend_snapshot(&data, &snapshot, &request, None);
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.;
     let profile = take_luck_score_profile();
+    let record = take_luck_record_profile();
     fs::write(&args[3], serde_json::to_vec(&answer)?)?;
-    println!("{}", serde_json::json!({"elapsedMs":elapsed_ms,"luckProfile":profile}));
+    println!("{}", serde_json::json!({"elapsedMs":elapsed_ms,"luckProfile":profile,"luckRecordProfile":record}));
     Ok(())
 }
 
