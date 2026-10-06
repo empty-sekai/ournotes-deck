@@ -331,6 +331,8 @@ impl Engine<'_, '_> {
 /// best-improvement local search on the leaf bound, exact evaluation of the dive decks and of the best decks the
 /// local search saw, then polishing rounds around the best deck. Certified seeding starts new proposals during
 /// the first quarter of the remaining time; an in-flight evaluation uses the request's complete deadline.
+/// Certified requests evaluate at most min(K, DIVES) seed proposals; the complete-domain traversal handles
+/// subsequent candidates.
 pub(super) fn seed(e: &mut Engine<'_, '_>) -> Result<(), Error> {
     let Some(w) = e.warm.take() else { return Ok(()) };
     e.rec.begin(&mut e.tel, "seed", None);
@@ -350,6 +352,12 @@ pub(super) fn seed(e: &mut Engine<'_, '_>) -> Result<(), Error> {
 }
 
 fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>, deadline: Option<Instant>) -> Result<(), Error> {
+    let initial_evaluations = e.tel.incumbents.warm_start.evaluations;
+    let proposal_limit = e.request.k.min(DIVES) as u64;
+    let certified_seed_complete = |e: &Engine<'_, '_>| {
+        e.certified.is_some()
+            && e.tel.incumbents.warm_start.evaluations.saturating_sub(initial_evaluations) >= proposal_limit
+    };
     let paused = |e: &mut Engine<'_, '_>| {
         let now = crate::search::budget::now();
         e.expired_at(now) || deadline.is_some_and(|deadline| now >= deadline)
@@ -383,6 +391,9 @@ fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>, deadline: Option<Instant>) -
         }
         #[cfg(test)]
         crate::search::budget::test_clock::stage("seed-evaluated");
+        if certified_seed_complete(e) {
+            return Ok(());
+        }
         shortlist.offer(value, current);
         while checks < SURROGATE_CHECKS {
             if paused(e) {
@@ -408,6 +419,9 @@ fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>, deadline: Option<Instant>) -
         }
     }
     for (value, d) in shortlist.rows.clone() {
+        if certified_seed_complete(e) {
+            return Ok(());
+        }
         if paused(e) || !evaluate(w, value, d, false, e)? {
             return Ok(());
         }

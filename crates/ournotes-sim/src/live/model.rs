@@ -589,23 +589,101 @@ impl LiveModel {
         crate::live::skill::score_with_factors(&mut calc, &play.notes, commands, self.max_frame)
     }
 
+    /// Checks the numeric domain used by the per-order search's monotone-power
+    /// reduction and relative-error envelope. The positive `score_up` interval
+    /// must enclose every note's rounded score-up state, independently of power.
+    /// Evaluation itself retains the unrestricted conversion and wrapping rules.
+    #[doc(hidden)]
+    pub fn prove_search_domain(
+        &self,
+        power_upper: i64,
+        score_up: [f32; 2],
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<bool, Error> {
+        let [factor_low, factor_high] = score_up;
+        let domain = || Error::Domain("per-order live score is outside the proven numeric domain".into());
+        let power = i32::try_from(power_upper).ok().filter(|&p| p >= 0).ok_or_else(domain)?;
+        let nonnegative = |x: f32| x.is_finite() && x >= 0.0;
+        let positive = |x: f32| x.is_finite() && x > 0.0;
+        if self.notes.len() > (1 << 20)
+            || !positive(self.settings.score_adjustment_factor)
+            || !positive(self.difficulty)
+            || self.converted_note_count <= 0
+            || !nonnegative(self.assist_factor)
+            || !positive(factor_low)
+            || !positive(factor_high)
+            || factor_low > factor_high
+        {
+            return Err(domain());
+        }
+        // A relative rounding bound requires normal nonzero intermediates.
+        // Checking the positive chain at power 1 and its upper endpoint covers
+        // every integer power in between. Zero operands stay exactly zero.
+        let mul = |a: f32, b: f32| -> Result<f32, Error> {
+            let x = a * b;
+            if !nonnegative(x) || (a > 0.0 && b > 0.0 && !x.is_normal()) {
+                return Err(domain());
+            }
+            Ok(x)
+        };
+        let cnc = self.converted_note_count as f32;
+        let mut sum = 0i64;
+        for n in &self.notes {
+            if cancelled() {
+                return Ok(false);
+            }
+            if ![n.note_pct, n.judge_pct, n.combo_base, n.life].into_iter().all(nonnegative) {
+                return Err(domain());
+            }
+            let chain = |p: i32, factor: f32| -> Result<f32, Error> {
+                let t = mul(mul(self.settings.score_adjustment_factor, p as f32)?, self.difficulty)?;
+                let a = mul(n.note_pct, t)?;
+                let b = mul(n.judge_pct, a)?;
+                let c = mul(mul(b, n.combo_base)?, factor)?;
+                let x = c / cnc;
+                if !nonnegative(x) || (c > 0.0 && !x.is_normal()) {
+                    return Err(domain());
+                }
+                Ok(x)
+            };
+            chain(1, factor_low)?;
+            let x = chain(power, factor_high)?;
+            // A nonzero rounded integer before the life/assist factors is at
+            // least 1. Check that endpoint too, rather than letting a floor to
+            // zero conceal underflow in those final multiplications.
+            mul(self.assist_factor, mul(n.life, 1.0)?)?;
+            let y = trunc_to_i32(x.floor()) as f32;
+            let z = mul(self.assist_factor, mul(n.life, y)?)?;
+            let cap = floor_to_i32(z);
+            sum = sum.checked_add(i64::from(cap)).ok_or_else(domain)?;
+            if cap < 0 || sum > i64::from(i32::MAX) {
+                return Err(domain());
+            }
+        }
+        Ok(true)
+    }
+
     /// Per-note upper bound data: for each note (processing order) its time, judgement and the real-valued score
     /// per unit of power and per unit of score-up factor.
     #[doc(hidden)]
     pub fn note_coefficients(&self) -> Vec<(i32, i32, f64)> {
         let adj = self.settings.score_adjustment_factor as f64;
-        let cnc = self.converted_note_count as f64;
+        let cnc = self.converted_note_count as f32 as f64;
         self.notes
             .iter()
             .map(|n| {
-                let k = self.assist_factor as f64
-                    * n.life as f64
-                    * n.judge_pct as f64
-                    * n.note_pct as f64
-                    * adj
-                    * self.difficulty as f64
-                    * n.combo_base as f64
-                    / cnc;
+                let k = [
+                    self.assist_factor as f64,
+                    n.life as f64,
+                    n.judge_pct as f64,
+                    n.note_pct as f64,
+                    adj,
+                    self.difficulty as f64,
+                    n.combo_base as f64,
+                ]
+                .into_iter()
+                .fold(1.0, |a, b| if a == 0.0 || b == 0.0 { 0.0 } else { (a * b).next_up() });
+                let k = if k == 0.0 { 0.0 } else { (k / cnc).next_up() };
                 (n.time_ms, n.score_type, k)
             })
             .collect()

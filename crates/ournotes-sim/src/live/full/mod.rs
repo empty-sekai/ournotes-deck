@@ -63,8 +63,8 @@ pub use luck_dp::{
     luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
 };
 pub use luck_exact::{
-    LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactStats,
-    luck_exact_law_with_ranking,
+    LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactSession,
+    LuckExactStats, luck_exact_law_with_ranking,
 };
 mod luck_score_bounds;
 pub use luck_score_bounds::{
@@ -1280,18 +1280,48 @@ impl LiveModel {
     /// Search cutoff after a frame: every score frame below `frame` is final, holding `total` points (`fixed` of them
     /// fixed Gekisou rank bonus scores). `future_note_ms` is the earliest chart time of a note judged in a later frame.
     ///
-    /// A later command lands at a time no earlier than the least of: this frame's time (skill execution, finish and
-    /// re-application times; live skill events not yet fired), `future_note_ms` (note commands, and checker override
-    /// times taken from notes judged later), and the start of every Gekisou range not yet finished (range-start and
-    /// range-state override times, override times read from the playing range's judged notes, the solo ranking rewind
-    /// to the range start and the rank bonus at its end). Commands file at `get_frame` of their time and a rewind keeps
-    /// the frames up to its own, so no frame below `get_frame` of that time is undone or executed again.
+    /// A duration-adjustment row (15000) with a value below zero keeps this prefix empty: its later execution can
+    /// move a running effect's finish before the current frame.
+    ///
+    /// A later command lands at a time no earlier than the least of: this frame's time (skill execution and
+    /// re-application times; live skill events not yet fired), pending timed finishes, the positive music length
+    /// (finish-time clamp), `future_note_ms` (note commands, and checker override times taken from notes judged
+    /// later), the start of every Gekisou range not yet finished (range-start and range-state override times,
+    /// override times read from the playing range's judged notes and the solo ranking rewind), and the end of every
+    /// externally ranked range awaiting its confirmation (the fixed rank bonus). Commands file at `get_frame` of
+    /// their time, capped to the final addressable frame, and a rewind keeps the frames up to its own. The calculator
+    /// keeps that final frame open and settles only frames strictly below the horizon, so every settled frame
+    /// retains its final score.
     pub fn settle(&mut self, future_note_ms: i32) -> Settled {
+        if self.rows.iter().any(|row| row.effect_type == 15000 && row.effect_value < 0) {
+            return Settled { frame: 0, total: 0, fixed: 0 };
+        }
         let mut horizon = self.frame_time.min(future_note_ms);
+        if self.music_length_ms > 0 {
+            horizon = horizon.min(self.music_length_ms);
+        }
+        for skill in &self.live {
+            for effect in &skill.effects {
+                if let Some(finish) = effect.state.pending_finish_ms(effect.act) {
+                    horizon = horizon.min(finish);
+                }
+            }
+        }
+        for skill in &self.cond {
+            for updater in &skill.updater.updaters {
+                let effect = skill.updater.effect(updater.effect);
+                if let Some(finish) = updater.state.pending_finish_ms(effect.act) {
+                    horizon = horizon.min(finish);
+                }
+            }
+        }
         if let Some(gk) = &self.gk {
-            for (range, state) in gk.ctrl.ranges.iter().zip(&gk.ctrl.states) {
+            for (idx, (range, state)) in gk.ctrl.ranges.iter().zip(&gk.ctrl.states).enumerate() {
                 if state.state < gekisou::S_FINISH {
                     horizon = horizon.min(range.start_ms);
+                }
+                if gk.external_ranking && !gk.rank_bonus.iter().any(|bonus| bonus.0 == idx) {
+                    horizon = horizon.min(range.end_ms);
                 }
             }
         }
