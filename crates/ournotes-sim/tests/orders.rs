@@ -270,6 +270,174 @@ fn shared_frames_give_each_order_its_own_result() {
 }
 
 #[test]
+fn settled_prefix_preserves_scores_across_capped_effect_finishes() {
+    use ournotes_sim::live::score::get_frame;
+
+    let master = master_from(&tables());
+    let performers = [Performer { live_skill: Some((1, 1)), ..Default::default() }];
+    let notes = [
+        LiveNote { note_id: 1, time_ms: 40, note_operate_type: 1, judgement_type: 1 },
+        LiveNote { note_id: 2, time_ms: 600, note_operate_type: 1, judgement_type: 1 },
+    ];
+    let params = LiveParams {
+        total_power: 200_000,
+        music_level: 5,
+        converted_note_count: 2,
+        music_length_ms: 500,
+        score_music_length_ms: None,
+        skill_target_music_type: 0,
+        assist_factor: 1.0,
+    };
+    let mut model = LiveModel::new(&master, &performers, &notes, &[(0, 0)], params).unwrap();
+    model.frame_timed(0, &[], 0.0).unwrap();
+    for note in notes {
+        model
+            .frame_timed(
+                note.time_ms,
+                &[JudgedNote { note_id: note.note_id, judgement: 5, judgement_time_ms: note.time_ms }],
+                0.04,
+            )
+            .unwrap();
+    }
+    model.frame_timed(1000, &[], 0.04).unwrap();
+    let before_finish = model.score();
+    let settled = model.settle(i32::MAX);
+    // The three-second skill ends at the music length when its duration elapses.
+    model.frame_timed(3040, &[], 0.04).unwrap();
+    assert!(model.score() < before_finish);
+    assert!(settled.total <= i64::from(model.score()), "settled={settled:?}, final={}", model.score());
+    assert_eq!(settled.frame, get_frame(params.music_length_ms));
+    #[cfg(feature = "search-diagnostics")]
+    {
+        let final_prefix: i64 = model
+            .filed_scores()
+            .0
+            .iter()
+            .filter(|note| get_frame(note.0) < settled.frame)
+            .map(|note| i64::from(note.2))
+            .sum();
+        assert_eq!(settled.total, final_prefix);
+        assert_eq!(model.settled_violations(), 0);
+    }
+}
+
+#[test]
+fn settled_prefix_preserves_scores_with_signed_duration_adjustments() {
+    #[cfg(feature = "search-diagnostics")]
+    use ournotes_sim::live::score::get_frame;
+
+    for score_up in [1000, -1000] {
+        let mut data = tables();
+        data["MasterSkillEffectSetting"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"_id": 8, "_skillEffectType": 15000, "_phase": 2}));
+        data["MasterSkillCondition"][1]["_conditionValues"] = json!([2]);
+        data["MasterSupportSkillEffect"][0]["_skillEffectType"] = json!(15000);
+        data["MasterSupportSkillEffect"][0]["_effectValue"] = json!(-2500);
+        data["MasterSupportSkillEffect"][0]["_activationTimeSecond"] = json!(0.0);
+        data["MasterLiveSkillEffect"][0]["_effectValue"] = json!(score_up);
+        let master = master_from(&data);
+        let performers = [Performer { live_skill: Some((1, 1)), support_skills: vec![(1, 1)], ..Default::default() }];
+        let notes = [
+            LiveNote { note_id: 1, time_ms: 40, note_operate_type: 1, judgement_type: 1 },
+            LiveNote { note_id: 2, time_ms: 560, note_operate_type: 1, judgement_type: 1 },
+        ];
+        let params = LiveParams {
+            total_power: 200_000,
+            music_level: 5,
+            converted_note_count: 2,
+            music_length_ms: 5000,
+            score_music_length_ms: None,
+            skill_target_music_type: 0,
+            assist_factor: 1.0,
+        };
+        let mut model = LiveModel::new(&master, &performers, &notes, &[(0, 0)], params).unwrap();
+        model.frame_timed(0, &[], 0.0).unwrap();
+        model.frame_timed(40, &[JudgedNote { note_id: 1, judgement: 5, judgement_time_ms: 40 }], 0.04).unwrap();
+        model.frame_timed(80, &[], 0.04).unwrap();
+        model.frame_timed(600, &[JudgedNote { note_id: 2, judgement: 5, judgement_time_ms: 600 }], 0.52).unwrap();
+        let before_finish = model.score();
+        let settled = model.settle(i32::MAX);
+        model.frame_timed(640, &[], 0.04).unwrap();
+        assert!(if score_up > 0 { model.score() < before_finish } else { model.score() > before_finish });
+        assert_eq!((settled.frame, settled.total, settled.fixed), (0, 0, 0));
+        #[cfg(feature = "search-diagnostics")]
+        {
+            let final_prefix: i64 = model
+                .filed_scores()
+                .0
+                .iter()
+                .filter(|note| get_frame(note.0) < settled.frame)
+                .map(|note| i64::from(note.2))
+                .sum();
+            assert_eq!(settled.total, final_prefix);
+            assert_eq!(model.settled_violations(), 0);
+        }
+    }
+}
+
+#[test]
+fn settled_prefix_keeps_the_last_addressable_score_frame_open() {
+    use ournotes_sim::live::score::get_frame;
+
+    let master = master_from(&tables());
+    let notes = [
+        LiveNote { note_id: 1, time_ms: 2000, note_operate_type: 1, judgement_type: 1 },
+        LiveNote { note_id: 2, time_ms: 5100, note_operate_type: 1, judgement_type: 1 },
+    ];
+    let params = LiveParams {
+        total_power: 200_000,
+        music_level: 5,
+        converted_note_count: 2,
+        music_length_ms: 10_000,
+        score_music_length_ms: Some(40),
+        skill_target_music_type: 0,
+        assist_factor: 1.0,
+    };
+    let mut model = LiveModel::new(&master, &[], &notes, &[], params).unwrap();
+    model.frame_timed(2000, &[JudgedNote { note_id: 1, judgement: 5, judgement_time_ms: 2000 }], 2.0).unwrap();
+    model.frame_timed(5000, &[], 3.0).unwrap();
+    let settled = model.settle(notes[1].time_ms);
+    model.frame_timed(5100, &[JudgedNote { note_id: 2, judgement: 5, judgement_time_ms: 5100 }], 0.1).unwrap();
+    assert_eq!(settled.total, 0);
+    assert_eq!(settled.frame, get_frame(notes[0].time_ms));
+    #[cfg(feature = "search-diagnostics")]
+    assert_eq!(model.settled_violations(), 0);
+}
+
+#[test]
+fn settled_prefix_preserves_scores_across_delayed_rank_arrivals() {
+    use ournotes_sim::live::score::get_frame;
+    use ournotes_sim::replay::RankConfirmation;
+
+    let master = master_from(&tables());
+    let mut live = live(true);
+    live.rank_confirmations = Some(vec![RankConfirmation { frame: 690, range: 0, rank: 1, percent: 370 }]);
+    let mut model = live.model(&master, &[0, 1, 2, 3, 4]).unwrap();
+    model.set_seed(3);
+    model.play_frames(&live.play, &live.delta_times, 690).unwrap();
+    assert!(model.gekisou_rank_bonuses().is_empty());
+    let settled = model.settle(i32::MAX);
+    model.play_frames(&live.play, &live.delta_times, live.play.frames.len()).unwrap();
+    assert_eq!(model.gekisou_rank_bonuses().len(), 1);
+    assert!(model.gekisou_rank_bonuses()[0].2 > 0);
+    #[cfg(feature = "search-diagnostics")]
+    {
+        let (notes, fixed) = model.filed_scores();
+        let final_prefix = notes
+            .iter()
+            .filter(|note| get_frame(note.0) < settled.frame)
+            .map(|note| i64::from(note.2))
+            .chain(fixed.iter().filter(|&&(frame, _)| frame < settled.frame).map(|&(_, score)| i64::from(score)))
+            .sum::<i64>();
+        assert_eq!(settled.total, final_prefix);
+        assert_eq!(model.settled_violations(), 0);
+    }
+    assert_eq!(settled.frame, get_frame(live.gekisou.as_ref().unwrap().fevers[0].1));
+}
+
+#[test]
 fn shared_frames_give_each_order_its_own_result_with_gekisou_lotteries() {
     for seed in [3, 11] {
         check_every_order(true, seed);
