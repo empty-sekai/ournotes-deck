@@ -96,6 +96,12 @@ pub(super) struct Fine {
     pub(super) exec_profile: Vec<u32>,
     pub(super) slot_end: Vec<i64>,
     pub(super) slot_dmg: Vec<i64>,
+    /// Per slot, the damage of its entries at chart times up to the last play frame's time: the commands the life
+    /// query of the last frame, which sets the final life, folds.
+    pub(super) slot_dmg_final: Vec<i64>,
+    /// Whether `life` lists every row that can raise a performer's life (false when life recovery and guard rows
+    /// are left out of the classes because no life value can change the score).
+    pub(super) life_rows_listed: bool,
     pub(super) ev_slot: [Vec<(usize, i64)>; 5],
     pub(super) until: Vec<i64>,
     /// The smallest `until` from each entry on, and the first entry from which every entry is in `dead`.
@@ -160,6 +166,35 @@ impl Fine {
             }
         }
         i64::MAX
+    }
+
+    /// At least the final life of a candidate whose only life-raising rows are the recoveries `rec[k]` at position
+    /// `k`'s skill events (0: none): the slot-ordered fold of [`Fine::zero_from`] over the damage the last play
+    /// frame's life query folds (`slot_dmg_final`), 0 from the first slot at which it is 0 (a recovery leaves a life
+    /// of 0 at 0 and damage never raises it).
+    pub(super) fn final_life(&self, rec: [i64; 5]) -> i64 {
+        let mut ups: Vec<(usize, i64)> = Vec::new();
+        for (k, slots) in self.ev_slot.iter().enumerate() {
+            if rec[k] > 0 {
+                ups.extend(slots.iter().map(|&(slot, times)| (slot, rec[k].saturating_mul(times))));
+            }
+        }
+        ups.sort_unstable();
+        let cap = 2 * self.base;
+        let mut life = self.base;
+        let mut j = 0usize;
+        for (slot, &dmg) in self.slot_dmg_final.iter().enumerate() {
+            let mut up = 0i64;
+            while j < ups.len() && ups[j].0 == slot {
+                up = up.saturating_add(ups[j].1);
+                j += 1;
+            }
+            life = (life.saturating_add(up) - dmg).clamp(0, cap);
+            if life == 0 {
+                return 0;
+            }
+        }
+        life
     }
 }
 

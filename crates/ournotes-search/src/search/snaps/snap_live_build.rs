@@ -650,6 +650,8 @@ impl<'a> SnapLive<'a> {
             exec_profile: Vec::new(),
             slot_end: Vec::new(),
             slot_dmg: Vec::new(),
+            slot_dmg_final: Vec::new(),
+            life_rows_listed: !env.life_rigid,
             ev_slot: Default::default(),
             until: Vec::new(),
             until_min: Vec::new(),
@@ -763,9 +765,14 @@ impl<'a> SnapLive<'a> {
             keys.dedup();
             fine.slot_end = keys.iter().map(|&k| end_of(k)).collect();
             fine.slot_dmg = vec![0i64; keys.len()];
+            fine.slot_dmg_final = vec![0i64; keys.len()];
+            let last_frame = frames.last().copied().unwrap_or(i32::MIN);
             for (e, &d) in entries.iter().zip(&dmin) {
                 let slot = keys.binary_search(&key(e.1.time_ms)).expect("slot of an entry");
                 fine.slot_dmg[slot] = fine.slot_dmg[slot].saturating_add(d);
+                if e.1.time_ms <= last_frame {
+                    fine.slot_dmg_final[slot] = fine.slot_dmg_final[slot].saturating_add(d);
+                }
             }
             for k in 0..5 {
                 fine.ev_slot[k] = fire_k[k]

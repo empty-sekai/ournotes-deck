@@ -426,6 +426,71 @@ fn position_mean_bounds_cover_the_exact_uniform_value() {
     assert!(checks > 0 && modules > 0, "{checks} {modules}");
 }
 
+/// A score and life target under a stream with misses, with Snaps that recover life at their own skill event, guard,
+/// or neither: every per-order cap covers the exact payoff of each team, some orders are capped at zero by their
+/// final life alone, and the search returns the full canonical Top-K of the exhaustive ranking.
+#[cfg(feature = "search-diagnostics")]
+#[test]
+fn final_life_caps_cover_every_team_and_keep_the_full_topk() {
+    use ournotes_search::{
+        engine, handler,
+        search::{Completion, diagnostics},
+        types::{Execution, PlayPolicy},
+    };
+    let mut synth = synthetic_master(6, 3, 5);
+    // Support skill 5 recovers life at its own skill event, 8 guards, 3 and 6 add score and conversions.
+    set_column(&mut synth, "MasterSupportCard", &mut |r| {
+        let (a, b) = match r["_id"].as_i64().unwrap() {
+            1 => (5, 0),
+            2 => (8, 3),
+            _ => (3, 6),
+        };
+        r["_supportSkillId01"] = json!(a);
+        r["_supportSkillId02"] = json!(b);
+    });
+    let data = DeckData::from_json(&data_document(&synth, 6, 3, 5).to_string()).unwrap();
+    let roster = Roster::from_json(&roster_document(6, 3, 5).to_string()).unwrap();
+    let mut stream = ournotes_sim::live::model::JudgementStream::theoretical_best(&data.chart(SCORE_ID).unwrap());
+    // Eight of the twelve notes are missed: 8 * 140 damage empties the base life of 1000 without a recovery.
+    for (i, row) in stream.judged.iter_mut().enumerate() {
+        if i % 3 != 2 {
+            row[2] = 1;
+        }
+    }
+    let (mut zero_orders, mut passing) = (0, 0);
+    for (mode, gekisou) in [("free", false), ("mission", true)] {
+        for least in [1, 150, 400, 900] {
+            let metric = json!({"kind":"scoreAndLifeAtLeast","threshold":1,"minFinalLife":least});
+            let mut request = joint_request(mode, gekisou, metric);
+            request.execution =
+                Execution::Live { score_id: SCORE_ID, gekisou, play: PlayPolicy::Stream { stream: stream.clone() } };
+            // Every team of the domain: two member sets under the fixed leader, 136 Snap pairings each.
+            request.k = 1000;
+            request.strategy = Strategy::Exhaustive;
+            let oracle = engine::recommend(&data, &roster, &request).unwrap();
+            assert_eq!(oracle.completion, Completion::Complete);
+            assert_eq!(oracle.results.len(), 272);
+            request.strategy = Strategy::BranchAndBound;
+            let built = handler::build_card_pool(&data, &roster, &request).unwrap();
+            for row in &oracle.results {
+                let audit = diagnostics::audit_order_caps(&built, row.members, row.snaps).unwrap();
+                assert_eq!(audit["violations"], 0, "{mode} {least}: {}", audit["first"]);
+                zero_orders += audit["lifeCapped"].as_u64().unwrap();
+                passing += row.order_outcomes.iter().filter(|&&(_, _, payoff)| payoff > 0).count();
+            }
+            for k in [1, 5, 64] {
+                request.k = k;
+                let bounded = engine::recommend(&data, &roster, &request).unwrap();
+                assert_eq!(bounded.completion, Completion::Complete, "{mode} {least} k={k}");
+                assert!(bounded.telemetry.environment.bounds.fallback.is_none(), "{mode} {least} k={k}");
+                let expected: Vec<_> = oracle.results.iter().take(k).cloned().collect();
+                assert_eq!(bounded.results, expected, "{mode} {least} k={k}");
+            }
+        }
+    }
+    assert!(zero_orders > 0 && passing > 0, "{zero_orders} {passing}");
+}
+
 #[test]
 fn warm_start_and_visit_order_leave_the_canonical_topk_unchanged() {
     use ournotes_search::{

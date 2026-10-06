@@ -538,6 +538,28 @@ impl JointFineBounds {
     pub(crate) fn choice_class(&self, member: usize, choice: usize) -> usize {
         if choice == 0 { 0 } else { self.class_of[member][choice - 1] as usize }
     }
+
+    /// At least the final life of a complete team in the performance order with these positions, when nothing but
+    /// recoveries at its performers' own skill events can raise its life (see `Fine::final_life`); None otherwise.
+    pub(crate) fn final_life_cap(
+        &self,
+        members: [usize; 5],
+        choices: [usize; 5],
+        positions: &[usize; 5],
+    ) -> Option<i64> {
+        if !self.fine.life_rows_listed {
+            return None;
+        }
+        let mut rec = [0i64; 5];
+        for s in 0..5 {
+            match self.fine.life[members[s]][self.choice_class(members[s], choices[s])] {
+                LifeKind::None => {}
+                LifeKind::Recovery(r) => rec[positions[s]] = r,
+                LifeKind::Other => return None,
+            }
+        }
+        Some(self.fine.final_life(rec))
+    }
     /// The per-entry terms of [`JointFineBounds::upper`] for the same candidate and order.
     pub(crate) fn cap_terms(
         &self,

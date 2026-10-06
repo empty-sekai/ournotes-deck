@@ -311,6 +311,13 @@ when `t0 <= t_e` and every entry at a chart time up to `t0` is judged no later t
 damages and only recoveries this fold contains, at most as often, so the life it reads is at most the fold's value at
 `t0`, which is 0, and the later commands keep it 0.
 
+Final life. The final life of a play is the life the query at the last play frame reads, a fold of the commands filed
+at times up to that frame's time. For such a candidate, the same slot-by-slot fold over the smallest damage of the
+entries at chart times up to the last play frame's time and the candidate's recoveries at their events is at least
+that life, and it is 0 from the first slot at which it reaches 0. A score and life target pays nothing in an order
+where this fold is below its least final life, so the per-order caps of that order are 0. The bound is not used when
+life is rigid (recovery and guard rows are then left out of the snap classes).
+
 Windows. A factor started at `exec` holds for the notes with chart times in `[exec, finish)`: its start and end
 commands are filed at those times, and a command filed in a score frame that was already executed undoes and
 re-executes the frames from there, so every note is last scored with the factors whose commands surround its chart

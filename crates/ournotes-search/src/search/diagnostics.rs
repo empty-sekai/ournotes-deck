@@ -393,7 +393,9 @@ pub fn prefix_upper(
 }
 
 /// Check each per-order cap of a complete deck (cheap, raw and fine, as the leaf evaluation reads them) against the
-/// exact payoff of that order, over all 120 orders. Returns the orders checked and the violations found.
+/// exact payoff of that order, and its final life cap, when it has one, against the order's final life, over all 120
+/// orders. Returns the orders checked, the violations found and the orders a score and life target caps at zero for
+/// their final life.
 pub fn audit_order_caps(
     built: &BuiltProblem<'_>,
     members: [i64; 5],
@@ -409,8 +411,16 @@ pub fn audit_order_caps(
     let input = super::expectation::context(&built.pool, &p, &built.context.request.objective)?;
     let spec = &built.context.spec;
     let mut bad = Vec::new();
+    let mut life_capped = 0;
     for (i, order) in orders.iter().enumerate() {
         let outcome = input.simulate_performance_order(built.pool.master, *order)?;
+        let life = outcome.model.current_life();
+        if let Some(cap) = b.final_life_cap(built.domain(), &p, &positions[i])
+            && i64::from(life) > cap
+        {
+            bad.push(serde_json::json!({"order":order,"finalLifeCap":cap,"finalLife":life}));
+        }
+        life_capped += usize::from(b.order_short_of_final_life(built.domain(), &p, &positions[i]));
         let payoff = super::physical::payoff_of(
             &built.pool,
             &built.context.request,
@@ -425,7 +435,7 @@ pub fn audit_order_caps(
             bad.push(serde_json::json!({"order":order,"cap":caps[i].to_string(),"payoff":payoff.to_string()}));
         }
     }
-    Ok(serde_json::json!({"orders":orders.len(),"violations":bad.len(),"first":bad.first()}))
+    Ok(serde_json::json!({"orders":orders.len(),"violations":bad.len(),"first":bad.first(),"lifeCapped":life_capped}))
 }
 
 /// The joint traversal's bounds along the path that reaches a complete legal deck: the leader, then the other pairs

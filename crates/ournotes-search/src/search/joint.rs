@@ -173,6 +173,8 @@ pub(crate) struct JointBounds {
     global: f64,
     eps: f64,
     points: Option<PointBound>,
+    /// The least final life of a score and life target: an order whose final life cap is below it pays nothing.
+    min_final_life: Option<i64>,
     fine: Option<JointFineBounds>,
     correlation_scales: [f64; 3],
     tails: Option<TailTables>,
@@ -462,6 +464,10 @@ impl JointBounds {
             global,
             eps,
             points,
+            min_final_life: match metric {
+                Metric::ScoreAndLifeAtLeast { min_final_life, .. } => Some(i64::from(*min_final_life)),
+                _ => None,
+            },
             fine,
             correlation_scales,
             tails: None,
@@ -526,6 +532,7 @@ impl JointBounds {
             global,
             eps: self.eps,
             points: self.points.clone(),
+            min_final_life: self.min_final_life,
             fine: None,
             correlation_scales: self.correlation_scales,
             tails: None,
@@ -1663,9 +1670,41 @@ impl JointBounds {
                 }
                 let score_cap =
                     ((power as f64) * add_up(a0, gain).min(level.global) * (1.0 + level.eps)).ceil() as i128;
+                if self.short_of_final_life(p, &choices, positions) {
+                    return 0;
+                }
                 level.points.as_ref().map_or(score_cap, |pt| pt.order_payoff(bonus, score_cap))
             })
             .collect()
+    }
+
+    /// Diagnostics only: the final life cap of a complete team in the order with these positions.
+    #[cfg(feature = "search-diagnostics")]
+    pub(crate) fn final_life_cap(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        positions: &[usize; 5],
+    ) -> Option<i64> {
+        self.fine.as_ref()?.final_life_cap(p.members, Self::prefix_choices(domain, p, 5), positions)
+    }
+
+    /// Diagnostics only: [`JointBounds::short_of_final_life`] of a complete team.
+    #[cfg(feature = "search-diagnostics")]
+    pub(crate) fn order_short_of_final_life(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        positions: &[usize; 5],
+    ) -> bool {
+        self.short_of_final_life(p, &Self::prefix_choices(domain, p, 5), positions)
+    }
+
+    /// Whether a score and life target pays nothing for a complete team in the order with these positions because
+    /// its final life cap is below the target's least final life.
+    fn short_of_final_life(&self, p: &PhysicalDeck, choices: &[usize; 5], positions: &[usize; 5]) -> bool {
+        let (Some(least), Some(fine)) = (self.min_final_life, &self.fine) else { return false };
+        fine.final_life_cap(p.members, *choices, positions).is_some_and(|cap| cap < least)
     }
 
     /// Lowers each per-order cap of a complete team (see [`JointBounds::order_cheap_caps`]) to its raw and fine caps
