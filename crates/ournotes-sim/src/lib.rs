@@ -36,3 +36,20 @@ pub mod replay;
 pub mod scenario;
 
 pub use error::Error;
+
+/// The SHA-256 of this crate's sources: `Cargo.toml`, `build.rs` and every file under `src/`, each as its path and
+/// contents. Builds of sources with the same value run the same model, so a result computed by one of them (chart
+/// statistics, a replay, a live score) holds for the others; a cache of such results can key them by this value
+/// instead of by the release or commit.
+pub const SOURCE_SHA256: &str = env!("OURNOTES_SIM_SOURCE_SHA256");
+
+#[cfg(test)]
+mod source_tests {
+    #[test]
+    fn the_source_digest_is_a_sha256() {
+        assert!(
+            super::SOURCE_SHA256.len() == 64
+                && super::SOURCE_SHA256.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        );
+    }
+}
