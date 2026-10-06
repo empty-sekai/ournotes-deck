@@ -2487,3 +2487,6 @@ fn composition_power_frontier_keeps_canonical_ties_in_heuristic_layout() {
         assert_eq!(actual.results, oracle.results[..k], "K={k}");
     }
 }
+
+#[path = "fixtures/correctness_matrix.rs"]
+mod correctness_matrix;
