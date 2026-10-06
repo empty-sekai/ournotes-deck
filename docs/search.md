@@ -1,247 +1,124 @@
 # Exact deck search
 
-The recommendation facade searches leader/member-Snap teams under the declared deterministic or played-live
-objective. Played-live values average all 120 member performance orders. Each API has an explicit result identity,
-probability law and completion contract, specified below. The member-set solvers and the team solvers share power
-and score components, while retaining their own result spaces. Live with Gekisou off uses the
-[composition/Snap decomposition](#member-compositions-snap-pairings-and-power-frontiers);
-Gekisou keeps joint member/Snap traversal. [Compiled envelopes](search-envelope-programs.md) and
-[score programs](score-programs.md) describe reusable bound and evaluation components.
-[Validation](#validation) gives reproducible correctness experiments.
+The played Live/PT recommendation facade searches teams (a leader, four other members and the Snap paired with
+each member) under the uniform member-order target: the five members perform in a uniformly random order, and a
+team's value is its mean payoff over the 120 performance orders. Its result order and proof contract are specified
+in [uniform member-order search](#uniform-member-order-search); the bounds it uses are described after it, and
+[validation](#validation) lists the reproducible correctness experiments.
+The opening sections describe the canonical member-set solvers and the power/score components that the team
+solver reuses. Each route declares its result identity explicitly. The recommendation facade first tries the
+applicable [team power and deck-payoff routes](#canonical-team-power-and-deck-payoff-routes). Played-live
+continuations use the [composition/Snap decomposition](#member-compositions-snap-pairings-and-power-frontiers)
+with Gekisou off, and joint member/Snap traversal with Gekisou on. Compiled envelopes are derived in
+[compiled search envelopes](search-envelope-programs.md).
 
-## Search contracts and proof scope
+## Proof scope and route contracts
 
-Exactness is a statement about a declared finite optimization problem. Its inputs are the resolved card pool,
-cultivation, song, scenario, play and clock inputs, constraints, payoff function, probability law, result identity,
-canonical ordering and positive result limit `K`. These inputs stay fixed throughout one search.
-Recommendation and session requests accept `1 <= K <= 100`; the member-set API uses its `usize` result limit.
-The evaluator's integer and floating-point operations are part of the objective being optimized.
-Legality means membership in the resolved `CandidateDomain`: eligible cards at their resolved cultivation,
-five distinct characters, allowed leader, required/excluded cards and unique paired Snaps. The account envelope
-records the input coverage used to build that domain.
+An exact search claim fixes four things: the legal candidate domain, the value of a candidate, the identity of a
+result, and the complete tie order. The following contracts use different identities and targets.
 
-The following interfaces use distinct result spaces:
+| Entry point or route | Value being ranked | Result identity | Empty Snap tie |
+|---|---|---|---|
+| `search::search`, Power and Skip score | Power, or the deterministic Skip score with power as its next key | One best representative per set of five member cards | After every Snap ID |
+| `search::search_best_order_diagnostic` | Best performance order for the declared diagnostic objective | One best representative per member set | After every Snap ID |
+| Recommendation facade, Power and deterministic Skip metrics | Declared deterministic payoff, then power | Leader and five member/Snap pairs; nonleader pairs in canonical layout | Before every Snap ID |
+| Recommendation facade, deterministic played Live | Mean terminal payoff over all 120 orders, then power | The same canonical team | Before every Snap ID |
+| Recommendation facade, LUCK | Expected terminal payoff under the declared order and lottery law | Canonical team, with certified interval ranking | Before every Snap ID |
+| Deterministic `SearchSession` v1 | Its supported deterministic payoff, then power | Five physical member slots and their Snap bindings | Before every Snap ID |
 
-| Interface | Result identity | Objective and representative |
-|---|---|---|
-| `search::search` (Power/Skip) | Set of five member card IDs | The best leader and Snap assignment of each member set, under the member-set ordering below. |
-| `search::search_best_order_diagnostic` (Live) | Set of five member card IDs | The best leader, Snap assignment and performance order of each member set under its declared diagnostic objective. |
-| Recommendation of a played Live | `team` | One leader and five member/Snap pairs, with the four nonleader pairs unordered; payoff averaged over the declared uniform member-order law. |
-| Recommendation of Power or monotone Skip targets | `team` | One leader and five member/Snap pairs; deterministic payoff, then power, then the canonical team key. |
-| Deterministic Skip client-point and conditional-item recommendation | `team` | The same team identity, with the declared client payoff evaluated for each team. |
-| Fixed evaluation | `fixedTeam` or `fixedPhysicalDeck` | The requested deck under the selected evaluator's identity; `optimality` is `notApplicable`. |
-| `SearchSession` v1 | `physicalDeck` | Deterministic Power/Skip with physical slot arrays, exact payoff, power and physical member/Snap ID ties. |
+`search::search` accepts Power and Skip; best-order Live optimization is exposed through the explicitly named
+diagnostic entry point. The recommendation facade selects its route in
+[`handler.rs`](../crates/ournotes-search/src/handler.rs) and
+[`physical.rs`](../crates/ournotes-search/src/search/physical.rs).
+The session's physical-slot contract is specified in [search sessions](search-session.md).
+A fixed-deck evaluation proves the value of its requested deck under its declared inputs; its domain contains that
+deck alone.
 
-`search::topk::identity` defines the member-set identity. The recommendation engine's `team_identity_in`,
-`uniform::canonical` and `physical::compare` define its identity and ordering. The returned `resultIdentity` and,
-for sessions, `goalSpec` state the contract of the actual route.
+Here, “legal” means admitted by the resolved pool, cultivation, leader/include/exclude constraints and declared
+execution context. The search theorem is relative to the supplied scorer and probability law. Account prerequisite
+coverage is specified in [account input](account-input.md), and scorer compatibility evidence in
+[native validation](native-validation.md). A search proof, an exact numerical expectation, a certified rank and a
+model-compatibility claim are separate statements.
 
-### Common mathematical problem
-
-Let `D` be the finite set of legal candidate configurations and let `I` be the route's result identities.
-A configuration includes every choice optimized within a result: leader, members, Snap pairing and, for a
-member-set Live objective, performance order. A uniform-order team's performance orders belong to its evaluation.
-For each identity `i`, let `D_i` contain all its configurations. Its result is the best representative of `D_i`
-under the route's ordering; layout-equivalent teams share one canonical layout. Let `V(i)` be that result's
-objective and `P(i)` its power. All remaining tie keys are exact discrete values.
-The requested answer is the first `min(K, |I|)` identities in the specified total order.
-
-For a lottery-free played team `t`, write `q(t,o)` for its exact terminal payoff in performance order `o`:
-
-    N(t) = sum over o in S_5 of q(t,o),       V(t) = N(t) / 120.
-
-Every one of the 120 slot permutations has mass one, including permutations whose performers execute equivalent
-skills. The common denominator permits comparisons of `N` alone. Deterministic Power and Skip use mass one.
-For LUCK, the mathematical value is instead
-
-    V(t) = (1/120) * sum over o in S_5 of E[q(t,o,R) | o],
-
-where `R` follows the nominal conditional draw law defined in [LUCK](#luck). Certified intervals enclose this value; exact fractions are
-provided when the certificate also establishes their numerator and denominator.
-
-### Exactness theorem
-
-The completed-search theorem uses these hypotheses:
-
-1. **Finite legal domain.** The candidate construction and traversal cover every legal configuration, directly or
-   through a proved equivalent canonical layout. Every domain partition covers its parent.
-2. **Faithful evaluation.** A completed scalar candidate carries its exact objective and tie keys. Reused results
-   satisfy the same evaluator contract. An interrupted scalar evaluation remains outside the scalar Top-K.
-3. **Admissible bounds.** Each numeric cap bounds every completion represented by its node, in the units used by
-   the cutoff. A power cap used for a payoff tie bounds all completions that can attain that payoff cap.
-4. **Certified arithmetic.** The operations used to establish each bound satisfy its sign, range and rounding
-   assumptions. Checked exact sums establish values; outward-rounded relaxations establish upper bounds.
-5. **Order-preserving exclusions.** A discarded configuration transfers its obligation to an at-least-as-good
-   evaluated or open representative of its own identity, or ranks after evaluated or certified representatives
-   of `K` distinct identities. Comparisons use the full order; identical configurations share one evaluation.
-6. **Closed completion.** `Complete` follows only after every legal configuration has a completed evaluation or
-   such a certificate, and any retained interval frontier has a proved ordered answer.
-
-Under these hypotheses, a completed search returns exactly the first `min(K, |I|)` identities and their declared
-values or certified value intervals. The theorem is conditional on the declared evaluator and inputs.
-The [model validation](native-validation.md) contract supplies the separate relation to game behavior.
-
-**Proof.** For each raw configuration `d`, maintain one of three witnesses: an evaluated at-least-as-good
-configuration of the same identity; `K` distinct evaluated or certified identities whose representatives rank
-before `d`; or an open evaluation/proof obligation for `d` or an at-least-as-good representative of its identity.
-Branching replaces an open region by covering children. Evaluation closes its obligation. Representative
-substitution transfers the obligation; global pruning supplies the `K` witnesses. Evaluating or discarding one
-representative leaves stronger open representatives covered. Domain partitions preserve this invariant and
-share one Top-K.
-
-Among the evaluated identities, insertion maintains the first `K` in the canonical order. For the member-set
-route, an insertion first improves the representative of its own identity, then competes with other identities.
-An identity removed from this Top-K has `K` distinct better evaluated identities. Their true order remains valid
-as further evaluations improve the incumbents. Consequently the full K-th key improves monotonically; its primary
-value and then its power at a primary tie provide monotone pruning thresholds.
-
-Suppose a true Top-K identity is missing or has an inferior representative at completion, and take its best
-configuration `d`. Every open proof obligation is closed, so its witness is an evaluated at-least-as-good representative of its
-own identity or `K` distinct better representatives. The first case gives the insertion invariant its true best
-representative. The second implies `K` other identities rank before it: a strictly better
-representative of its own identity would contradict the choice of `d`. Both conclusions contradict the supposed
-error. Thus the maintained Top-K is the first `min(K, |I|)` of the domain, including every identity when fewer
-than `K` exist. The empty domain yields an empty completed answer.
-
-### Numeric and canonical cutoffs
-
-For scalar team ranking, let `(T,Q)` be the K-th incumbent's payoff numerator and power. A node with payoff cap
-`B` and a corresponding power cap `H` may close when
-
-    B < T,       or       B = T and H < Q.
-
-At `B = T` and `H = Q`, a canonical lower key `L` can additionally prove closure when every completion's key
-is at least `L` and `L` ranks after the K-th key. Equality of complete keys denotes the same already considered
-identity. A bound that supplies only a primary cap retains equality. Before the Top-K contains `K` distinct
-identities, its K-th threshold is absent.
-
-Independent upper bounds of the same completion set combine by taking their minimum. If completion sets
-`C_i` cover a parent and `B_i` bounds `C_i`, the parent is bounded by `B = max_i B_i`. For power ties,
-`H = max_{i: B_i = B} H_i` suffices when each `H_i` bounds the power of its cell: every completion attaining
-`B` lies in a cell attaining `B`. This is the conditional power certificate used by exact-bonus cells.
-
-A carrier-multiset check can stop as soon as one cell exceeds the cutoff; that outcome keeps the prefix.
-A certificate closing the prefix covers every remaining multiset. A recorded frontier upper bound likewise
-covers the entire region it represents. Relaxations preserve a map from every real completion into their
-feasible sets; this coverage justifies dropping a resource or required-member constraint inside a bound.
-See [`NodeBound`](../crates/ournotes-search/src/search/joint.rs),
-[bonus cells](../crates/ournotes-search/src/search/joint/bonus.rs) and
-[carrier splits](../crates/ournotes-search/src/search/joint/carrier_split.rs).
-
-These conditions handle a flat objective correctly: a score plateau still ranks by power, and equal power still
-ranks by member and Snap IDs. Member-set search places an empty Snap after real IDs; team search places it before
-real IDs. Each assignment solver and lower-key construction uses the convention of its consumer.
-
-For a scalar leaf with evaluated order set `E`, the unresolved numerator is bounded by
-
-    C = sum over o in E of q(t,o) + sum over o outside E of b(t,o),
-
-where each `b(t,o)` bounds that order's complete payoff. The same cutoff applies to `C` and the team's exact power.
-During shared-prefix simulation, each open order-tree node represents a set of orders. Its cap is the smaller
-of its direct cap and the sum of its completed children's payoffs, open child's cap and unstarted children's caps.
-Induction up the tree gives a cap of the same complete numerator. A cutoff closes the team only through this bound.
-
-### Outcomes and partial results
-
-The recommendation outcome separates completion, rank proof and stopping cause:
-
-| Outcome fields | Meaning |
-|---|---|
-| `Complete`, `proven`, `exhausted` | The full canonical Top-K is certified for the declared search domain. |
-| `TimedOut`, `unproven`, `timeLimit` | Cooperative time checks stopped a search; completed scalar values or certified intervals are retained. |
-| `TimedOut`, `unproven`, `candidateLimit` | The configured candidate limit stopped a complete-domain strategy. |
-| `TimedOut`, `heuristic`, a limit reason | The candidate strategy returned its evaluated proposals. |
-| `RefinementRequired`, `unproven`, `refinementRequired` | Domain traversal is closed; retained payoff intervals still require refinement to establish the requested ranking. |
-| Fixed evaluation, `notApplicable` | The result evaluates the requested deck; its completion concerns that evaluation. |
-
-On a feasible domain, the candidate strategy ends with a limit reason and `heuristic` optimality. An infeasible
-declared domain has an empty completed answer independently of candidate proposals.
-
-For scalar played-live results, `expectedScore` and `expectedPayoff` are exact fractions over 120, and the complete
-order vector supplies `scoreSummary` and `bestOrder`. LUCK results carry `scoreInterval`, `payoffInterval` and
-`rankCertified`; their exact fraction fields are optional, and the scalar order-summary fields are absent.
-Validation and evaluation errors return an error through the API's error channel.
-
-A deadline is cooperative. An indivisible preparation or evaluation operation can finish after its expiry.
-The completion field records whether the proof closed; elapsed time records the work's duration.
-Within a partial scalar leaf, completed individual orders may be reusable, while only a completed aggregate
-enters the result Top-K. Interval leaves retain their certified value contract.
-
-`telemetry.proof.upperBound`, when supplied, bounds the best numerator in regions left open by the stop.
-For a nonempty scalar domain, taking the maximum of that bound and the best evaluated numerator bounds the
-whole-domain optimum. `globalUpperBound` records a valid whole-domain bound and can tighten as regions close.
-The equality of a primary upper bound and an incumbent establishes the optimal primary value; canonical Top-K
-certification additionally closes the power and identity ties for all requested ranks.
-
-`engine::recommend_with_progress` and the account facade expose completed candidates and the current proof state
-through progress callbacks. Their telemetry is closed on a copy;
-the running frontier stays available to the search. The stop's final unexplored-domain bound is computed when
-the traversal unwinds. Callback work contributes to elapsed time under the cooperative budget.
+The real-arithmetic inequalities below require the indicated numerical certificates in their implementations.
+Optional bounds return no cap when their certificate is unavailable; the caller retains the complete continuation
+or uses an exhaustive route. An input, model or arithmetic error remains an error. In particular, an unavailable
+upper bound has the meaning “unknown,” rather than a numerical value of zero.
 
 ## Problem
 
 A deck has five member cards in slots 0..4 and up to five snaps, one per slot. The member in slot 2 is the leader.
 The members belong to five different characters; a snap appears at most once. Snaps are optional.
 
-Deck power is computed per slot and summed. For a slot holding member `m` and snap `s` under leader skill profile
-`L` (the leader card's leader skill at its level), the slot total in points is
+Deck power is computed per stat, per slot, and summed. Let `Q(B, p)` denote the sum of the three stat-point
+contributions produced by `B.mul(p).to_floor()`. For one stat, with base `b` and percentage `p` both in the
+fixed-point unit, its contribution in whole points is
+
+    q(b, p) = sat_i32(floor(RN32(RN32(trunc0(b * p / 10000)) / 10000)))
+
+`RN32` is the binary32 rounding used by the integer cast and floating division; `trunc0` is integer division
+toward zero. `sat_i32` is the finite-value saturating conversion of the native numeric model. The admitted table
+products are nonwrapping and the floating values are finite; infinity has a separate native conversion rule.
+This is the operator
+in [power.rs](../crates/ournotes-sim/src/power.rs) and
+[`tables::term`](../crates/ournotes-search/src/search/tables.rs).
+It is monotone in `p` for nonnegative `b` on that domain, but it can differ from flooring the real-number
+percentage directly: 99,999,999 BP rounds to 100,000,000 BP through `to_floor`.
+
+For a slot holding member `m` and Snap `s` under leader skill profile `L`
+(the leader card's leader skill at its level), the slot total in points is
 
     S(m, s, L) = A(m) + LEAD_L(m) + W(m, s)
 
 - `A(m)`: every term that depends on the member alone (its own power, character rank and total rank bonuses, band
   items, song type and tag bonuses, memory, VIP, and the member's event bonus when event parameters are used);
-- `LEAD_L(m)`: `floor(B_m x leaderPercent_L(m))`, where `B_m` is the member's base (its power plus the flat
-  character rank, total rank and memory points) and `leaderPercent_L(m)` sums the leader skill effects that target
-  `m`;
-- `W(m, s)`: `floor(B_m x (snapPercent_s + snapEvent_s)) + floor(B_m x typeLink(m, s))`, and `W(m, none) = 0`.
+- `LEAD_L(m)`: `Q(B_m, leaderPercent_L(m))`, where `B_m` is the resolved member power plus its member-event
+  power increment and flat character-rank, total-rank and slot-memory terms. The member-event increment is applied
+  before this base multiplies leader, Snap and other percentages.
+  `leaderPercent_L(m)` sums the leader skill effects targeting `m`;
+- `W(m, s)`: `Q(B_m, snapPercent_s + snapEvent_s) + Q(B_m, typeLink(m, s))`, with `W(m, none) = 0`.
 
-Here each displayed percentage term means the model's component-wise operation, including its binary32
-conversion and finite saturation. With base stat `B` and percentage `p` in BP units, define
+The additive identity needs both integrality and range checks. `Tables::new` checks that resolved base and
+member-only totals are multiples of 10,000 BP on every stat. Percentage terms return multiples of that unit by
+construction. Hence each stat sum divided by 10,000 is an integer, and the regular deck total equals the sum of
+the slot-point totals as long as the sum and its conversion are nonwrapping. Table construction checks base/stat
+values below `2^40` BP and table percentages below `2^20`; each product is therefore below `2^60`.
+The consuming route additionally certifies the whole-deck power range needed by its score or payoff reduction.
+The checked decomposition is relative to the resolved values produced by the regular power calculator.
 
-    mulBP(B,p) = trunc0(B*p / 10000),
-    F(B,p) = floor_to_i32(RN32(RN32(mulBP(B,p)) / 10000)).
-
-`F` is the stat contribution in points. `RN32` denotes rounding to binary32; `floor_to_i32` includes the
-finite saturating conversion implemented in [`num.rs`](../crates/ournotes-sim/src/num.rs). On the checked product
-domain, multiplication and truncation are monotone in `p` for `B >= 0`; both binary32 operations and finite
-saturating floor preserve that order. The table bounds keep the integer products and converted operands finite.
-The model's [`CardPower`](../crates/ournotes-sim/src/power.rs) operations supply these exact terms.
-
-Each prepared slot term has a whole number of points per stat, represented by a multiple of 10,000 BP.
-The additive power identity also requires the final stat conversions and total sum to stay in their proved
-range. Let `x_j` be a completed deck's integer point sum for stat `j`, before the final conversion, and let
-`b_j >= x_j` be its sum of nonnegative component upper contributions. The prepared leader bound and the
-required-member/distinct-character lower proof establish
+The final stat conversions need their own range argument. Let `x_j` be a completed deck's integer point sum for
+stat `j` before that conversion, and `b_j >= max(x_j,0)` its sum of nonnegative component upper contributions.
+The prepared leader upper bound and the whole-domain lower proof establish
 
     sum_j b_j <= Pmax <= i32::MAX,       sum_j x_j >= 0.
 
-For every stat,
+For each stat, `x_j <= b_j <= Pmax`, while
 
-    x_j <= b_j <= Pmax,
     x_j >= -sum_{k != j} x_k >= -sum_{k != j} b_k >= -Pmax.
 
-Each final stat is therefore representable. Its whole-point BP value converts exactly through the final
-binary64 division, and the total lies in `[0,Pmax]`. Thus the model's power is exactly the sum of the slot
-terms, with representable final conversions and a nonwrapping total. This is a whole-domain certificate,
-including branches that can subsequently be pruned. Individual percentage terms still use the finite
-saturating binary32 conversion above, whose monotonicity is sufficient for their bounds.
+Every final stat is therefore representable, its whole-point BP value divides exactly by 10,000 in binary64,
+and the sum lies in `[0,Pmax]`. This proves the final conversion step of the additive identity, including for
+configurations pruned before evaluation. The member-set route checks the interval for all its targets; team
+bound preparation supplies its corresponding certificate or leaves the facade's exhaustive route available.
 
-Table construction checks fixed-point integrality, signs and product limits; the member-set search establishes
-the total-power interval before traversal and returns `Error::Domain` when its certificate is unavailable.
-Team bound compilation establishes the corresponding interval for its prepared domain; the recommendation
-facade retains its exhaustive evaluation route when a bound is unavailable. The ordinary evaluator supplies
-the declared integer semantics in either route. Source: [tables](../crates/ournotes-search/src/search/tables.rs),
-[member-set preparation](../crates/ournotes-search/src/search/mod.rs) and
-[team power bounds](../crates/ournotes-search/src/search/team_power.rs).
+Leader percentages additionally have a nonwrapping accumulation certificate. For the entire profile,
+`LeaderProfile::absolute_sum_bound` checks `C = sum_e |value_e| * c_e <= i64::MAX`, with `c_e = 5` for a cumulative
+row and `c_e = 1` otherwise, without applying targets or conditions. Every component, conditional subset and
+addition prefix has absolute magnitude at most `C`. Thus both the exact percentage and its positive-effect
+relaxation are ordinary integer sums before the percentage-range check and the application of `Q`.
+Checking only an already-wrapped final percentage would not justify that comparison.
 
-The four nonleader positions preserve power under pair relabelling; leader choice and Snap pairing can change it.
+Permuting the four non-leader pairs preserves power; changing the leader or a member/Snap pairing can change it.
 
 A leader profile is *simple* when none of its effects has a condition group or a cumulative count: then
 `leaderPercent_L(m)` depends on `m` alone. Otherwise (conditions on the other members or on the song, counts over the
 deck) it depends on the whole member set; the search evaluates it exactly for every complete member set and bounds
 it before.
 
-## Member-set result identity and order
+## Result identity and order
+
+This section, through the core algorithm proof, specifies the direct member-set search contract in the first two
+rows of the route table.
 
 One result per set of five member cards. Its representative is the best deck with those members under this order,
 better first:
@@ -253,39 +130,43 @@ better first:
 5. the snap ids in slot order, ascending, with "no snap" after every snap;
 6. the performance order, ascending.
 
-Canonical Snap keys distinguish every `i64` card ID from an empty slot.
-
 The non-leader members sit in slots 0, 1, 3, 4 in ascending card-id order. The function `identity` in
 `crates/ournotes-search/src/search/topk.rs` is the only place that defines what makes two results the same.
 
-## Member-set outcomes
+## Outcomes
 
-- `Complete`: the results are exactly the first `min(K, number of feasible member sets)` representatives under the
-  order above.
+- `Complete`: the results are exactly the first `min(K, number of legal member-set identities)` entries of the
+  order above, each represented by its best legal deck.
 - `TimedOut`: every result is a legal deck whose values are computed exactly, but some better deck may be missing.
   Preparation, traversal and final verification share one cooperative deadline. Only completely verified
   candidates are returned. An atomic verification can finish after expiry, but another candidate is not started.
-- An exhausted domain with no legal deck (fewer than five characters, or constraints that exclude every deck):
-  `Complete` with no results.
-- `Error::Domain`, `Error::Input`, `Error::Game`, `Error::Capacity`: no results.
+- No legal deck (fewer than five characters, or constraints that exclude every deck): `Complete` with no results.
+- `Error::Domain`, `Error::Input`, `Error::Game`, `Error::Capacity`, `Error::Unsupported`: no results.
 
-Every returned deck is evaluated again with the regular deck-power path (and, for the live objective with snap
+Every returned deck on these member-set routes is evaluated again with the regular deck-power path (and, for the live objective with snap
 skills, simulated again); a difference from the search's value is an error, not a result.
 
 `K = 0` is an input error, including with a zero budget or infeasible pool. A zero budget returns `TimedOut`
 without preparing tables or visiting decks. K is a result limit, so requesting more results than exist does not
-allocate K entries up front. A cooperative deadline is checked between atomic operations.
-The separate [search session](search-session.md) API provides resumable deterministic Power/Skip physical-deck
-search with its own identity and step contract.
+allocate K entries up front. Cooperative deadlines do not provide preemption, resumability or a browser Worker
+step API; these remain separate requirements.
 
-For Skip search, ordering by power additionally requires a proof over the entire feasible power domain. The
-solver combines target-aware lower bounds for signed leader effects with required members and distinct-character
+The recommendation facade can report progress (`engine::recommend_with_progress`, `Progress`). A report is a
+`TimedOut` snapshot with completely evaluated deterministic candidates, or the current certified LUCK intervals,
+and the telemetry so far. The report's telemetry is closed on a copy, so its proof is not complete and
+has no upper bound of the unexplored part, which only a stop computes. Reports are made at the deadline checks and
+after Top-K insertions, at most once per interval. Building a report only reads the search state, so a complete
+search visits the same nodes and returns the same result with or without reports.
+
+Every member-set target, including pure Power, requires a proof over the entire feasible power domain. The solver
+combines target-aware lower bounds for signed leader effects with required members and distinct-character
 constraints, and takes the largest prepared leader bound as its power upper bound. It rejects a domain unless
-power is nonnegative and within i32 and every intermediate Skip f32 operation at that upper bound is finite and
-nonnegative, with a nonwrapping note sum. This is conservative: a rejected domain need not contain an actual
+power is nonnegative and within `i32`. Skip additionally requires every intermediate binary32 operation at that
+upper bound to be finite and nonnegative, with a nonwrapping note sum. Live applies its score-chain certificate
+below. These conditions are conservative: a rejected domain need not contain an actual
 overflow. The unrestricted evaluator retains the native conversion and wrapping behavior, including infinity
-converting to MIN. The search proof is conditional on the declared model and resolved inputs; the validation
-section specifies the scope of its independent comparisons.
+converting to MIN; it never substitutes a fabricated saturating score. This search proof and synthetic oracle
+coverage do not certify the latest JP model, account resolver, or timing-policy search.
 
 ## Algorithm
 
@@ -303,42 +184,6 @@ smallest snap ids in slot order).
 Leaders are visited in descending order of their own bound; a Top-K holding at most one entry per member set keeps
 the K best representatives.
 
-
-### Exact assignment and empty-slot ties
-
-The five-row maximum-weight assignment uses one column per real Snap and five dummy columns. Distinct real
-columns enforce unique Snaps; the dummies supply independent empty slots. For the member-set route, sort the
-`n` real Snap IDs and give them ranks `0..n-1`, with None at rank `n`. Set `b=n+1` and `B=b^5`. The transformed
-objective for assignment weight `W` and row ranks `j_i` is
-
-    W*B - sum from i=0 to 4 of j_i*b^(4-i).
-
-The second term lies in `[0,B-1]`. An integer weight improvement of one therefore wins over every tie penalty;
-at equal weight, the penalty orders the five row ranks lexicographically. The numeric optimum and the
-None-last representative are both exact. Restricted class assignments retain the same encoding on allowed
-edges. With `M` bounding absolute edge weights, the forbidden-edge cost `16*(M+2)*B` exceeds the possible cost
-advantage from the other four rows, so a feasible assignment wins over one using a forbidden edge. The returned
-binding is checked for allowed edges. See [matching](../crates/ournotes-search/src/search/matching.rs).
-
-The encoding also fits its integer implementation. `Pool` admits at most 65,535 Snaps, so `B<=2^80`.
-Prepared Snap weights sum six nonnegative finite `i32` component terms and are less than `2^34`; the
-forbidden cost `F=16*(M+2)*B` is therefore below `2^118`. Quantized resource and proposal callers admit at
-most 4,096 Snaps and absolute weights at most `10^15`, giving `F<2^115`.
-
-For the five-row Hungarian solve, all matrix costs lie in `[-F,F]`. Real-column potentials remain nonpositive,
-and free columns have potential zero. Dual feasibility, matched-edge equality and an available free column
-give row potentials in `[-F,F]` and real-column potentials in `[-2F,0]`. Reduced costs and finite slacks are
-bounded by `4F`; at most five nonzero real-column potentials bound the auxiliary objective potential by
-`15F`. The corresponding updates fit below `16F<2^122`, within `i128`. Finite slacks lie below the
-`i128::MAX/4` sentinel; every unused slack is initialized by its first scan. The exact-integer optimization
-therefore implements the radix proof on these admitted domains.
-
-Sources: [pool capacity](../crates/ournotes-sim/src/pool.rs),
-[Snap weight construction](../crates/ournotes-search/src/search/tables.rs),
-[resource limits](../crates/ournotes-search/src/search/joint/resource.rs),
-[class-assignment limits](../crates/ournotes-search/src/search/joint/classes.rs) and
-[prefix-resource limits](../crates/ournotes-search/src/search/joint/prefix_resource.rs).
-
 ## Why no result is lost
 
 Let `T` be the K-th value currently held (minus infinity while fewer than K results are held). `T` never decreases.
@@ -348,11 +193,12 @@ equal-valued deck can still win on the later keys of the order.
 1. *The bound is at least the value of every deck below the node.* For a member `m` in any deck: `A(m)` is exact;
    `W(m, s) <= Wmax(m)` for every snap and for an empty slot, since `Wmax` is a maximum over all allowed snaps and 0
    (relaxing the rule that snaps are distinct only enlarges the maximum); `LEAD_L(m)` is exact for simple profiles. For
-   other profiles the search uses `floor(B_m x P)` with `P` the component-wise sum over the effects that could target
+   other profiles the search uses `Q(B_m, P)` with `P` the component-wise sum over the effects that could target
    `m` of `max(0, value x c)`, where `c` is the largest count the effect can take (at most 5, or its cap), counting every
-   conditional effect as active. The exact percentage is a sum over a subset of those effects with counts at most `c`,
-   so it is at most `P` component-wise. The slot multiplication `(B x p) / 10000` with truncation and the floor through
-   binary32 are both non-decreasing in `p` for `B >= 0` (IEEE rounding is monotone, and so is `floor`), so the exact
+   conditional effect as active. The profile accumulation certificate above covers both sums. The exact percentage
+   is a sum over a subset of those effects with counts at most `c`,
+   so it is at most `P` component-wise. The multiplication, truncating division, binary32 operations and final floor
+   in `Q` are non-decreasing in `p` for `B >= 0` on the validated domain, so the exact
    term is at most the bounded one. The prefix sum over the best remaining characters is at least the sum over any
    `r` distinct remaining characters, since the characters are sorted and each character contributes at most its best
    card.
@@ -366,6 +212,41 @@ equal-valued deck can still win on the later keys of the order.
 
 The same holds per leader: a leader is skipped only when its own bound (the leader's `u` plus the best four other
 characters) is below `T`.
+
+### Enumeration and assignment lemmas
+
+**Member coverage.** Fix an allowed leader. Required members fix their characters; a conflicting required member
+or too few remaining characters makes that leader infeasible. Every remaining legal member set has one increasing
+sequence of character indexes, and one card choice for each such character. DFS takes exactly that path. Sorting
+characters by their maximum and sorting cards within each character changes only visitation order.
+
+The sorted maxima also justify loop termination. Moving the starting character index to the right cannot
+increase the sum of the next `r` maxima. Within a character, the remaining card values cannot exceed its current
+value. A bound rejection can end one of these loops only when the bound covers its entire remaining suffix;
+rejection of an individual card proves only that card's subtree.
+
+**Canonical assignment.** Let `s` be the number of allowed Snaps, `b = s + 1`, and `B = b^5`. Rank the Snaps
+by ascending public ID, with None at rank `s`. The five-slot penalty
+
+    penalty = rank_0*b^4 + rank_1*b^3 + rank_2*b^2 + rank_3*b + rank_4
+
+lies in `[0, B-1]`. Thus maximizing `total_weight*B - penalty` first maximizes integer power, then minimizes the
+whole Snap key. Five dummy None columns allow every slot to be empty independently. Dummy-column permutations
+have the same result identity. The constrained matcher assigns a forbidden pair a cost exceeding the largest
+possible cost advantage of any legal assignment, and verifies legality on its output.
+
+These are the objectives implemented by [matching.rs](../crates/ournotes-search/src/search/matching.rs).
+The pool constructor limits each card pool to 65,535 entries, hence `B <= 2^80`. The admitted nonnegative
+power-table edge is below `2^37` points, so its encoded cost and the forbidden cost
+`16*(max_abs_weight+2)*B` fit well inside the matcher's `i128` range. Optional weighted-resource callers have
+their own tighter edge/cardinality gates.
+
+**Top-K witnesses.** After each offer, the table holds the best K representatives among all identities handled
+so far. Replacing an identity by a better representative preserves this invariant. Removing another identity
+requires K distinct better identities. Those K witnesses remain available or improve later, so the K-th primary
+cutoff never decreases. A discarded branch lies below K witnesses at the moment it is discarded; it remains
+excluded at every later cutoff. This proves preservation without presupposing that the search's final cutoff
+already equals the mathematical optimum.
 
 ## Skip score
 
@@ -385,33 +266,45 @@ commands for a fixed duration. The default play (`Play::theoretical_best`) judge
 a full combo: the combo a note reads is the number of judged notes at earlier chart times and the life stays at its
 base value (a Perfect costs no life in the data; a table where it does is reported as unsupported).
 
-Under these assumptions the leader and the snaps change the live score only through the deck power `P`. Preparation
-checks the common power interval and the score chain over that entire interval: fixed multipliers are finite and
-nonnegative, positive intermediate values remain normal, the maximum intermediates remain finite, and the native
-sum of note scores does not wrap. Every supported factor command has a nonnegative start and an equal opposite end
-at the same or a later time. The ideal active factor is therefore at least one, and its rounding certificate keeps
-the native factor positive. For a fixed performance order every operation is monotone in `P`, so a member set's
-best representative is its highest-power leader and Snap choice with its best performance order.
+The representative reduction also requires a numeric certificate over the whole feasible power interval.
+The diagnostic search checks nonnegative power within `i32`, positive finite score adjustment and difficulty,
+a positive converted-note count, and finite nonnegative per-note multipliers. Generated score-factor commands
+must be paired nonnegative start effects with matching negated finishes in time order. Note, event and command counts
+are limited to `2^20`, and a bound on accumulated factor error must stay below `1/2`.
 
-For `N` commands and total absolute command magnitude at most `F`, use `u=2^-24`, `alpha=(3N+1)u` and
-`D=alpha/(1-alpha)*(1+F)`, with all proof arithmetic rounded outward. The count charges two representation
-roundings and one state addition per command, plus the final field addition. Preparation requires `alpha<1` and
-`D<1/2`, and encloses every score-up factor in `[1-D,1+F+D]`. Per-event maxima cover every performer assignment.
-The score audit checks positive paths at power one and the lower factor endpoint, and maximum paths at the
-prepared power cap and the upper endpoint. Zero multiplier paths stay zero. These checks establish the premises
-for monotonicity and the relative score-chain error bound; an unavailable certificate reports a domain error.
+Let `u = 2^-24`, `n` be the maximum command count and `M` the maximum sum of absolute command factors.
+Charge two representation roundings and one state addition per command, plus the final note/judgement-field
+addition. With `alpha = (3*n+1)*u < 1`, the feedback factor is `gamma = alpha/(1-alpha)` and the absolute
+allowance is `d = gamma*(1+M)`; when there are no commands, `d = 0`. The count limit `n <= 2^20` keeps
+`alpha` below 1. Command magnitudes, sums, the feedback denominator and the resulting allowance are all evaluated
+outward in binary64. Paired nonnegative windows have ideal score-up state at least 1; the separate `d < 1/2`
+gate therefore gives a positive rounded-state lower bound. The implementation rounds the endpoints
+`[1-d, 1+M+d]` outward to binary32.
 
-Sources: [`LiveCtx::new`](../crates/ournotes-search/src/search/live.rs),
+For each note, the positive score chain at power 1 and the lower factor endpoint must have normal nonzero
+intermediates, and the chain at the power/factor upper endpoints must remain finite. Zero factors remain exact
+zero. After the first integer floor, the final life/assist chain is also checked at its least positive integer
+input, 1. The sum of the resulting integer note caps must be at most `i32::MAX`.
+These checks are in [the live bound](../crates/ournotes-search/src/search/live.rs) and
 [`LiveModel::prove_search_domain`](../crates/ournotes-sim/src/live/model.rs).
+Coefficient construction uses the converted-note divisor after its native binary32 conversion, then rounds every
+binary64 product, quotient, contribution and sum upward. The final power-times-coefficient cap is upward-rounded
+as well. A real-arithmetic inequality and a binary32 chain margin do not by themselves certify an unbounded number
+of nearest-rounded binary64 additions.
+
+With these certificates, the factor sequence is independent of power and every per-note operation is
+nondecreasing in it, including finite integer saturation. Nonnegative, nonwrapping note sums preserve that
+order. Maximizing over performance orders preserves it too. The member set's best representative is therefore
+its highest-power leader/Snap choice with its best order. An unproved numeric domain returns `Error::Domain`;
+the regular evaluator retains its declared conversion and wrapping behavior.
 
 Bound: for note `n`, the score is at most `P * k_n * U_n * (1 + e)`, where `k_n` is the product of the note's fixed
 constants (assist, life, judgement and note percentages, score adjustment, level factor, combo factor, divided by
 the converted note count), `U_n` bounds the score-up factor and `e = 2e-6` covers the float roundings of the chain
 (at most 16 roundings of relative size 2^-24). `U_n = 1 + S_n + d`, where `S_n` sums, over the skill events whose
 effect window can contain the note, the largest factor any available performer gives at that event (for the note's
-judgement), and `d=D` bounds the accumulated representation and state error above. The native converted-note
-count is first rounded to binary32, and the coefficient calculation uses that same denominator. Coefficients,
-gains and their sums round outward. The floors only lower the score. The search compares `P_bound * A` with
+judgement), and `d` bounds the accumulated rounding of the running factor state (one rounding of at most 2^-24 of a
+value below `1 + sum |factor|` per command). The floors only lower the score. The search compares `P_bound * A` with
 the K-th live score, `A = sum_n k_n U_n (1 + e)`, first with every pool member as a possible performer and, for a
 complete member set, with that set's members only. A complete member set that passes gets every distinct assignment
 of its live skills to the five positions evaluated exactly.
@@ -426,8 +319,7 @@ live skill and the support skills of the snap in the same slot at the levels of 
 the Gekisou state are reported as unsupported.
 
 The default stream (`JudgementStream::theoretical_best`) plays at 60 fps: frame `i` is at `floor(i * 1000 / 60)` ms,
-from `i = 0` while that time is at most `T + 2000`, where `T` is the maximum of zero, every chart-note time and
-every skill-event time, including unjudged chart notes.
+from `i = 0` while that time is at most `T + 2000`, where `T` is the latest time of a judged note or a skill event.
 Every judged note is judged Perfect in the first frame whose time reaches its chart time, with the chart time as
 judgement time, in the order (chart time, note id) within a frame; the seed is 0 and assist is off. With Gekisou off
 the Just judgement is never enabled, so Perfect is the highest judgement.
@@ -442,10 +334,53 @@ Judgements, conversions, combo, life, random draws and the start and end of ever
 every power, and so is the sequence of factor states each note is scored and rescored with, including the frames that
 are undone and executed again. The score is the 32-bit sum over the judged stream entries of each note's last computed
 score, and each note's score is non-decreasing in the power when every multiplier of its chain is non-negative. The
-search checks that (score adjustment and level factor positive, converted note count positive, assist and life-zero
-factors, note and judgement percentages, combo factors and score factor values non-negative) and that its score bound
-stays below half of the 32-bit range, so the sum does not wrap. For fixed performers and stream, the score is
-therefore a non-decreasing function of the power.
+compiler must establish both that sign condition and a finite, nonwrapping numeric domain. A small final real-valued
+score estimate alone cannot establish either one: an intermediate binary32 product can overflow before a later
+small multiplier, and a finish filed before its start can give an earlier note a negative factor.
+
+The admission checks in
+[`SnapLive::new`](../crates/ournotes-search/src/search/snaps/snap_live_build.rs) and its consuming search routes
+require the following certificates:
+
+| Quantity or transition | Required domain | Role in the proof |
+|---|---|---|
+| Clock values | Frame, chart-note and skill-event timestamps are nonnegative; each note is judged in a frame at or after its chart time. | Count-triggered execution times cannot be in the future relative to the update that creates them. |
+| Music-length finish clamp | For a positive music length, every chart note maps to a native `ScoreFrames` frame strictly before the finish-clamp frame. Play frames may continue after the clamp. | A finish clamped before its own start remains strictly after the scored prefix, including binary32 time projection and the last-addressable-frame clamp. |
+| Live duration extensions | Every compiled `15000` row has nonnegative raw value. | Once an effect is executing, an extension cannot move its duration backward through its start. |
+| Score and life effects | Score additions are nonnegative; life base is in `[1, 2^29]`, damage in `[0, i32::MAX]`, and native `i32` recovery in `[0, 2^30)`. | Factor windows have nonnegative ideal contributions and the life interval used for classification is valid. |
+| Score adjustment and difficulty | Adjustment is in `[2^-16, 2^16]`, difficulty in `[2^-8, 2^8]`; converted note count is positive. | Positive products and division have bounded exponents. |
+| Post-floor factors | Assist and life-zero factors are either zero or in `[2^-16, 2^16]`. | Zero stays exact; nonzero post-floor multiplication is finite and normal. |
+| Percentages and factor norm | Note and judgement percentages are integers in `[0, 10^6]`; the outward total factor norm is at most `2^16`. | Nonzero percentage factors have a positive lower bound, and intermediate upper bounds are finite. |
+| Accumulated rounding | The certified factor and chain allowance exists and `eps < 1/2`. | The rounded score-up state stays positive, not merely below an upper envelope. |
+| Power and total | The search proves the whole feasible power interval lies in nonnegative `i32`; the score envelope stays below half the `i32` range. | The power cast and the nonnegative note sum preserve order. |
+
+Forward nonnegative windows have ideal note-plus-judgement factor at least 1. The absolute drift certificate below
+then gives a rounded factor greater than `1/2`. For a positive input, power and the converted-note divisor are
+between `1` and `2^31` after conversion to binary32; positive note and judgement percentages divided by 100 are
+between `2^-7` and `2^14`. The ordinary combo factor is in `[1,2]`, since the supported rows exclude changes to
+ordinary `combo_score_up`. With Gekisou enabled, its admitted positive combo factor is at least `2^-24` and at most
+2, and its positive luck percentage factor is greater than `2^-7` and at most 2. Disabled Gekisou factors and the
+whole-live event factor are 1. The rounded note-plus-judgement factor is below `2^17`.
+
+Multiplying these exponent bounds in the native chain's order bounds every positive pre-floor intermediate by
+
+    2^(-16-8-7-7-24-1-7-31) = 2^-101,
+    2^(16+31+8+14+14+1+1+17+1) = 2^103.
+
+Both endpoints are inside the normal binary32 range. After the first floor/cast, a positive value converted back
+to binary32 is in `[1,2^31]`; the life and assist multiplications stay in `[2^-32,2^63]`. Zero operands stay exactly
+zero because all the other intermediates are finite. These ranges exclude intermediate overflow and underflow of
+a nonzero product. They concern the ordinary per-note chain, including its admitted Gekisou factors, rather than
+the separate expression for retained network snapshots. Floors and finite integer saturation preserve monotonicity, and the
+total cap excludes wrapping of the final sum. For fixed performers and stream, the final score is therefore a
+non-decreasing function of power. These are conservative admission conditions; rejection does not imply that a
+particular deck would score incorrectly.
+
+The best-order diagnostic also rejects external rank confirmations: monotonicity of the ordinary per-note chain
+does not prove monotonicity of an arbitrary signed difference of retained network snapshots. The formal facade's
+network traversal uses its separate bounds and retains physical team identities. A failure to compile the optional
+Snap Live bound makes that facade use its complete fallback; the diagnostic entry point reports the unsupported or
+unproved domain directly.
 
 **2. The leader.** Performers follow the members, whatever their slots, and the snap terms of the power `W(m, s)` do
 not depend on the leader; so the leader changes only the member-only part of the power. The best representative's
@@ -458,15 +393,16 @@ is classified. Two facts come first, from the stream and every allowed card:
 
 - the *reachable judgements* of each stream entry: its raw judgement, and the target judgement of every conversion an
   allowed card has that lists the raw judgement and can see the entry. Conversion functions only see raw judgements. A
-  conversion of a live skill, or of a snap row with any other trigger, can see every entry; a snap conversion
-  triggered by its performer's own skill event is registered in the frame where the event fires and sees the entries
+  conversion of a live skill, or of a snap row with another trigger or a release checker, can see every entry in the
+  relaxation; a snap conversion triggered only by its performer's own skill event, without release, is registered in
+  the frame where the event fires and sees the entries
   judged in the next frames up to the first frame later than its start plus its activation time (with a margin of
   `2^-22` relative and 1 ms);
 - the *life interval* `[lo, hi]`: `lo` is the base life when no reachable judgement of any entry costs life, else 0;
   `hi` is twice the base when some allowed card recovers life, else the base. Every life value the simulation computes
   lies in it, whatever the order of the life commands and the state of the life frame cache: recovery caps at twice
   the base, damage floors at 0, and without damage nothing lowers the life (the search checks that damage is
-  non-negative and recovery below `2^30`, so no 32-bit sum wraps). Life is *rigid* when every life condition of any
+  non-negative and native recovery in `[0, 2^30)`, so no 32-bit sum wraps). Life is *rigid* when every life condition of any
   allowed card is decided on `[lo, hi]` (true for every life in it, or false for every life in it) and the note's life
   factor is fixed (`lo > 0` or the life-zero factor is 1); then no life value can change the score.
 
@@ -489,10 +425,25 @@ Removing never and inert rows, and skills left without rows, from a performer le
 unchanged: their factor commands do not exist, the life values they change are read by nothing that can change the
 score, and the other rows keep their order. A snap's *class key* for `m` is the list, per skill with active rows (in
 the performer's order), of its active rows by row id, each written with every field the simulation reads except its
-id; a condition that is decided true and pure is written as none. The simulation reads a row id only as a sort key
-within its skill (the list keeps that order) and as the identity of the row's own state, so snaps with equal keys are
-interchangeable at `m`. The empty key (class 0) holds the snaps that cannot change anything at `m`, together with "no
-snap".
+id; a condition that is decided true and pure is written as none.
+
+Deleting a row ID requires an additional identity certificate in
+[`rows.rs`](../crates/ournotes-search/src/search/snaps/rows.rs). A condition effect's native key is
+`100*row_id + 10*kind + position`, for `kind` in `3..=5` and position in `0..=4`. The compiler checks
+`row_id.checked_mul(100).and_then(|x| x.checked_add(54))`: every admitted key is nonwrapping and its order within
+a skill is the raw row order kept by the class key. Different actual source rows may not share an ID within their
+source table, and a single Snap's program may not register the same condition identity twice within one skill
+kind. Repeated references to one actual row by different candidate cards remain legal.
+
+Conversion targets have a separate alias rule. Their native cache is keyed by raw row ID across live, support and
+Gekisou sources, so compiled conversion rows sharing that ID must have identical target judgement vectors. Merely
+preserving sort order would not prove this cache behavior. The checks cover rows of the allowed cards at their
+selected levels; an unrelated row elsewhere in the master table does not invalidate the certificate.
+
+Under these conditions, replacing equal class keys preserves effect order, a one-to-one correspondence of private
+states, and every conversion cache lookup. The fixed member retains its live-skill identity and order. Thus equal
+keys are interchangeable at `m`; this is conditional equivalence, not a claim that arbitrary native row IDs are
+irrelevant. The empty key (class 0) holds the snaps that cannot change anything at `m`, together with "no snap".
 
 For a member set, a performance order and a class for each slot, part 1 applies: the score is a non-decreasing
 function of the power alone. The best snaps for that choice are the maximum-weight assignment of snaps to slots
@@ -511,7 +462,7 @@ that respects the restriction.
   such entry before `t_e`;
 - `Z_e`: assist factor times the largest life factor (1 when `lo > 0`, else the larger of 1 and the life-zero factor;
   for some candidates the life-zero factor alone, below);
-- the coarse separable envelope uses `V_e = max_j jp(j) * (1 + N_e) + sum_j jp(j) * J_e(j)`, over the reachable judgements `j` of the entry, `jp(j)` the
+- `V_e = max_j jp(j) * (1 + N_e) + sum_j jp(j) * J_e(j)`, over the reachable judgements `j` of the entry, `jp(j)` the
   judgement percentage, `N_e` and `J_e(j)` the note and judgement factors whose windows contain `t_e`. The note ends
   with one reachable judgement `x`, and its score-up value `jp(x) * (1 + N + J(x))` is at most `V_e`.
 
@@ -519,13 +470,11 @@ Above the candidates these coefficients use the reachable judgements of every al
 member set, a performance order and a class for each slot) only its own performers register conversions, and one
 triggered by its performer's skill event only at that position's events; the per-entry bound of a candidate uses the
 reachable judgements of its own conversions, and the combo breaks that follow from them. They are a subset of the
-pool-wide ones, so the candidate's combo counts and percentages are never larger. The fine cap also preserves
-the exclusivity of the final judgement: it uses `max_j jp(j)*(1+max(0,N_e)+max(0,J_e(j))+D)`, with the
-candidate's factor error `D`, before the separate score-chain allowance and floors.
+pool-wide ones, so the candidate's combo counts and percentages are never larger.
 
 Life of a candidate. When no performer of a candidate has a life recovery or guard row that can start, every life the
-simulation computes when a note reads its life is at most `max(0, base - filed minimum damage)`. The filed damage is from the
-entries judged in earlier frames, or earlier in the same frame, the note itself included, with chart times up to the
+simulation computes when a note reads its life is at most the base minus the damage already filed at that point (the
+entries judged in earlier frames, or earlier in the same frame, the note itself included) with chart times up to the
 note's: damage only lowers the life and floors at 0, and a life query folds every filed command up to its time at
 least once (with the frame cache, some of them twice). The damage of an entry is at least the smallest damage of its
 reachable judgements. Where this bound is 0 the note's life is 0, and `Z_e` is the assist factor times the life-zero
@@ -553,9 +502,9 @@ and every chart time outside the runs is one slot. A computed life is then a fol
 with some of them repeated inside their slots, and possibly with commands of a slot's later frames folded before its
 earlier ones. Within a slot the fold uses `clamp(x + r - d, 0, 2 * base)` when it has both damage `d` and recovery `r`
 (each recovery counted as many times as it can be applied): whatever the order and the repetitions, the result is 0
-when the life starts at 0. With positive starting life, a fold that reaches 0 ends at 0; an always-positive fold
-adds at most the counted recoveries and subtracts at least the required damage, so it is at most `x + r - d` and
-at most `2 * base`. Both cases are bounded by `min(2 * base, max(0, x + r - d))`. Repeated damage only lowers the result.
+when the life starts at 0, and otherwise at most `x + r - d` (a fold that never reaches 0 adds at most the recoveries
+and subtracts at least the damage; one that reaches 0 stays there) and at most `2 * base`. Repeated damage only lowers
+the result.
 
 For a candidate whose only life-raising rows are such recoveries (no guard, no recovery with another trigger, none in
 the live skills), the search folds, slot by slot, every entry's smallest damage and the candidate's recoveries at their
@@ -575,82 +524,107 @@ Windows. A factor started at `exec` holds for the notes with chart times in `[ex
 commands are filed at those times, and a command filed in a score frame that was already executed undoes and
 re-executes the frames from there, so every note is last scored with the factors whose commands surround its chart
 time. A live skill effect of position `k` starts at the time of each skill event of `k` that some frame reaches. Its
-duration is `d = act * 1000 + extension`, in binary32; it ends at `exec + ceil(d)`, or at the next frame after its
-start frame when that is later, if a frame later than `exec + d` exists, and never otherwise (an activation time that
-is not positive ends it in the next frame; with an extension the bound then uses no end). `d` is non-decreasing in the
+duration is `d = act * 1000 + extension`, in binary32. The first update after its start keeps it running only when
+`d > RN32(frame_time.wrapping_sub(exec))`; otherwise it finishes at that update's time. A running execution with
+positive activation ends when the native strict predicate `d < RN32(frame_time.wrapping_sub(exec))` holds, and files
+its finish at the native `exec + ceil(d)` timestamp, subject to the music-length clamp. A later real-valued frame
+time alone does not imply that predicate: the integer-to-binary32 conversion can round the elapsed time back to `d`.
+An activation time that is not positive ends in the next frame; with an extension the bound then uses no end.
+On the admitted nonwrapping clock domain, `d` is non-decreasing in the
 extension (binary32 addition and `ceil` are monotone), so the bound uses the largest extension: the extension rows of
 the member's live skill and of its snap class that can start, each once per event of the position. It uses no end at
 all when an extension row of the snap class has a trigger other than the performer's own skill event, or when the
-position has two events (a restart does not remove the first factor). A snap score row triggered by its performer's
-own skill event starts at the frame where the event fires and ends by the same rule without extension; a snap score
-row with any other trigger counts over the whole live, five concurrent executions at once. Live skill rows of one
+position has two events (a restart does not remove the first factor). A Snap score row triggered by its performer's
+own skill event, without a release checker, starts at the event frame and uses the same bound without extension.
+A release checker skips the first elapsed-time check and can retain an untimed factor indefinitely; such a row
+uses the general conservative envelope. Ordinary Snap rows with another trigger also count over the whole live,
+five concurrent executions at once. Live skill rows of one
 member with the same effect type and duration whose conditions are one condition each, negations of each other, cannot
 both start at one event: both are checked in the same phase of the frame, before any effect of that phase applies, and
 repeated life queries at one time give one value (probability and count conditions, which change with each check, are
 excluded). When the position has at most one event such a pair counts once with the larger factors. Every factor value
 is non-negative, so a window that is too wide only raises the bound.
 
-**Float margin and command-count certificate.**
+Float margin. `eps` covers `2e-6` for the per-note chain (as without snap skills), `2^-22` for the score-up sum,
+`2^-19` for the factor after the floor, and the drift of the running factor state, a binary32 sum. Each float
+operation on it rounds by at most `2^-24` of its magnitude. A score frame is executed at most `E(g)` times (its first
+run and its re-runs). In each play frame, the two recalculations can re-execute from the earliest score frame covered
+by its certified timer floor, the chart times of its judged notes, and its Gekisou override times. Rank confirmations
+have their separately counted replays. Commands mapped strictly after the last note's score frame cannot change
+that scored prefix.
 
-Let `N` bound lifetime factor commands and `E` their total executions including
-score-frame replays. For a row touching `h` score fields, let `s` bound starts,
-`c` concurrency, `f` processing frames and `q` replacements per activation:
+The timer floor is a separate certificate in
+[`command_floor_times`](../crates/ournotes-search/src/search/snaps/score_windows.rs). It uses the previous play-frame
+time only when frame times are nondecreasing; frame, chart-note, skill-event and Gekisou range times all lie in
+`[0, 2^24]`; extension rows are nonnegative; and positive-duration rows have neither a release checker nor a gated
+Gekisou sustained updater. The interval makes every elapsed integer exactly representable in binary32.
+An execution that survives the previous update has `d_previous >= previous_time - exec` (strictly greater on its
+first update). A nonnegative extension keeps `d` from decreasing, so a later timed finish satisfies
+`exec + ceil(d) >= previous_time`. Its successful current strict end test also keeps that timestamp within the
+current nonwrapping clock range. A release checker can skip the first elapsed check, and a gated sustained updater
+can skip a previous update entirely; neither supplies this premise. Without the compact certificate the timer
+floor is score frame zero. Every case also includes the positive music-length finish clamp. This same floor feeds
+the execution counts and the network snapshot cancellation bounds. A wider replay interval can increase the
+rounding allowance or make the optional cap unavailable; it does not change the scorer.
 
-`N_row = 2 h [s + min(s q, c f)]`.
+Frame geometry is a separate obligation. `ScoreFrames` projects a possible factor span `[a,b]` onto the closed
+native frame interval `[frame(a),frame(b)]`, using binary32 time conversion and the last-addressable-frame clamp
+of the actual scoring clock, including a nonzero `score_music_length_ms` override. Every factor applied, removed
+or active in a frame is contained in this projected span. Summing its magnitudes bounds the frame's transient
+state; closed endpoints include equal-time start/end pairs and final-frame clamping. A fixed 40 ms neighbourhood
+is not equivalent to that map: at large timestamps even more widely separated times can share a native frame.
+The compiled raw envelope sums per-slot maxima, which is at least the maximum of the whole team's sum.
 
-A fixed factor has zero replacements. The finite cumulative replacement count
-requires every reachable requested factor to reconstruct to the identical
-binary32 value after mill quantization; other cases use the processing-frame
-count. Each start, end and replacement is charged, and its possible filing
-frames supply an upper replay multiplicity for `E`.
+A positive music-length clamp needs a frame-level premise too. Raw timestamps `1039 < 1040` can both map to native
+score frame 26. If an effect starts at 1100 and its finish is clamped back to 1040, a nominal span beginning at 1100
+does not count that earlier frame. Admission therefore requires each note's `ScoreFrames` image to be strictly
+before the clamp's image. This also covers a shortened `score_music_length_ms` override. The ordinary
+`DataChart::chart` route uses `Chart::from_notes`, which sets `last_timing_note_ms` to the maximum note time, and
+`FullSetup` adds 1000 ms to obtain the music length. Direct core callers can supply independent public `Chart`
+metadata, so the compiler checks the frame relation instead of assuming this construction. The rule only restricts
+the optional certificate; play frames after music length remain allowed and the native evaluator is unchanged.
 
-Map every possible factor span `[a,b]` to the closed interval `[frame(a),frame(b)]` using the scorer's
-binary32 time-to-frame calculation and its final-frame clamping. Every factor that can be applied, removed
-or remain active in a score frame has a projected interval containing that frame. The maximum sum of interval
-magnitudes therefore bounds its ideal transient factor state above the base value. Closed endpoints include equal-time start/end
-pairs and the final clamped frame. A frame difference is the signed difference between two states in this
-nonnegative envelope. The compiled raw bound sums the per-slot maxima, which bounds the maximum of their sum.
+Let `N` bound lifetime factor commands and `E` their total executions including all frame replays. For a row
+touching `h` score fields, let `s` bound starts, `c` concurrency, `f` processing frames and `q` replacements per
+activation. The implementation charges
 
-Set `u=2^-24`, `W=3E+2N`, `F` to that frame-magnitude bound,
-and `S=1+max(F, peak active factor sum)`. State addition, frame-difference
-addition and undo account for `3E`; integer-to-binary32 conversion and division
-account for `2N`. An absolute score-up error certificate is
+    N_row = 2*h*(s + min(s*q, c*f)).
 
-`D = u [E (2S+F) + 2N S] / (1-uW)`, where `uW<1`.
+A fixed factor has no replacements. A finite cumulative replacement count is used only when mill quantization
+reconstructs the identical binary32 factor at every reachable requested value; otherwise the bound uses the
+processing-frame count. Every start, end and replacement is charged, and its possible filing frames determine
+the replay multiplicity used for `E`.
 
-The feedback inequality is `error<=u M+u W error`, with
-`M=E(2S+F)+2N S`. Solving gives the displayed bound. The implementation rounds
-outward and uses `max(1.01,1/(1-uW))` for amplification. This argument requires
-the chosen start, replacement, replay and frame-magnitude envelopes to cover
-every reachable command state.
+For one candidate, let `F` bound factor magnitudes meeting a native score frame and
+`S = 1 + max(F, peak active factor sum)`. With `u = 2^-24` and `W = 3*E + 2*N`, an absolute factor-error cap is
 
-A candidate's fine cap adds `D` to the note-plus-selected-judgement factor before
-applying the separate multiplicative allowances for the score chain. For a
-linear joint envelope, `B=sum_e k_e z_e max_j judgement_percent(j)` bounds the
-sensitivity to absolute factor error, including budgeted conversions. Therefore
-`P(A+D B)` bounds the unfloored contribution before the chain allowance. The
-joint refinement uses a larger prepared allowance and its positivity and finite
-normal-range checks. An unavailable global certificate rejects preparation;
-an unavailable candidate certificate supplies the maximal cap; an unavailable
-compiled raw cap returns `None`; an inapplicable refinement retains its enclosing
-envelope.
+    D = u*(E*(2*S+F) + 2*N*S)/(1-u*W),       u*W < 1.
 
-Source: [`command_count`](../crates/ournotes-search/src/search/snaps/score_windows.rs), [`amplification` and `WindowRoundoff`](../crates/ournotes-search/src/search/snaps/float_margin.rs),
-[`FineView::cand_drift`](../crates/ournotes-search/src/search/snaps/fine_view.rs),
-[`additive_joint_envelope`](../crates/ournotes-search/src/search/snaps/snap_live.rs).
+State addition, frame-difference addition and undo contribute `3*E`; integer cast and division contribute `2*N`.
+The rounding magnitude can depend on earlier error: writing `delta = u*(E*(2*S+F) + 2*N*S)` and `alpha = u*W`
+gives `error <= delta + alpha*error`. Solving gives the displayed cap; at `alpha >= 1` it is unavailable.
+[`float_margin::amplification`](../crates/ournotes-search/src/search/snaps/float_margin.rs) computes that factor
+outward and also retains a minimum factor of 1.01. Thus 1.01 is a floor on the allowance, not the proof for
+arbitrary command counts. The nonnegative ideal score-up value is at least 1, so an absolute state-error allowance
+can also serve as a relative score-up allowance. Above the candidate level the same argument uses the largest
+`E`, command weight and factor totals of the admitted performers.
 
-When a fine cap uses refined Rush windows, `WindowRoundoff` additionally certifies their binary64 endpoint
-construction. With `w` windows, at most
-`2w` endpoint writes, `2w` nonzero prefix additions and one factor multiplication affect an input path.
-For `v=2^-53` and `(4w+1)v<1`, the absolute construction error is at most
+A fine cap adds `D` to its note-plus-selected-judgement factor before the independent chain allowance. For a
+linear joint envelope, `B = sum_e k_e*z_e*max_j judgement_percent(j)` bounds sensitivity to absolute factor error,
+including budgeted conversions. Thus `P*(A+D*B)` bounds the unfloored contribution before the chain allowance.
+An unavailable global certificate rejects preparation; an unavailable candidate certificate keeps the maximal
+cap; an unavailable compiled raw cap returns `None`; an inapplicable refinement retains its enclosing envelope.
 
-    gamma_(4w+1) * sum of absolute endpoint inputs,
-    gamma_n = n*v/(1-n*v).
-
-`WindowRoundoff` encloses the endpoint norm and this factor with outward rounding. The compiled raw envelope
-independently stores lower and upper coefficient-prefix endpoints and uses `upper[end] - lower[start]` for
-interval caps. The separate chain allowance and the operation-counted state drift together
-justify the coarse relative `eps`; candidate fine caps retain the tighter additive drift before their floors.
+The compiler's binary64 window sums need their own certificate. With `W` windows there are at most
+`2W` endpoint writes, `2W` nonzero prefix additions and one factor multiplication on an input path.
+`WindowRoundoff` bounds absolute error by `gamma_(4W+1) * endpoint_L1`, with `u = 2^-53` and outward
+evaluation of both terms. The L1 norm makes the bound applicable to cancellation at window ends. An invalid
+operation count, nonfinite value or `(4W+1)*u >= 1` makes this optional certificate unavailable.
+The implementation combines independent relative allowances multiplicatively, rounding outward, before
+subtracting 1 to obtain `eps`. Ordinary real-algebra identities alone do not supply these numerical certificates.
+Compiled raw coefficient prefixes retain both lower and upper endpoints. An interval cap uses
+`upper[end] - lower[start]`, with outward subtraction: subtracting two upper prefixes has no general upper-bound
+guarantee. The reusable representation is specified in [compiled envelopes](search-envelope-programs.md).
 
 Separability. Every window belongs to one position, so the sum over the entries of the per-entry bound without the
 floors is `P * (A0 + sum over positions k of G(k, m_k, c_k)) * (1 + eps)`, where `A0` is the value of the entries
@@ -686,8 +660,9 @@ test with the largest gain of every position.
    the per-entry bound of part 4 with its floors, the candidate's reachable judgements and its own margin;
 4. surviving candidates are simulated in descending order of the per-entry bound (ties: power descending, then snap
    ids and order ascending). The first candidate is the best-bound order with a greedy class choice, and pending
-   candidates are simulated as the list grows, so the cutoff rises early. Candidates with the same member identities
-   and Snap class IDs in performance order, at the same power, are simulated once.
+   candidates are simulated as the list grows, so the cutoff rises early. Candidates whose performers are the same for
+   the simulation (members with the same live skill, band and card type, and character when a member target reads
+   characters; snaps with equal class keys; same order and power) are simulated once.
 
 Life test. Call a class *plain* when its only life-raising rows are recoveries at its performer's skill events, or
 when it has none. A node whose chosen classes are all plain covers two kinds of completions. Those with a class that
@@ -714,22 +689,149 @@ member set's best representative, and a member set whose leaf finds nothing at t
 A search that reaches its time limit inside a leaf (checked before each simulation and every 1024 nodes of the
 class search) keeps that leaf's best simulated deck and reports `TimedOut`.
 
-### Finite domain and exhaustive work
+Cost. A member-set leaf can be excluded entirely by its bounds. Surviving candidates require exact simulation or
+a proven equivalent cached value. Missed or late notes can make combo, conversion and life envelopes looser, leaving
+more candidates to evaluate. A time limit stops work cooperatively; one atomic preparation, assignment or evaluation
+can overrun it. The [complexity discussion](#search-size-and-complexity) gives the finite-domain bounds.
 
-With `n` eligible member cards and `s` eligible Snaps, the number of member sets is at most `binom(n,5)`;
-distinct-character and required-card constraints reduce that count. A fixed member set has at most five leader
-choices. Its number of optional injective Snap bindings is
+## Canonical team power and deck-payoff routes
 
-    B(s) = sum from j=0 to min(5,s) of binom(5,j) * s!/(s-j)!.
+### Canonical team power frontiers
 
-Choose the `j` occupied slots and inject `j` distinct Snaps into them; the other slots are independently empty.
-Consequently the team domain has at most `5 * binom(n,5) * B(s)` identities. A physical-slot contract additionally
-retains the `4!` nonleader layouts. Lottery-free played evaluation aggregates 120 order outcomes per team.
-LUCK evaluation also depends on its admitted lottery state space and refinement limits.
+The deterministic team route is implemented by [team power bounds](../crates/ournotes-search/src/search/team_power.rs),
+[team traversal](../crates/ournotes-search/src/search/team_power_search.rs) and
+[Snap assignment](../crates/ournotes-search/src/search/matching.rs). It applies to native power, or to Skip score,
+`scoreAtLeast` and `cappedScore` after compilation certifies a nonnegative, nonwrapping power interval and a
+nondecreasing Skip score throughout that interval. If `u(P)` is the selected utility, the order
+`(u(P) descending, P descending, canonical IDs ascending)` equals
+`(P descending, canonical IDs ascending)`: a greater power never has a smaller utility, and power resolves every
+utility plateau. This argument requires the secondary power comparison, including for thresholds and caps.
 
-These are finite exhaustive bounds on configurations. Pruning, assignments and exact evaluation reuse reduce
-the work by the certificates described here. A declared resource limit returns a partial outcome when proof
-obligations remain open; closure certifies the requested ordering.
+Members are assigned in slots `[2, 0, 1, 3, 4]`; the four nonleader IDs increase strictly. Every legal choice of leader
+and four other cards therefore has exactly one member layout. Distinct leaders and distinct Snap bindings remain
+distinct teams. Required cards reserve their characters, already used characters are unavailable, and a required
+nonleader below the next allowed ID makes a prefix infeasible. These checks remove exactly the prefixes without a
+legal continuation, rather than using card quality to reduce the domain.
+
+For a prefix with `r` unfilled member slots, let `H_R^r(v)` be the sum of the values for the required remaining
+characters `R` plus the largest `r - |R|` values of other available characters. Each character's value is a maximum
+over its allowed cards. With a fixed leader profile, put `b(m) = A(m) + LEAD_bound(m)` and
+`wmax(m) = max(0, max_s W(m,s))`. Two power bounds are:
+
+```text
+U_pair = sum_fixed (b(m) + wmax(m)) + H_R^r(max_card (b(m) + wmax(m)))
+U_resource = sum_fixed b(m) + H_R^r(max_card b(m))
+             + sum_of_five_largest_s max(0, max_fixed_or_available_m W(m,s))
+```
+
+For `U_pair`, each actual card contributes at most its character maximum, and independent row maxima relax Snap
+uniqueness. For `U_resource`, the member sum is bounded independently and every used Snap contributes at most its
+column maximum; a team uses at most five distinct Snaps. Both dominate every completion, so their minimum does too.
+At an unassigned leader the maximum over possible leader profiles is also safe. At a complete member layout the
+bound uses an exact maximum-weight Snap assignment and the bounded leader constant. Complex leader effects can
+make that constant loose; they do not change the Snap weights or the upper-bound direction.
+
+**Fixed-layout assignment lemma.** For a complete member layout `M`, exact native power has the form
+`P(M,s) = P(M,None) + sum_i W(M_i,s_i)`. The first term is independent of the Snap binding, including with complex
+leader effects. Scan Snap resources once in public-ID order. After a scan position, a partial binding is described
+by its occupied-slot mask and assigned IDs. Two partial bindings with the same mask admit exactly the same future
+extensions: later resources are unused by both, and precisely the same slots are free. Applying a common extension
+adds the same power and fills the same previously empty positions, so it preserves both power order and the first
+existing lexicographic difference.
+
+Consequently, if a partial binding is behind `K` distinct partial bindings of its mask, every completion of it has
+`K` distinct better completions, obtained by applying the same extension to those witnesses. It cannot belong to
+that layout's Top-K. Induction over the resource scan proves that retaining the first `K` partial bindings per mask
+preserves the exact final Top-K, including empty slots and ties. Different final masks are merged before the final
+truncation. Resource scanning gives each binding one construction path, so the witnesses are distinct identities.
+
+**Local-to-global lemma.** Any binding omitted after keeping the first `K` of one layout has `K` distinct better
+teams of that same layout. It therefore cannot enter the global Top-K over all layouts. The evaluator supplies the
+reported native values; the leader bound is never substituted for an evaluated result. A member-prefix power cap
+below the incumbent K-th power permits pruning. On power equality, pruning additionally requires the prefix's least
+possible canonical key to be strictly greater than the K-th key. The key uses the lexicographically least feasible
+member completion and `None` in every Snap slot, which is a lower key for all its bindings under `None`-first order.
+
+### Deck payoff curves and bounds
+
+[Deck payoff bounds](../crates/ournotes-search/src/search/deck_payoff.rs) use the additive bonus
+`B = sum_members beta(m) + sum_used_Snaps beta(s)` and native power `P`. The compiled function `F(B,P)` is
+nondecreasing in both arguments. For deck-determined rewards it is exact; for score-dependent rewards it is an
+upper bound. Those two cases have different completion rules.
+
+| Payoff function | Meaning of the compiled value |
+| --- | --- |
+| `floor(reward * (B + 10000) * rate / 10000)` | Exact Skip event points at the configured result rank. |
+| `reward * rate` | Exact Skip challenge-point earnings; no card bonus is applied. |
+| `sum_j floor(count_j * (B + 10000) * rate / 10000)` | Exact conditional items for the declared selected rewards of the requested resource. Each reward is rounded separately. |
+| Score-step function at a score cap | Upper bound for each played order's score-dependent payoff. |
+
+The compiler resolves the requested result route, active events, reward rows and effect event before selecting a
+curve. It checks every contributing card-bonus cast and addition. Nonnegative bonuses make the largest legal
+five-member bonus no greater than the five largest per-character maxima; adding the five largest Snap bonuses
+also bounds every optional distinct-Snap selection. Compilation checks `B + 10000` and the native intermediate
+products over this interval. In particular, a zero final rate does not excuse overflow of the earlier
+`reward * (B + 10000)` product. These checks establish monotonicity of the integer arithmetic actually evaluated.
+
+At a member prefix, the fixed bonuses plus required-character maxima and the best remaining character values,
+together with the five largest Snap bonuses, give `B_upper`. The team power bound gives `P_upper`. Every completion
+has `B <= B_upper` and `P <= P_upper`, so `F(B_upper,P_upper)` bounds its payoff even if those two maxima cannot
+occur in one team. This is a relaxation; no assumption of positive correlation between bonus and power is needed.
+
+For played score-step payoffs, [the joint compiler](../crates/ournotes-search/src/search/joint.rs) supplies a
+per-outcome score cap `C(P) = ceil(P * global * (1 + eps))`. A reward table may decrease at a higher score: the bound
+uses the prefix maximum of the reachable tiers, rather than assuming the actual rewards are monotone. A target
+uses the indicator that `C(P)` reaches its threshold; a score-and-life target may relax the life requirement.
+Thus each order's payoff, and its lottery expectation when applicable, is at most `F(B,P)`. Multiplying by 120
+bounds the uniform-order payoff numerator. This conversion requires an orderwise score cap; a bound on mean score
+alone would not justify applying a discontinuous target or reward step in this way.
+
+### Snap frontiers with both bonus and power
+
+The payoff frontier scans Snaps with a state `(occupied mask, bonus sum, power increment, binding)`. Common
+extensions remain identical within one mask, as in the fixed-layout assignment lemma. A partial binding `x`
+dominates `y` for this purpose when its bonus is at least `y`'s and either its power is greater, or its power is equal
+and its Snap key is smaller. For every common extension, monotonicity of `F` gives a payoff at least as large; if
+payoffs tie, power and then the preserved canonical key put `x` first.
+
+States are processed by descending bonus. A state is discarded only after `K` distinct earlier states beat its
+power/key pair. Each is therefore a valid dominance witness with sufficient bonus. Applying any common extension
+gives `K` distinct teams ahead of the discarded state's completion. Induction preserves the first `K` full bindings
+under `(F(B,P), P, canonical IDs)`, and final sorting produces that order exactly. For a score-step curve, this is
+the exact order of the *bounds*, not a claim that the actual played payoffs equal them.
+
+This frontier can keep many mutually undominated bonus/power tradeoffs in one mask. Its width is not bounded by
+`K`, unlike the power-only assignment DP. The compilation checks on `K * max(1, number_of_Snaps)` and table sizes
+are algorithm-selection limits; they do not prove a wall-clock bound or a bound of `K` states per payoff mask.
+
+### Evaluation and reranking of payoff bounds
+
+[The payoff traversal](../crates/ournotes-search/src/search/deck_payoff_search.rs) ranks all teams by their compiled
+payoff, exact power and canonical IDs, then evaluates the first `K`. Use common payoff mass `D = 1` for Skip and
+`D = 120` for played Live. An unevaluated team has optimistic numerator `D * F(B,P)`; an evaluated shortfall is
+replaced by its exact numerator over that same mass. Numerator/denominator comparisons are checked explicitly.
+Replacing a bound by a smaller exact value only moves that team down. A payoff above its bound or a power mismatch
+is an error and cannot certify a ranking.
+
+**Reranking frontier lemma.** Suppose `f` bindings of one member layout have been moved down after evaluation.
+Any binding outside that layout's original first `K + f` has at least `K + f` bindings ahead of it; at most `f`
+of those can move down. At least `K` unchanged bindings still precede it. Therefore recomputing the original
+`K + f` frontier, applying the recorded decreases and merging the layouts preserves the new global Top-K.
+The count is per member layout, as are the frontier and recorded shortfalls.
+
+**Termination certificate.** In a round, every current ranking value is an upper bound on its team's true value,
+while already replaced values are exact. If all first `K` teams have settled values equal to their current ranking
+values and no new shortfall occurs, every other team's optimistic rank is behind those exact ranks. Its true rank
+can only move down, so the retained exact Top-K is globally correct. When the domain has fewer than `K` teams, all
+of them must be accounted for. This argument includes power and canonical-ID ties, not only primary-payoff values.
+
+A known evaluated team whose exact payoff is no longer retained cannot simply be skipped as an unsettled optimistic
+entry. For a bounded payoff that situation hands the domain to the joint traversal. A certified lottery evaluation
+that falls below the bound, a value that cannot be settled on the common mass, or continued shortfalls after eight
+ranking rounds also hands over. The continuation retains evaluated incumbents and searches the full legal domain
+with its own admissible bounds. The round limit changes the algorithm; it never converts an unresolved ranking
+into `Complete`. A time or candidate stop retains the root payoff cap for all unresolved work, including ranked
+teams not yet evaluated, and reports an incomplete search.
 
 ## Uniform member-order search
 
@@ -741,49 +843,55 @@ team is the mean of its payoff over the 120 performance orders, each equally lik
 
     U(team) = (1/120) * sum over the 120 orders of payoff(team, order)
 
-Each order has the outcome of a complete simulation with the declared judgement stream. Exact score laws,
-validated score programs and shared simulation prefixes can supply that outcome as described in
-[leaf evaluation](#leaf-evaluation). The payoff is the selected metric applied to that order's final score,
-rank and life, with the team's declared event context.
+An order's value is defined by a whole-live evaluation with the declared judgement stream. The payoff is the final
+score (or capped score), or the client event points of that order's final score, rank and life. Power and the
+terminal-payoff law are fixed for a team. Permuting the four non-leader member/Snap pairs preserves power and the
+distribution over performer sequences; their slots are a layout, not an additional decision. Changing power can
+change the payoff.
 
-Permuting the four non-leader `(member, Snap)` pairs preserves both power and the uniform mean payoff. To see
-this, let `sigma` be the slot permutation fixing slot 2. Relabeling every performance order by `sigma` gives a
-bijection on the 120 orders and preserves the actual sequence of paired performers. Corresponding simulations
-therefore have the same input and payoff. Summing over that bijection proves layout invariance. Leader choice
-and Snap pairing remain team decisions; power is an input to the score calculation.
+To justify this quotient, let `h` be a permutation of the four nonleader slots that fixes slot 2. Mapping each
+performance order `pi` to `h composed with pi` is a bijection of all 120 orders. The paired performers occur in the
+same sequence under corresponding orders, with the same leader, power and declared terminal mapping. Consequently
+their payoff multiset and mean are unchanged. All 24 layouts of the nonleader pairs have the same canonical team.
+This argument concerns the declared uniform-order law; it does not require the same seed to generate corresponding
+raw shuffle sequences.
 
 A skill probability check draws a random number. With Gekisou off such a draw ends the request with `Unsupported`.
-For Gekisou without a LUCK range, the recorder's effect and condition checks can certify that every draw history
-has the same score, life and declared rank arrivals. Such an admitted model keeps one exact score per order
-(`"lottery":"noLuckRange"`, below). LUCK models use certified intervals under the nominal conditional draw law
-defined in [LUCK](#luck).
+In the supported Gekisou domain without a LUCK range, probability-gated effects cannot affect the score, and each order keeps one exact
+score (`"lottery":"noLuckRange"`, below). A LUCK range decides its lottery with random numbers; those decks are
+ranked by certified intervals over the native lottery probabilities ([LUCK](#luck)).
 
 ### Result identity and shape
 
 `resultIdentity` is `team` (`fixedTeam` for a fixed-deck evaluation). A team is reported in its canonical layout: the
 leader in slot 2 and the other (member, Snap) pairs in slots 0, 1, 3 and 4 in ascending member card ID order. Every
 layout of the same pairs is the same team, and a fixed deck given in any layout evaluates and reports as that team.
-Lottery-free results are ordered by
+Results are ordered by
 
-1. `expectedPayoff.numerator`, descending (each such played-live result has denominator 120);
+1. expected payoff, descending; on the deterministic played branch this compares `expectedPayoff.numerator`
+   because each denominator is 120;
 2. power, descending;
 3. member card IDs of the canonical layout, ascending;
 4. Snap IDs of the canonical layout, ascending, with "no Snap" before every ID.
 
-Each lottery-free result carries `expectedScore` and `expectedPayoff` as exact fractions over 120, `scoreSummary` (minimum,
+Each deterministic played result carries `expectedScore` and `expectedPayoff` as exact fractions over 120,
+`scoreSummary` (minimum,
 maximum, lower quantiles and the probability of reaching a score target, over the 120 equally likely orders) and
 `bestOrder`: the first performance order, in lexicographic order of slot permutations, with the highest payoff and
 then the highest score. `bestOrder.performanceOrder` lists the result's slots in performance order,
 `bestOrder.members` the member card IDs in that order, with that order's `score` and `payoff`. It reproduces one play;
 it is not a decision of the search. `probabilityLaw` is `{"kind":"uniformMemberOrder","orders":120,"lottery":"none"}`.
-An admitted Gekisou model without a LUCK range whose skills read a probability reports `"lottery":"noLuckRange"`.
-Its recorder certificate establishes one exact score per order for every draw history; the absence of a LUCK
-range and the supported effect/condition checks are both premises of this certificate.
+In a Gekisou live without a LUCK range, a deck whose skills read a probability reports `"lottery":"noLuckRange"`:
+without a LUCK range the controller consumes no lottery, the probability gates only lottery chains and
+lottery-dependent score-ups, and each order still has one exact score.
 
-`Complete` certifies the first `min(K, number of legal teams)` under this order. LUCK teams use the
-[interval ranking certificate](#luck-ranking-certificates), with optional exact fractions and a separately
-certified order. [Outcomes and partial results](#outcomes-and-partial-results) specifies the stopping fields
-and the availability of whole-domain bounds.
+`Complete` certifies the first `min(K, number of legal teams)` teams under this order. `TimedOut` preserves
+complete deterministic evaluations, or certified enclosures on the LUCK route; the reason can be a time limit,
+candidate limit or another incomplete-search exit and is recorded separately. `telemetry.proof` reports the
+available bounds on unexplored work; an absent cap means that the unexplored value is unknown.
+An exhausted LUCK domain with unresolved interval ranking is `RefinementRequired` when no time or candidate stop
+takes precedence. A deadline reached during refinement can still return `TimedOut` after domain exhaustion.
+The [LUCK certificate](#luck-ranking-certificate) specifies its exact-value and rank fields separately.
 
 ### Traversals
 
@@ -791,14 +899,8 @@ The joint traversal assigns one `(member, optional Snap)` pair at a time in slot
 first. After the first non-leader slot, each slot takes a pair later in a fixed choice order than the previous slot's
 pair, so every team is visited once, in one layout. The composition traversal (Live with Gekisou off) branches on the
 leader and an unordered set of four other members, then on the Snap pairings of that composition. Leaves evaluate
-the canonical layout. Fix the traversal's total choice order. Each team's four nonleader pairs have exactly
-one increasing sequence, and the leader is chosen separately, giving one path per legal team. Composition search
-applies the same argument to member choices, then enumerates each legal Snap binding. A prefix may fail legality
-when it repeats a character or a real Snap, violates the leader restriction, conflicts with a required card
-of the same character, or leaves fewer slots than outstanding required members. Each condition rules out every
-completion of that prefix. Source: [joint traversal](../crates/ournotes-search/src/search/physical.rs),
-[composition traversal](../crates/ournotes-search/src/search/composition.rs) and
-[candidate domain](../crates/ournotes-search/src/domain.rs).
+the canonical layout. Neither traversal removes a legal pairing: there is no per-card quality cutoff, Snap dominance
+deletion or representative-only class matching.
 
 ### Node bounds
 
@@ -809,92 +911,34 @@ per character and then the largest required number of character values. Differen
 may reuse a Snap in the relaxation; this enlarges the feasible domain rather than deleting a resource.
 
 The existing Snap Live bound compiler supplies `A0`, `global`, `eps` and each pair's five position gains. Its
-supported-domain checks cover nonnegative score factors, conversion/recovery, frame re-execution drift, Gekisou
-combo and rank bonuses, and the score overflow ceiling. Class classification is used only to read these upper
+supported-domain checks cover causal nonnegative clocks, forward factor windows, finite normal score chains,
+conversion/recovery, frame re-execution drift, Gekisou combo and rank bonuses, and the score overflow ceiling.
+Class classification is used only to read these upper
 bounds: Snap identities remain in search.
 
-### From position gains to a mean score
+In one performance order the score of a team is at most `P * min(A0 + sum of the slots' position gains, global) *
+(1 + eps)`. Power `P` does not depend on the order, and under the uniform order every member is at every position
+with probability 1/5, so the mean of the gain sum is the sum of each pair's mean gain over the five positions. The
+function `x -> min(x, global)` is concave, so by Jensen's inequality the mean score is at most
+`P * min(A0 + sum of mean gains, global) * (1 + eps)`. Every node bound therefore reads position-mean gains (rounded
+up) and is multiplied by 120 to bound the payoff numerator. Unassigned members take per-character maxima of power
+and mean gain, which may come from different cards; this only enlarges the completion set.
 
-Write `g_i(k)` for the prepared nonnegative gain of physical pair `i` at skill
-position `k`. The per-order envelope premise is
+For normal-played PT with exactly one held target event, member and Snap bonuses are additive. Preparation requires
+nonnegative resolved per-card bonuses, rate and reachable rank values. It checks `bonus + 10000`, its product with
+rate, and the complete point product against `i32::MAX`, with `bonus` the largest event bonus of any team: the five
+largest per-character maxima of the member bonuses plus the five largest Snap bonuses (a team's members have distinct
+characters and its Snaps are distinct). The reward of one order is a step function of its score,
+not necessarily increasing. Its prefix maximum over reachable thresholds is at least the reward, and the concave
+majorant of that prefix maximum (the upper concave hull of its corners, flat after the last one) is a concave,
+nondecreasing function above it. The mean reward over the orders is then at most the majorant at the mean score
+cap, again by Jensen's inequality; the majorant is evaluated with rounding up, then the event bonus applies. At a
+complete team the per-order caps take the largest reward among the tiers reachable below each order's score cap.
 
-`S(d,o) <= P(d) min(A0 + sum_i g_i(pos_o(i)), G) (1 + eps)`.
-
-The admitted domain supplies `P(d)>=0`, finite nonnegative coefficients and the scorer's nonwrapping score conditions. Every pair occupies each of the five
-positions in exactly 24 of the 120 permutations. Thus, with
-`gbar_i=(sum_k g_i(k))/5`, linearity gives
-`E_o[sum_i g_i(pos_o(i))]=sum_i gbar_i`.
-The function `x -> min(x,G)` is concave and nondecreasing. Applying Jensen and
-then multiplying by the order-independent nonnegative power proves
-
-`E_o[S(d,o)] <= P(d) min(A0 + sum_i gbar_i, G) (1 + eps)`.
-
-The implemented `mean_up` rounds every addition and division toward an upper
-endpoint. Each stored mean therefore dominates its exact real mean. Prefix
-power and gain relaxations may attain their maxima on different completions:
-if `0<=P(d)<=Pplus` and `0<=A(d)<=Aplus`, then
-`P(d) A(d)<=Pplus Aplus`. Multiplying an integer mean cap by 120 gives a cap of
-the payoff numerator in the score objective.
-
-Source: [`uniform::mean_up` and `MEAN_ORDERS`](../crates/ournotes-search/src/search/uniform.rs), [`JointBounds::payoff_cap_from`](../crates/ournotes-search/src/search/joint.rs).
-
-### Reward steps, concave majorants and bonus cells
-
-Let `r(s)` be the resolved reward multiplier, including its nonnegative rate,
-and let `b` be a team's additive event bonus. In the admitted arithmetic domain,
-one order pays `floor((b+10000) r(s)/10000)`. The integer-domain checks establish
-the products used by this expression before the bound invokes its monotonicity.
-Define `rplus(x)=max_{0<=s<=x} r(s)` using the reachable rank thresholds. This
-function bounds each permitted reward even when successive tiers pay less.
-
-For a per-order score cap `C`, retain the thresholds at or below `C` and form the
-smallest nondecreasing concave majorant `H_C` of their prefix-maximum steps on
-`[0,infinity)`, flat after the final retained corner. The upper hull keeps
-nonincreasing chord slopes. Its value at each retained corner is at least that
-corner's reward; monotonicity then covers the interval until the next corner.
-All outcomes with score in `[0,C]` satisfy `r(s)<=H_C(s)`.
-
-If `E[S]<=M` and every order satisfies `0<=S<=C`, then
-
-`E[payoff] <= ((b+10000)/10000) E[H_C(S)]`
-`           <= ((b+10000)/10000) H_C(E[S])`
-`           <= ((b+10000)/10000) H_C(M)`.
-
-The first inequality drops only a downward floor, the second uses concavity,
-and the third uses monotonicity. Exact integer interpolation and a final ceiling
-produce the implemented cap. Its intersection with the per-order maximum
-`floor((b+10000) rplus(C)/10000)` is also valid. The choice of the truncated hull
-uses the per-order cap `C`, which is stronger information than a mean score cap.
-For example, outcomes at scores 0 and 100 with rewards 0 and 100 have mean
-reward 50; the score-step reward at mean score 50 may be 0. The majorant
-supplies the valid mean inequality.
-
-The per-order cap comes from both the spread above pair means and a placement
-bound preserving one pair per performance position. The placement DP has 32
-position masks. Each actual ordering appears in that DP or its free-column
-relaxation. Their minimum remains a cap of every order's gain sum.
-
-For a prefix, a distinct-character cardinality DP groups completions by their
-exact bonus sum. Each cell separately retains upper endpoints for power, gain,
-spread and weighted sums. Component maxima within the cell may be independent;
-all represent that same bonus. Apply the reward majorant within each cell, then
-take the maximum over cells. A physical team's bonus is shared by all orders,
-so any order-weighted sum is formed within one bonus cell before this maximum.
-The conditional power rule above applies to the cells attaining that maximum.
-
-Multiplayer contexts with signed final scores use a reward cap over the defined
-rank domain. A declared monotone room-score policy and the nonnegative-score
-checks permit local-score threshold preimages and the corresponding hull.
-For capped score, `min(S,t)` is concave and nondecreasing on the signed domain.
-For a score-target indicator, its per-order score cap establishes reachability.
-
-Source: [`PointBound::compile`, `mean_payoff`, `node_order_gain`](../crates/ournotes-search/src/search/joint.rs), [`concave_majorant` and `concave_value_ceil`](../crates/ournotes-search/src/search/uniform.rs),
-[`bonus_rows` and `bonus_caps`](../crates/ournotes-search/src/search/joint/bonus.rs).
-
-A numeric cap check removes a branch when its numerator cap is strictly below the full Top-K threshold, or the
-numerators tie and its power cap is strictly lower. Equality of both retains the branch unless a separate
-canonical-key certificate establishes closure, preserving member-ID/Snap-ID tie order.
-Exhausting the traversal therefore certifies the same Top-K as exhaustive enumeration of every team.
+A numeric branch test removes a branch only when its numerator cap is strictly below the full Top-K threshold,
+or the numerators tie and its power cap is strictly lower. With both numeric keys equal, the general test retains
+the branch. Routes that additionally construct a valid lower bound on the canonical ID key may prove exclusion
+using that key, as in composition search. The completion theorem below includes both rules.
 
 Unsupported bound domains, explicit duration/delta-clock overrides, negative bonuses and possible PT wrapping
 select exhaustive fallback and report `telemetry.environment.bounds.fallback`. Preparation errors are not converted
@@ -915,75 +959,156 @@ together. With `T = A0 + sum of the pairs' mean gains`, the mean score is at mos
 `P + lambda * T = lambda * A0 + sum over pairs of (power + lambda * mean gain)` is additive: a placed member
 contributes the largest term over its Pareto-optimal (mean gain, power) Snap choices, and each slot still to fill
 the largest term of one character not yet in the team, a distinct character per slot. Snap uniqueness and required
-members are relaxed. A golden-section search over `ln(sqrt(lambda))` picks a finite positive scale. Every such scale supplies a
-valid inequality, so approximation of the best scale affects only bound tightness. Taking the minimum over
-valid scales intersects their certificates. The carrier split likewise retains its uncoupled cap whenever
-a positive finite scale is unavailable. Arithmetic rounds outward. See
-[correlated caps](../crates/ournotes-search/src/search/joint/lambda.rs) and
-[carrier splits](../crates/ournotes-search/src/search/joint/carrier_split.rs).
+members are relaxed. A golden-section search over `ln(sqrt(lambda))` picks a finite strictly positive scale; scale
+selection changes tightness, and arithmetic rounds outward. Taking the minimum of independently certified scales
+intersects valid caps. The analogous [carrier split](../crates/ournotes-search/src/search/joint/carrier_split.rs)
+keeps its uncoupled cap when power or coefficient is nonpositive, the coefficient is nonfinite, or a finite
+positive scale cannot be obtained. The real inequality alone does not authorize an invalid floating-point scale.
 
 ### Leaf evaluation
 
-A complete team uses [`search/leaf.rs`](../crates/ournotes-search/src/search/leaf.rs). Complete cached
-score/life laws and valid recorded order programs supply exact outcomes in their proved context. For remaining
-orders, cheap, raw and fine caps provide per-order bounds. The team closes when their sum with the already exact
-payoffs satisfies the canonical cutoff.
+On the deterministic played branch, a complete team in its canonical layout has one value per performance order
+(`search/leaf.rs`). Once the Top-K is full, the
+team first gets one cap per performance order: the cheap envelope with that order's position gains, then the raw and
+fine per-note caps of that order. If the sum of the caps is below the K-th payoff numerator (or equal with a smaller
+power), the team is dropped without simulation. Otherwise the order driver shares equivalent simulation prefixes
+and visits each node's child groups in descending total-cap order. The
+[simulation cutoff](#simulation-cutoff) combines exact payoffs of completed orders with caps of every remaining
+order, including the group currently sharing a prefix. After each completed order, the same total decides whether
+the remaining orders are needed. A surviving deterministic team obtains exact values for all 120 orders.
+The LUCK branch instead maintains complete per-order enclosures and uses the
+[interval ranking certificate](#luck-ranking-certificate).
 
-The remaining simulations form a tree of performance-order prefixes. Before the next unassigned performer acts,
-every order below the same node has the same live state. Cloning that state and assigning the next performer
-therefore produces the same child state as a complete run of each descendant order. Induction on the five
-positions establishes all 120 terminal outcomes; completed orders are stored by their exact permutation.
+### Shared simulation prefixes
 
-At an open tree node, the direct cap bounds all its descendant orders. Completed child totals plus bounds of
-open and unstarted children provide another cap. Their minimum is valid, and propagating it to the root bounds
-the team's complete numerator, including reused orders. The [simulation cutoff](#simulation-cutoff) refines
-a node's cap using only settled score frames. A stopped tree retains completed reusable orders; a scalar team
-enters Top-K only after its complete aggregate is available. Source:
-[order-tree evaluation](../crates/ournotes-sim/src/live/full/orders.rs).
+The five-member `OrderedLive` route preserves a state-equivalence invariant. At a node, all represented orders
+agree on the fixed positions, the model is at a complete frame boundary, and no member of an open position has
+fired a performance event, returned a condition-effect updater or consumed a skill-random value. Moving those open
+members and their private state to any represented order must give the same subsequent behavior as its separate
+simulation.
+
+Untouched checkers may update their private counters, previous values and caches. Those states move with their
+owner. Their only dynamic position predicate is the owner's performance-event check, including recursive instances
+inside compound checkers, and it is remapped. Static formation conditions depend on the unchanged member set and
+owner. Within a skill phase, life checks query the same timestamp before any applier writes. Repeating that query
+against the same life-command log is idempotent, so these cache reads commute. A random draw makes its owner touched
+even when the condition ultimately fails, preventing that draw from being shared across an unresolved position.
+
+Relocation updates owner keys, effect-count keys and idle plans, and sorts the effects by their relocated native
+keys. The sort is necessary because a position shift can cross a signed wrapping boundary. Private checker and
+updater state stays with the same effect; frame-local scratch state is rebuilt before reuse. Global applier
+registrations belong only to fixed members, since an open member has returned no updater. Random stream state
+clones by value. Score logs share only immutable prefixes, with separate mutable tails for subsequent work.
+
+An announced open event splits before its frame. An unannounced condition action is detected on a clone, and the
+driver replays only to that frame's preceding boundary. Each split fixes another member-position pair and
+partitions every represented order into exactly one child. Induction over shared frames and these splits gives
+each completed order the same native outcome as its separate simulation. Under this invariant each constituent
+order's cutoff table applies to the shared settled prefix; their sum bounds the group's remaining payoff.
+
+This lemma concerns the ordinary model construction used by this search. Scripted lottery-probe models require
+their separate probability argument, and the lottery-free construction requires its no-LUCK certificate.
+Implementation: [order driver and relocation](../crates/ournotes-sim/src/live/full/orders.rs),
+[checker/updater relocation](../crates/ournotes-sim/src/live/full/engine.rs).
 
 ### Global upper bound
 
-`telemetry.proof.globalUpperBound` bounds the best payoff numerator over the whole domain: the larger of the best
+On deterministic routes that track it, `telemetry.proof.globalUpperBound` bounds the best payoff numerator over the whole domain: the larger of the best
 payoff found and the bounds of the branches still open. The composition traversal bounds every leader's subtree
 before the search and drops a leader's bound when its subtree is done; the joint traversal in descending root-bound
 order reads the bound of its remaining root children. The recorded value only decreases. It equals the best payoff
 once the search is complete; after a stop it is at most the larger of the best payoff and `upperBound`. Every point
-of the incumbent timeline carries the value at that time (`upper`). With several sequential search parts (Gekisou
-conversion parts) it is reported only once the search completes.
+of the incumbent timeline carries the value at that time (`upper`) where available. With several sequential search
+parts (Gekisou conversion parts), a running timeline may lack this scalar. The final result can publish it after
+completion or an interrupted unwind that has covered every later part's cap.
+
+This scalar concerns the primary value of the best team. Equality with the best incumbent's value alone does not
+certify K results, power ties or canonical-ID ties. Those claims require the remaining ranking obligations to close.
+The certified LUCK route uses its interval frontier and rank certificates; this deterministic scalar is not its
+expectation or ranking certificate.
 
 ### Initial decks
 
-`initialDecks` lists up to 100 legal decks of the domain that the search considers before its traversal, for
-example the best decks of a heuristic. They use the same leaf contract: a complete evaluation can enter Top-K,
-and a pruning certificate can close a team already below the current cutoff. An interrupted evaluation remains
-open. Preselected teams preserve the legal domain, objective and canonical order, so every completed search has
-the same result. Their effect on the incumbent cutoff can change traversal work and a stopped search's results
-and bounds.
+`initialDecks` lists up to 100 legal decks of the domain that the search evaluates or safely excludes before its traversal, for
+example the best decks of a fast heuristic. They only fill the Top-K earlier, which lets the bounds prune sooner;
+their team identities are retained as handled. When the search completes, the ordered result is independent of
+these proposals. Work counts, cutoff evolution and results of an incomplete search can depend on them.
 
 With `search-diagnostics`, `search::diagnostics::prefix_upper`, `module_prefix_uppers` and `audit_order_caps` expose
 the node bounds, the module bounds and the per-order caps of a team. The harness independently enumerates every team
 and checks every prefix against its exact value and power, then compares the entire ordered Top-K (see
 [validation](#validation)).
 
-### Evaluation reuse and supplied candidates
+### Deterministic completion theorem
 
-Candidate identity caching records a completed evaluation or a sound exclusion. The monotonically improving
-cutoff preserves that exclusion on later encounters. An interrupted evaluation stays eligible for future work.
-Cache eviction changes the amount of repeated work while preserving domain coverage.
+Fix a validated request and its finite legal team domain `D`. Let `N(t)` be a team's exact payoff numerator on
+the common mass, `P(t)` its power, and `I(t)` its canonical member/Snap key. Order teams by
+`N descending, P descending, I ascending`. The direct member-set route uses its own representative key instead.
+The following obligations establish the complete result:
 
-The request-local `TeamScores` cache keys a complete lottery-free score law by the unordered member/Snap pairs
-and exact power. Its 120 score/life values are relabelled bijectively into the requested team's slots.
-The payoff is recomputed for that team, preserving deck-dependent event bonuses and final-life targets.
+1. **Coverage.** The traversal initially covers every legal identity. Each branching step partitions its legal
+   continuations, or covers them with overlap while preserving identity deduplication. An assignment reduction
+   accounts for each omitted result by the distinct dominating witnesses proved for that route.
+2. **Values.** Every incumbent is a legal, fully evaluated result under the fixed target. An exact cache or
+   score-program substitution supplies the same value as its specified evaluator. A partially simulated team
+   supplies no incumbent value.
+3. **Bounds.** Every discarded subtree has a valid upper bound on all its completions' primary values. A
+   secondary power cap covers all completions that can tie the primary cutoff. Any canonical key bound is a
+   lower bound under ascending ID order.
+4. **Retention.** The Top-K contains distinct result identities, uses the declared entire key, and keeps the
+   first K among the completely evaluated candidates. Representative replacement preserves or improves a key.
+5. **Closure.** Every continuation is either handled or certified unable to enter Top-K. Exhaustion, rather
+   than a budget or heuristic stopping rule, supplies this last obligation.
 
-The request-local program cache compares the complete performer values and member identities. The request fixes
-the chart, play, clocks, scenario and simulator parameters other than power. A stored completed order supplies
-an exact score program and its final life; the program is evaluated at the candidate's actual power, and its
-payoff is recomputed. Missing orders remain explicit. The program's admission contract is described in
-[score programs](score-programs.md). Equality caching of LUCK additionally includes the full payoff mapping.
+Here is the pruning proof with ties included. Suppose the full incumbent set has last key `(T, P_K, I_K)`.
+For node `v`, let `U(v)` cap `N(t)` for each completion `t`. If `U(v) < T`, the K distinct incumbents all
+precede every completion. If `U(v) = T` and the relevant power cap is below `P_K`, each completion either loses
+on the primary value or loses on power. If both caps equal the cutoff and `I_min(v) > I_K`, each completion
+also loses on the canonical key. A non-strict key test additionally accounts for the equal-key identity that has
+already been handled. Without a key certificate, equality of the numeric caps leaves the branch open.
 
-`initialDecks` and assignment proposals pass through the same legality, leaf-evaluation and cutoff contracts.
-They establish useful incumbents before the complete traversal. Their ordering can change the work and partial
-results; every completed run optimizes the same legal domain with the same objective and canonical order.
+The K-th full key can only improve. Therefore a rejection supported by K distinct incumbents stays valid even
+when those witnesses later leave Top-K: replacements are better witnesses. At closure, every omitted identity
+has K better retained-or-replaced witnesses. It cannot belong to the mathematical first K. Every returned value
+is correct by the value obligation, and Top-K retention gives the right order. If fewer than K identities
+exist, coverage and closure account for all of them.
+
+This proof also explains which shortcuts need separate lemmas. Member-set representative maximization needs
+its score/power monotonicity and class-equivalence assumptions. A team search retains distinct leader and Snap
+bindings and uses the per-layout K-witness argument. A compiled coefficient, a heuristic proposal or a scalar
+best-value certificate supplies only its own local obligation.
+
+### Partial leaves, caches and search parts
+
+For a deterministic team, after a set `E` of orders has completed, its numerator is bounded by
+
+    sum_{pi in E} exact_payoff(pi) + sum_{pi not in E} order_cap(pi).
+
+During the current order, its second term may be replaced by a valid simulation-cutoff cap. Replacing a cap by
+that order's exact value preserves coverage. If this total loses against the incumbent key, the whole team is
+safely handled; otherwise all 120 orders must complete before offering its exact mean. A cooperative budget
+stop can preserve already completed teams, but cannot promote this partial sum to an exact expectation.
+
+The same invariant applies when an identity is skipped because it was already handled. Its previous handling
+must be a complete evaluation or a valid exclusion against an earlier, no-better cutoff. A cache eviction may
+cause repeated work; it does not change the mathematical domain or justify a new exclusion.
+
+`TeamScores` keys a complete lottery-free law by unordered member/Snap pairs and exact power. It relabels all
+120 score/life values bijectively into the requested slots, then recomputes that team's payoff, including event
+bonus and final-life conditions. The request-local program cache instead keys full performer values and member
+identities; the request fixes chart, play, clocks, scenario and all other simulator parameters except power. Each stored
+completed order supplies an exact program evaluated at the candidate's actual power and its final life, followed
+by a fresh payoff calculation. Missing orders remain incomplete. See [score programs](score-programs.md) for this
+admission and evaluation contract; LUCK equality additionally includes the full payoff mapping.
+
+For disjoint search parts, such as conversion regimes, their union must equal the original domain. They share
+one incumbent order, and each part's bound must cover that part under its own constraints. Completion requires
+every part to close. An incomplete whole-domain bound must cover the active part, unfinished siblings, remaining
+root leaders and all later parts. Where the implementation cannot retain that coverage as one scalar, the
+scalar remains unavailable.
+
+Theorem obligations concern the actual arithmetic and domain checks used by each route. The accompanying
+finite-oracle tests check instances of these obligations; they do not replace the universal arguments.
 
 ## Prefix bounds
 
@@ -992,7 +1117,7 @@ sound envelope it uses there and the condition that keeps the envelope sound.
 
 | Relaxation point | Sound envelope | Necessary boundary |
 |---|---|---|
-| Skill windows and weighted notes | Compile weighted interval sums per performance position; node bounds read the mean over the five positions; intersect an own-event trigger with its mission gate. | A trigger cannot invent extra trigger events or move its window. |
+| Skill windows and weighted notes | Compile weighted interval sums per performance position; node bounds read the mean over the five positions; intersect a certified own-event trigger with its mission gate. | The trigger and release behavior must satisfy the timing certificate. |
 | Member/Snap power and skill tradeoff | Bound a weighted sum of power and coefficient for the same pair, then apply `P A <= (P + r A)^2 / (4r)`, taking the minimum over positive `r`. | Preserve leader context and distinct-character maxima; optional reuse of remaining Snaps only enlarges the domain. Round outward. |
 | Unique Snap capacity | Bound member-only contributions plus at most one positive increment per available Snap; intersect with the character-wise bound. | Snap increments must be bounded over every possible remaining member and position, including negative pair differences. |
 | Mission ranges | Charge JUST, COMBO, LUCK and rank bonuses only to the notes/ranges that can receive them. | Confirmation replay and boundary frames follow the scorer; a display Fever ratio is insufficient. |
@@ -1007,16 +1132,17 @@ bounds and never prune the integer scorer.
 
 The bounds in use:
 
-- Own-event Gekisou factor windows use the performer's event frames and mission gate.
+- Certified own-event Gekisou factor windows use the performer's event frames and mission gate; rows with release
+  checkers retain the general timing envelope.
 - Cheap prefix bounds intersect distinct-character maxima with unique-Snap capacity bounds for power, gain and
   event bonus.
 - Optional correlated envelopes retain the power/skill tradeoff of each pair.
 - At surviving leaves, per-note envelopes use the candidate's conversion reach, budgets and combo windows, and
   take the maximum over exclusive judgements.
-- PT transforms the per-order cheap and fine score caps of a complete team through all reachable solo reward tiers,
+- PT transforms the per-order cheap and fine score caps of a complete team through all reachable reward tiers,
   and node bounds through the concave majorant of the tiers. It does not assume that a higher grade pays more.
-  Declared monotone multiplayer room-score policies with nonnegative score bounds admit local threshold
-  preimages; other multiplayer contexts use the full defined-rank reward cap.
+  A declared multiplayer score policy with nonnegative rank confirmations permits local-score preimages of room
+  thresholds; without that certificate, the route keeps the unrestricted reward ceiling.
 
 **Network rank snapshots.** Network rank bonuses read retained controller score snapshots. A timed factor can
 still affect notes in its finish score frame before the end command is filed, so the snapshot factor envelope
@@ -1029,9 +1155,8 @@ bound and keeps the ordinary complete traversal. The probe is a cost policy, not
 candidates; diagnostics still audit the correlated bound when the policy skips it.
 
 The coefficient, correlated and node bound checks read position-mean gains; the per-order caps of a complete team
-read each order's own positions and are summed with checked integer arithmetic. Numeric cap checks compare these
-to the canonical K-th incumbent with strict payoff/power rejection. Equality of both keys retains possible ID
-ties unless a separate canonical-key certificate establishes closure.
+read each order's own positions and are summed with checked integer arithmetic. All are compared to the canonical
+K-th incumbent with strict payoff/power rejection. Equality of both keys retains possible ID ties.
 
 **Judgement-frame triggers.** Judgement-match and count conditions (1000/1010/1020/1030/1040) require a
 judgement in the current frame. Possible triggers are therefore restricted to frames with a raw judgement,
@@ -1053,6 +1178,10 @@ group of one set with one remaining condition can carry an earlier override time
 **Sustained windows.** A sustained Gekisou effect runs one execution at a time, each inside the span of its start
 frame (its earliest trigger time to the first later frame whose trigger fails), so its factor windows are the
 components of the union of those spans, each with the executions of its own start frames.
+For timed Gekisou and Rush rows with a release checker, nominal activation time alone supplies no upper end:
+the checker can bypass the first elapsed-time test. Their general windows retain the effect unless a separately
+proved release, such as completion of the matching range, bounds its end. Conversion registration windows use the
+same lifecycle restriction.
 
 **Candidate suffixes.** Candidate-suffix envelopes precompute component maxima after every position in the
 ordered member/Snap choice list. For a surviving prefix, the next slot is bounded by its suffix and the other
@@ -1062,15 +1191,13 @@ entire remaining loop. The `tailChoicesSkipped` counter counts pair-loop entries
 distinct complete decks.
 
 **Next pair.** Each surviving prefix also prepares the residual once, excluding the next slot. A constant-cost
-per-pair check combines that residual with the proposed pair's prepared power and gain bounds and exact event bonus before
+per-pair check combines that residual with the proposed pair's actual power/gain/bonus components before
 recursing. It allows the residual to reuse that pair's character/Snap, so it remains an upper bound. Only
 survivors pay for a fresh, stronger resource-aware prefix scan.
 
 **Table form.** The cheap prefix relaxation is compiled into tables. A prefix fixes at most four characters and
-four Snaps. An entry omitted from the five best distinct keys has five retained competitors, at least one
-of which remains free after four exclusions; that retained value is at least the omitted value. Thus the
-five-entry table preserves the exact free-key maximum. Keys are Snaps for per-character maxima and characters
-for per-Snap increments; reusable None retains its explicit availability. The values and floating operations equal the
+four Snaps, so keeping the five best entries with distinct keys (Snap for per-character maxima, character for
+per-Snap increments) returns the exact maximum over the free keys. The values and floating operations equal the
 member/Snap scan, so the relaxation returns identical numbers.
 
 ## PT bounds
@@ -1120,7 +1247,7 @@ expected payoff and residual power, so a completion whose payoff reaches the ove
 total is the cap. A branch whose payoff cap equals the K-th payoff numerator survives only when the largest power
 among those cells reaches the K-th result's power.
 
-Residual tables depend on leader profile, excluded characters and remaining positions. They are
+Residual tables depend on leader profile and excluded characters. They are
 reused only within one compiled bound/domain; used Snaps need not enter the key because residual Snap reuse is
 explicit. Limits on states, convolution work and retained cells disable this optional bound rather than dropping
 DP states. All numeric equality cases retain the original canonical ranking rules. This layer supplements the
@@ -1141,32 +1268,25 @@ uniqueness and bounds remaining power with bipartite assignment. Numeric ties al
 canonical layout of the composition with the Snaps assigned so far and None in each unassigned Snap slot. This key
 is no greater than any legal completion because None is always allowed and sorts before every Snap ID.
 
-When at most two Snap slots remain, the numeric assignment is solved directly. Fix the other row of an optimal
-assignment. It occupies at most one real Snap, so one of a row's two best choices is still available; optional
-None stays reusable. Replacing an omitted choice by that available choice preserves feasibility and cannot
-reduce weight. Applying the replacement to both rows proves that their two-choice sets contain an optimum. Zero
+When at most two Snap slots remain, the numeric assignment is solved directly. At most one real Snap can conflict
+with the other slot, so each row's two best choices, including optional None, contain an optimal assignment. Zero
 remaining slots need no assignment call. The general matcher remains the value reference; the fast residual tie
 convention is not used as a Top-K certificate.
 
-For PT, when the best-power proposal attains the composition's primary-payoff cap, a small resource DP separately
+For PT and the other bounded terminal objectives admitted by this path, when the best-power proposal attains the
+composition's primary-payoff cap, a small resource DP separately
 solves the **power-only** Top-K bindings of the composition's layout. After scanning a Snap, future resources depend
 only on the occupied-slot mask. Keeping K partial bindings per mask is therefore exact for power and None-first
-identity ordering. To prove the K-entry retention rule, fix a scanned-resource prefix and occupied-slot mask. Every partial
-binding in that state has the same possible continuations: the remaining resources and unoccupied slots agree.
-Appending one continuation adds the same power and preserves the first differing occupied-slot Snap key.
-If a partial binding has K better partial bindings in the state, the same continuation gives K distinct better
-complete bindings. Thus discarding it preserves the power-only Top-K, including signed edge increments and
-None-first ties. When the domain has fewer than K bindings, all of them survive.
-
-The Snap increments in the validated power table are exact; all member/leader-only terms are
+identity ordering. The Snap increments in the validated power table are exact; all member/leader-only terms are
 constant across bindings, including a complex leader's fixed-member contribution. The actual power of the last
 proposal is read through the ordinary evaluator's power path before using it as the remaining-power cap.
 
-Every proposed binding is evaluated exactly over the 120 performance orders. All unexamined bindings rank after the
+Every proposed binding is completely evaluated, resolved from existing evaluation state, or safely excluded by
+an admissible leaf cap. All unexamined bindings rank after the
 last power proposal. The composition may close only when its primary-payoff cap, the remaining-power cap and canonical
-lower key cannot beat the updated global K-th result. An equal cutoff key is already evaluated. If fewer than K legal
+lower key cannot beat the updated global K-th result. An equal cutoff key is already handled. If fewer than K legal
 bindings exist, the DP returned all of them and the composition is exhausted. Otherwise a failed closure
-proof resumes the complete Snap traversal, excluding only the identities already evaluated in this layout. Higher
+proof resumes the complete Snap traversal, excluding only the identities already safely handled in this layout. Higher
 power is **not** assumed to imply higher PT, and a nonmonotone reward table does not justify representative-only
 pruning. The cap-attainment condition is a cost policy only: skipping the frontier leaves complete Snap traversal
 intact. Compositions without Snaps have one binding and close immediately after its exact evaluation.
@@ -1176,17 +1296,19 @@ the PT membership regime above. Both schedules optimize over the same teams and 
 
 ## Class and resource envelopes as explicit harness schedules
 
-Two diagnostic schedules separate two independent decisions: an upper-bound effect class in each slot, then the
+For Gekisou score objectives, two diagnostic schedules separate two decisions: an upper-bound effect class in each slot, then the
 unique Snap assignment inside those classes. A class is an identity in `JointFineBounds` metadata only. Every
 allowed completion remains represented. A constrained assignment proves infeasibility or maximum power; at a
 complete class vector the per-note fine bound, summed over the 120 performance orders, applies to every binding
 because its inputs are exactly members, classes, positions and an upper bound on power (`JointFineBounds::upper`
-projects each choice through `class_of`). Surviving bindings still receive the full evaluation over the orders. There is no representative-only score reuse and no assumption that actual score is
-monotone in power.
+projects each choice through `class_of`). Surviving bindings reach the ordinary leaf path, which either evaluates
+them or proves their exclusion. The [class-envelope proof](#class-envelopes) uses direct per-entry admissibility
+at the supplied power cap; it requires neither representative-only score reuse nor monotonicity of actual score
+or of the entire relaxed fine-envelope function.
 
 The resource-correlated cap addresses a different relaxation. For a fixed member composition, write the mean score
 envelope as `P*A`, where `A = a0 + sum(mean gain)`. For every positive `r`, `P*A <= (P+r*A)^2/(4*r)`. Each pair's
-`power+r*gain` is rounded up to an integer before subtracting a row shift. An exact constrained assignment then
+`P+r*gain` is rounded up to an integer before subtracting a row shift. An exact constrained assignment then
 maximizes the sum with each Snap used at most once; None remains independently available only in allowed slots.
 Restoring the row shifts and constant `r*a0` gives an upper bound on `P+r*A`. Floating operations round outward
 and retain the scorer margin. The minimum over three positive scales intersects the other caps; unavailable
@@ -1206,6 +1328,247 @@ coefficient fit is not an exact evaluator: score rank conditions, signed undo/re
 integer wrapping and float factor drift all intervene. Exact per-deck programs and their checked monotonicity
 certificates are described in [score programs](score-programs.md).
 
+## Proofs for prefix and assignment bounds
+
+These arguments apply to one compiled bound and its declared candidate domain. Let `N(D) = 120 U(D)` be a team's
+scaled expected payoff, `P(D)` its power, and `C(N)` the legal completions of a node. A payoff cap `U(N)`
+must satisfy `N(D) <= U(N)` for every `D` in `C(N)`. For LUCK, an orderwise cap also covers every admitted lottery outcome before averaging. A power cap used after payoff equality need only cover the
+completions that can reach that payoff cap; a general power cap covers all completions.
+
+### Position means and component maxima
+
+For a team with member/Snap pairs `i = 0..4`, write `g_i(k)` for its compiled gain at performance position `k`.
+The underlying score-envelope obligation is, for every order `pi`,
+
+```text
+S(D, pi) <= (1 + eps) P(D) min(G, a0 + sum_i g_i(position_pi(i))).
+```
+
+Here power, `a0`, `G`, gains and the margin are nonnegative; the compiled domain must also establish that the
+envelope covers the scorer's integer and floating operations. Every slot occupies every performance position in
+exactly 24 of the 120 permutations. Therefore, with `mean_i = sum_k g_i(k) / 5`,
+
+```text
+E_pi[S(D, pi)] <= (1 + eps) P(D) min(G, a0 + sum_i mean_i).
+```
+
+This follows from linearity of expectation and Jensen's inequality for the concave, nondecreasing function
+`x -> min(G, x)`. The five positions need not be independent. The stored means round upward, so replacing a real
+mean with its stored value preserves the inequality. A mean cap multiplied by 120 bounds the score numerator;
+the single position-mean pseudo-order is a representation of that cap, not one simulated performance order.
+
+For any additive component, choosing the `r` largest remaining distinct-character maxima bounds every choice of
+`r` remaining characters. Component maxima for power, gain and event bonus may come from different completions:
+the resulting rectangle contains every completion. Products require nonnegative components; the joint compiler
+proves nonnegative slot power, bounds total power below `i32::MAX`, and rejects negative or nonfinite gains.
+
+Implementation: [means and order enumeration](../crates/ournotes-search/src/search/uniform.rs),
+[joint compilation and components](../crates/ournotes-search/src/search/joint.rs).
+
+### Unique-resource relaxation
+
+For one component `x`, decompose a member/Snap choice at position `k` as
+
+```text
+x(m, s, k) = x(m, None, k) + delta(m, s, k),
+Delta(s) = max(0, max over eligible remaining members and positions of delta(m, s, k)).
+```
+
+Every completion with `r` free slots uses at most `r` distinct real Snaps. Its component sum is consequently at
+most the sum of the `r` largest free-character no-Snap maxima plus the `r` largest available `Delta(s)` values.
+Taking the minimum of this bound and the distinct-character bound remains sound. The two maxima may relax
+different constraints; both inequalities must hold for the same completion before they are intersected.
+
+The increment is formed from the same member's paired and unpaired values. A negative increment is covered by
+zero because Snap use is optional. This reasoning does not permit subtracting independently maximized paired
+and unpaired values: their maximizing members may differ.
+
+Candidate-suffix bounds apply the same inclusion argument. Every remaining child uses a next pair from its
+suffix; the other slots belong to the residual relaxation. Permitting that residual to reuse the proposed pair's
+character or Snap enlarges the completion set. A bound below the cutoff therefore closes the whole suffix.
+
+Implementation: `scan_free`, `tail_upper` and `pair_upper` in
+[joint bounds](../crates/ournotes-search/src/search/joint.rs).
+
+### Weighted sums and quantized assignment
+
+Put `A(D) = a0 + sum_i mean_i`. For every positive scale `r`,
+
+```text
+4 r P(D) A(D) <= (P(D) + r A(D))^2,
+P(D) + r A(D) = r a0 + sum_i (p_i + r mean_i).
+```
+
+The first inequality is equivalent to `(P(D) - r A(D))^2 >= 0`. If an additive relaxation gives
+`W >= P(D) + r A(D) >= 0`, squaring preserves the inequality, and
+`(1 + eps) W^2 / (4r)` is a score cap. Each pair contributes its own power and gain before maximization.
+Distinct-character maxima may relax Snap uniqueness; resource assignment may instead retain unique Snaps.
+Every positive scale gives an independent valid cap. A grid or finite optimization procedure may choose any
+evaluated scales and take their minimum; proving that it finds the best scale is unnecessary for admissibility.
+
+The resource version first rounds each absolute edge upward:
+
+```text
+q(i, s) = ceil(up(p(i, s) + r g(i, s))),
+shift(i) = q(i, None),
+weight(i, s) = q(i, s) - shift(i).
+```
+
+The subtraction is exact integer arithmetic. For every allowed binding, adding all row shifts back to its
+assignment weight recovers the sum of its quantized absolute edges. This remains true when None is forbidden
+in some rows: the shift is an algebraic constant, not a choice the binding must make. Maximizing with unique
+real Snap columns and independently available allowed None columns therefore bounds every legal weighted sum.
+
+For this optional quantized matcher, each absolute edge lies in `[0, 10^15]` and there are at most 4096 real
+Snap columns. Five absolute edges sum to at most `5 * 10^15 < 2^53`, so that integer sum converts exactly to
+binary64. Row shifts and assignment arithmetic also stay within their integer ranges. The weighted square,
+division and margin operations round outward. These statements concern the quantized weighted expression;
+the ordinary score-product caps additionally rely on the scorer-envelope margin theorem.
+
+An unavailable numeric or storage range disables the optional cap. It does not discard an edge and then use
+the reduced assignment as an upper bound. Surrogate assignments used to obtain incumbents have a separate role:
+they propose legal teams whose actual payoff still goes through the leaf evaluator.
+
+Implementation: [resource product](../crates/ournotes-search/src/search/joint/resource.rs),
+[prefix resource tables](../crates/ournotes-search/src/search/joint/prefix_resource.rs),
+[member-additive scales](../crates/ournotes-search/src/search/joint/lambda.rs).
+
+### Exact maxima from bounded tables
+
+An unfinished prefix occupies at most four character keys and four real Snap keys. A table retaining its five
+largest values with distinct excluded keys therefore retains a maximum among all free keys: at least one of
+those five survives, and every omitted value is no larger. If fewer than five keys exist, the table retains all
+of them. None is a choice that is never excluded by another slot's None. The stored table and the direct scan
+use the same values and accumulation order, which is required for their stated numeric equality.
+
+A related exchange argument proves the small residual character solver. With `k <= 4` mandatory rows, retain
+each row's `k` largest distinct-character edges. If an assignment uses an omitted edge, at most `k - 1` retained
+characters are occupied by other rows. Replacing that edge with a free retained edge preserves feasibility and
+cannot lower the value. Repeating this replacement produces an optimum using retained edges only.
+
+With at most two free Snap slots, the same argument retains two choices per row, treating None as a shareable
+choice. At most one real Snap is blocked by the other row. These arguments prove numeric optimum values; their
+tie choices do not certify a physical Top-K representative.
+
+Implementation: [relaxation tables](../crates/ournotes-search/src/search/joint/relax_tables.rs),
+[residual character solver](../crates/ournotes-search/src/search/joint/prefix_character.rs),
+[small Snap assignment](../crates/ournotes-search/src/search/matching.rs).
+
+### Residual assignment lemma
+
+Fix the leader-first prefix. When every remaining character must be used, let `M_c` be one character's allowed
+members, and let `l_m` be the compiled leader contribution, which may be an upper bound for a complex leader.
+Define `h(c, None) = max_{m in M_c}(a_m + l_m)` and
+`h(c, s) = max_{m in M_c}(a_m + l_m + w(m, s))`.
+
+Every completion maps to a character/Snap assignment whose edges dominate its actual member contributions.
+Subtract `h(c, None)` from its real-Snap edges and restore these row constants after matching. Used Snaps are
+excluded; zero-weight dummy rows can choose None, so padding to five rows leaves the residual optimum unchanged.
+Required-member restrictions are relaxed. A complex leader can make the resulting number optimistic, which is
+sufficient for a cap. The matcher tie convention does not matter because only its numeric optimum is consumed.
+
+The current optimization runs at prefix depths 1 through 3 and is consulted after payoff equality. A strictly
+smaller power cap then proves inferiority; equal power retains the canonical ID alternatives.
+Implementation: `assignment_power_upper` in [joint bounds](../crates/ournotes-search/src/search/joint.rs).
+
+### PT from a score cap
+
+Let `h(s)` be the actual nonnegative reward multiplier at score `s`, possibly decreasing at higher ranks, and
+let `m(s) = max_{t <= s} h(t)`. For a valid per-order score cap `s_max`, take a concave, nondecreasing majorant
+`H` of the prefix-maximum reward steps reachable at scores at most `s_max`. For one team's constant event bonus
+`b >= 0` and a valid mean-score cap `s_mean`,
+
+```text
+Y_pi = floor((10000 + b) h(S_pi) / 10000),
+E[Y_pi] <= (10000 + b) E[H(S_pi)] / 10000
+        <= (10000 + b) H(E[S_pi]) / 10000
+        <= (10000 + b) H(s_mean) / 10000.
+```
+
+The final bound rounds upward and intersects the direct maximum reachable per-order payoff. Applying the raw
+reward function to mean score would be unsound: 60 orders at score 0 and 60 at score 2 have mean score 1; a
+reward of 100 only at score 2 or above gives mean reward 50 while the reward at the mean is zero.
+
+The nonnegative-score hull requires that score domain. With a declared multiplayer score policy and nonnegative
+rank confirmations, the compiler uses local-score preimages of the room-score thresholds. A multiplayer route
+without that policy, or one admitting negative network rank bonuses, keeps the unrestricted reward ceiling.
+Integer reward products must remain in the validated nonwrapping domain.
+
+Implementation: `PointBound` in [joint bounds](../crates/ournotes-search/src/search/joint.rs),
+[concave majorant and integer interpolation](../crates/ournotes-search/src/search/uniform.rs).
+
+### Exact-bonus cells
+
+After processing `j` character groups, the cardinality DP cell `(k, b)` covers every choice of `k` distinct
+processed characters with exact additive event bonus `b`. Initialization at `(0, 0)`, descending-cardinality
+convolution with one new character, and component-wise maximization establish this invariant by induction.
+Power, mean gain and each weighted sum may maximize at different choices within the cell; they never cross
+between bonus values. Residual Snap reuse, including a Snap held by the prefix, and required-card obligations
+are relaxed. The assigned prefix contributes its fixed pairs.
+
+The team's event bonus is identical in every performance order. Thus any order-mass contributions to a bonus
+cell's cap are summed before maximizing over cells. Let `U_b` and `P_b` be a cell's payoff and power caps and
+`U = max_b U_b`. If a team reaches `U`, its bonus cell must have `U_b = U`; cells strictly below `U` cannot tie.
+Consequently `max_{b: U_b = U} P_b` is a valid power cap for the teams reaching `U`, and can reject a node after
+`U` equals the K-th payoff. A general power cap may be intersected with it.
+
+The row cache belongs to one compiled bound/domain. Its leader profile, excluded-character set and remaining
+positions determine the residual rows; used Snaps need no key because their reuse is relaxed. State, convolution
+or storage limits abandon the optional bound as a whole. Implementation:
+[bonus-conditioned DP](../crates/ournotes-search/src/search/joint/bonus.rs).
+
+### Canonical power frontiers and closure
+
+For a fixed leader and complete member composition, true power is one member/leader constant plus the sum of
+exact Snap increments. This is still true for a complex leader: its exact contribution depends on the fixed
+members and song, not on the Snap binding. The composition's nonleader pairs are first put in public member-ID
+order, and Snap columns are public-ID sorted; None precedes every real Snap in the team identity order.
+
+Process Snaps one at a time. At a fixed processed-Snap index and occupied-slot mask, all partial bindings have
+the same available future resources and free slots. Giving two such bindings the same future extension preserves
+their power difference and lexicographic order: the extension fills the same previously empty coordinates.
+For any partial binding ranked below K, each extension has K distinct extensions of better retained bindings.
+It therefore cannot enter the final power Top-K. Keeping K per mask is exact; after the final Snap, merge all
+masks and retain the first K. This also covers unused Snaps, empty slots, equal powers and K exceeding the
+number of legal bindings.
+
+Every proposed binding is submitted to the leaf path: it is exactly evaluated, resolved from existing evaluation
+state, or certified unable to enter Top-K by a valid cap. A candidate stopped by a budget is not marked handled.
+The incumbent threshold never weakens, so an identity already excluded by a cap remains safely excluded.
+
+Let `L` be the last power-ranked proposal and `U` the composition's primary-payoff cap. Every unexamined binding
+has lower power than `L`, or equal power with a larger canonical key. Read `P(L)` through the regular power
+evaluator. The unexamined bindings cannot enter Top-K when `U` is below the cutoff, or when `U` equals it and
+`P(L)` is below the cutoff power. If both numeric keys are equal, `key(L) >= key(cutoff)` also closes them;
+the equal-key proposal itself was already handled. Fewer than K proposals means every binding was handled.
+
+Otherwise complete Snap traversal resumes, omitting only safely handled identities. Attaining the composition
+cap controls whether the frontier is attempted; it is not a monotonicity assumption. Higher power need not give
+higher PT. The same frontier proof applies to the other bounded terminal objectives admitted by this path.
+Implementation: [Top-K assignment DP](../crates/ournotes-search/src/search/matching.rs),
+[layout and exact increments](../crates/ournotes-search/src/search/joint/composition.rs),
+[frontier closure and traversal](../crates/ournotes-search/src/search/composition.rs).
+
+### Class envelopes
+
+The diagnostic class schedules currently require a Gekisou score objective. Grouping Snap choices partitions
+the choices; all individual legal bindings remain represented. At a complete class vector, the fine-bound
+inputs are fixed members, classes and positions together with an upper bound on power. `JointFineBounds::upper`
+projects every choice through `class_of`, so those metadata inputs are identical across the class bindings.
+
+Admissibility at the supplied power cap follows from the per-entry envelope construction: for actual power
+`p <= P`, each possible final judgement's bound at `P` covers that entry at `p`. Every actual budgeted conversion
+is charged to an eligible budget row; maximizing each row's allocation independently only enlarges its options.
+Summing these bounds covers every binding and order. This argument requires neither native-score monotonicity
+nor monotonicity of the complete fine-envelope function in power. Independent conversion-budget overcounts
+alone would not prove such monotonicity.
+
+Constrained assignment supplies infeasibility or a power cap; the fine cap supplies a payoff cap. Every surviving
+binding still reaches the ordinary leaf path. A bound-metadata class therefore supplies no representative-only
+evaluation certificate. Implementation: [class bounds](../crates/ournotes-search/src/search/joint/classes.rs),
+[class and binding traversal](../crates/ournotes-search/src/search/composition/classes.rs),
+[fine-bound projection](../crates/ournotes-search/src/search/snaps/fine_view.rs).
+
 ## Gekisou envelopes
 
 ### Conversion reach and conversion regimes
@@ -1220,32 +1583,35 @@ an entry keeps its raw judgement. The windows come from the conversion analysis 
 whole-pool closure), so they only over-approximate. Until the windows are known, the whole-pool closure remains
 the fallback.
 
-Let $C$ be the set of allowed Snaps whose ordinary or Gekisou support rows contain a recognized judgement
-conversion (effect 12006 or 13005). A legal team belongs to exactly one of these cases:
+The reach depends on which converting Snaps a deck may hold, so Gekisou score partitions the physical domain:
 
-1. It contains no Snap in $C$.
-2. It contains exactly one Snap $c\in C$. In the total choice order of the domain admitting $c$ and the
-   nonconverting Snaps, its unique traversal layout places $c$ in exactly one slot $s$.
-3. It contains at least two Snaps in $C$. In the full domain's unique traversal layout, let $i<j$ be the
-   first two occupied converting positions in search-slot order.
+- no converting Snap: an envelope compiled for that sub-domain;
+- exactly one, `c` in physical slot `s`: the sub-domain keeps `c` as its only converting Snap, slot `s` must take
+  `c` and every other slot excludes it;
+- two or more: split by the first two slots in search order that hold converting Snaps; both must take converting
+  Snaps and the other earlier slots exclude them.
 
-Case 1 uses the domain excluding $C$. Case 2 retains only $c$ from $C$, forces $c$ in $s$, and excludes
-it elsewhere. Case 3 forces converting choices at $i,j$, excludes converting choices at earlier positions
-other than $i$, and leaves positions after $j$ free. These cases are disjoint and exhaustive.
-The conversion count and unique converting identity are layout invariant; the slot predicates use the
-particular traversal's deterministic layout. Each part retains all compatible member/Snap pairings.
-
-All parts share the result collector. Every part is compiled before traversal; when a specialized compilation
-is unavailable the original full-domain envelope supplies the traversal. A timeout includes a full-domain cap
-for all later parts. This establishes coverage independently of the tightness of conversion reach estimates.
-
-Sources: [conversion classification](../crates/ournotes-search/src/search/snaps/conversion.rs),
-[partition construction and execution](../crates/ournotes-search/src/search/physical.rs),
-[slot predicates](../crates/ournotes-search/src/search/joint.rs).
+The parts are disjoint and cover the domain (a team's converting Snaps do not depend on its layout); they share one
+Top-K, so canonical order and tie handling are unchanged. A forced slot is charged in the cheap relaxation only with its allowed choices; excluded masks filter
+enumeration only. All other bounds remain valid unforced relaxations. A failed part compile falls back to one
+pool-wide search.
 
 ### COMBO
 
-**Combo-count ramps.** For an admitted one-shot Gekisou row, a cumulative note score-up that counts the playing range's combo (7001) updates its count
+**Integer-stack domain.** Combo-count and combo-table refinements require an exact-integer certificate for
+effect-12000 bonuses. The compiler bounds a member's own rows plus at most one allowed Snap row list, and then
+the sum `B` for any admitted five-slot deck and requires `B < 2^24`. Each stack prefix, including the initial
+increment of 1 and paired removals, stays in `[1, 1+B]` with `1+B <= 2^24`; those integer operations are exact in
+binary32. This is a prerequisite for using integer window sums as
+native combo counts in threshold triggers, ramps and fine score tables. When that stack certificate is unavailable
+on a COMBO chart, the shared bound compiler declines the bound and the recommendation route retains exhaustive
+evaluation. The score evaluator continues to use its native binary32 operations.
+
+This guard is needed at every count-dependent bound, not only at trigger-time gates: rounding a bonus upward by
+one can cross a combo-table threshold. A multiplicative score margin cannot justify the wrong side of such a
+discontinuous threshold.
+
+**Combo-count ramps.** A cumulative note score-up that counts the playing range's combo (7001) updates its count
 in the skill phase of every frame it runs in, from the playing range's combo after the judgements of the earlier
 frames, and files a changed factor at the frame's time; its first factor can be backdated to its trigger time. An
 execution ends no later than the time of the frame that processes its end, so an entry reading the factor of an
@@ -1255,8 +1621,7 @@ frames whose earliest trigger time is at most the entry's chart time. A frame's 
 of its playing range's largest per-entry increments over the shortest chart-order prefix holding the entries
 judged before the frame; within a run of frames with one playing range it does not decrease. A frame whose playing
 range is not an ordered combo range keeps the flat factor. The candidate cap reads the increments of the
-candidate's own combo bonus windows, the gain tables those of their carrier level or keyed envelope. Other
-lifecycle or numerical cases retain their flat-window envelope.
+candidate's own combo bonus windows, the gain tables those of their carrier level or keyed envelope.
 
 **Carrier split.** A completion of a prefix whose placed carriers bring the window lists `S` has exactly the carriers
 of `S` and of some multiset `T` of lists, one per carrier among its slots to fill. Its cheap bound is at most the one
@@ -1269,10 +1634,8 @@ set). Every gain is the mean over the five positions, so each table holds one va
 above the K-th payoff is also bounded with power and gain coupled: for any weight `λ > 0`,
 `P·(A0 + G) <= (λ·P + (A0 + G)/λ)^2 / 4`, and the slots to fill relax `λ·power + gain/λ` as one value per pair (per
 list for the carriers, by the same table relaxation for the other slots), so a pair's power and gain come from the
-same pair. `λ` is the step of a geometric grid (ratio 1.08) nearest `sqrt((A0 + G)/P)` at the uncoupled terms.
-Every finite positive scale gives the displayed inequality; scale selection affects tightness. Zero power, a
-nonpositive or nonfinite coefficient, or an unavailable finite positive scale retains the uncoupled cap.
-Otherwise the bound of `T` is the smaller of the two. The check stops at the first `T` still above the K-th payoff. Below the leader
+same pair. `λ` is the step of a geometric grid (ratio 1.08) nearest `sqrt((A0 + G)/P)` at the uncoupled terms; the
+bound of `T` is the smaller of the two. The check stops at the first `T` still above the K-th payoff. Below the leader
 the slots to fill take candidates in ascending choice order, so a node's completions use the choices from its start
 on, and in a node's choice loop every child from an offset on, with its completions, uses the choices from that offset
 on. The tables are compiled for the pairs from each of a few suffix starts (0, 8, then about half again each time); a
@@ -1294,117 +1657,117 @@ gate names another range, always counts.
 prior-frame Good-through-Just processing and the largest exact integer effect-12000 increment of any admitted
 five-member deck (conditions, character uniqueness and Snap uniqueness relaxed; a member has its own rows plus at
 most one allowed Snap row list). Same-frame skill phases cannot use increments before the controller recount.
-Unsafe controller effects keep the broad bound; compound trigger groups trigger at their frame's time.
+An unsafe controller or integer-stack domain declines the shared bound on a COMBO chart. Within the certified
+domain, an unavailable optional trigger-time table keeps the broader timing envelope; compound trigger groups
+trigger at their frame's time.
 
 ### LUCK
 
-#### Probability law
+A LUCK mission decides its lottery with random numbers, so a LUCK chart's outcome is a distribution over draws
+rather than one integer payoff per performance order. Its declared value is
 
-For a team $D$, let $S_{D,\sigma}(\omega)$ be the final score and $Q_{D,\sigma}(\omega)$ its requested
-payoff at order $\sigma$. The certified target is
+    U(t) = (1/120) * sum_{pi in S5} E_{h ~ Q(t,pi)}[payoff(t, pi, h)].
 
-$$
-U(D)=\frac{1}{120}\sum_{\sigma\in S_5}\mathbb E_{\mathrm{nominal}}
-       [Q_{D,\sigma}(\omega)].
-$$
+`Q` is the independent nominal draw law implemented by
+[the lottery DP](../crates/ournotes-sim/src/live/full/luck_dp.rs) and
+[exact replay refinement](../crates/ournotes-sim/src/live/full/luck_exact.rs).
+For a history `h`, its mass is the product of the conditional probabilities along its path. Lottery choices use
+the current native integer weight divided by the current total weight; supported probability conditions use the
+exact dyadic rational represented by their binary32 chance. State-dependent choices can depend on earlier history,
+while successive source draws follow this declared independent law. The stream, clocks and rank context are fixed.
+This law is distinct from averaging a finite set of seeded `System.Random` executions.
 
-The nominal model uses independent random inputs for successive lottery/skill draws, with each transition
-conditioned on the complete preceding live state. For a lottery history $h$, its possible next results have
-probabilities $w_j(h)/\sum_k w_k(h)$, where the weights include the model's integer tables and binary32 buff
-conversion. Supported skill probability checks use their binary32 chances. Thus the probability of a complete
-history is the product of its conditional transition probabilities.
+The reported probability-law field is `"lottery":"certifiedNativeLotteryIntervals"`. Exact refinement completes
+all positive-mass paths of an admitted order, or retains the earlier enclosure. Conditional uncertainty over a
+lottery remains separate from the uniform distribution over member orders.
 
-The uniform-order law and nominal draw law are declared mathematical inputs. The finite-seed APIs define a
-separate target by averaging complete post-shuffle random states from a supplied root-seed law. That target
-retains the correlations created by the seeded random streams.
+#### Order and payoff enclosures
 
-Sources: [nominal probability model](../crates/ournotes-sim/src/live/full/luck_dp.rs),
-[finite-seed shuffle](../crates/ournotes-search/src/search/expectation.rs),
-[finite-seed order assumption](../crates/ournotes-search/src/search/expectation.rs).
+For each performance order `sigma`, the admitted scorer supplies score support and an outward interval containing
+its nominal expected score. The lottery-state DP must retain every possible state, and the score recorder must
+enclose each supported command/query schedule and its final integer score. These scheduling and effect checks are
+premises of the enclosure. If `L_sigma <= E[Q_sigma] <= H_sigma`, then
 
-#### Enclosing all orders and payoffs
+    sum_sigma L_sigma / 120 <= U(t) <= sum_sigma H_sigma / 120.
 
-The scorer produces, for every order, a score support interval and an outward-rounded interval containing
-the nominal expected score. Its supported lottery-state DP preserves every possible state, and the score
-recorder encloses the binary32 command/query schedule and final integer score for all admitted paths.
-The supported effect and scheduling checks are premises of this enclosure.
+Aggregation checks that the input contains 120 distinct permutations and rounds outward. An unrepresentable exact
+rational aggregate can omit its exact metadata while keeping that interval certificate.
 
-If order $\sigma$ supplies $L_\sigma\leq\mathbb E[Q_\sigma]\leq H_\sigma$, then
+For a step payoff starting at value `v0`, with thresholds `t_i` and signed value changes `delta_i`,
 
-$$
-\frac{1}{120}\sum_\sigma L_\sigma
-\;\leq U(D)\leq\;
-\frac{1}{120}\sum_\sigma H_\sigma .
-$$
+    E[f(S)] = v0 + sum_i delta_i * Pr(S >= t_i).
 
-Aggregation validates 120 distinct permutations and uses outward arithmetic. Exact rational metadata is
-available when all contributing exact values fit its integer representation; the enclosure remains the
-certificate when exact rational metadata is unavailable.
+The identity follows by writing the step function as a sum of threshold indicators and taking expectations; it
+does not require reward tiers to be monotone. Score targets consume tail probabilities, capped scores consume
+truncated expectations, and score/life conjunctions require a joint-event certificate. Support and first-moment
+inequalities retain conservative bounds where refined tails are unavailable. These transforms are in
+[`certified_search.rs`](../crates/ournotes-search/src/search/certified_search.rs).
 
-For a step payoff with value $v_0$ followed by thresholds $t_i$ and value changes $\Delta v_i$,
+Exact refinement replays each prefix in a fresh model and branches over every admitted positive-weight outcome.
+A complete law is installed only when every branch terminates and exact rational terminal masses sum to 1.
+Unsupported draws, resource limits or an interrupted branch retain the previous sound enclosure. A partial tree
+is not a probability law of total mass 1.
 
-$$
-\mathbb E[f(S)]=v_0+\sum_i\Delta v_i\,\Pr(S\geq t_i).
-$$
+#### LUCK ranking certificate
 
-This identity permits signed value changes and therefore covers nonmonotone reward tables. Every reachable
-score belongs to one declared payoff interval. Score-target payoffs consume tail probabilities, capped-score
-payoffs consume a truncated expectation, and joint score/life targets additionally require a joint event
-certificate. Support and first-moment inequalities provide conservative bounds where refined tails are unavailable.
+For every retained team `t`, maintain a certified payoff interval
 
-Sources: [LUCK score enclosure](../crates/ournotes-sim/src/live/full/luck_score_bounds.rs),
-[order evaluation](../crates/ournotes-search/src/search/certified_search.rs),
-[payoff transforms and aggregation](../crates/ournotes-search/src/search/certified_search.rs).
+    L(t) <= U(t) <= H(t).
 
-#### Bounded exact refinement
+The [interval frontier](../crates/ournotes-search/src/search/interval_topk.rs) proves that `t` precedes `s` when:
 
-Ranking certification and exact expectation evaluation are separate properties. A team can have a certified
-rank while its expected payoff remains an interval. A ranking certificate compares every relevant candidate
-and remaining-domain bound; equal-program certificates establish equality before the canonical tie keys apply.
-An unresolved overlap is reported as **RefinementRequired**.
+- `L(t) > H(s)`; or
+- `L(t) = H(s)` and `t` has the better power/canonical-ID key; or
+- exact expectations, or an equal-program certificate, prove the primary comparison, followed by that same key.
 
-After physical-domain exhaustion, the refinement provider considers the overlapping frontier. Its exact tree
-replays each prefix in a fresh model, branches over all positive-weight base-point and bonus LUCK outcomes, and
-combines terminal (score, life) atoms with exact rational masses. A complete law is installed only after every
-branch terminates and its masses sum to exactly one. The provider admits only random draws covered by this tree.
+The endpoint-equality rule is sound even when one interval has positive width: every possible value of `t` is
+at least every possible value of `s`; a strict actual inequality wins on payoff, and actual equality wins on
+the secondary key. Equal overlapping intervals alone prove neither value equality nor rank.
+An equal-program certificate covers the full evaluation program, power, declared context and payoff mapping.
+Sharing a score coefficient, class metadata or an approximate scalar does not supply that certificate.
 
-The current admission limits are 32 notes and 512 play frames. One order admits at most 32 branch levels and
-32,768 replay runs. All attempted orders share 240,000 replay runs, 8,000,000 replayed frames and the request's
-cooperative deadline. Exhaustion retains the previous valid intervals; completed orders can refine the frontier.
-The final rank certificate is issued by the interval frontier using the resulting bounds and equality proofs.
+A candidate leaves the live frontier only after K distinct candidates are proved ahead of it. Extending a
+certified ordered prefix requires its next team to precede every remaining live competitor and every unseen
+completion covered by the remaining-domain cap. The same K-witness argument as in the deterministic proof then
+preserves true Top-K membership.
 
-For Gekisou with no LUCK range, the lottery-free reduction additionally requires the recorder's effect/condition
-checks. They establish that probability-dependent writes affect only unused lottery state and that lottery
-score probes remain false; the resulting score, life and declared rank arrivals are identical for every seed.
+`rankCertified` reports this ranking fact. Exact `expectedScore` and `expectedPayoff` fractions are optional
+and can have any admitted positive `u128` denominator; averaging 120 rational order values need not produce a
+fraction with denominator 120. Certified ranks can therefore be complete while exact expectations remain
+unavailable. Exact order statistics and a deterministic `bestOrder` are reported only when the required exact
+order values exist. An incomplete lower-level result may retain more than K unresolved frontier candidates;
+the account facade presents its requested number without declaring their unresolved ranks proved.
 
-Sources: [refinement schedule](../crates/ournotes-search/src/search/certified_engine.rs),
-[exact-tree limits](../crates/ournotes-sim/src/live/full/luck_exact.rs),
-[complete-law construction](../crates/ournotes-sim/src/live/full/luck_exact.rs),
-[lottery-free reduction](../crates/ournotes-sim/src/live/full/luck_score_bounds.rs).
+#### The integer grid used by bounds
 
-### LUCK ranking certificates
+Node caps are often integer upper bounds on `120*U(t)`. This scaling is a bound grid, not a restriction on the
+denominator of the true expectation. For an incumbent with lower endpoint `L_i`, define
+`a_i = ceil(120*L_i)`, and let `T` be the K-th largest `a_i`. If an integer node cap `B < T`, at least K
+incumbents satisfy
 
-For candidate `a`, write `[l_a,u_a]` for its proved payoff enclosure. Candidate `a` ranks before `b` when
-`l_a > u_b`, or when `l_a = u_b` and `a` wins the canonical secondary order. A verified equality of complete
-program, probability law, power and payoff mapping establishes equal payoffs and permits the same secondary order.
-Known exact fractions replace their interval endpoints in these comparisons using exact rational comparison.
+    B < ceil(120*L_i)  implies  B < 120*L_i <= 120*U_i.
 
-An interval candidate is discarded only after `K` distinct candidates have a proved better relation to it.
-To certify the next displayed rank, the frontier proves that candidate ahead of every other retained candidate
-and of the unseen domain. Repeating this argument establishes the ordered prefix. The unexplored-domain scalar
-cap, when available, must be strictly below a candidate's lower bound because it carries no complete tie key.
+The implication uses the integrality of `B`; it is valid whether or not `120*L_i` is an integer. Thus strict
+grid pruning is sound. At `B = T`, let `r` incumbents have `a_i > T`; they already give strict witnesses. Among the
+remaining incumbents with lower endpoint proved exactly equal to `T/120`, let `Q` be the `(K-r)`-th largest power.
+Then a node power cap below `Q` supplies the missing tie witnesses, giving K distinct witnesses in total. If there
+are too few exact-grid ties, the power-tie cut is disabled. A rounded-up endpoint alone cannot supply such a tie
+certificate. This is the distinction made by `IntervalTopK::grid_cutoff`.
 
-The integer cutoff uses `t_j = ceil(120*l_j)` for each lower certificate, with exact comparisons correcting the
-initial arithmetic approximation. Let `T` be the K-th largest `t_j`. For `U < T`, at least `K` candidates satisfy
-`U/120 < l_j <= V(j)`. At `U = T`, candidates with `t_j > T` remain strict witnesses; candidates with `t_j = T`
-supply power-tie witnesses only when `l_j = T/120` is proved exactly. If `a` candidates are strictly above, `Q` is
-the `(K-a)`-th largest power among those certified ties. If fewer such ties exist, `Q = i32::MIN` disables the
-power-tie test. Consequently the rule `U < T` or `U = T and H < Q` always has `K` distinct witnesses.
+#### Exhaustion, refinement and displayed bounds
 
-Refinement intersects existing enclosures with sound tighter enclosures and preserves established exact values.
-Its completion criterion is a proved ranking. A proved ranking can coexist with positive-width value intervals.
-The returned `rankCertified` distinguishes the proved ordered prefix from the unresolved candidates retained
-after it. An unresolved frontier can contain more than `K` candidates.
+After candidate-domain exhaustion, an unresolved frontier returns `RefinementRequired` unless a time or candidate
+stop takes precedence. A deadline during refinement returns `TimedOut` even when the candidate domain is exhausted.
+An unlimited wall-clock setting does not remove the exact refinement provider's own admission and work limits.
+Its current limits include 32 notes, 512 frames, branch depth 32 and 32,768 replay runs per order, with a shared
+240,000-run/8,000,000-frame work budget. A declined or interrupted refinement preserves its previous interval.
+Consequently, domain exhaustion, availability of an exact expectation, and certified ranking are separate
+observable states.
+
+When an exact fraction is available, integer display bounds are its mathematical floor and ceiling with the
+entire unsigned denominator preserved. Probability display bounds use outward rational-to-binary64 conversion.
+The exact fraction remains the source of value comparisons; a decimal display approximation is not a ranking
+certificate. See [account recommendation](recommendation.md) for the result schema.
 
 ## Simulation work
 
@@ -1413,24 +1776,25 @@ after it. An unresolved frontier can contain more than `K` candidates.
 A team whose value cannot reach the Top-K cutoff stops simulating as soon as the part of its score that is already
 final shows it.
 
-**Settled frames.** After a processed play frame, define the command horizon `H` as the minimum of the
-current frame time, the positive music length, the earliest chart time of any future judged note, the start of
-every Gekisou range still before FINISH, and the end of every externally ranked range whose fixed bonus awaits
-application. The music-length term covers clamped effect finishes; the range terms cover range-start rewinds
-and delayed rank bonuses.
+**Settled frames.** Under a validated stream of nonnegative, nondecreasing i32 frame times, after a play frame a later command lands
+at a time no earlier than the least of: the frame's time (skill execution and re-application times; live skill events
+not yet fired); the pending native timed finishes of every active live and condition execution; the positive music
+length used to clamp finish times; the earliest chart time
+of a note judged in a later frame (note commands, and checker override times taken from later notes); and the
+start of every Gekisou range not yet finished (range-start and range-state override times, override times read
+from the playing range's judged notes and the solo ranking rewind to the range start); and the end of every
+externally ranked range whose fixed rank bonus has not yet been applied, even when the range is already finished.
+The pending finishes use the same binary32 duration and integer timestamp as the updater. In particular, rounding
+the elapsed time can postpone the strict end test past that timestamp; the current frame time alone is
+insufficient. A future nonnegative extension can only move the finish later on the admitted clock domain. A
+duration-reducing extension keeps the settled prefix empty, because it could move a future finish earlier.
 
-This shrinking prefix is available when every duration-adjustment row (effect 15000) instantiated in the model
-has a nonnegative value. The check covers all stored model rows, including those inactive in a particular play.
-Other models retain the empty settled prefix `(frame, total, fixed) = (0, 0, 0)`, so their cutoff continues to use
-the whole-score remainder bound. This preserves signed duration-adjustment semantics without assuming that a
-future adjustment cannot move an effect finish backward.
-
-Let `G` be the scorer's binary32 time-to-frame map and `L` its last addressable score frame. Every future filing
-addresses a frame at or above `min(G(H),L)`. The calculator keeps frame `L` open and settles only executed frames
-strictly before that minimum and any pending fixed-score frame. Recalculation undoes frames beginning at the
-first filed command frame; a direct rewind preserves its own frame. Every later score operation therefore
-preserves the settled prefix, and its note and fixed-score sums equal the final sums of those frames. Sources:
-[`LiveModel::settle`](../crates/ournotes-sim/src/live/full/mod.rs) and
+Let `G` be the native `get_frame` map and `L` the last addressable score frame. Future commands can be clamped to
+`L`, so they only satisfy `frame >= min(G(horizon),L)`. The calculator keeps `L` open and settles only already
+executed frames strictly below that minimum and before any pending fixed-score frame. A rewind retains the
+frames up to its own, hence those settled note and fixed scores are final. The native frame map uses binary32
+conversion and ceiling; integer floor division is not interchangeable with it. The two parts of the construction
+are [`LiveModel::settle`](../crates/ournotes-sim/src/live/full/mod.rs) and
 [`IncrementalCalculator::settle`](../crates/ournotes-sim/src/live/full/scorecalc.rs).
 
 **Cutoff tables.** For one team and performance order the fine cap is split by score frame. Each entry's term
@@ -1442,14 +1806,13 @@ conversion gain). Each budget row converts at most its count among the unsettled
 settled ones, a bound on its conversions among all of them. The cap after a frame is the settled total plus this
 remainder, rounded outward; PT applies the candidate's bonus and reachable reward tiers to it.
 
-**Remainder arithmetic.** The suffix array and conversion heap store upper endpoints of sums of their stored
-floating edge values. Adding an edge `v` uses `round_up(U+v)`; removing that exact retained edge uses
-`round_up(U-v)`. Both preserve the sum invariant. Each stored edge bounds its candidate contribution, and the
-sum of the largest `k` values is nondecreasing in every edge, so heap selection preserves the conversion-budget
-cap. Rank-share products and divisions use upward endpoints with nonnegative numerators and positive
-denominators. Exact zero remains zero; nonfinite prepared sums make the optional table unavailable. The final
-reserve is a multiplier at least one, enlarging an already certified remainder. Source:
-[cutoff tables](../crates/ournotes-search/src/search/joint/cutoff.rs).
+The [remainder arithmetic](../crates/ournotes-search/src/search/joint/cutoff.rs) preserves a separate invariant:
+each suffix and retained conversion-edge sum is an upper endpoint of its exact stored sum. Adding edge `v` uses
+`U <- round_up(U+v)`; removing a retained edge uses `U <- round_up(U-v)`. Both preserve that endpoint inequality.
+The largest-k sum is monotone in each nonnegative edge, so heaps of bounded conversion gains preserve the cap.
+Rank-share multiplication and division round upward separately with nonnegative numerators and positive
+denominators. Exact zero stays zero; nonfinite prepared sums disable the optional table. A final reserve factor
+widens an already certified bound and cannot substitute for these operation-level certificates.
 
 **Test.** Every few frames the search adds the running order's cap to the exact payoffs of the orders already
 simulated and the per-order caps of the orders still to run. The simulation stops only when that total is strictly
@@ -1463,42 +1826,72 @@ live-skill event (4010) or a fixed false trigger compiles an idle plan. Compound
 short-circuit checks can reset counters or consume skill random numbers. In a frame with no matching event and no
 active execution the skill's triggers are pure false: the plan fills the trigger cache as the checks would and
 skips condition, release, cumulative and applier work. Active and end-frame-pending instances keep the original
-path. The plan preserves trigger cache, phase order, errors and random-number consumption. Controlled performer
-relabelling updates both the checker metadata and the plan's member positions (`move_position`), preserving
-its applicability predicate. A thread-local switch builds reference models for the idle audit below.
+path. Trigger cache, phase order, errors and random-number consumption are unchanged, and effect metadata is
+immutable after construction, so a compiled plan cannot go stale. A thread-local switch builds reference models
+without the plan for the idle audit below.
+
+## Search size and complexity
+
+Let `n_c` be the number of eligible member cards for character `c`, and let `n = sum_c n_c`.
+Before further constraints, the number of five-character member sets is the fifth elementary symmetric sum
+
+    M5 = sum_{c1 < c2 < c3 < c4 < c5} n_c1*n_c2*n_c3*n_c4*n_c5 <= choose(n,5).
+
+With `s` universally allowed Snaps, the number of optional injective bindings to five fixed members is
+
+    B5(s) = sum_{j=0}^{min(5,s)} choose(5,j) * (s)_j,
+    (s)_j = s*(s-1)*...*(s-j+1),  (s)_0 = 1.
+
+Choose the `j` occupied slots, then assign an ordered set of `j` distinct Snaps. This counts each binding once,
+including the empty binding. With every leader allowed, the canonical team count is `5*M5*B5(s)`;
+leader/include/exclude constraints can only reduce it. Fixed physical-slot enumeration has another factor of 24
+for the nonleader layouts. Performance orders are evaluations of a team, rather than additional result identities.
+
+Even one fixed leader and five fixed members with five allowed Snaps gives `B5(5) = 1546` teams and 185,520
+logical team/order values under deterministic exhaustive Live scoring. A member-set Top-K may return one
+representative from this domain; a team Top-K retains the distinct bindings.
+
+For a fixed five-member deck size, the general unpruned domain grows as `O(n^5 * (s+1)^5)`; evaluating each deterministic
+order separately costs 120 whole-live evaluations per team. The implementation can share equivalent simulation
+prefixes, so 120 is a count of logical order values rather than necessarily separate full simulations. Their cost depends on
+the chart, frames, effects and replay work. LUCK refinement adds branching over positive-mass random histories
+within its explicit work limits. When deck size itself is variable, the combination, injection and permutation
+counts must retain that size parameter.
+
+The full runtime also includes table compilation, per-node bounds, assignments, Top-K maintenance and result
+materialization. A fixed five-row numeric Hungarian assignment takes `O(s)` arithmetic steps up to the constant
+row factor; K-assignment and payoff-frontier DPs additionally depend on K and retained states. In particular,
+bonus/power Pareto frontiers can contain many incomparable states. A depth-five traversal does not imply constant
+total memory: tables, caches, retained DP states and results consume memory as well.
+
+Branch-and-bound retains exactness even when its bounds reject nothing. K limits the result count; it does not
+bound the number of candidates that must be excluded to prove those results. Heuristic ordering, warm starts,
+cap-attainment policies and optional-table limits can improve work on an instance, while the coverage and
+K-witness arguments preserve the answer.
+
+These combinatorial bounds do not imply a uniform wall-clock completion guarantee. Deadlines are cooperative,
+including preparation and final verification where the route provides those checks. An atomic unit can overrun
+the deadline. `TimedOut` records incomplete proof work; `Complete` follows the route's closure certificate.
 
 ## Validation
 
-Every experiment below compares the search, or one of its bounds, with an independent computation under the same
-shared scorer. Agreement establishes search correctness for the declared model, inputs and target; agreement of the
-model with the game is established separately ([native validation](native-validation.md)). Counts of audited
-prefixes include repeated prefixes; they are checks, not independent samples.
+The experiments below compare search results or bounds with independently enumerated candidates under the shared
+scorer. Agreement establishes the checked equality or inequality on those enumerated finite inputs. The universal
+search argument additionally needs the coverage, arithmetic and bound lemmas above. Scorer compatibility with the
+game is a separate source of evidence ([native validation](native-validation.md)).
+Counts of audited prefixes include repeated prefixes; they count checks, not independent samples.
 
-### Proof obligations and implementation evidence
+There are three different validation obligations:
 
-The arguments above establish implications from explicit domain and arithmetic premises. Exhaustive tests
-check every candidate of their declared finite domains; focused regression tests exercise individual boundary
-contracts. Agreement on those inputs supplies reproducible evidence for the implementation. The global theorem
-applies through the stated coverage, evaluation and bound invariants.
-
-| Obligation | Implementation | Reproducible evidence |
+| Obligation | What the check establishes | Shared assumptions |
 |---|---|---|
-| Legal configurations and identity-preserving traversal | `domain.rs`, `uniform.rs`, `physical.rs`, `composition.rs`, `team_power_search.rs` | `search_oracle`, `power_team_identity`, `adapter_fixture_export`, session oracle tests |
-| Additive, representable power throughout the domain | `tables.rs`, `power.rs`, `mod.rs`, `team_power.rs` | `search::gate_tests`, `search_oracle`, numeric-domain fixtures |
-| Complete scalar evaluation and order aggregation | `leaf.rs`, `expectation.rs`, `full/orders.rs` | `expectation`, `search_snaps`, `orders`, fixed-team facade comparisons |
-| Strict total ordering, distinct witnesses and interval rank proofs | `topk.rs`, `physical.rs`, `interval_topk.rs` | full ordered oracle comparisons, interval-frontier tests, canonical Snap-ID tests |
-| Character/Snap relaxations and exact assignment frontiers | `matching.rs`, `joint/relax_tables.rs`, `joint/bonus.rs` | assignment unit tests and all-prefix harness audits |
-| Floating command and coefficient envelopes | `snaps/float_margin.rs`, `snaps/score_windows.rs`, `snaps/fine_view.rs`, `snaps/raw.rs` | operation-count, actual-frame and exact-arithmetic cap tests |
-| Irreversible settled prefixes and safe remaining-payoff caps | `full/mod.rs`, `full/scorecalc.rs`, `joint/cutoff.rs` | `orders`, `cutoff_audit`, exact dyadic suffix/conversion tests |
-| Reuse preserves evaluation context and every result identity | `team_scores.rs`, `program_cache.rs`, `full/score_program.rs` | relabelling, eviction, partial-order and fresh-evaluation comparisons |
-| Declared LUCK law, enclosure and bounded refinement | `full/luck_dp.rs`, `full/luck_exact.rs`, `certified_search.rs`, `certified_engine.rs` | lottery interval and complete-law fixtures, interval ranking tests |
-| Closed completion and explicit partial states | `budget.rs`, `physical.rs`, `session.rs` | request-budget, proof-telemetry and session state tests |
+| Returned-value replay | A returned candidate agrees with the regular evaluator. | The candidate may still be globally suboptimal. |
+| Full-domain ordered oracle | The whole returned Top-K equals independently enumerated and sorted candidates on that finite domain. | Resolved inputs, target and scorer must be the same. |
+| Prefix/leaf cap audit | Every audited cap dominates each covered oracle completion. | Every bound family and its numeric admission boundary must be exercised. |
 
-`domain.rs` is in `crates/ournotes-search/src`; the other search module paths are relative to
-`crates/ournotes-search/src/search`. Simulation paths beginning with `full/` are relative to
-`crates/ournotes-sim/src/live`. Integration tests are in the corresponding crate's `tests`
-directory. The command below runs the synthetic tests, and the harness commands exercise independently
-constructed bounded team domains.
+Returned-value replay alone cannot detect an optimum removed before evaluation. The separate oracle and cap checks
+exercise that exclusion logic. These source-level mathematical arguments and executable checks are not a
+machine-checked refinement proof of the entire Rust implementation.
 
 ### Tests without game data
 
@@ -1507,8 +1900,9 @@ constructed bounded team domains.
 - Exhaustive enumeration (`search::oracle::brute_force`) evaluates every legal deck (member set, leader, snap
   assignment) with the regular deck-power path and its own ordering, and is compared with the search on complete
   ordered results for several K, objectives and constraint sets (`crates/ournotes-search/tests/search_oracle.rs`). It shares no bound,
-  decomposition or Top-K code with the search.
-- Each returned member-set deck is re-evaluated with the regular path (see [member-set outcomes](#member-set-outcomes)); skip and live scores are recomputed with
+  decomposition or Top-K code with the search. It shares constraint resolution, objective construction, permutation
+  generation and the regular scorer; its independence concerns enumeration, representative selection and ordering.
+- Each returned deck is re-evaluated with the regular path (see Outcomes); skip and live scores are recomputed with
   the general score calculator.
 - The prepared live and skip evaluators are compared with the general calculator on random plays and charts.
 - The objective with snap skills is compared with an exhaustive enumeration that simulates every member set, leader,
@@ -1525,6 +1919,15 @@ constructed bounded team domains.
   (`crates/ournotes-search/tests/adapter_fixture_export.rs`).
 - Unit tests check the uniform order enumeration, the concave majorant of reward steps, and the member-additive
   bound against brute-force enumeration of completions.
+- Numeric-domain regressions exercise forward nonnegative factor windows, causal clock boundaries, native negative
+  recovery, nonfinite or subnormal chains, overflowing positive note sums, the binary32 integer boundary of COMBO
+  stacks, held release windows, delayed timed finishes and finish-time clamping. They distinguish legitimate late
+  playback frames from early note judgement and verify complete fallback identities for declined domains.
+  Shared-order tests compare complete outcomes across wrapped effect-key ordering, and
+  timer-floor tests cover both execution counts and network snapshot cancellation. Rank-key tests distinguish
+  every real `i64` Snap ID from None. Effect-identity regressions exercise key wrapping, duplicate state identities,
+  conversion-cache aliases and safe reuse of the same source row by different candidates. Rational output tests
+  cover unsigned-denominator limits and verify probability endpoints against exact fractions.
 
 ### Team-domain oracle
 
