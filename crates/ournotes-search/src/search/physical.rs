@@ -1337,39 +1337,17 @@ fn joint_regimes(
         }
         parts.push((plan.domain.clone(), rules));
     }
-    e.rec.begin(&mut e.tel, "conversionCompile", None);
-    let prepare = Instant::now();
-    let mut conversion = telemetry::Conversion { snaps: converting.len(), ..Default::default() };
-    let mut compiled = Vec::with_capacity(parts.len());
-    for (domain, rules) in parts {
-        match JointBounds::compile(e.pool, e.request, &domain, e.metric, e.event_input, e.simulation) {
-            Ok(b) => compiled.push((domain, rules, b)),
-            Err(error) => {
-                conversion.compile_ms = prepare.elapsed().as_secs_f64() * 1000.0;
-                conversion.fallback = Some(error.to_string());
-                e.tel.environment.bounds.conversion = Some(conversion);
-                e.rec.end(&mut e.tel);
-                e.rec.begin(&mut e.tel, "search", None);
-                ordered_root(p, &plan.domain, bounds, orders, e)?;
-                e.rec.end(&mut e.tel);
-                return Ok(());
-            }
-        }
-    }
-    conversion.compile_ms = prepare.elapsed().as_secs_f64() * 1000.0;
-    conversion.parts = compiled.iter().map(|(_, rules, _)| rules.len()).sum();
-    let total = conversion.parts as u64;
-    e.tel.environment.bounds.conversion = Some(conversion);
-    e.rec.end(&mut e.tel);
+    let total = parts.iter().map(|(_, rules)| rules.len()).sum::<usize>() as u64;
+    e.tel.environment.bounds.conversion =
+        Some(telemetry::Conversion { snaps: converting.len(), parts: total as usize, ..Default::default() });
     e.rec.parts = total;
-    // One root traversal per (part, slot rules); every traversal runs. With the visit order on, the traversals that
-    // hold Top-K incumbents run first, best incumbent first, the others in the static order, and each root loop
-    // follows its children's bound order (warm.rs).
-    let mut flags = Vec::with_capacity(compiled.len());
+    // Slot traversals share one compiled envelope for their domain. Preparation follows the same
+    // incumbent-first traversal order, and the last traversal releases that domain's envelope.
+    let mut compiled: Vec<Option<JointBounds>> = (0..parts.len()).map(|_| None).collect();
+    let mut flags = vec![None; parts.len()];
+    let mut remaining: Vec<_> = parts.iter().map(|(_, rules)| rules.len()).collect();
     let mut traversals = Vec::new();
-    for (i, (domain, rules, part)) in compiled.iter().enumerate() {
-        let correlated = part.correlation_worthwhile(e.pool, domain, orders)?;
-        flags.push((correlated, part.resource_worthwhile(e.pool, domain, orders, correlated)?));
+    for (i, (_, rules)) in parts.iter().enumerate() {
         traversals.extend((0..rules.len()).map(|j| (i, j)));
     }
     if !warm::static_order() {
@@ -1381,8 +1359,49 @@ fn joint_regimes(
         traversals.sort_by_key(|t| std::cmp::Reverse(best.get(t).copied()));
     }
     for (i, j) in traversals {
-        let (domain, rules, part) = &mut compiled[i];
-        (e.correlated, e.resource) = flags[i];
+        if e.expired() {
+            let started = e.bound_start();
+            let upper = joint_root_upper(e.pool, &plan.domain, bounds, orders, 0)?;
+            e.fold_unexplored(upper, started);
+            return Ok(());
+        }
+        let (domain, rules) = &parts[i];
+        if compiled[i].is_none() {
+            e.rec.frontier.clear();
+            e.rec.begin(&mut e.tel, "conversionCompile", None);
+            let prepare = Instant::now();
+            let result = JointBounds::compile(e.pool, e.request, domain, e.metric, e.event_input, e.simulation);
+            let conversion = e.tel.environment.bounds.conversion.as_mut().expect("conversion partitions");
+            conversion.compile_ms += prepare.elapsed().as_secs_f64() * 1000.0;
+            e.rec.end(&mut e.tel);
+            match result {
+                Ok(part) => {
+                    let correlated = part.correlation_worthwhile(e.pool, domain, orders)?;
+                    flags[i] = Some((correlated, part.resource_worthwhile(e.pool, domain, orders, correlated)?));
+                    compiled[i] = Some(part);
+                }
+                Err(error) => {
+                    e.tel.environment.bounds.conversion.as_mut().expect("conversion partitions").fallback =
+                        Some(error.to_string());
+                    // The full-domain traversal covers every outstanding partition and shares the incumbents.
+                    e.rec.parts = 1;
+                    e.rec.parts_done = 0;
+                    e.rec.frontier.clear();
+                    e.rec.begin(&mut e.tel, "search", None);
+                    ordered_root(p, &plan.domain, bounds, orders, e)?;
+                    e.rec.end(&mut e.tel);
+                    return Ok(());
+                }
+            }
+        }
+        if e.expired() {
+            let started = e.bound_start();
+            let upper = joint_root_upper(e.pool, &plan.domain, bounds, orders, 0)?;
+            e.fold_unexplored(upper, started);
+            return Ok(());
+        }
+        let part = compiled[i].as_mut().expect("prepared partition");
+        (e.correlated, e.resource) = flags[i].expect("prepared bound policy");
         let (r, label) = &rules[j];
         part.set_rules(e.pool, domain, r.clone());
         *p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
@@ -1400,6 +1419,10 @@ fn joint_regimes(
             return Ok(());
         }
         e.rec.parts_done += 1;
+        remaining[i] -= 1;
+        if remaining[i] == 0 {
+            compiled[i] = None;
+        }
     }
     Ok(())
 }
