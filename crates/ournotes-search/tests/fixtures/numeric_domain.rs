@@ -246,6 +246,65 @@ fn release_support_windows_bound_all_performance_orders() {
 }
 
 #[test]
+fn horizon_release_timers_preserve_chronological_scores_and_caps() {
+    use ournotes_sim::live::full::{JudgedNote, LiveModel, LiveNote, LiveParams, Performer};
+
+    let (mut data, roster, mut request) = release_support_inputs(1.0, 63, false);
+    let release = data.master.skill_condition_sets.iter().find(|set| set.group == 63).unwrap().condition_ids[0];
+    data.master.skill_conditions.iter_mut().find(|condition| condition.id == release).unwrap().is_positive = false;
+    data.master.reindex().unwrap();
+    data.charts[0].notes[0].time_ms = 40;
+    let stream = serde_json::from_value(json!({
+        "frames":[0,40,80,400,440],"judged":[[1,1,5,40],[3,2,5,400]]
+    }))
+    .unwrap();
+    request.execution = ournotes_search::types::Execution::Live {
+        score_id: SCORE_ID,
+        gekisou: false,
+        play: ournotes_search::types::PlayPolicy::Stream { stream },
+    };
+
+    let performer = Performer { support_skills: vec![(3, 3)], ..Default::default() };
+    let notes = [
+        LiveNote { note_id: 1, time_ms: 40, note_operate_type: 1, judgement_type: 1 },
+        LiveNote { note_id: 2, time_ms: 400, note_operate_type: 1, judgement_type: 1 },
+    ];
+    let params = LiveParams {
+        skill_target_music_type: 0,
+        total_power: 100_000,
+        music_level: 24,
+        converted_note_count: 2,
+        music_length_ms: 1400,
+        score_music_length_ms: None,
+        assist_factor: 1.0,
+    };
+    let mut model = LiveModel::new(&data.master, &[performer], &notes, &[(0, 0)], params).unwrap();
+    model.frame(0, &[]).unwrap();
+    model.frame(40, &[JudgedNote { note_id: 1, judgement: 5, judgement_time_ms: 40 }]).unwrap();
+    assert_eq!(model.factor_state().note_score_up, 2.0);
+    model.frame(80, &[]).unwrap();
+    assert_eq!(model.factor_state().note_score_up, 1.0);
+    model.frame(400, &[JudgedNote { note_id: 2, judgement: 5, judgement_time_ms: 400 }]).unwrap();
+    assert_eq!(model.factor_state().note_score_up, 1.0);
+
+    let built = handler::build_card_pool(&data, &roster, &request).unwrap();
+    let bounded = search::recommend_built(&built).unwrap();
+    assert_eq!(bounded.completion, Completion::Complete);
+    assert!(bounded.telemetry.environment.bounds.compiled);
+    assert_eq!(bounded.results.len(), 6);
+    request.strategy = Strategy::Exhaustive;
+    let exact = engine::recommend(&data, &roster, &request).unwrap();
+    assert_eq!(exact.completion, Completion::Complete);
+    assert_eq!(bounded.results, exact.results);
+    #[cfg(feature = "search-diagnostics")]
+    for deck in &exact.results {
+        let audit = search::diagnostics::audit_order_caps(&built, deck.members, deck.snaps).unwrap();
+        assert_eq!(audit["orders"], 120);
+        assert_eq!(audit["violations"], 0, "{}", audit["first"]);
+    }
+}
+
+#[test]
 fn release_condition_keeps_late_support_conversions_in_caps() {
     let (data, roster, mut request) = release_support_inputs(0.0, 63, true);
     let bounded = engine::recommend(&data, &roster, &request).unwrap();

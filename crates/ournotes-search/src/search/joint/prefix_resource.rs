@@ -30,7 +30,24 @@ impl TopCharacters {
     }
 }
 
+/// Identical free-slot rows: `base` is the repeatable None choice, and each value belongs to one distinct
+/// available Snap. An optimum uses at most `count` positive increments over `base`, the largest ones available.
+fn shared_value(base: i64, count: usize, values: impl Iterator<Item = i64>) -> Option<i64> {
+    if count == 0 {
+        return Some(0);
+    }
+    let mut increments = super::relax_tables::Largest::new(count, 0i64);
+    for value in values {
+        if value > base {
+            increments.push(value.checked_sub(base)?);
+        }
+    }
+    let baseline = base.checked_mul(i64::try_from(count).ok()?)?;
+    increments.values().iter().try_fold(baseline, |sum, &increment| sum.checked_add(increment))
+}
+
 pub(super) struct PrefixResourceTables {
+    /// Position-mean gains give every position the same rows, indexed by profile, scale and choice.
     rows: Vec<TopCharacters>,
     choices: usize,
 }
@@ -38,31 +55,23 @@ impl PrefixResourceTables {
     /// Empty rows for the domain, None past the storage gate; `prefix_character::compile_prefix_tables` fills them.
     pub(super) fn empty(b: &JointBounds, domain: &CandidateDomain) -> Option<Self> {
         let choices = domain.snaps().len() + 1;
-        // Bound optional storage and the matching solver's lexicographic i128 weights.
+        // Bounded optional storage for the domain choices.
         if choices > 4097 {
             return None;
         }
-        let cells = b.lead.len().checked_mul(15)?.checked_mul(choices)?;
+        let cells = b.lead.len().checked_mul(3)?.checked_mul(choices)?;
         if cells > 250_000 {
             return None;
         }
         Some(Self { rows: vec![TopCharacters::default(); cells], choices })
     }
-    /// Offers the quantized edge `q` of a member of `character` with `choice` at (profile, position, scale).
+    /// Offers the quantized edge `q` of a member of `character` with `choice` at (profile, scale).
     #[inline]
-    pub(super) fn insert(
-        &mut self,
-        profile: usize,
-        position: usize,
-        scale: usize,
-        choice: usize,
-        character: i64,
-        q: i64,
-    ) {
-        self.rows[((profile * 5 + position) * 3 + scale) * self.choices + choice].insert(character, q);
+    pub(super) fn insert(&mut self, profile: usize, scale: usize, choice: usize, character: i64, q: i64) {
+        self.rows[(profile * 3 + scale) * self.choices + choice].insert(character, q);
     }
-    fn row(&self, profile: usize, position: usize, scale: usize, choice: usize) -> &TopCharacters {
-        &self.rows[((profile * 5 + position) * 3 + scale) * self.choices + choice]
+    fn row(&self, profile: usize, scale: usize, choice: usize) -> &TopCharacters {
+        &self.rows[(profile * 3 + scale) * self.choices + choice]
     }
     fn upper(
         &self,
@@ -96,28 +105,13 @@ impl PrefixResourceTables {
                 let power = b.a[m] + b.lead[profile][m] + if choice == 0 { 0 } else { b.w[m][choice - 1] };
                 fixed += quantized(power, b.gains[m][choice][positions[slot]], r)?;
             }
-            let ns = self.choices - 1;
-            let mut shifts = [0i64; 5];
-            let mut weights: [Vec<i64>; 5] = std::array::from_fn(|_| vec![0; ns]);
-            let mut allowed: [Vec<bool>; 5] = std::array::from_fn(|_| vec![false; ns]);
-            for &slot in &SLOTS[depth..] {
-                let pos = positions[slot];
-                shifts[slot] = self.row(profile, pos, scale, 0).best(&occupied)?;
-                for (j, &taken) in used.iter().enumerate() {
-                    if !taken && let Some(q) = self.row(profile, pos, scale, j + 1).best(&occupied) {
-                        allowed[slot][j] = true;
-                        weights[slot][j] = q - shifts[slot];
-                    }
-                }
-            }
-            // Assigned slots are forced to dummy None columns. Remaining character
-            // uniqueness and required-card restrictions are relaxed, Snap reuse is not.
-            let (extra, _) = super::super::matching::constrained_assignment(
-                weights.each_ref().map(|v| v.as_slice()),
-                allowed.each_ref().map(|v| v.as_slice()),
-                [true; 5],
-            )?;
-            let sum = fixed + shifts.iter().sum::<i64>() + extra;
+            let base = self.row(profile, scale, 0).best(&occupied)?;
+            let values = used
+                .iter()
+                .enumerate()
+                .filter_map(|(j, &taken)| (!taken).then(|| self.row(profile, scale, j + 1).best(&occupied)).flatten());
+            let extra = shared_value(base, 5 - depth, values)?;
+            let sum = fixed + extra;
             let upper = add_up(sum as f64, (r * b.a0).next_up());
             let cap =
                 (((upper * upper).next_up() / (4.0 * r)).next_up() * (1.0 + b.eps).next_up()).next_up().ceil() as i128;
@@ -201,7 +195,60 @@ impl JointBounds {
 
 #[cfg(test)]
 mod tests {
-    use super::TopCharacters;
+    use super::{TopCharacters, shared_value};
+
+    fn exhaustive_shared(base: i64, values: &[Option<i64>], count: usize, used: usize) -> i64 {
+        if count == 0 {
+            return 0;
+        }
+        let mut best = base + exhaustive_shared(base, values, count - 1, used);
+        for (choice, &value) in values.iter().enumerate() {
+            if let Some(value) = value
+                && used & (1 << choice) == 0
+            {
+                best = best.max(value + exhaustive_shared(base, values, count - 1, used | (1 << choice)));
+            }
+        }
+        best
+    }
+
+    #[test]
+    fn shared_rows_match_exhaustive_assignments_with_optional_choices() {
+        for base in [-13i64, 0, 13, 999_999_999_999_997] {
+            for choices in 0..=5 {
+                for encoding in 0..4usize.pow(choices as u32) {
+                    let mut digits = encoding;
+                    let values: Vec<_> = (0..choices)
+                        .map(|_| {
+                            let digit = digits % 4;
+                            digits /= 4;
+                            match digit {
+                                0 => None,
+                                1 => Some(base.saturating_sub(1)),
+                                2 => Some(base),
+                                _ => Some(base + 2),
+                            }
+                        })
+                        .collect();
+                    for count in 0..=4 {
+                        assert_eq!(
+                            shared_value(base, count, values.iter().copied().flatten()),
+                            Some(exhaustive_shared(base, &values, count, 0)),
+                            "base={base} count={count} values={values:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shared_rows_keep_checked_integer_sums() {
+        assert_eq!(shared_value(i64::MAX, 2, std::iter::empty()), None);
+        assert_eq!(shared_value(i64::MIN, 1, std::iter::once(i64::MAX)), None);
+        assert_eq!(shared_value(0, 2, [i64::MAX, 1].into_iter()), None);
+    }
+
     #[test]
     fn five_distinct_maxima_cover_every_four_occupied_characters() {
         for seed in 0..17 {

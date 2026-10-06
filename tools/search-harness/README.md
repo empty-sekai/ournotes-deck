@@ -168,6 +168,53 @@ Use the exclusion experiment to expose the actual loss from an unproved removal.
 
 ## Synthetic suite
 
+### Search correctness matrix
+
+The `correctness_matrix` integration tests construct synthetic member, Snap,
+chart, and payoff tables in memory. Run the complete matrix with:
+
+```sh
+cargo test --release --locked --features search-diagnostics \
+  --test adapter_fixture_export correctness_matrix -- --nocapture
+```
+
+The ordinary CI integration-test command includes this matrix. Each case covers
+K = 1, 3, 5, and 100 with cache capacities of 0 and 64. K = 100 also checks the
+returned cardinality when the physical domain contains fewer candidates.
+
+| Family | Cases | Physical candidates | Coverage |
+|---|---:|---:|---|
+| Scene and objective | 36 | 216 | Free, COMBO Mission, Battle, Arena; theoretical play and a complete mixed-judgement stream; expected score, score-target probability, capped score, client event PT, and score with terminal life |
+| Constraints and ties | 8 | 152 | Same-character alternatives, every eligible leader, member requirements and exclusions, Snap exclusions, optional unique Snap bindings, empty domains, and canonical ties |
+| Nominal LUCK | 11 | 55 | Expected score, score-target probability, capped score, client event PT, terminal-life probability, equivalent leader programs, and certified ranking |
+
+For deterministic cases, an independent enumerator forms five-character member
+combinations, chooses each eligible leader, and enumerates every injective
+optional Snap assignment. The fixed evaluator supplies each team's 120 order
+outcomes. Separate aggregation and rational comparison code establishes the full
+canonical ranking, which both exhaustive and branch-and-bound search reproduce.
+The matrix checks 44,160 oracle order outcomes. With `search-diagnostics`, each
+candidate also supplies witnesses for five joint prefixes, eleven composition
+and team prefixes, and all 120 per-order caps: 5,888 prefix checks and 44,160
+order-cap checks in total.
+
+The scene fixtures include recovery and judgement conversion, COMBO ranges,
+timed score factors ending at a range snapshot, and network confirmations with
+distinct arrival frames and bonus percentages. Mixed streams include Miss,
+Bad, Good, Great, Perfect, and Just judgements. Score and life objectives consume the
+complete stream's terminal life.
+
+The LUCK cases use the declared independent nominal lottery tables. Their
+leader variants have equal power and the same performer multiset, so averaging
+all 120 orders gives the same score law. The independently enumerated canonical
+keys therefore determine the tie order. Every returned rank is certified;
+constant-payoff cases also check exact probability or capped-score values.
+
+The matrix establishes search enumeration, ranking, and bound contracts under
+the shared fixed-deck model. Its model inputs and charts are synthetic.
+
+### Exported corpus
+
 The generator reuses existing synthetic effect tables: six members across five characters, two different Snap programs, a short synthetic chart, normal Free and lottery-free Gekisou Mission scenes. Both scenes test final score and client event PT. Each case compares exhaustive search, bounded candidate proposals, and an intentionally unproved Snap removal, plus member/Snap substitution audits. Each of the four cases enumerates 310 teams: two legal five-member sets, five leaders each, and all 31 optional unique assignments of two Snaps, each team over its 120 performance orders. `BDON_HARNESS_STRESS=1` exports a larger 13,600-team variant. `check-errors.py BINARY CORPUS OUTPUT` checks that an oracle cap below the domain size is refused before scoring and leaves no report.
 
 The suite exercises represented Snap and Gekisou behavior; it does not claim every skill family, realistic whole-chart behavior, latest patch parity, human input prediction or server settlement. Real-data cases use a deck data file written by `nnnotes deck-data`, rosters from `mock_rosters.py` and explicit requests, with their own input identities.

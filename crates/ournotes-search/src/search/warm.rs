@@ -329,13 +329,19 @@ impl Engine<'_, '_> {
 
 /// Warm start on the whole domain with its whole-domain bounds: greedy dives from the best leader pairs, a
 /// best-improvement local search on the leaf bound, exact evaluation of the dive decks and of the best decks the
-/// local search saw, then polishing rounds around the best deck. It stops when the budget runs out; the traversal
-/// after it then stops at its first deadline check.
+/// local search saw, then polishing rounds around the best deck. Certified seeding starts new proposals during
+/// the first quarter of the remaining time; an in-flight evaluation uses the request's complete deadline.
+/// Certified requests evaluate at most min(K, DIVES) seed proposals; the complete-domain traversal handles
+/// subsequent candidates.
 pub(super) fn seed(e: &mut Engine<'_, '_>) -> Result<(), Error> {
     let Some(w) = e.warm.take() else { return Ok(()) };
     e.rec.begin(&mut e.tel, "seed", None);
     let (_, resume) = e.rec.clock.lap(slot::WARM);
-    let result = seed_inner(&w, e);
+    let seed_deadline = e.certified.as_ref().and_then(|_| e.budget.deadline()).map(|deadline| {
+        let now = crate::search::budget::now();
+        now + deadline.saturating_duration_since(now) / 4
+    });
+    let result = seed_inner(&w, e, seed_deadline);
     e.rec.clock.lap(resume);
     e.rec.end(&mut e.tel);
     // This telemetry field is an exact incumbent value, not the interval route's conservative cutoff.
@@ -345,7 +351,20 @@ pub(super) fn seed(e: &mut Engine<'_, '_>) -> Result<(), Error> {
     result
 }
 
-fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>) -> Result<(), Error> {
+fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>, deadline: Option<Instant>) -> Result<(), Error> {
+    let initial_evaluations = e.tel.incumbents.warm_start.evaluations;
+    let proposal_limit = e.request.k.min(DIVES) as u64;
+    let certified_seed_complete = |e: &Engine<'_, '_>| {
+        e.certified.is_some()
+            && e.tel.incumbents.warm_start.evaluations.saturating_sub(initial_evaluations) >= proposal_limit
+    };
+    let paused = |e: &mut Engine<'_, '_>| {
+        let now = crate::search::budget::now();
+        e.expired_at(now) || deadline.is_some_and(|deadline| now >= deadline)
+    };
+    if paused(e) {
+        return Ok(());
+    }
     let root = RootOrder::new(w.domain, w.bounds, &w.orders, e)?;
     let mut leaders = Vec::new();
     for &(m, choice) in &root.children {
@@ -359,24 +378,34 @@ fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>) -> Result<(), Error> {
     let mut shortlist = Shortlist { rows: Vec::new(), seen: HashSet::new() };
     let mut checks = 0u64;
     for leader in leaders {
-        if e.expired() {
+        if paused(e) {
             return Ok(());
         }
         let Some(current) = dive(w, leader, e)? else { continue };
         let mut current = uniform::canonical(e.pool, &current);
         let mut value = surrogate(w, &current, e)?;
-        if !evaluate(w, value, current, false, e)? {
+        #[cfg(test)]
+        crate::search::budget::test_clock::stage("seed-dive");
+        if paused(e) || !evaluate(w, value, current, false, e)? {
+            return Ok(());
+        }
+        #[cfg(test)]
+        crate::search::budget::test_clock::stage("seed-evaluated");
+        if certified_seed_complete(e) {
             return Ok(());
         }
         shortlist.offer(value, current);
         while checks < SURROGATE_CHECKS {
+            if paused(e) {
+                return Ok(());
+            }
             let mut step: Option<((i128, i64), PhysicalDeck)> = None;
             for n in neighbours(w, &current, e) {
                 if checks >= SURROGATE_CHECKS {
                     break;
                 }
                 checks += 1;
-                if checks.is_multiple_of(64) && e.expired() {
+                if paused(e) {
                     return Ok(());
                 }
                 let v = surrogate(w, &n, e)?;
@@ -390,10 +419,142 @@ fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>) -> Result<(), Error> {
         }
     }
     for (value, d) in shortlist.rows.clone() {
-        if !evaluate(w, value, d, false, e)? {
+        if certified_seed_complete(e) {
+            return Ok(());
+        }
+        if paused(e) || !evaluate(w, value, d, false, e)? {
             return Ok(());
         }
     }
-    polish_rounds(w, SEED_POLISH_ROUNDS, e)?;
+    if !paused(e) {
+        polish_rounds(w, SEED_POLISH_ROUNDS, e)?;
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::search::budget::{self, test_clock};
+    use crate::search::gate_tests::common::{Rng, extend_table, replace_table, roster, set_column, synth_snaps};
+    use crate::search::{Completion, Constraints, GekisouObjective, Objective, PlayInput, SearchRequest, SeedSet};
+    use crate::types::{Limits, Metric, SimulationInput, Strategy};
+    use ournotes_sim::live::model::JudgementStream;
+    use ournotes_sim::live::score::LiveScoreSettings;
+    use ournotes_sim::live::skip::{Chart, ChartNote};
+    use ournotes_sim::pool::Pool;
+    use ournotes_sim::scenario::{ContextInput, PowerSnapshotInput, Scenario};
+    use serde_json::json;
+
+    #[test]
+    fn certified_seed_allocation_yields_to_the_complete_domain() {
+        let mut source = synth_snaps(&mut Rng::new(91), 5, 0, &[]);
+        set_column(&mut source, "MasterMemberCard", &mut |row| {
+            row["_characterID"] = row["_id"].clone();
+            row["_leaderSkillID"] = json!(4);
+        });
+        set_column(&mut source, "MasterLiveMusic", &mut |row| {
+            row["_gekisouMission1"] = json!(2);
+            row["_gekisouMission2"] = json!(3);
+            row["_gekisouMission3"] = json!(1);
+        });
+        replace_table(&mut source, "MasterLiveSkillEffect", json!([]));
+        extend_table(
+            &mut source,
+            "MasterLiveSettings",
+            vec![
+                json!({"_id":30,"_key":"gekisou_luck_gauge_max","_value":"40"}),
+                json!({"_id":31,"_key":"gekisou_luck_gauge_max_rush","_value":"20"}),
+                json!({"_id":32,"_key":"gekisou_luck_rush_score_bonus_percent","_value":"10"}),
+            ],
+        );
+        replace_table(
+            &mut source,
+            "MasterLiveGekisouLuckBasePoint",
+            json!([
+                {"_id":1,"_noteCategory":0,"_noteSimulateJudgement":5,"_weight":1,"_basePoint":10}
+            ]),
+        );
+        replace_table(
+            &mut source,
+            "MasterLiveGekisouLuckBonusLot",
+            json!(
+                (0..5)
+                    .flat_map(|kind| (0..4).map(move |result| json!({
+                        "_id":kind*10+result+1,"_chanceLotType":kind,"_lotResult":result,"_weight":1
+                    })))
+                    .collect::<Vec<_>>()
+            ),
+        );
+        replace_table(
+            &mut source,
+            "MasterLiveGekisouRankingScoreBonus",
+            json!(
+                (1..=3)
+                    .flat_map(|pattern| {
+                        (1..=3).map(move |count| json!({
+                "_id":pattern*10+count,"_missionPattern":pattern,"_count":count,"_rank":1,"_scoreBonusPercent":10
+            }))
+                    })
+                    .collect::<Vec<_>>()
+            ),
+        );
+        let master = source.master();
+        let owned = roster(&mut Rng::new(92), &master);
+        let pool = Pool::new(&master, &owned).unwrap();
+        let chart = Chart::from_notes(
+            vec![ChartNote { id: 1, time_ms: 100, note_type: 1 }],
+            vec![],
+            &LiveScoreSettings::from_master(&master).unwrap(),
+        )
+        .unwrap();
+        let stream = JudgementStream::theoretical_best(&chart);
+        let context = ContextInput {
+            power_snapshot: PowerSnapshotInput { event_ids: vec![], captured_jst_ticks: None },
+            result_clock: None,
+            event_payoff: None,
+        }
+        .resolve(&master, Scenario::Mission(10), Some(1004), &[(50, 150)])
+        .unwrap();
+        let request = SearchRequest {
+            objective: Objective::LiveScore {
+                score_id: 1004,
+                chart,
+                play: PlayInput::Stream { stream, judgement_types: vec![1] },
+                event: false,
+                exclude_snap_skills: false,
+                gekisou: Some(GekisouObjective { seeds: SeedSet::List(vec![0]), fevers: vec![(50, 150)] }),
+            }
+            .in_scenario(context),
+            k: 5,
+            constraints: Constraints { no_snaps: true, ..Default::default() },
+            time_limit: None,
+        };
+        let limits = Limits { time_limit_ms: Some(3_000), max_candidates: None, cache_entries: 64 };
+        for (stage, completed) in [("seed-dive", 0), ("seed-evaluated", 1)] {
+            let result = test_clock::with_expiry(stage, 1, || {
+                super::super::solve_physical_impl(
+                    &pool,
+                    &request,
+                    &Metric::Score,
+                    None,
+                    &limits,
+                    &Strategy::BranchAndBound,
+                    None,
+                    &SimulationInput::default(),
+                    None,
+                    &[],
+                    None,
+                    budget::now(),
+                    None,
+                )
+            })
+            .unwrap();
+            assert_eq!(result.completion, Completion::Complete);
+            assert_eq!(result.results.len(), 5);
+            let seed = result.telemetry.phases.iter().find(|phase| phase.name == "seed").unwrap();
+            assert_eq!(seed.candidates, completed);
+            assert_eq!(result.telemetry.leaves.partial, 0);
+            assert!(result.telemetry.phases.iter().any(|phase| phase.name == "search" && phase.candidates > 0));
+        }
+    }
 }

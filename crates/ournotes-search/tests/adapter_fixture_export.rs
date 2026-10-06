@@ -1,6 +1,8 @@
 //! Explicitly synthetic UTF-8 transport corpus input; no game assets or native truth.
 #[path = "../../ournotes-sim/tests/common/mod.rs"]
 mod common;
+#[path = "fixtures/damage_reduction.rs"]
+mod damage_reduction;
 use common::{Rng, Synth, extend_table, replace_table, set_column, synth_snaps};
 use ournotes_search::types::{DeckInput, Limits, Metric, SimulationInput, Strategy};
 use ournotes_sim::{cards::Roster, data::DeckData};
@@ -16,6 +18,8 @@ const EVENT_ID: i64 = 7;
 
 #[path = "fixtures/combo_integer.rs"]
 mod combo_integer;
+#[path = "fixtures/conversion_partitions.rs"]
+mod conversion_partitions;
 #[path = "fixtures/effect_identity.rs"]
 mod effect_identity;
 #[path = "fixtures/luck_refinement.rs"]
@@ -26,12 +30,17 @@ mod network_snapshots;
 mod numeric_domain;
 #[path = "fixtures/proof_telemetry.rs"]
 mod proof_telemetry;
+#[path = "fixtures/scenario_completion.rs"]
+mod scenario_completion;
 #[path = "fixtures/sustained_combo.rs"]
 mod sustained_combo;
 
 fn joint_request(mode: &str, gekisou: bool, metric: Value) -> ournotes_search::types::RecommendationRequest {
     serde_json::from_value(joint_request_json(mode, gekisou, metric)).unwrap()
 }
+
+#[path = "fixtures/conversion_regimes.rs"]
+mod conversion_regimes;
 
 fn joint_request_json(mode: &str, gekisou: bool, metric: Value) -> Value {
     json!({"format":"ournotes-deck.search-request/1",
@@ -2491,3 +2500,6 @@ fn composition_power_frontier_keeps_canonical_ties_in_heuristic_layout() {
         assert_eq!(actual.results, oracle.results[..k], "K={k}");
     }
 }
+
+#[path = "fixtures/correctness_matrix.rs"]
+mod correctness_matrix;
