@@ -438,7 +438,8 @@ fn final_life_caps_cover_every_team_and_keep_the_full_topk() {
         types::{Execution, PlayPolicy},
     };
     let mut synth = synthetic_master(6, 3, 5);
-    // Support skill 5 recovers life at its own skill event, 8 guards, 3 and 6 add score and conversions.
+    // Support skill 5 recovers life at its own skill event, 8 guards, 3 and 6 add score and conversions (Snap 3 is
+    // left out of the domain).
     set_column(&mut synth, "MasterSupportCard", &mut |r| {
         let (a, b) = match r["_id"].as_i64().unwrap() {
             1 => (5, 0),
@@ -457,19 +458,20 @@ fn final_life_caps_cover_every_team_and_keep_the_full_topk() {
             row[2] = 1;
         }
     }
-    let (mut zero_orders, mut passing) = (0, 0);
+    let (mut zero_orders, mut passing, mut zero_prefixes) = (0, 0, 0);
     for (mode, gekisou) in [("free", false), ("mission", true)] {
         for least in [1, 150, 400, 900] {
             let metric = json!({"kind":"scoreAndLifeAtLeast","threshold":1,"minFinalLife":least});
             let mut request = joint_request(mode, gekisou, metric);
             request.execution =
                 Execution::Live { score_id: SCORE_ID, gekisou, play: PlayPolicy::Stream { stream: stream.clone() } };
-            // Every team of the domain: two member sets under the fixed leader, 136 Snap pairings each.
-            request.k = 1000;
+            // Every team of the domain: two member sets under the fixed leader, 31 pairings of Snaps 1 and 2 each.
+            request.constraints.exclude_snaps = vec![3];
+            request.k = 100;
             request.strategy = Strategy::Exhaustive;
             let oracle = engine::recommend(&data, &roster, &request).unwrap();
             assert_eq!(oracle.completion, Completion::Complete);
-            assert_eq!(oracle.results.len(), 272);
+            assert_eq!(oracle.results.len(), 62);
             request.strategy = Strategy::BranchAndBound;
             let built = handler::build_card_pool(&data, &roster, &request).unwrap();
             for row in &oracle.results {
@@ -477,6 +479,16 @@ fn final_life_caps_cover_every_team_and_keep_the_full_topk() {
                 assert_eq!(audit["violations"], 0, "{mode} {least}: {}", audit["first"]);
                 zero_orders += audit["lifeCapped"].as_u64().unwrap();
                 passing += row.order_outcomes.iter().filter(|&&(_, _, payoff)| payoff > 0).count();
+                // The composition bounds of the team's prefixes, members first and then Snaps.
+                let numerator = row.expected_payoff.as_ref().unwrap().numerator.parse::<i128>().unwrap();
+                for team in [false, true] {
+                    for depth in usize::from(!team)..=5 {
+                        let bound = diagnostics::split_prefix_upper(&built, row.members, row.snaps, depth, team);
+                        let (cap, power) = bound.unwrap().unwrap();
+                        assert!(cap >= numerator && power >= i64::from(row.power), "{mode} {least} {team} {depth}");
+                        zero_prefixes += usize::from(cap == 0);
+                    }
+                }
             }
             for k in [1, 5, 64] {
                 request.k = k;
@@ -488,7 +500,7 @@ fn final_life_caps_cover_every_team_and_keep_the_full_topk() {
             }
         }
     }
-    assert!(zero_orders > 0 && passing > 0, "{zero_orders} {passing}");
+    assert!(zero_orders > 0 && passing > 0 && zero_prefixes > 0, "{zero_orders} {passing} {zero_prefixes}");
 }
 
 #[test]

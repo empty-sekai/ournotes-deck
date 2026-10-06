@@ -560,6 +560,31 @@ impl JointFineBounds {
         }
         Some(self.fine.final_life(rec))
     }
+
+    /// The most life a performer recovers at its own skill events with any of these choices (see
+    /// [`JointFineBounds::final_life_cap`]); None when one of them has another row that can raise the life, or when
+    /// the life rows are not listed.
+    pub(crate) fn recovery_reach(&self, member: usize, choices: impl IntoIterator<Item = usize>) -> Option<i64> {
+        if !self.fine.life_rows_listed {
+            return None;
+        }
+        let mut reach = 0i64;
+        for choice in choices {
+            match self.fine.life[member][self.choice_class(member, choice)] {
+                LifeKind::None => {}
+                LifeKind::Recovery(r) => reach = reach.max(r),
+                LifeKind::Other => return None,
+            }
+        }
+        Some(reach)
+    }
+
+    /// At least the final life of every team whose performer at position `k` has no life-raising row but recoveries
+    /// at its own skill events of at most `rec[k]` in total: the fold of [`JointFineBounds::final_life_cap`] is
+    /// non-decreasing in each recovery (every step `clamp(x + r - d, 0, 2 * base)` is, and 0 stays 0).
+    pub(crate) fn final_life_reach(&self, rec: [i64; 5]) -> i64 {
+        self.fine.final_life(rec)
+    }
     /// The per-entry terms of [`JointFineBounds::upper`] for the same candidate and order.
     pub(crate) fn cap_terms(
         &self,

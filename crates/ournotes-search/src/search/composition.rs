@@ -275,10 +275,11 @@ fn team(
         e.tel.composition.team.pruned += 1;
         return Ok(true);
     }
+    // Every proposal is a leaf of this composition: its per-order caps drop it when it cannot enter the Top-K.
     let (_, proposal) = bounds.layout_power(domain, p, 0);
     if !evaluated.contains(&proposal.snaps) {
         e.tel.composition.seeds.team += 1;
-        if !e.consider(proposal)? {
+        if !e.consider_with(proposal, Some((bounds, domain)))? {
             return Ok(false);
         }
         evaluated.insert(proposal.snaps);
@@ -314,7 +315,7 @@ fn team(
                 continue;
             }
             e.tel.composition.seeds.power_frontier += 1;
-            if !e.consider(proposal)? {
+            if !e.consider_with(proposal, Some((bounds, domain)))? {
                 return Ok(false);
             }
             evaluated.insert(proposal.snaps);

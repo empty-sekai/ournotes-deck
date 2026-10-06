@@ -316,12 +316,43 @@ impl JointBounds {
         orders: &[([usize; 5], u128)],
     ) -> Result<(i128, i64), Error> {
         let power_cap = (member_depth == 5).then(|| self.layout_power(domain, p, snap_depth).0);
+        // The fold is non-decreasing in every recovery: with none it bounds no team below the least final life, and
+        // with the largest at every position it bounds every order of every team.
+        let life = self
+            .node_life(pool, domain, p, member_depth, snap_depth, free_order)
+            .filter(|&(fine, least, _)| fine.final_life_reach([0; 5]) < least);
+        if let Some((fine, least, recovery)) = life
+            && fine.final_life_reach([recovery.into_iter().max().unwrap_or(0); 5]) < least
+            && let Some((positions, _)) = orders.last()
+        {
+            let (_, power) =
+                self.composition_upper_at(pool, domain, p, member_depth, snap_depth, free_order, positions, power_cap);
+            return Ok((0, power));
+        }
+        let mut short: Vec<([i64; 5], bool)> = Vec::new();
         let mut total = 0i128;
         let mut power = 0;
         for (positions, weight) in orders {
-            let (cap, p) =
+            let (mut cap, p) =
                 self.composition_upper_at(pool, domain, p, member_depth, snap_depth, free_order, positions, power_cap);
             power = p;
+            if let Some((fine, least, recovery)) = life {
+                let mut rec = [0i64; 5];
+                for (&position, &r) in positions.iter().zip(&recovery) {
+                    rec[position] = r;
+                }
+                let is_short = match short.iter().find(|(r, _)| *r == rec) {
+                    Some(&(_, s)) => s,
+                    None => {
+                        let s = fine.final_life_reach(rec) < least;
+                        short.push((rec, s));
+                        s
+                    }
+                };
+                if is_short {
+                    cap = 0;
+                }
+            }
             total = total
                 .checked_add(
                     cap.checked_mul(i128::try_from(*weight).map_err(|_| unavailable("composition mass overflow"))?)
@@ -330,6 +361,59 @@ impl JointBounds {
                 .ok_or_else(|| unavailable("composition sum overflow"))?;
         }
         Ok((total, power))
+    }
+
+    /// For a score and life target: the fine bounds, its least final life and, per slot of `p`, the most life the
+    /// slot's performer recovers at its own skill events in any team of the node (`member_depth` members and the
+    /// Snaps of `SLOTS[..snap_depth]` assigned; with `free_order` the nonleader slots take their largest value, their
+    /// positions being free). None when some team of the node may have another life-raising row.
+    fn node_life(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        member_depth: usize,
+        snap_depth: usize,
+        free_order: bool,
+    ) -> Option<(&JointFineBounds, i64, [i64; 5])> {
+        let least = self.min_final_life?;
+        let fine = self.fine.as_ref()?;
+        let used: ournotes_sim::num::FxHashSet<_> = SLOTS[..snap_depth].iter().filter_map(|&s| p.snaps[s]).collect();
+        let open = |m: usize| {
+            let snaps = domain.snaps().iter().enumerate().filter(|(_, s)| !used.contains(s)).map(|(j, _)| j + 1);
+            fine.recovery_reach(m, std::iter::once(0).chain(snaps))
+        };
+        let mut recovery = [0i64; 5];
+        for (depth, &slot) in SLOTS[..member_depth].iter().enumerate() {
+            let m = p.members[slot];
+            recovery[slot] = if depth < snap_depth {
+                let choice = p.snaps[slot]
+                    .map_or(0, |s| domain.snaps().iter().position(|&v| v == s).expect("compiled Snap") + 1);
+                fine.recovery_reach(m, [choice])?
+            } else {
+                open(m)?
+            };
+        }
+        if member_depth < 5 {
+            let characters: ournotes_sim::num::FxHashSet<_> =
+                SLOTS[..member_depth].iter().map(|&s| pool.members[p.members[s]].character_id).collect();
+            let mut rest = 0i64;
+            for &m in domain.members() {
+                if !characters.contains(&pool.members[m].character_id) {
+                    rest = rest.max(open(m)?);
+                }
+            }
+            for &slot in &SLOTS[member_depth..] {
+                recovery[slot] = rest;
+            }
+        }
+        if free_order {
+            let most = SLOTS[1..].iter().map(|&s| recovery[s]).max().unwrap_or(0);
+            for &slot in &SLOTS[1..] {
+                recovery[slot] = most;
+            }
+        }
+        Some((fine, least, recovery))
     }
 
     pub(crate) fn slot_choices(
