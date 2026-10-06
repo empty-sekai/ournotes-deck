@@ -564,16 +564,23 @@ that scored prefix.
 The timer floor is a separate certificate in
 [`command_floor_times`](../crates/ournotes-search/src/search/snaps/score_windows.rs). It uses the previous play-frame
 time only when frame times are nondecreasing; frame, chart-note, skill-event and Gekisou range times all lie in
-`[0, 2^24]`; extension rows are nonnegative; and positive-duration rows have neither a release checker nor a gated
-Gekisou sustained updater. The interval makes every elapsed integer exactly representable in binary32.
-An execution that survives the previous update has `d_previous >= previous_time - exec` (strictly greater on its
-first update). A nonnegative extension keeps `d` from decreasing, so a later timed finish satisfies
-`exec + ceil(d) >= previous_time`. Its successful current strict end test also keeps that timestamp within the
-current nonwrapping clock range. A release checker can skip the first elapsed check, and a gated sustained updater
-can skip a previous update entirely; neither supplies this premise. Without the compact certificate the timer
-floor is score frame zero. Every case also includes the positive music-length finish clamp. This same floor feeds
-the execution counts and the network snapshot cancellation bounds. A wider replay interval can increase the
-rounding allowance or make the optional cap unavailable; it does not change the scorer.
+`[0, 2^24]`; extension rows are nonnegative; and every positive-duration row satisfies either of two sufficient
+conditions. The first is that it has neither a release checker nor a gated Gekisou sustained updater. The interval
+makes every elapsed integer exactly representable in binary32. An execution that survives the previous update
+has `d_previous >= previous_time - exec` (strictly greater on its first update). A nonnegative extension keeps `d`
+from decreasing, so a later timed finish satisfies `exec + ceil(d) >= previous_time`. Its successful current strict
+end test also keeps that timestamp within the current nonwrapping clock range. The second condition is that the
+native binary32 product `d0 = act * 1000f32` is finite and `d0 >= H as f32`, where `H` is the absolute music time of
+the final supplied play frame. Every execution timestamp is nonnegative, so every elapsed time is at most `H`.
+Nonnegative extensions preserve `d >= d0`, making the strict timed-end predicate `d < elapsed` false throughout
+the play, including when `d0 == H as f32`. This admits release checkers and gated sustained updaters even when
+their updates skip elapsed-time checks. Release, forced-finish and first post-start checks file their end
+commands at the current frame time, before the music-length clamp. The product and comparison use native binary32
+rounding. Other pools use the conservative score-frame-zero floor.
+Every case also includes the positive music-length finish clamp, independently of the play horizon and scoring
+clock limits. This same floor feeds the execution counts and the network snapshot cancellation bounds. A wider
+replay interval can increase the rounding allowance or make the optional cap unavailable; it does not change the
+scorer.
 
 Frame geometry is a separate obligation. `ScoreFrames` projects a possible factor span `[a,b]` onto the closed
 native frame interval `[frame(a),frame(b)]`, using binary32 time conversion and the last-addressable-frame clamp
