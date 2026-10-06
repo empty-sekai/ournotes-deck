@@ -22,6 +22,8 @@ mod network_snapshots;
 mod numeric_domain;
 #[path = "fixtures/proof_telemetry.rs"]
 mod proof_telemetry;
+#[path = "fixtures/scenario_completion.rs"]
+mod scenario_completion;
 #[path = "fixtures/sustained_combo.rs"]
 mod sustained_combo;
 
