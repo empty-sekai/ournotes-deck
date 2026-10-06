@@ -335,7 +335,7 @@ impl Leaf<'_, '_, '_> {
             return Ok(());
         }
         let snaps = snaps_j.map(|x| x.map(|j| self.t.snaps[j]));
-        let snap_ids = snaps.map(|x| x.map_or(NO_SNAP, |i| self.pool.snaps[i].id));
+        let snap_ids = snaps.map(|x| SnapKey::from(x.map(|i| self.pool.snaps[i].id)));
         let mut scratch = std::mem::take(&mut self.scratch);
         let src: [u32; 5] = std::array::from_fn(|k| sl.fine.src[self.members[o[k]]][cs[o[k]]]);
         let bound = sl.fine_bound(power, parts, src, life, &mut scratch);

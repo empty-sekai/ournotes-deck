@@ -269,7 +269,7 @@ pub(super) struct Cand {
     pub(super) bound: i64,
     pub(super) power: i64,
     pub(super) snaps: [Option<usize>; 5],
-    pub(super) snap_ids: [i64; 5],
+    pub(super) snap_ids: [SnapKey; 5],
     pub(super) order: [usize; 5],
     pub(super) classes: [usize; 5],
 }
