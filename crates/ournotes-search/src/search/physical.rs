@@ -1250,7 +1250,9 @@ pub(crate) fn solve_physical_impl(
     }
     engine.tel.incumbents.warm_start.final_top_k = engine.seeded_in_top();
     if engine.certified.is_some() && engine.stop.is_none() {
+        engine.rec.begin(&mut engine.tel, "lotteryRefinement", None);
         engine.refine_certified_frontier()?;
+        engine.rec.end(&mut engine.tel);
     }
     let standing = engine.standing();
     engine.rec.begin(&mut engine.tel, "finish", None);

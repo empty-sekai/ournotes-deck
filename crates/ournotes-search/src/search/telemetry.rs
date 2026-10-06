@@ -78,11 +78,43 @@ pub struct LotteryRefinement {
     /// Complete laws successfully installed in the ranking frontier.
     pub installed_orders: u64,
     pub declined_orders: u64,
+    /// Provider refusals by cause. A refusal preserves the candidate's previous enclosure.
+    pub declines: LotteryRefinementDeclines,
+    /// The shared replay or frame allowance reached zero, independently of ranking completion.
+    pub budget_exhausted: bool,
     /// Complete laws whose search-side exact payoff arithmetic exceeded its representation.
     pub arithmetic_declines: u64,
     pub replay_runs: u64,
     pub terminal_paths: u64,
     pub frames: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LotteryRefinementDeclines {
+    pub domain: u64,
+    pub branch_depth: u64,
+    pub work_budget: u64,
+    pub arithmetic: u64,
+    pub unhandled_random: u64,
+    pub cancelled: u64,
+    pub unsupported: u64,
+}
+
+impl LotteryRefinementDeclines {
+    pub(crate) fn record(&mut self, decline: ournotes_sim::live::full::LuckExactDecline) {
+        use ournotes_sim::live::full::LuckExactDecline;
+        let counter = match decline {
+            LuckExactDecline::Domain => &mut self.domain,
+            LuckExactDecline::BranchDepth => &mut self.branch_depth,
+            LuckExactDecline::WorkBudget => &mut self.work_budget,
+            LuckExactDecline::Arithmetic => &mut self.arithmetic,
+            LuckExactDecline::UnhandledRandom => &mut self.unhandled_random,
+            LuckExactDecline::Cancelled => &mut self.cancelled,
+            LuckExactDecline::Unsupported => &mut self.unsupported,
+        };
+        *counter += 1;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -368,6 +400,8 @@ pub struct TimeBreakdown {
     pub stopped_simulation_ms: f64,
     /// Warm start and polishing, outside the simulations and cutoff tables they run.
     pub warm_start_ms: f64,
+    /// Certified candidate insertion and interval ranking work, outside probability playback.
+    pub interval_frontier_ms: f64,
     pub other_ms: f64,
 }
 
@@ -653,6 +687,8 @@ pub struct Caches {
     pub rush_windows: CacheUse,
     /// Certified lottery curves of LUCK lives, shared across performance orders and teams.
     pub luck_curves: LuckCurves,
+    /// Certified whole-program score caps retained after partial order exclusion.
+    pub luck_score_caps: CacheUse,
 }
 
 /// Use of the certified lottery-curve cache.
@@ -665,6 +701,19 @@ pub struct LuckCurves {
     /// Compiled recorder states considered and reused within score sessions.
     pub recording_lookups: u64,
     pub recording_hits: u64,
+    pub summary_lookups: u64,
+    pub summary_hits: u64,
+    pub summary_peak_entries: usize,
+    pub summary_peak_bytes: usize,
+    pub program_lookups: u64,
+    pub program_hits: u64,
+    pub program_compilations: u64,
+    pub program_evictions: u64,
+    pub program_peak_entries: usize,
+    pub program_peak_bytes: usize,
+    pub propagated_curves: u64,
+    pub peak_states: usize,
+    pub transitions: u64,
     /// Diagnostic builds only: the reduced recordings and the propagations of newly encountered curves.
     pub record_ms: f64,
     pub propagate_ms: f64,
@@ -682,6 +731,19 @@ impl LuckCurves {
             peak_key_bytes: stats.peak_key_bytes,
             recording_lookups: stats.recording_lookups,
             recording_hits: stats.recording_hits,
+            summary_lookups: stats.summary_lookups,
+            summary_hits: stats.summary_hits,
+            summary_peak_entries: stats.summary_peak_entries,
+            summary_peak_bytes: stats.summary_peak_bytes,
+            program_lookups: stats.program_lookups,
+            program_hits: stats.program_hits,
+            program_compilations: stats.program_compilations,
+            program_evictions: stats.program_evictions,
+            program_peak_entries: stats.program_peak_entries,
+            program_peak_bytes: stats.program_peak_bytes,
+            propagated_curves: stats.propagated_curves,
+            peak_states: stats.peak_states,
+            transitions: stats.transitions,
             record_ms: stats.record_ms,
             propagate_ms: stats.propagate_ms,
         };
@@ -730,7 +792,8 @@ pub(crate) mod slot {
     pub(crate) const SIMULATION: usize = CUTOFF_TABLE + 1;
     pub(crate) const STOPPED: usize = SIMULATION + 1;
     pub(crate) const WARM: usize = STOPPED + 1;
-    pub(crate) const OTHER: usize = WARM + 1;
+    pub(crate) const INTERVAL_FRONTIER: usize = WARM + 1;
+    pub(crate) const OTHER: usize = INTERVAL_FRONTIER + 1;
     pub(crate) const COUNT: usize = OTHER + 1;
 }
 
@@ -787,6 +850,7 @@ fn add_nanos(nanos: &[u64; slot::COUNT], time: &mut TimeBreakdown) {
     time.simulation_ms += ms(nanos[slot::SIMULATION]);
     time.stopped_simulation_ms += ms(nanos[slot::STOPPED]);
     time.warm_start_ms += ms(nanos[slot::WARM]);
+    time.interval_frontier_ms += ms(nanos[slot::INTERVAL_FRONTIER]);
     time.other_ms += ms(nanos[slot::OTHER]);
 }
 

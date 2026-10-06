@@ -38,6 +38,32 @@ fn cap_sum(caps: &[i128]) -> i128 {
     caps.iter().fold(0i128, |a, &c| a.saturating_add(c))
 }
 
+/// Integer caps on each order's expected score, indexed in the canonical performer basis.
+/// The sum bounds 120 times the team's expected score, including every unfinished order.
+struct CertifiedOrderCutoff {
+    caps: Vec<i128>,
+    threshold: i128,
+    power: i32,
+    kth_power: i32,
+}
+
+fn canonical_order_caps(caps: &[i128], basis: [usize; 5]) -> Vec<i128> {
+    uniform::all_orders().iter().map(|order| caps[uniform::order_index(&order.map(|slot| basis[slot]))]).collect()
+}
+
+impl CertifiedOrderCutoff {
+    fn offer(&mut self, index: usize, upper: f64) -> bool {
+        // The admitted score route is nonnegative and its score support is i32. Keep the original
+        // cap if a provider cannot supply this conversion certificate.
+        if !(0.0..=f64::from(i32::MAX)).contains(&upper) {
+            return false;
+        }
+        self.caps[index] = self.caps[index].min(upper.ceil() as i128);
+        let total = cap_sum(&self.caps);
+        total < self.threshold || (total == self.threshold && self.power < self.kth_power)
+    }
+}
+
 impl Engine<'_, '_> {
     /// The payoff numerator of a team over the performance orders: each order simulated once, the sum over all of
     /// them. With a full Top-K and bounds, the team's per-order caps (cheap, then raw and fine) are summed first; the
@@ -51,6 +77,16 @@ impl Engine<'_, '_> {
         cut: Option<(&crate::search::joint::JointBounds, &crate::domain::CandidateDomain)>,
     ) -> Result<Leaf, Error> {
         if self.certified.is_some() {
+            let mut score_cutoff = None;
+            if matches!(self.metric, crate::types::Metric::Score)
+                && let Some((threshold, kth_power)) = self.safe_cutoff()
+                && self
+                    .cached_certified_score_cap(physical, power)
+                    .is_some_and(|cap| cap < threshold || (cap == threshold && power < kth_power))
+            {
+                self.tel.leaves.order_bound_pruned += 1;
+                return Ok(Leaf::Pruned);
+            }
             // The caps prove a team below the K-th whether or not its scores are cached.
             if let (Some((bounds, domain)), Some((threshold, kth_power))) = (cut, self.safe_cutoff()) {
                 let below = |total: i128| total < threshold || (total == threshold && power < kth_power);
@@ -77,6 +113,9 @@ impl Engine<'_, '_> {
                         return Ok(Leaf::Pruned);
                     }
                 }
+                if matches!(self.metric, crate::types::Metric::Score) {
+                    score_cutoff = Some((caps, threshold, kth_power));
+                }
             }
             let mut input = expectation::context(self.pool, physical, &self.request.objective)?;
             if let Some(v) = self.simulation.music_length_ms {
@@ -86,7 +125,7 @@ impl Engine<'_, '_> {
                 input.params.score_music_length_ms = Some(v);
             }
             self.admit_certified_refinement(input.notes.len(), input.play.frames.len());
-            let program = crate::search::certified_search::canonicalize_performers(&mut input);
+            let (program, basis) = crate::search::certified_search::canonicalize_performers_with_basis(&mut input);
             let master = self.pool.master;
             let score = if let Some(score) = self.cached_certified_score(&program, power) {
                 score
@@ -94,22 +133,48 @@ impl Engine<'_, '_> {
                 self.tel.leaves.started += 1;
                 let skills = self.certified_luck_skills()?;
                 let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
+                let mut order_cutoff = score_cutoff.map(|(caps, threshold, kth_power)| {
+                    let canonical_caps = canonical_order_caps(&caps, basis);
+                    CertifiedOrderCutoff { caps: canonical_caps, threshold, power, kth_power }
+                });
+                let mut schedule: Vec<_> = (0..ORDERS).collect();
+                if let Some(cutoff) = &order_cutoff {
+                    // This changes only the evaluation sequence. Every unfinished order
+                    // keeps its proved cap, and complete aggregation restores the canonical order.
+                    schedule.sort_by(|&a, &b| cutoff.caps[b].cmp(&cutoff.caps[a]).then(a.cmp(&b)));
+                }
+                let mut completed_orders = 0u64;
+                let mut pruned = false;
                 let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
-                let result = crate::search::certified_search::evaluate_luck_context(
+                let result = crate::search::certified_search::evaluate_luck_context_until(
                     master,
                     &skills,
                     &input,
                     &crate::search::certified_search::PayoffMap::Score,
                     Some(&mut curves),
+                    (&schedule, |index, order| {
+                        completed_orders += 1;
+                        pruned = order_cutoff.as_mut().is_some_and(|cutoff| cutoff.offer(index, order.mean.upper()));
+                        !pruned
+                    }),
                     || self.expired(),
                 );
                 self.rec.clock.lap(resume);
+                self.tel.leaves.simulations += completed_orders;
                 self.tel.caches.luck_curves.record(curves.stats());
                 self.certified.as_mut().expect("certified request").luck_curves = curves;
                 let Some(score) = result? else {
+                    if pruned {
+                        self.cache_certified_score_cap(
+                            physical,
+                            power,
+                            cap_sum(&order_cutoff.as_ref().expect("certified exclusion").caps),
+                        );
+                        self.tel.leaves.order_bound_pruned += 1;
+                        return Ok(Leaf::Pruned);
+                    }
                     return Ok(Leaf::Stopped);
                 };
-                self.tel.leaves.simulations += ORDERS as u64;
                 self.cache_certified_score(program.clone(), power, &score);
                 score
             };
@@ -426,5 +491,65 @@ impl Engine<'_, '_> {
         let census = self.tel.leaves.census.as_mut().expect("census started");
         census.record(physical.members, team, cheap, fine);
         Ok(Leaf::Pruned)
+    }
+}
+
+#[cfg(test)]
+mod certified_cutoff_tests {
+    use super::*;
+
+    #[test]
+    fn every_performer_basis_preserves_unequal_physical_order_caps() {
+        let powers = [2i128, 3, 5, 7, 11];
+        let positions = [13i128, 17, 19, 23, 29];
+        let orders = uniform::all_orders();
+        let caps: Vec<_> = orders
+            .iter()
+            .map(|order| order.iter().enumerate().map(|(position, &slot)| powers[slot] * positions[position]).sum())
+            .collect();
+        for basis in &orders {
+            let remapped = canonical_order_caps(&caps, *basis);
+            let canonical_powers = basis.map(|slot| powers[slot]);
+            for (order, actual) in orders.iter().zip(remapped) {
+                let expected: i128 = order
+                    .iter()
+                    .enumerate()
+                    .map(|(position, &slot)| canonical_powers[slot] * positions[position])
+                    .sum();
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn fractional_order_bounds_keep_every_possible_winner_and_power_tie() {
+        // Each order independently pays 99 or 101 with masses 1/4 and 3/4: its exact mean is 100.5.
+        // Finishing the other orders at their caps witnesses why a partial low order cannot discard a team.
+        for power in [99, 100, 101] {
+            let mut cutoff = CertifiedOrderCutoff { caps: vec![101; ORDERS], threshold: 12_060, power, kth_power: 100 };
+            for index in 0..ORDERS {
+                assert!(!cutoff.offer(index, 100.5), "ceil must preserve the fractional mean");
+            }
+            let mut cutoff = CertifiedOrderCutoff { caps: vec![101; ORDERS], threshold: 12_000, power, kth_power: 100 };
+            for index in 0..ORDERS - 1 {
+                assert!(!cutoff.offer(index, 100.0), "an unfinished order can still exceed the cutoff");
+            }
+            assert_eq!(cutoff.offer(ORDERS - 1, 100.0), power < 100);
+        }
+    }
+
+    #[test]
+    fn a_partial_order_sum_can_certify_exclusion_without_an_aggregate() {
+        let mut cutoff =
+            CertifiedOrderCutoff { caps: vec![101; ORDERS], threshold: 12_120, power: 100, kth_power: 100 };
+        assert!(cutoff.offer(0, 99.5));
+        assert_eq!(cutoff.caps[0], 100);
+        assert!(cutoff.caps[1..].iter().all(|&cap| cap == 101));
+        for unavailable in [f64::NAN, f64::INFINITY, -1.0, f64::from(i32::MAX) + 1.0] {
+            let mut fallback =
+                CertifiedOrderCutoff { caps: vec![101; ORDERS], threshold: 12_120, power: 100, kth_power: 100 };
+            assert!(!fallback.offer(0, unavailable));
+            assert!(fallback.caps.iter().all(|&cap| cap == 101));
+        }
     }
 }

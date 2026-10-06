@@ -118,6 +118,7 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | `conversionCompile` | 撃奏分数：编译各转换分段的上界 |
 | `seed` | 联合搜索遍历前的 warm start（见 `incumbents.warmStart`） |
 | `search` | 主搜索；转换分段时每个分段一项，`label` 为 `free`、`snap <Snap ID> slot <槽位>` 或 `pair slots <i>,<j>` |
+| `lotteryRefinement` | LUCK 物理候选域关闭后的完整概率律精化 |
 | `evaluate` | 评估指定编成 |
 | `warmStart`、`proposals` | 启发式候选策略的两段 |
 | `verify` | Power/Skip 规范搜索的结果复核 |
@@ -136,6 +137,7 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | `simulationMs` | 跑完的整局模拟 |
 | `stoppedSimulationMs` | 中途截断的整局模拟 |
 | `warmStartMs` | warm start 与打磨，不含其中的模拟和截断表 |
+| `intervalFrontierMs` | 候选区间证书的插入、区间排名与精化簿记，不含概率回放 |
 | `otherMs` | 其余：准备、编译、整理结果、其他遍历，以及停止后计算 `proof.upperBound` 的时间（`proof.boundMs`） |
 
 ## `leaves`
@@ -148,8 +150,8 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | `partial` | 被停止打断评估的候选数 |
 | `cheapPruned`、`finePruned` | 一局都没模拟就放弃的队伍：各出场顺序的廉价上界之和，或原始与精细上界之和，低于第 K 名 |
 | `started` | 开始逐个出场顺序模拟的队伍数 |
-| `orderBoundPruned` | 部分出场顺序算完后，精确收益加上其余顺序的上界仍低于第 K 名而放弃的队伍数 |
-| `simulations` | 跑完的整局模拟次数（每次一个出场顺序） |
+| `orderBoundPruned` | 部分出场顺序算完后，已得收益（LUCK 使用认证上端点）加上其余顺序的上界仍低于第 K 名截断值而放弃的队伍数 |
+| `simulations` | 完整求值的出场顺序数；LUCK 路径包含完整的区间证书 |
 | `cutoff.tables` | 带截断表模拟的出场顺序数 |
 | `cutoff.unavailable` | 没有有限截断表的出场顺序数 |
 | `cutoff.stopped` | 中途截断的模拟次数（该队伍不可能进入 Top-K） |
@@ -198,17 +200,37 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | `completedOrders` | 取得完整且总质量精确等于 1 的概率律的顺序数，包括初始模型相等时复用的完整概率律 |
 | `installedOrders` | 完整 law 成功用于收紧排序前沿的顺序数 |
 | `declinedOrders` | 因不支持的输入、随机源、工作配额、取消或算术容量而未得到完整 law 的顺序数 |
+| `declines` | 提供器按原因统计的拒绝次数：`domain`、`branchDepth`、`workBudget`、`arithmetic`、`unhandledRandom`、`cancelled`、`unsupported` |
+| `budgetExhausted` | 共享重放段配额或帧配额已归零；此标志本身不证明任何排名结果 |
 | `arithmeticDeclines` | law 已完整，但搜索侧精确收益算术无法表示，因此未安装的顺序数 |
 | `replayRuns`、`frames`、`terminalPaths` | 所有细化尝试中已启动的重放段数、已执行帧数、已完成终止路径数；复用完整概率律不增加重放工作量 |
 
 细化运行计入 `time.simulationMs`，与原有 `leaves.simulations` 的每队 120 顺序粗求值分别计数。排名得到认证时可以停止，
 因此 `Complete` 不要求每个顺序都完成精确细化，也不保证结果中已有精确的有理数期望值。
 
+[nominal LUCK 精化方法](luck-refinement.md)说明了帧检查点、工作量计数和保留的排名证书。
+
 ## `caches`
 
 `candidates`（已评估或剪掉的编成；实打 Live 为按规范站位的队伍）、`bonusRows`（PT 奖金上界的行表）、`rushWindows`
 （Rush 区间窗口）各为 `{lookups, hits, evictions, peakEntries}`；`evictions` 是丢弃的条目数（整表清空时计全部条目）。
 `bonusRowsRefused` 是因容量上限而放弃该上界的次数。
+
+`luckCurves` 记录本次请求的概率曲线与评分摘要复用。`propagatedCurves` 是实际完整执行的 DP 传播次数，不含通过缓存复用的曲线。
+`peakStates` 是传播期间的活跃状态数峰值，`transitions` 是实际执行的转移次数；两者均包含传播中断前的工作。缓存命中不增加传播工作量。
+`recordingLookups`、`recordingHits` 记录已编译 recorder 的查询与复用次数。`summaryLookups`、`summaryHits` 记录初始模型
+相等时完整评分摘要的查询与复用次数；`summaryPeakEntries`、`summaryPeakBytes` 记录观察到的 session 缓存条目数和字节数峰值。
+`programLookups`、`programHits` 记录仅以初始总合力为参数的因子历史程序的查询与复用次数。`programCompilations` 统计完整编译的
+程序，也包括随后因容量不足未被保留的程序；`programEvictions` 统计移除的条目。`programPeakEntries`、`programPeakBytes`
+记录保留条目数及其内存占用上界的峰值，包含容器容量、键、核与引用，并对共享运行上下文和概率曲线各计一次。
+程序命中会重新计算该合力下原有的浮点运算、整数取整、概率连接和排名奖金；它不会再次回放因子历史，也不直接提供精确值或排名完成证明。
+请求缓存容量为 0 时禁用这些缓存。
+
+LUCK 路径上的 `leaves.simulations` 统计已完成的顺序得分包围区间，也包括该候选随后被剩余顺序上界排除的情况；摘要缓存命中同样提供完整的
+顺序包围区间，无需再次回放。
+
+`luckScoreCaps` 记录完整评分程序的已认证分数上界的复用，这些上界在部分顺序已足以排除候选时保留。
+缓存条目提供上界，不提供候选精确值或完成证明。
 
 ## `memory`
 

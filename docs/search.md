@@ -1012,6 +1012,23 @@ the remaining orders are needed. A surviving deterministic team obtains exact va
 The LUCK branch instead maintains complete per-order enclosures and uses the
 [interval ranking certificate](#luck-ranking-certificate).
 
+For the LUCK expected-score target, the leaf also retains the existing per-order score caps. Its canonical
+performer basis is a permutation of the physical slots, so each cap is relabelled by that bijection. After order
+`i` completes with certified mean upper endpoint `H_i`, its cap becomes `min(C_i, ceil(H_i))`; the other orders
+keep their original caps. Therefore `sum_i C_i` continues to bound `120 * U(team)` at every prefix of the order
+evaluation. The ordinary certified integer-grid cutoff, including its proved power tie rule, may exclude the
+team as soon as this sum loses. An excluded partial evaluation supplies neither an aggregate value nor a team
+score-cache entry. Nonlinear payoff targets retain their dedicated payoff evaluation.
+The complete-program score cap may be retained separately under a sorted set of physical member/Snap pairs
+and total power. In the immutable pool and request, each pair determines a complete performer and the leader
+affects only total power; all other live parameters are fixed. Equal keys therefore identify the same uniform
+120-order score program. A hit can be compared with the current certified cutoff before constructing a new
+live context or fine order caps. This cache contains no exact score or completed evaluation; it holds at most
+`min(cacheEntries, 64)` caps, and zero disables reuse.
+The leaf evaluates orders by descending retained cap, with their canonical order index breaking priority ties.
+This is only a work schedule: it contains every order exactly once, every unfinished order keeps its valid cap,
+and complete aggregation restores canonical order before summation.
+
 ### Shared simulation prefixes
 
 The five-member `OrderedLive` route preserves a state-equivalence invariant. At a node, all represented orders
@@ -1763,7 +1780,12 @@ lottery remains separate from the uniform distribution over member orders.
 delta times and rank arrivals. Within that context, a recorder cache identifies the compiled effect rows,
 resolved checkers, performer positions, effect order, activation bit patterns, life-interpreter inputs and probe
 flags. Equal recorder keys reuse a complete lottery curve. Each summary still evaluates the requested deck's
-complete score command schedule. Recorder-key storage is bounded by the optional curve-cache capacity, at most
+complete score command schedule, or reuses a completed certificate for an equal initialized full model in this
+same immutable context. Equal full models have the same nominal terminal law; a completed all-path score,
+support and life enclosure for one therefore encloses the other. Summary storage holds at most 64 entries and
+8 MiB of identity and result payload, further limited by the optional curve-cache byte capacity. Zero capacity
+or an absent curve cache clears and disables summary reuse. All 120 distinct order labels remain in the aggregate.
+Recorder-key storage is bounded by the optional curve-cache capacity, at most
 one MiB and 32 entries.
 
 The request's `LuckDpCache` separately identifies a curve by its complete transcript: range templates, lottery
@@ -1773,15 +1795,33 @@ propagation. The recommendation engine enables a 32 MiB curve-key allowance when
 zero disables this reuse. Completed team score evaluations use their canonical performer program and power as
 keys, within the fixed request, with at most `min(cacheEntries, 64)` entries.
 
+`LuckDpCache` can additionally retain completed factor-history programs, parameterized only by initial total
+power. The recorder admission proves that power and score cannot change its command, judgement, life, query
+or fixed-rank schedule; nonzero power commands remain unsupported. A program key keeps the complete initialized
+state except power, with copied chart notes/events in an exact shared scope alongside skills, play frames,
+judgements, seed and binary32 clock bits. Reuse requires the same retained certified probability curve.
+The cache holds at most 128 programs and 32 MiB, further limited by the configured byte allowance. Container
+capacity, identities, interned kernels and note references are counted; shared run scopes and retained curves
+are counted once. Zero capacity disables it.
+
+Each power reevaluates the original note operations and floors, probability linkage, signed range differences
+and integer rank percentages. Kernels retain every factor/combo endpoint bit; note uses retain the original
+probability-ready state. Observed-query templates preserve unchanged-prefix thresholds computed over every
+original query and fixed-bonus coefficients from actual filing queries, including overwritten pending bonuses.
+Final-note expectations retain their separate complete probability linkage. No proportional score conversion
+or power monotonicity is assumed. Numeric refusal and cancellation still return no completed value.
+
 Cancellation is checked during recording, probability propagation, score playback and score-bound processing,
-as well as between performance orders. An interrupted summary returns no completed value; aggregation requires
-all 120 distinct orders. Completed cache entries remain valid for later evaluations in the same context.
+as well as between performance orders and before returning a retained summary. An interrupted summary returns
+no completed value; aggregation requires all 120 distinct orders. Completed cache entries remain valid for later
+evaluations in the same context.
 For a request with a time limit, certified warm seeding starts new proposals within the first quarter of the time
 remaining at entry to that phase. An evaluation already in progress retains the full request deadline.
 The subsequent traversal retains the complete domain.
 
 Sources: [score sessions](../crates/ournotes-sim/src/live/full/luck_score_bounds.rs),
 [recorder and curve keys](../crates/ournotes-sim/src/live/full/luck_dp.rs),
+[power-parameterized factor histories](../crates/ournotes-sim/src/live/full/luck_score_bounds/program.rs),
 [team score cache](../crates/ournotes-search/src/search/certified_engine.rs),
 [order cancellation](../crates/ournotes-search/src/search/certified_search.rs),
 [seeding allocation](../crates/ournotes-search/src/search/warm.rs).
@@ -1797,6 +1837,12 @@ premises of the enclosure. If `L_sigma <= E[Q_sigma] <= H_sigma`, then
 
 Aggregation checks that the input contains 120 distinct permutations and rounds outward. An unrepresentable exact
 rational aggregate can omit its exact metadata while keeping that interval certificate.
+
+The factor replay has two identity transitions. A query at its current frame with no mandatory or possible
+lottery filing leaves every replay field unchanged. A frame with no ordinary float commands and no probe
+filings leaves the factor and probe classes unchanged, records zero diffs and immediately undoes to the same
+factor values. Its notes still replace their last-execution certificate on mandatory execution or join it on
+optional execution. Later filings and rank rewinds therefore retain the ordinary replay's certificates.
 
 For a step payoff starting at value `v0`, with thresholds `t_i` and signed value changes `delta_i`,
 
@@ -1830,7 +1876,10 @@ The session can therefore reuse a completed law for an equal initialized state.
 The identity contains the complete derived model state, including resolved formation predicates and cumulative
 counts. The two score lookup tables are ordered by key, and other model maps have deterministic hashing. Finite
 floating values retain a round-tripping representation including signed zero. Identity construction admits at
-most 512 KiB; NaN-bearing, opaque or oversized states use independent evaluation. A session retains at most 64
+most 512 KiB. Empty note/factor frame lists and arrays of bitwise-positive-zero score diffs are represented
+losslessly by their lengths; all other entries retain their complete contents. Exhaustive field destructuring
+requires updating the identity when a calculator or diff field is added. NaN-bearing, opaque or oversized states
+use independent evaluation. A session retains at most 64
 complete laws and 32 MiB of identity and atom payload, evicting the oldest entries at capacity.
 
 Every retained law satisfies the complete-tree and mass-one checks. A hit consumes no replay segments or frames
@@ -1864,6 +1913,17 @@ A candidate leaves the live frontier only after K distinct candidates are proved
 certified ordered prefix requires its next team to precede every remaining live competitor and every unseen
 completion covered by the remaining-domain cap. The same K-witness argument as in the deterministic proof then
 preserves true Top-K membership.
+
+Frontier pruning counts these witnesses after sorting by proved payoff lower bound and canonical tie, both in
+descending preference. An exact payoff, when available, supplies both comparison endpoints even if its displayed
+interval has positive width. For candidate `c`, the lower-bound keys strictly ahead of `(upper(c), tie(c))` form a
+prefix and are counted by binary search. They are exactly the separated-endpoint witnesses. Equal-program
+classes have already shared their intersected bounds and exact metadata. When a class has positive width, its
+canonical predecessors are additional witnesses disjoint from that prefix; when its endpoints are equal, those
+predecessors are already in the prefix. The frontier rejects duplicate canonical team keys, so every class
+predecessor is strictly preferred. This counts precisely the union of the certified comparison witnesses while
+preserving every physical identity. For a frontier of size `F`, a pruning pass uses `O(F log F)` comparisons and
+`O(F)` temporary storage.
 
 `rankCertified` reports this ranking fact. Exact `expectedScore` and `expectedPayoff` fractions are optional
 and can have any admitted positive `u128` denominator; averaging 120 rational order values need not produce a

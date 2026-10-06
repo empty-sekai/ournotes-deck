@@ -140,6 +140,18 @@ pub(crate) struct ReplayNote {
     pub executed: Classes,
 }
 
+#[cfg(feature = "search-diagnostics")]
+#[derive(Default)]
+pub(super) struct ReplayWork {
+    pub queries: u64,
+    pub quiet_queries: u64,
+    pub execute_frames: u64,
+    pub empty_frames: u64,
+    pub undo_frames: u64,
+    pub paired_paths: std::cell::Cell<u64>,
+    pub peak_paired_paths: std::cell::Cell<usize>,
+}
+
 /// The native factor state of every lottery path through the recorder's command and query schedule.
 pub(crate) struct Replay {
     frames: Vec<Frame>,
@@ -156,6 +168,8 @@ pub(crate) struct Replay {
     mandatory: Option<i32>,
     /// Frames that may have received a lottery-dependent filing since the previous query.
     potential: Vec<i32>,
+    #[cfg(feature = "search-diagnostics")]
+    pub(super) work: ReplayWork,
 }
 
 impl Replay {
@@ -173,6 +187,8 @@ impl Replay {
             fresh: false,
             mandatory: None,
             potential: Vec::new(),
+            #[cfg(feature = "search-diagnostics")]
+            work: ReplayWork::default(),
         }
     }
 
@@ -236,6 +252,17 @@ impl Replay {
 
     /// The native `calculate` up to score frame `to`.
     pub(crate) fn query(&mut self, to: i32) -> Result<(), Error> {
+        #[cfg(feature = "search-diagnostics")]
+        {
+            self.work.queries += 1;
+        }
+        if to == self.prev && self.mandatory.is_none() && self.potential.is_empty() {
+            #[cfg(feature = "search-diagnostics")]
+            {
+                self.work.quiet_queries += 1;
+            }
+            return Ok(());
+        }
         let prev = self.prev;
         let shallowest = self.mandatory.map_or(to, |frame| to.min(frame - 1));
         let mut targets: Vec<i32> =
@@ -253,6 +280,10 @@ impl Replay {
             undone[top] = self.state;
             for frame in (lowest..=prev).rev() {
                 let at = (frame - lowest) as usize;
+                #[cfg(feature = "search-diagnostics")]
+                {
+                    self.work.undo_frames += 1;
+                }
                 undone[at] = self.undo(frame as usize, undone[at + 1], frame == prev && self.fresh)?;
             }
         }
@@ -325,6 +356,8 @@ impl Replay {
             }
         }
         dedup_paths(&mut paths);
+        #[cfg(feature = "search-diagnostics")]
+        self.record_paths(paths.len());
         let (mut op, mut probe) = (0, 0);
         loop {
             let op_time = ops.get(op).map(|o| o.time);
@@ -356,6 +389,8 @@ impl Replay {
                         }
                     }
                     dedup_paths(&mut next);
+                    #[cfg(feature = "search-diagnostics")]
+                    self.record_paths(next.len());
                     paths = next;
                     op += end;
                     probe += 1;
@@ -377,6 +412,29 @@ impl Replay {
 
     /// Execute `frame` from `state` (per class at its start). `all` when every path executes it.
     fn execute(&mut self, frame: usize, mut state: Classes, all: bool) -> Result<Classes, Error> {
+        #[cfg(feature = "search-diagnostics")]
+        {
+            self.work.execute_frames += 1;
+        }
+        if self.frames[frame].ops.is_empty() && self.frames[frame].probes.is_empty() {
+            #[cfg(feature = "search-diagnostics")]
+            {
+                self.work.empty_frames += 1;
+            }
+            // No float command or class switch can occur. Native execution leaves each field unchanged,
+            // records +0 in every diff field, and its immediate undo subtracts that same +0.
+            for fields in state.iter().flatten() {
+                finite(fields)?;
+            }
+            let observed = if self.rows.is_empty() { [state[0], state[0]] } else { state };
+            for &index in &self.frames[frame].notes {
+                let note = &mut self.notes[index];
+                note.executed = if all { observed } else { hull_classes(note.executed, observed) };
+            }
+            let sums = [[state[0].map(|_| zero()), None], [None, state[1].map(|_| zero())]];
+            self.retain_frame(frame, all, sums, state);
+            return Ok(state);
+        }
         let paired = self.paired_undo(frame, &state)?;
         let entry = &self.frames[frame];
         let (ops, probes, notes) = (&entry.ops, &entry.probes, &entry.notes);
@@ -427,6 +485,17 @@ impl Replay {
             let note = &mut self.notes[index];
             note.executed = if all { classes } else { hull_classes(note.executed, classes) };
         }
+        self.retain_frame(frame, all, sums, paired);
+        Ok(state)
+    }
+
+    #[cfg(feature = "search-diagnostics")]
+    fn record_paths(&self, count: usize) {
+        self.work.paired_paths.set(self.work.paired_paths.get() + count as u64);
+        self.work.peak_paired_paths.set(self.work.peak_paired_paths.get().max(count));
+    }
+
+    fn retain_frame(&mut self, frame: usize, all: bool, sums: [Classes; 2], paired: Classes) {
         let entry = &mut self.frames[frame];
         entry.diff = Some(match (all, entry.diff) {
             (false, Some(old)) => [hull_classes(old[0], sums[0]), hull_classes(old[1], sums[1])],
@@ -436,7 +505,6 @@ impl Replay {
             (false, Some(old)) => hull_classes(old, paired),
             _ => paired,
         });
-        Ok(state)
     }
 }
 
@@ -650,6 +718,59 @@ mod tests {
 
     fn frame_of(time: i32, frames: usize) -> usize {
         (get_frame(time).max(0) as usize).min(frames - 1)
+    }
+
+    #[test]
+    fn empty_frames_keep_signed_zero_and_optional_note_histories() {
+        let mut replay = Replay::new(4, &[]);
+        let note = replay.file_note(1, 40, 1).unwrap();
+        let mut fields = initial_state();
+        fields[0] = point(-0.0).unwrap();
+        replay.state = [Some(fields), None];
+        replay.query(2).unwrap();
+        let before = replay.state;
+        replay.query(2).unwrap();
+        assert_eq!(replay.state, before);
+        let undone = replay.undo(2, replay.state, true).unwrap()[0].unwrap();
+        assert_eq!(undone[0].lower().to_bits(), (-0.0f32).to_bits());
+        assert_eq!(undone[0].upper().to_bits(), (-0.0f32).to_bits());
+        let mut alternate = fields;
+        alternate[1] = point(2.0).unwrap();
+        replay.execute(1, [Some(alternate), None], false).unwrap();
+        let observed = replay.notes[note].executed[0].unwrap();
+        assert_eq!((observed[1].lower(), observed[1].upper()), (1.0, 2.0));
+        let paired = replay.frames[1].undo.unwrap()[0].unwrap();
+        assert_eq!((paired[1].lower(), paired[1].upper()), (1.0, 2.0));
+        replay.execute(1, [Some(alternate), None], true).unwrap();
+        assert_eq!(replay.notes[note].executed[0].unwrap()[1], point(2.0).unwrap());
+    }
+
+    #[test]
+    fn quiet_queries_still_execute_late_commands_and_rank_rewinds() {
+        let mut native = calculator();
+        let frames = native.executed_states().0;
+        let mut replay = Replay::new(frames, &[]);
+        let note = NoteCommand::new(80, 1000, 1, 1, 2);
+        native.add_note(note);
+        let index = replay.file_note(frame_of(80, frames), 80, 1).unwrap();
+        let combo = ComboCounter::new(64);
+        for time in [120, 120] {
+            native.calculate(time, &combo, None).unwrap();
+            replay.query(frame_of(time, frames) as i32).unwrap();
+        }
+        let command = FactorCommand { time_ms: 0, owner_id: 1, note_mill: 12_345, ..Default::default() };
+        native.add_factor(command);
+        replay.file_command(0, &command).unwrap();
+        for time in [120, 40, 40, 120, 120] {
+            native.calculate(time, &combo, None).unwrap();
+            replay.query(frame_of(time, frames) as i32).unwrap();
+        }
+        let actual = native.executed_states().1.into_iter().find(|(id, _)| *id == 1).unwrap().1;
+        for (field, value) in actual.into_iter().enumerate() {
+            let enclosure = replay.notes[index].executed[0].unwrap()[field];
+            assert_eq!(enclosure.lower().to_bits(), value.to_bits());
+            assert_eq!(enclosure.upper().to_bits(), value.to_bits());
+        }
     }
 
     /// Every lottery path's native factor state at each note's last execution lies in the replay's enclosure of the

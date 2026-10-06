@@ -1778,6 +1778,358 @@ fn snapshot_document(dataset_id: &str, members: i64, snaps: i64, characters: i64
     })
 }
 
+fn luck_benchmark_document(members: i64, snaps: i64, characters: i64, long: bool, chance: i64, ties: bool) -> Value {
+    let mut synth = synthetic_master(members, snaps, characters);
+    replace_table(
+        &mut synth,
+        "MasterMemberCardLevelLimit",
+        json!(
+            (1..=5)
+                .flat_map(|rarity| (1..=5).map(move |awake| {
+                    json!({"_id":rarity*10+awake,"_rarity":rarity,"_awakeCount":awake,"_limitLevel":40})
+                }))
+                .collect::<Vec<_>>()
+        ),
+    );
+    set_column(&mut synth, "MasterLiveMusic", &mut |row| {
+        for key in ["_gekisouMission1", "_gekisouMission2", "_gekisouMission3"] {
+            row[key] = json!(2);
+        }
+    });
+    set_column(&mut synth, "MasterMemberCard", &mut |row| {
+        let id = row["_id"].as_i64().unwrap();
+        row["_gekisouSkillID"] = json!(101 + (id - 1) % 3);
+        if ties {
+            row["_rarity"] = json!(3);
+            row["_memberCardLevelGroup"] = json!(1);
+            row["_cardType"] = json!(1);
+            row["_bestMusicTagIDs"] = json!([1]);
+            row["_performancePowerMax"] = json!(10_000 + id % 2);
+            row["_technicPowerMax"] = json!(10_000);
+            row["_visualPowerMax"] = json!(10_000);
+        }
+    });
+    set_column(&mut synth, "MasterSupportCard", &mut |row| {
+        let id = row["_id"].as_i64().unwrap();
+        row["_supportSkillId01"] = json!([3, 9, 5][(id as usize - 1) % 3]);
+        row["_supportSkillId02"] = json!(if !long && id == 2 { 5 } else { [1, 6, 11][(id as usize - 1) % 3] });
+        row["_gekisouSupportSkillId01"] = json!(201 + (id - 1) % 3);
+        if ties {
+            row["_rarity"] = json!(3);
+            row["_cardType"] = json!(1);
+            row["_performancePowerMax"] = json!(500 + id);
+            row["_technicPowerMax"] = json!(500);
+            row["_visualPowerMax"] = json!(500);
+        }
+    });
+    set_column(&mut synth, "MasterSupportCardRank", &mut |row| {
+        row["_gekisouSupportSkill01Level"] = json!(1);
+    });
+    set_column(&mut synth, "MasterLiveSettings", &mut |row| match row["_key"].as_str() {
+        Some("gekisou_luck_gauge_max") => row["_value"] = json!("60"),
+        Some("gekisou_luck_gauge_max_rush") => row["_value"] = json!("30"),
+        _ => {}
+    });
+    extend_table(
+        &mut synth,
+        "MasterSkillEffectSetting",
+        [11001, 11003, 11005]
+            .into_iter()
+            .enumerate()
+            .map(|(i, effect)| json!({"_id":900+i,"_skillEffectType":effect,"_phase":2}))
+            .collect(),
+    );
+    extend_table(
+        &mut synth,
+        "MasterSkillTarget",
+        vec![json!({"_id":990,"_skillTargetType":5,"_gekisouMissionType":2})],
+    );
+    let conditions = [
+        (901, 7010, json!([]), json!([990])),
+        (902, 7013, json!([]), json!([])),
+        (903, 7021, json!([]), json!([])),
+        (904, 4011, json!([chance]), json!([])),
+        (905, 7000, json!([0]), json!([])),
+    ];
+    extend_table(
+        &mut synth,
+        "MasterSkillCondition",
+        conditions
+            .into_iter()
+            .map(|(id, kind, values, targets)| {
+                json!({"_id":id,"_conditionType":kind,"_conditionValues":values,
+                    "_conditionTargetIDs":targets,"_isPositive":true})
+            })
+            .collect(),
+    );
+    extend_table(
+        &mut synth,
+        "MasterSkillConditionSet",
+        (901..=905)
+            .map(|id| json!({"_id":id,"_group":id,"_conditionIds":[id]}))
+            .chain([json!({"_id":906,"_group":906,"_conditionIds":[904,70]})])
+            .collect(),
+    );
+    let effect = |id: i64, key: &str, kind: i64, value: i64, trigger: i64, extra: Value| {
+        let mut row = json!({"_id":id,key:id,"_level":1,"_skillTriggerType":1,
+            "_skillTriggerConditionGroup":trigger,"_skillConditionGroup":0,
+            "_skillReleaseConditionGroup":0,"_skillTargetIDs":[],"_skillEffectType":kind,
+            "_activationTimeSecond":0.0,"_effectValue":value,"_maxEffectValue":0,
+            "_effectLimitCount":0,"_skillCumulativeConditionID":0,"_effectExecuteLimitCount":0,
+            "_effectExecuteLimitResetConditionGroup":0});
+        for (key, value) in extra.as_object().unwrap() {
+            row[key] = value.clone();
+        }
+        row
+    };
+    replace_table(
+        &mut synth,
+        "MasterGekisouSkill",
+        json!((101..=103).map(|id| json!({"_id":id,"_gekisouMissionType":2})).collect::<Vec<_>>()),
+    );
+    replace_table(
+        &mut synth,
+        "MasterGekisouSkillEffect",
+        json!([
+            effect(101, "_gekisouSkillID", 11001, 5000, 901, json!({"_activationTimeSecond":0.6})),
+            effect(
+                102,
+                "_gekisouSkillID",
+                11003,
+                2500,
+                901,
+                json!({"_skillConditionGroup":if chance==100 {0} else {904},
+                "_skillReleaseConditionGroup":902})
+            ),
+            effect(103, "_gekisouSkillID", 2000, 1100, 903, json!({"_skillTriggerType":2}))
+        ]),
+    );
+    replace_table(
+        &mut synth,
+        "MasterGekisouSupportSkill",
+        json!((201..=203).map(|id| json!({"_id":id,"_gekisouMissionType":2})).collect::<Vec<_>>()),
+    );
+    replace_table(
+        &mut synth,
+        "MasterGekisouSupportSkillEffect",
+        json!([
+            effect(
+                201,
+                "_gekisouSupportSkillID",
+                11005,
+                3,
+                901,
+                json!({"_skillConditionGroup":if chance==100 {60} else {906},
+                "_skillReleaseConditionGroup":902,"_effectLimitCount":1})
+            ),
+            effect(
+                202,
+                "_gekisouSupportSkillID",
+                2000,
+                1500,
+                903,
+                json!({"_skillTriggerType":2,
+                "_skillConditionGroup":60})
+            ),
+            effect(
+                203,
+                "_gekisouSupportSkillID",
+                11003,
+                2000,
+                905,
+                json!({"_skillConditionGroup":60,
+                "_skillReleaseConditionGroup":902,"_effectExecuteLimitCount":1,
+                "_effectExecuteLimitResetConditionGroup":902})
+            )
+        ]),
+    );
+    let notes = if long { 720 } else { 60 };
+    let spacing = if long { 166 } else { 100 };
+    set_column(&mut synth, "MasterLiveMusicScore", &mut |row| row["_fullComboCount"] = json!(notes));
+    let mut document = data_document(&synth, members, snaps, characters);
+    document["provenance"]["masterVersion"] = json!("synthetic-luck-search-1");
+    document["provenance"]["source"] = json!("adapter_fixture_export::luck_benchmark_document");
+    document["charts"][0]["asset"]["key"] = json!(if long { "synthetic-luck-long" } else { "synthetic-luck-short" });
+    document["charts"][0]["notes"] = json!({"id":(1..=notes).collect::<Vec<_>>(),"op":vec![1;notes],
+        "judgementType":vec![1;notes],"timeMs":(1..=notes).map(|id|id*spacing).collect::<Vec<_>>()});
+    document["charts"][0]["skillEvents"]["timeMs"] =
+        if long { json!([1000, 10000, 56000, 80000, 104000]) } else { json!([0, 600, 2000, 2600, 4600]) };
+    document["charts"][0]["fevers"] = if long {
+        json!({"startMs":[10000,56000,104000],"endMs":[11600,57600,105600]})
+    } else {
+        json!({"startMs":[500,2500,4500],"endMs":[1400,3400,5400]})
+    };
+    document
+}
+
+#[test]
+#[ignore = "export a synthetic LUCK completion benchmark manifest"]
+fn export_luck_search_benchmarks() {
+    let directory = std::env::var_os("OURNOTES_LUCK_BENCH_OUT").expect("OURNOTES_LUCK_BENCH_OUT");
+    let out = Path::new(&directory);
+    fs::create_dir_all(out).unwrap();
+    let write = |name: &str, value: &Value| {
+        let text = serde_json::to_string_pretty(value).unwrap();
+        fs::write(out.join(name), &text).unwrap();
+        text
+    };
+    let mut cases = Vec::new();
+    for (name, members, snaps, characters, long, chance, ties) in [
+        ("short", 6, 2, 5, false, 100, false),
+        ("conditional", 6, 2, 5, false, 50, false),
+        ("long", 8, 3, 6, true, 100, false),
+        ("near-ties", 8, 3, 6, false, 100, true),
+    ] {
+        let document = luck_benchmark_document(members, snaps, characters, long, chance, ties);
+        let data_name = format!("{name}-data.json");
+        let data = DeckData::from_json(&write(&data_name, &document)).unwrap();
+        let snapshot_name = format!("{name}-snapshot.json");
+        write(&snapshot_name, &snapshot_document(data.sha256.as_deref().unwrap(), members, snaps, characters));
+        write(&format!("{name}-roster.json"), &roster_document(members, snaps, characters));
+        let threshold = if long {
+            565_000
+        } else if ties {
+            1_207_000
+        } else {
+            722_000
+        };
+        let metrics = if name == "short" {
+            vec![
+                ("score", json!({"kind":"score"})),
+                ("probability", json!({"kind":"scoreAtLeast","threshold":threshold})),
+                ("capped", json!({"kind":"cappedScore","threshold":threshold})),
+                ("pt", json!({"kind":"clientEventPoints","eventId":EVENT_ID})),
+                ("life", json!({"kind":"scoreAndLifeAtLeast","threshold":500_000,"minFinalLife":500})),
+            ]
+        } else if name == "long" {
+            vec![
+                ("score", json!({"kind":"score"})),
+                ("probability", json!({"kind":"scoreAtLeast","threshold":threshold})),
+            ]
+        } else {
+            vec![("score", json!({"kind":"score"})), ("capped", json!({"kind":"cappedScore","threshold":threshold}))]
+        };
+        for (metric_name, metric) in metrics {
+            let mut request = joint_request_json("mission", true, metric);
+            request["k"] = json!(3);
+            request["constraints"] = json!({});
+            request["limits"] = json!({"timeLimitMs":60_000,"maxCandidates":null,"cacheEntries":1024});
+            if metric_name == "life" {
+                let mut stream =
+                    ournotes_sim::live::model::JudgementStream::theoretical_best(&data.chart(SCORE_ID).unwrap());
+                for i in [6, 17, 28, 42, 54] {
+                    stream.judged[i][2] = 1;
+                }
+                request["execution"]["play"] = json!({"kind":"stream","stream":stream});
+            }
+            let id = format!("{name}-{metric_name}");
+            let request_name = format!("{id}-request.json");
+            write(&request_name, &request);
+            cases.push(json!({"name":id,"family":name,"metric":metric_name,"data":data_name,
+                "snapshot":snapshot_name,"roster":format!("{name}-roster.json"),"request":request_name,
+                "notes":if long {720} else {60},"luckRanges":3,"members":members,"characters":characters,"snaps":snaps}));
+            if name == "short" && metric_name == "score" {
+                request["limits"]["cacheEntries"] = json!(0);
+                write("short-score-cache0-request.json", &request);
+                let mut case = cases.last().unwrap().clone();
+                case["name"] = json!("short-score-cache0");
+                case["request"] = json!("short-score-cache0-request.json");
+                cases.push(case);
+            }
+        }
+        if name == "short" || name == "long" {
+            for (mode, gekisou) in [("free", false), ("no-luck", true)] {
+                let mut control = document.clone();
+                let table = &mut control["master"]["MasterLiveMusic"];
+                let columns = table["columns"].as_array().unwrap().clone();
+                for (index, column) in columns.iter().enumerate() {
+                    if column.as_str().is_some_and(|key| key.starts_with("_gekisouMission")) {
+                        table["rows"][0][index] = json!(1);
+                    }
+                }
+                let control_data_name = format!("{name}-{mode}-data.json");
+                let control_data = DeckData::from_json(&write(&control_data_name, &control)).unwrap();
+                let control_snapshot_name = format!("{name}-{mode}-snapshot.json");
+                write(
+                    &control_snapshot_name,
+                    &snapshot_document(control_data.sha256.as_deref().unwrap(), members, snaps, characters),
+                );
+                let mut request =
+                    joint_request_json(if gekisou { "mission" } else { "free" }, gekisou, json!({"kind":"score"}));
+                request["k"] = json!(3);
+                request["constraints"] = json!({});
+                request["limits"] = json!({"timeLimitMs":60_000,"maxCandidates":null,"cacheEntries":1024});
+                let id = format!("{name}-{mode}");
+                let request_name = format!("{id}-request.json");
+                write(&request_name, &request);
+                cases.push(json!({"name":id,"family":mode,"metric":"score","data":control_data_name,
+                    "snapshot":control_snapshot_name,"roster":format!("{name}-roster.json"),"request":request_name,
+                    "notes":if long {720} else {60},"luckRanges":0,"members":members,"characters":characters,"snaps":snaps}));
+            }
+        }
+    }
+    for case in &cases {
+        let data_text = fs::read_to_string(out.join(case["data"].as_str().unwrap())).unwrap();
+        let data = DeckData::from_json(&data_text).unwrap();
+        let snapshot = fs::read_to_string(out.join(case["snapshot"].as_str().unwrap())).unwrap();
+        let mut request: Value =
+            serde_json::from_str(&fs::read_to_string(out.join(case["request"].as_str().unwrap())).unwrap()).unwrap();
+        request["limits"]["timeLimitMs"] = json!(0);
+        let answer = ournotes_search::engine::recommend_snapshot(&data, &snapshot, &request.to_string(), None);
+        assert!(
+            matches!(answer.status, ournotes_search::engine::SnapshotStatus::Ok),
+            "{}: {:?}",
+            case["name"],
+            answer.errors
+        );
+    }
+    write(
+        "benchmark.json",
+        &json!({"format":"ournotes-deck.search-benchmark/1","synthetic":true,
+        "timeoutMs":90_000,"requestTimeLimitMs":60_000,"cases":cases}),
+    );
+}
+
+#[test]
+#[ignore = "export wide synthetic LUCK search domains"]
+fn export_wide_luck_search_benchmarks() {
+    let directory = std::env::var_os("OURNOTES_LUCK_BENCH_OUT").expect("OURNOTES_LUCK_BENCH_OUT");
+    let out = Path::new(&directory);
+    fs::create_dir_all(out).unwrap();
+    let write = |name: &str, value: &Value| {
+        let text = serde_json::to_string_pretty(value).unwrap();
+        fs::write(out.join(name), &text).unwrap();
+        text
+    };
+    let mut cases = Vec::new();
+    for (name, long) in [("wide-short", false), ("wide-long", true)] {
+        let document = luck_benchmark_document(18, 6, 9, long, 100, false);
+        let data_name = format!("{name}-data.json");
+        let data = DeckData::from_json(&write(&data_name, &document)).unwrap();
+        let snapshot_name = format!("{name}-snapshot.json");
+        let snapshot = write(&snapshot_name, &snapshot_document(data.sha256.as_deref().unwrap(), 18, 6, 9));
+        write(&format!("{name}-roster.json"), &roster_document(18, 6, 9));
+        let mut request = joint_request_json("mission", true, json!({"kind":"score"}));
+        request["k"] = json!(3);
+        request["constraints"] = json!({});
+        request["limits"] = json!({"timeLimitMs":60_000,"maxCandidates":null,"cacheEntries":1024});
+        let request_name = format!("{name}-request.json");
+        write(&request_name, &request);
+        request["limits"]["timeLimitMs"] = json!(0);
+        let answer = ournotes_search::engine::recommend_snapshot(&data, &snapshot, &request.to_string(), None);
+        assert!(matches!(answer.status, ournotes_search::engine::SnapshotStatus::Ok), "{name}: {:?}", answer.errors);
+        cases.push(json!({"name":name,"family":"wide","metric":"score","data":data_name,
+            "snapshot":snapshot_name,"roster":format!("{name}-roster.json"),"request":request_name,
+            "notes":if long {720} else {60},"luckRanges":3,"members":18,"characters":9,"snaps":6,
+            "canonicalTeams":81_668_160}));
+    }
+    write(
+        "wide-benchmark.json",
+        &json!({"format":"ournotes-deck.search-benchmark/1","synthetic":true,
+        "timeoutMs":90_000,"requestTimeLimitMs":60_000,"cases":cases}),
+    );
+}
+
 #[test]
 fn snapshot_recommendation_matches_the_same_roster_and_locates_every_input_problem() {
     use ournotes_search::engine::{SnapshotStatus, recommend, recommend_snapshot};
@@ -2505,3 +2857,236 @@ fn composition_power_frontier_keeps_canonical_ties_in_heuristic_layout() {
 
 #[path = "fixtures/correctness_matrix.rs"]
 mod correctness_matrix;
+
+#[test]
+fn nominal_luck_full_laws_match_independent_team_ranking() {
+    use ournotes_search::{
+        engine,
+        search::{Completion, GekisouObjective, Objective, PlayInput, SeedSet, expectation},
+        types::{Execution, PlayPolicy},
+    };
+    use ournotes_sim::{
+        live::{
+            full::{LuckExactBudget, LuckExactSession},
+            model::JudgementStream,
+        },
+        scenario::{ContextInput, Scenario},
+    };
+    type Rational = (i128, i128);
+    fn add(a: Rational, b: Rational) -> Rational {
+        fn gcd(mut a: i128, mut b: i128) -> i128 {
+            while b != 0 {
+                (a, b) = (b, a % b);
+            }
+            a
+        }
+        let common = gcd(a.1, b.1);
+        let numerator = a.0 * (b.1 / common) + b.0 * (a.1 / common);
+        let denominator = a.1 * (b.1 / common);
+        let reduction = gcd(numerator.abs(), denominator);
+        (numerator / reduction, denominator / reduction)
+    }
+    fn orders(prefix: &mut Vec<usize>, output: &mut Vec<[usize; 5]>) {
+        if prefix.len() == 5 {
+            output.push(prefix.as_slice().try_into().unwrap());
+        } else {
+            for slot in 0..5 {
+                if !prefix.contains(&slot) {
+                    prefix.push(slot);
+                    orders(prefix, output);
+                    prefix.pop();
+                }
+            }
+        }
+    }
+    let mut synth = synthetic_master(6, 1, 5);
+    extend_table(
+        &mut synth,
+        "MasterEventEffect",
+        vec![json!({
+            "_id":9000,"_eventId":EVENT_ID,"_eventBonusType":0,"_resourceTypeConstraint":3,"_supportCardId":1,
+            "_rank1EffectValue":2500,"_rank2EffectValue":2500,"_rank3EffectValue":2500,
+            "_rank4EffectValue":2500,"_rank5EffectValue":2500
+        })],
+    );
+    set_column(&mut synth, "MasterLiveMusic", &mut |row| row["_gekisouMission1"] = json!(2));
+    set_column(&mut synth, "MasterSupportCard", &mut |row| row["_supportSkillId02"] = json!(5));
+    set_column(&mut synth, "MasterLiveSettings", &mut |row| {
+        if matches!(row["_key"].as_str(), Some("gekisou_luck_gauge_max" | "gekisou_luck_gauge_max_rush")) {
+            row["_value"] = json!("20");
+        }
+    });
+    replace_table(
+        &mut synth,
+        "MasterLiveGekisouLuckBonusLot",
+        json!(
+            (0..5)
+                .flat_map(|kind| [0, 3].map(move |result| {
+                    json!({"_id":kind*10+result+1,"_chanceLotType":kind,"_lotResult":result,"_weight":1})
+                }))
+                .collect::<Vec<_>>()
+        ),
+    );
+    let mut document = data_document(&synth, 6, 1, 5);
+    document["charts"][0]["fevers"] = json!({"startMs":[150],"endMs":[400]});
+    let data = DeckData::from_json(&document.to_string()).unwrap();
+    let roster = Roster::from_json(&roster_document(6, 1, 5).to_string()).unwrap();
+    let chart = data.chart(SCORE_ID).unwrap();
+    let chart_data = data.data_chart(SCORE_ID).unwrap();
+    let mut stream = JudgementStream::theoretical_best(&chart);
+    for index in [4, 6, 8, 10] {
+        stream.judged[index][2] = 1;
+    }
+    let context_input: ContextInput = serde_json::from_value(context_document(false, false, false)).unwrap();
+    let context =
+        context_input.resolve(&data.master, Scenario::Mission(10), Some(SCORE_ID), &chart_data.fevers).unwrap();
+    let pool = context.pool(&data.master, &roster).unwrap();
+    let objective = Objective::LiveScore {
+        score_id: SCORE_ID,
+        chart,
+        play: PlayInput::Stream { stream: stream.clone(), judgement_types: chart_data.judgement_types.clone() },
+        event: false,
+        exclude_snap_skills: false,
+        gekisou: Some(GekisouObjective { seeds: SeedSet::List(vec![0]), fevers: chart_data.fevers.clone() }),
+    }
+    .in_scenario(context.clone());
+    let mut all_orders = Vec::new();
+    orders(&mut Vec::new(), &mut all_orders);
+    assert_eq!(all_orders.len(), 120);
+    let mut candidates = Vec::new();
+    // The two character-1 alternatives and six optional placements exhaust this declared domain.
+    for members in [[1, 2, 3, 4, 5], [2, 4, 3, 5, 6]] {
+        for binding in 0..=5 {
+            let snaps = std::array::from_fn(|slot| (binding == slot + 1).then_some(1));
+            let deck = pool.deck(members, snaps, [0, 1, 2, 3, 4]).unwrap();
+            let physical = expectation::PhysicalDeck { members: deck.members, snaps: deck.snaps };
+            let input = expectation::context(&pool, &physical, &objective).unwrap();
+            let mut session = LuckExactSession::new(
+                &data.master,
+                &input.notes,
+                &input.events,
+                input.params,
+                input.gekisou.as_ref().unwrap(),
+                &input.play,
+                &input.delta_times,
+                None,
+                0,
+            )
+            .unwrap();
+            let mut law = BTreeMap::<(i32, i32), Rational>::new();
+            for order in &all_orders {
+                let performers = order.map(|slot| input.performers[slot].clone());
+                let attempt = session.law(&performers, &mut LuckExactBudget::default(), || false).unwrap();
+                let atoms = attempt.law.as_ref().expect("finite synthetic probability tree").atoms();
+                let mut mass = (0, 1);
+                for atom in atoms {
+                    let probability = (atom.mass.numerator as i128, atom.mass.denominator as i128);
+                    mass = add(mass, probability);
+                    let weighted = (probability.0, probability.1 * 120);
+                    let entry = law.entry((atom.score, atom.final_life)).or_insert((0, 1));
+                    *entry = add(*entry, weighted);
+                }
+                assert_eq!(mass, (1, 1));
+            }
+            assert_eq!(law.values().copied().fold((0, 1), add), (1, 1));
+            candidates.push((members, snaps, input.params.total_power, physical, law));
+        }
+    }
+    assert_eq!(candidates.len(), 12);
+    assert!(candidates.iter().all(|candidate| candidate.4.len() > 1));
+    let mut scores: Vec<_> =
+        candidates.iter().flat_map(|candidate| candidate.4.keys().map(|&(score, _)| score)).collect();
+    scores.sort_unstable();
+    let threshold = scores[scores.len() / 2];
+    for metric in [
+        Metric::Score,
+        Metric::ScoreAtLeast { threshold },
+        Metric::CappedScore { threshold },
+        Metric::ScoreAndLifeAtLeast { threshold, min_final_life: 500 },
+        Metric::ClientEventPoints { event_id: EVENT_ID },
+    ] {
+        let mut oracle = Vec::new();
+        for (members, snaps, power, physical, law) in &candidates {
+            let mut payoff = (0, 1);
+            let mut expected_score = (0, 1);
+            for (&(score, life), &mass) in law {
+                expected_score = add(expected_score, (mass.0 * i128::from(score), mass.1));
+                let value = match metric {
+                    Metric::Score => i128::from(score),
+                    Metric::ScoreAtLeast { threshold } => i128::from(score >= threshold),
+                    Metric::CappedScore { threshold } => i128::from(score.min(threshold)),
+                    Metric::ScoreAndLifeAtLeast { threshold, min_final_life } => {
+                        i128::from(score >= threshold && life >= min_final_life)
+                    }
+                    Metric::ClientEventPoints { event_id } => i128::from(
+                        context
+                            .preview_event_points(
+                                &pool,
+                                &physical.as_deck(),
+                                context_input.event_payoff.as_ref().unwrap(),
+                                event_id,
+                                score,
+                            )
+                            .unwrap()
+                            .points_for(event_id),
+                    ),
+                    _ => unreachable!(),
+                };
+                payoff = add(payoff, (mass.0 * value, mass.1));
+            }
+            oracle.push((*members, *snaps, *power, payoff, expected_score));
+        }
+        oracle.sort_by(|a, b| {
+            (b.3.0 * a.3.1)
+                .cmp(&(a.3.0 * b.3.1))
+                .then_with(|| b.2.cmp(&a.2))
+                .then_with(|| a.0.cmp(&b.0))
+                .then_with(|| a.1.cmp(&b.1))
+        });
+        assert!(oracle.iter().map(|row| row.3).collect::<BTreeSet<_>>().len() > 1, "nonconstant {metric:?}");
+        if matches!(metric, Metric::ScoreAtLeast { .. } | Metric::ScoreAndLifeAtLeast { .. }) {
+            assert!(oracle.iter().any(|row| row.3.0 > 0 && row.3.0 < row.3.1), "interior probability");
+        }
+        let mut request = joint_request("mission", true, serde_json::to_value(&metric).unwrap());
+        request.execution =
+            Execution::Live { score_id: SCORE_ID, gekisou: true, play: PlayPolicy::Stream { stream: stream.clone() } };
+        for (k, cache, strategy) in
+            [(1, 0, Strategy::BranchAndBound), (3, 64, Strategy::BranchAndBound), (12, 64, Strategy::Exhaustive)]
+        {
+            request.k = k;
+            request.limits.cache_entries = cache;
+            request.strategy = strategy;
+            let actual = engine::recommend(&data, &roster, &request).unwrap();
+            assert_eq!(
+                actual.completion,
+                Completion::Complete,
+                "{metric:?}: {:?}",
+                actual.telemetry.lottery_refinement
+            );
+            assert_eq!(actual.results.len(), k);
+            for (team, expected) in actual.results.iter().zip(&oracle) {
+                assert_eq!((team.members, team.snaps, team.power), (expected.0, expected.1, expected.2), "{metric:?}");
+                assert_eq!(team.rank_certified, Some(true));
+                for (exact, value) in
+                    [(team.expected_payoff.as_ref(), expected.3), (team.expected_score.as_ref(), expected.4)]
+                {
+                    if let Some(exact) = exact {
+                        assert_eq!(
+                            exact.numerator.parse::<i128>().unwrap() * value.1,
+                            value.0 * exact.denominator.parse::<i128>().unwrap()
+                        );
+                    }
+                }
+                for (interval, value) in [
+                    (team.payoff_interval.as_ref().unwrap(), expected.3),
+                    (team.score_interval.as_ref().unwrap(), expected.4),
+                ] {
+                    let lower = interval.lower.numerator.parse::<i128>().unwrap() * value.1;
+                    let upper = interval.upper.numerator.parse::<i128>().unwrap() * value.1;
+                    assert!(lower <= value.0 * interval.lower.denominator.parse::<i128>().unwrap());
+                    assert!(value.0 * interval.upper.denominator.parse::<i128>().unwrap() <= upper);
+                }
+            }
+        }
+    }
+}

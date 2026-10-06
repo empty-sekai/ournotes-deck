@@ -14,6 +14,7 @@ use super::score_program::{Kernel, Recorder, ScoreProgram, ValueId};
 use crate::error::Error;
 use crate::live::score::{GekisouComboInfo, LiveScoreCalculator, ScoreFactorState, get_frame};
 use crate::live::skill::{FactorCommand, apply_factor};
+use std::fmt;
 
 /// Frames kept after the music length.
 const EXTRA_FRAMES: i32 = 50;
@@ -36,6 +37,13 @@ fn mill(m: i32) -> f32 {
 }
 
 impl FrameDiff {
+    fn is_bitwise_zero(&self) -> bool {
+        let Self { band_total_power, combo, note, just, perfect, great, good, luck } = self;
+        *band_total_power == 0
+            && *luck == 0
+            && [combo, note, just, perfect, great, good].iter().all(|value| value.to_bits() == 0)
+    }
+
     fn add(&mut self, cmd: &FactorCommand) {
         self.band_total_power = self.band_total_power.wrapping_add(cmd.band_total_power);
         self.luck = self.luck.wrapping_add(cmd.luck);
@@ -106,7 +114,7 @@ impl NoteCommand {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct IncrementalCalculator {
     pub(super) minimum_score_up: Option<f32>,
     pub(super) bounds_trace: Option<BoundsTrace>,
@@ -134,6 +142,84 @@ pub(crate) struct IncrementalCalculator {
     /// Diagnostics only: undos of a frame already declared settled (a broken settledness argument).
     #[cfg(feature = "search-diagnostics")]
     pub settled_violations: u64,
+}
+
+/// Empty frame storage has a lossless length representation. Nonempty entries keep their complete state.
+struct FrameLists<'a, T>(&'a [Vec<T>]);
+
+impl<T: fmt::Debug> fmt::Debug for FrameLists<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.iter().all(Vec::is_empty) {
+            f.debug_tuple("EmptyFrameLists").field(&self.0.len()).finish()
+        } else {
+            fmt::Debug::fmt(self.0, f)
+        }
+    }
+}
+
+struct FrameDiffs<'a>(&'a [FrameDiff]);
+
+impl fmt::Debug for FrameDiffs<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.iter().all(FrameDiff::is_bitwise_zero) {
+            f.debug_tuple("ZeroFrameDiffs").field(&self.0.len()).finish()
+        } else {
+            fmt::Debug::fmt(self.0, f)
+        }
+    }
+}
+
+impl fmt::Debug for IncrementalCalculator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Exhaustive destructuring keeps every field in the identity when the calculator changes.
+        // Compression applies only to exact empty/bitwise-zero arrays, and always includes their lengths.
+        let Self {
+            minimum_score_up,
+            bounds_trace,
+            program,
+            calc,
+            max_frame,
+            notes,
+            factors,
+            diffs,
+            prev,
+            added,
+            score,
+            fixed,
+            pending_fixed,
+            rank_bonus,
+            order_f,
+            order_n,
+            settled_frame,
+            settled_total,
+            settled_fixed,
+            #[cfg(feature = "search-diagnostics")]
+            settled_violations,
+        } = self;
+        let mut view = f.debug_struct("IncrementalCalculator");
+        view.field("minimum_score_up", minimum_score_up)
+            .field("bounds_trace", bounds_trace)
+            .field("program", program)
+            .field("calc", calc)
+            .field("max_frame", max_frame)
+            .field("notes", &FrameLists(notes))
+            .field("factors", &FrameLists(factors))
+            .field("diffs", &FrameDiffs(diffs))
+            .field("prev", prev)
+            .field("added", added)
+            .field("score", score)
+            .field("fixed", fixed)
+            .field("pending_fixed", pending_fixed)
+            .field("rank_bonus", rank_bonus)
+            .field("order_f", order_f)
+            .field("order_n", order_n)
+            .field("settled_frame", settled_frame)
+            .field("settled_total", settled_total)
+            .field("settled_fixed", settled_fixed);
+        #[cfg(feature = "search-diagnostics")]
+        view.field("settled_violations", settled_violations);
+        view.finish()
+    }
 }
 
 impl IncrementalCalculator {
@@ -528,7 +614,22 @@ fn combo_inputs(
 
 #[cfg(test)]
 mod score_up_observation_tests {
-    use super::observe_score_up;
+    use super::{FrameDiff, FrameDiffs, FrameLists, observe_score_up};
+
+    #[test]
+    fn compact_frame_storage_identity_retains_lengths_and_signed_zero() {
+        let empty: Vec<Vec<i32>> = vec![vec![]; 4000];
+        assert_eq!(format!("{:?}", FrameLists(&empty)), "EmptyFrameLists(4000)");
+        assert_ne!(format!("{:?}", FrameLists(&empty)), format!("{:?}", FrameLists(&empty[..3999])));
+        assert_ne!(format!("{:?}", FrameLists(&[Vec::<i32>::new()])), format!("{:?}", FrameLists(&[vec![0]])));
+        let mut diffs = vec![FrameDiff::default(); 4000];
+        assert_eq!(format!("{:?}", FrameDiffs(&diffs)), "ZeroFrameDiffs(4000)");
+        diffs[3999].note = -0.0;
+        assert!(!diffs[3999].is_bitwise_zero());
+        assert!(!format!("{:?}", FrameDiffs(&diffs)).starts_with("ZeroFrameDiffs"));
+        diffs[3999] = FrameDiff { band_total_power: 1, ..Default::default() };
+        assert!(!diffs[3999].is_bitwise_zero());
+    }
 
     #[test]
     fn observation_covers_reexecutions_and_preserves_nan() {

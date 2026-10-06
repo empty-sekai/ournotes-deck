@@ -1,11 +1,11 @@
-//! Exhausted LUCK frontiers over a synthetic 31-team domain.
+//! Exhausted LUCK frontiers over synthetic domains with distinct physical team identities.
 //! These inputs declare independent nominal lottery tables.
 use super::common::set_column;
 use super::{data_document, joint_request, roster_document, synthetic_master};
 use ournotes_search::{
     engine,
     search::Completion,
-    types::{RecommendationRequest, Strategy},
+    types::{Metric, RecommendationRequest, Strategy},
 };
 use ournotes_sim::{cards::Roster, data::DeckData};
 use serde_json::json;
@@ -189,5 +189,46 @@ fn certified_seed_budget_preserves_the_complete_canonical_ranking() {
             actual.telemetry.environment.bounds
         );
         assert!(actual.telemetry.phases.iter().any(|phase| phase.name == "search"));
+    }
+}
+
+#[test]
+fn certified_score_caps_reuse_exclusion_proofs_across_equivalent_leaders() {
+    let (mut data, roster, mut request) = inputs(610_000, 3, 64);
+    for effect in &mut data.master.leader_skill_effects {
+        effect.effect_value = 0;
+    }
+    request.constraints.leader = None;
+    request.metric = Metric::Score;
+    let reference = engine::recommend(&data, &roster, &request).unwrap();
+    assert_eq!(reference.completion, Completion::Complete);
+    assert_eq!(reference.telemetry.leaves.visited, 155);
+    assert_eq!(reference.results.len(), 3);
+
+    request.strategy = Strategy::BranchAndBound;
+    for cache_entries in [0, 64] {
+        request.limits.cache_entries = cache_entries;
+        let result = engine::recommend(&data, &roster, &request).unwrap();
+        assert_eq!(result.completion, Completion::Complete);
+        assert_eq!(result.results.len(), reference.results.len());
+        for (actual, expected) in result.results.iter().zip(&reference.results) {
+            assert_eq!(
+                (actual.members, actual.snaps, actual.power),
+                (expected.members, expected.snaps, expected.power)
+            );
+            assert_eq!(actual.rank_certified, Some(true));
+            let a = actual.payoff_interval.as_ref().unwrap();
+            let b = expected.payoff_interval.as_ref().unwrap();
+            assert!(a.lower_f64() <= b.upper_f64() && b.lower_f64() <= a.upper_f64());
+        }
+        let caps = &result.telemetry.caches.luck_score_caps;
+        if cache_entries == 0 {
+            assert_eq!(caps.hits, 0);
+            assert_eq!(caps.peak_entries, 0);
+        } else {
+            assert!(caps.hits > 0, "equivalent leaders must reuse completed upper-bound proofs: {caps:?}");
+            assert!(caps.peak_entries > 0);
+        }
+        assert!(result.telemetry.leaves.order_bound_pruned > 0);
     }
 }

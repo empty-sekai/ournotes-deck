@@ -91,6 +91,23 @@ struct RetainedRefinement {
     program: Vec<u8>,
 }
 
+/// The same paired cards at the same total power determine the same uniform-order score program.
+/// Physical leader placement is already accounted for in power; every other live parameter is request-fixed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct ScoreCapKey {
+    pairs: [(usize, Option<usize>); 5],
+    power: i32,
+}
+
+impl ScoreCapKey {
+    fn new(physical: &PhysicalDeck, power: i32) -> Self {
+        let PhysicalDeck { members, snaps } = physical;
+        let mut pairs = std::array::from_fn(|slot| (members[slot], snaps[slot]));
+        pairs.sort_unstable();
+        Self { pairs, power }
+    }
+}
+
 impl RetainedRefinement {
     fn new(admitted: bool, evaluation: CertifiedEvaluation, map: PayoffMap, program: Vec<u8>) -> Option<Box<Self>> {
         admitted.then(|| Box::new(Self { evaluation, map, program }))
@@ -102,6 +119,8 @@ pub(super) struct CertifiedState {
     entries: BTreeMap<u64, CertifiedEntry>,
     cutoff: Option<(i128, i32)>,
     score_cache: BTreeMap<(Vec<u8>, i32), CertifiedEvaluation>,
+    /// Whole-program mean-score caps remain useful when a losing team stops before all order evaluations.
+    score_caps: BTreeMap<ScoreCapKey, i128>,
     /// Refinement can hit its deadline after the physical traversal already closed the domain.
     domain_exhausted: bool,
     /// Small charts retain order state eagerly; other charts materialize one boundary candidate at a time.
@@ -122,6 +141,7 @@ impl CertifiedState {
             entries: BTreeMap::new(),
             cutoff: None,
             score_cache: BTreeMap::new(),
+            score_caps: BTreeMap::new(),
             domain_exhausted: false,
             retain_refinement: None,
             luck_skills: None,
@@ -188,6 +208,32 @@ impl Engine<'_, '_> {
         }
         cache.insert((key, power), value.clone());
     }
+
+    pub(super) fn cached_certified_score_cap(&mut self, physical: &PhysicalDeck, power: i32) -> Option<i128> {
+        self.tel.caches.luck_score_caps.lookups += 1;
+        let cap = self.certified.as_ref()?.score_caps.get(&ScoreCapKey::new(physical, power)).copied();
+        self.tel.caches.luck_score_caps.hits += u64::from(cap.is_some());
+        cap
+    }
+
+    pub(super) fn cache_certified_score_cap(&mut self, physical: &PhysicalDeck, power: i32, cap: i128) {
+        let capacity = self.limits.cache_entries.min(64);
+        if capacity == 0 {
+            return;
+        }
+        let cache = &mut self.certified.as_mut().expect("certified request").score_caps;
+        let key = ScoreCapKey::new(physical, power);
+        if let Some(old) = cache.get_mut(&key) {
+            *old = (*old).min(cap);
+            return;
+        }
+        if cache.len() >= capacity {
+            cache.pop_first();
+            self.tel.caches.luck_score_caps.evictions += 1;
+        }
+        cache.insert(key, cap);
+        self.tel.caches.luck_score_caps.peak_entries = self.tel.caches.luck_score_caps.peak_entries.max(cache.len());
+    }
     /// Integer node threshold over 120 orders. On the certified frontier an equal node upper is closed only below
     /// the returned power (i32::MIN when no K candidates prove that tie); public-ID ties are not used.
     pub(super) fn safe_cutoff(&self) -> Option<(i128, i32)> {
@@ -213,6 +259,7 @@ impl Engine<'_, '_> {
         map: PayoffMap,
     ) -> Result<(), Error> {
         // The leaf transfers its already constructed map; never rebuild a deck's native payoff steps.
+        let (_, resume) = self.rec.clock.lap(slot::INTERVAL_FRONTIER);
         let payoff_identity = format!("{map:?}").into_bytes();
         let state = self.certified.as_mut().expect("certified request");
         let members = physical.members.map(|i| self.pool.members[i].id);
@@ -252,6 +299,7 @@ impl Engine<'_, '_> {
         self.tel.leaves.peak_retained = self.tel.leaves.peak_retained.max(state.entries.len());
         self.tel.leaves.evaluated += 1;
         self.remember(physical);
+        self.rec.clock.lap(resume);
         self.report_progress();
         Ok(())
     }
@@ -259,6 +307,13 @@ impl Engine<'_, '_> {
     /// Once the physical domain is exhausted, spend bounded work only on candidates whose ordering still
     /// overlaps. Every installed order is a complete nominal law; declined/partial trees keep their old bounds.
     pub(super) fn refine_certified_frontier(&mut self) -> Result<(), Error> {
+        let (_, resume) = self.rec.clock.lap(slot::INTERVAL_FRONTIER);
+        let result = self.refine_certified_frontier_inner();
+        self.rec.clock.lap(resume);
+        result
+    }
+
+    fn refine_certified_frontier_inner(&mut self) -> Result<(), Error> {
         use ournotes_sim::live::full::{LuckExactBudget, LuckExactDecline, LuckExactSession};
         let state = self.certified.as_mut().expect("certified request");
         state.domain_exhausted = true;
@@ -390,11 +445,15 @@ impl Engine<'_, '_> {
                 self.rec.clock.lap(resume);
                 let result = result?;
                 let telemetry = &mut self.tel.lottery_refinement;
+                telemetry.budget_exhausted |= work.exhausted();
                 telemetry.replay_runs += result.stats.replay_runs;
                 telemetry.frames += result.stats.frames;
                 telemetry.terminal_paths += result.stats.terminal_paths;
                 let Some(law) = result.law else {
                     telemetry.declined_orders += 1;
+                    if let Some(decline) = result.decline {
+                        telemetry.declines.record(decline);
+                    }
                     if result.decline == Some(LuckExactDecline::Cancelled) {
                         return Ok(());
                     }
@@ -554,6 +613,26 @@ impl Engine<'_, '_> {
 #[cfg(test)]
 mod refinement_tests {
     use super::*;
+
+    #[test]
+    fn score_cap_identity_keeps_snap_pairs_and_power_across_leader_layouts() {
+        let physical = PhysicalDeck { members: [0, 1, 2, 3, 4], snaps: [Some(1), None, Some(2), None, Some(3)] };
+        let identity = ScoreCapKey::new(&physical, 100);
+        for order in uniform::all_orders() {
+            let rearranged = PhysicalDeck {
+                members: order.map(|slot| physical.members[slot]),
+                snaps: order.map(|slot| physical.snaps[slot]),
+            };
+            assert_eq!(ScoreCapKey::new(&rearranged, 100), identity);
+        }
+        let mut reattached = physical;
+        reattached.snaps.swap(0, 1);
+        assert_ne!(ScoreCapKey::new(&reattached, 100), identity);
+        assert_ne!(ScoreCapKey::new(&physical, 101), identity);
+        let mut changed_member = physical;
+        changed_member.members[0] = 5;
+        assert_ne!(ScoreCapKey::new(&changed_member, 100), identity);
+    }
 
     fn frontier(k: usize) -> CertifiedState {
         let mut state = CertifiedState::new(k, 0).unwrap();

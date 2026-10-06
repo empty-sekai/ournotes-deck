@@ -415,19 +415,38 @@ impl IntervalTopK {
         if self.candidates.len() <= self.k {
             return;
         }
-        let dropped: Vec<_> = self
-            .candidates
-            .values()
-            .filter(|c| {
-                self.candidates
-                    .values()
-                    .filter(|d| d.id != c.id && relation(d, c) == Some(Ordering::Greater))
-                    .take(self.k)
-                    .count()
-                    == self.k
-            })
-            .map(|c| c.id)
-            .collect();
+        let mut lower: Vec<_> = self.candidates.values().collect();
+        lower.sort_unstable_by(|a, b| {
+            compare_bound(b.payoff_lower(), a.payoff_lower()).then_with(|| b.tie.better(&a.tie))
+        });
+        let mut equal_seen = BTreeMap::<u64, usize>::new();
+        let mut dropped = Vec::new();
+        for candidate in &lower {
+            // A lower endpoint ahead of the candidate's upper endpoint proves the primary comparison;
+            // equality needs the better canonical tie. This predicate is a prefix of the sorted lower keys.
+            let separated = lower.partition_point(|other| {
+                compare_bound(other.payoff_lower(), candidate.payoff_upper())
+                    .then_with(|| other.tie.better(&candidate.tie))
+                    == Ordering::Greater
+            });
+            // Equal classes already have identical enclosures and exact metadata. With positive width,
+            // their better canonical members supply additional, disjoint witnesses. With equal endpoints,
+            // those members are counted by the endpoint comparison above. The lower-key order also orders
+            // every equal class by its canonical tie, so the previous class members are precisely its witnesses.
+            let equivalent = candidate
+                .equality
+                .as_ref()
+                .filter(|_| compare_bound(candidate.payoff_lower(), candidate.payoff_upper()) == Ordering::Less)
+                .map_or(0, |certificate| {
+                    let seen = equal_seen.entry(certificate.identity).or_default();
+                    let predecessors = *seen;
+                    *seen += 1;
+                    predecessors
+                });
+            if separated + equivalent >= self.k {
+                dropped.push(candidate.id);
+            }
+        }
         for id in &dropped {
             self.candidates.remove(id);
         }
@@ -485,6 +504,175 @@ impl IntervalTopK {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pairwise_prune(frontier: &mut IntervalTopK) {
+        let dropped: Vec<_> = frontier
+            .candidates
+            .values()
+            .filter(|candidate| {
+                frontier
+                    .candidates
+                    .values()
+                    .filter(|other| other.id != candidate.id && relation(other, candidate) == Some(Ordering::Greater))
+                    .take(frontier.k)
+                    .count()
+                    == frontier.k
+            })
+            .map(|candidate| candidate.id)
+            .collect();
+        for id in &dropped {
+            frontier.candidates.remove(id);
+        }
+        frontier.pruned += dropped.len() as u64;
+    }
+
+    fn assert_same_frontier(actual: &IntervalTopK, expected: &IntervalTopK) {
+        assert_eq!(actual.candidates.keys().collect::<Vec<_>>(), expected.candidates.keys().collect::<Vec<_>>());
+        assert_eq!(actual.pruned, expected.pruned);
+        assert_eq!(actual.grid_cutoff(120), expected.grid_cutoff(120));
+        for domain in [
+            RemainingDomain::Exhausted,
+            RemainingDomain::Open { upper: None },
+            RemainingDomain::Open { upper: Some(-100.0) },
+            RemainingDomain::Open { upper: Some(0.0) },
+        ] {
+            let a = actual.proof(domain).unwrap();
+            let b = expected.proof(domain).unwrap();
+            assert_eq!(
+                (a.ordered_prefix, a.ambiguous, a.complete, a.refinement, a.pruned),
+                (b.ordered_prefix, b.ambiguous, b.complete, b.refinement, b.pruned)
+            );
+        }
+    }
+
+    #[test]
+    fn sorted_witness_counts_match_pairwise_insertion_and_refinement() {
+        let value = |id: u64| {
+            let class = (id - 1) / 4;
+            ExactExpectation { numerator: (class * 17 % 23) as i128 - 11, denominator: 1 + (class % 7) as u128 }
+        };
+        for k in [1, 3, 8, 32, 80, 100] {
+            for mut seed in [1u64, 7, 12345] {
+                let mut actual = IntervalTopK::new(k).unwrap();
+                let mut candidates = Vec::new();
+                for id in 1..=80u64 {
+                    let class = (id - 1) / 4;
+                    let exact = value(id);
+                    let center = exact.numerator as f64 / exact.denominator as f64;
+                    let width = 1.0 + (id * 13 % 17) as f64;
+                    let lo = center.floor() - if id % 5 == 0 { 0.0 } else { width };
+                    let hi = center.ceil() + if id % 7 == 0 { 0.0 } else { width };
+                    let mut candidate = candidate(id, lo, hi);
+                    candidate.tie.power = 100 + (class % 5) as i32;
+                    if class % 4 == 0 || (class % 4 == 2 && id % 4 == 0) {
+                        candidate.exact_score = Some(exact);
+                        candidate.exact_payoff = Some(exact);
+                    }
+                    if class % 3 != 0 {
+                        candidate.equality = Some(actual.certify_equal_program(
+                            class.to_le_bytes().to_vec(),
+                            candidate.tie.power,
+                            vec![0],
+                        ));
+                    }
+                    candidates.push(candidate);
+                }
+                for i in (1..candidates.len()).rev() {
+                    seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    candidates.swap(i, (seed as usize) % (i + 1));
+                }
+                let mut expected = IntervalTopK {
+                    k,
+                    candidates: BTreeMap::new(),
+                    scope: actual.scope.clone(),
+                    identities: actual.identities.clone(),
+                    pruned: 0,
+                };
+                for candidate in candidates {
+                    expected.validate(&candidate).unwrap();
+                    expected.check_equal_class(&candidate).unwrap();
+                    expected.candidates.insert(candidate.id, candidate.clone());
+                    expected.tighten_equal_classes();
+                    pairwise_prune(&mut expected);
+                    actual.insert(candidate).unwrap();
+                    assert_same_frontier(&actual, &expected);
+                }
+                let ids: Vec<_> = actual.candidates.keys().copied().collect();
+                for id in ids {
+                    let Some(old) = actual.get(id).cloned() else { continue };
+                    let exact = Some(value(id));
+                    let mut refined = expected.candidates[&id].clone();
+                    refined.exact_score = exact;
+                    refined.exact_payoff = exact;
+                    refined.revision += 1;
+                    expected.validate(&refined).unwrap();
+                    expected.check_equal_class(&refined).unwrap();
+                    expected.candidates.insert(id, refined);
+                    expected.tighten_equal_classes();
+                    pairwise_prune(&mut expected);
+                    actual.refine(id, old.revision, old.score, old.payoff, exact, exact).unwrap();
+                    assert_same_frontier(&actual, &expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn equal_class_witnesses_are_counted_once_at_exact_endpoints() {
+        for (lo, hi, exact) in [(10.0, 12.0, None), (11.0, 11.0, None), (10.0, 12.0, Some(11))] {
+            let mut frontier = IntervalTopK::new(3).unwrap();
+            let certificate = frontier.certify_equal_program(vec![1], 100, vec![0]);
+            for id in [3, 2, 1] {
+                let mut candidate = candidate(id, lo, hi);
+                candidate.equality = Some(certificate.clone());
+                candidate.exact_payoff = exact.map(|numerator| ExactExpectation { numerator, denominator: 1 });
+                frontier.insert(candidate).unwrap();
+            }
+            frontier.insert(candidate(4, 0.0, 1.0)).unwrap();
+            assert_eq!(frontier.proof(RemainingDomain::Exhausted).unwrap().ordered_prefix, [1, 2, 3]);
+            assert_eq!(frontier.len(), 3);
+        }
+        let mut frontier = IntervalTopK::new(3).unwrap();
+        let certificate = frontier.certify_equal_program(vec![1], 100, vec![0]);
+        for id in [3, 2, 1] {
+            let mut candidate = candidate(id, 10.0, 12.0);
+            candidate.equality = Some(certificate.clone());
+            frontier.insert(candidate).unwrap();
+        }
+        frontier.insert(candidate(4, 13.0, 14.0)).unwrap();
+        assert_eq!(frontier.proof(RemainingDomain::Exhausted).unwrap().ordered_prefix, [4, 1, 2]);
+        assert_eq!(frontier.len(), 3);
+    }
+
+    #[test]
+    fn equal_classes_require_distinct_canonical_candidate_keys() {
+        let mut frontier = IntervalTopK::new(2).unwrap();
+        let certificate = frontier.certify_equal_program(vec![1], 100, vec![0]);
+        let mut first = candidate(1, 10.0, 12.0);
+        first.equality = Some(certificate);
+        frontier.insert(first.clone()).unwrap();
+        first.id = 2;
+        assert!(frontier.insert(first).is_err());
+        assert_eq!(frontier.len(), 1);
+        assert!(!frontier.proof(RemainingDomain::Open { upper: None }).unwrap().complete);
+    }
+
+    #[test]
+    fn sorted_witnesses_compare_exact_fractions_and_binary_endpoints() {
+        let mut frontier = IntervalTopK::new(4).unwrap();
+        for (id, numerator, denominator) in
+            [(1, i128::MIN, u128::MAX), (2, -1, 2), (3, 1, u128::MAX), (4, 1, 10), (5, 1, 3), (6, i128::MAX, u128::MAX)]
+        {
+            let mut candidate = candidate(id, -1.0, 1.0);
+            candidate.exact_payoff = Some(ExactExpectation { numerator, denominator });
+            frontier.insert(candidate).unwrap();
+        }
+        frontier.insert(candidate(7, 0.1, 0.1)).unwrap();
+        frontier.insert(candidate(8, 1.0 / 3.0, 1.0 / 3.0)).unwrap();
+        assert_eq!(frontier.proof(RemainingDomain::Exhausted).unwrap().ordered_prefix, [6, 5, 8, 7]);
+        assert_eq!(frontier.len(), 4);
+    }
+
     fn candidate(id: u64, lo: f64, hi: f64) -> CandidateInterval {
         CandidateInterval {
             id,

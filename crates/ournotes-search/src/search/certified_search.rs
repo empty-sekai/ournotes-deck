@@ -81,12 +81,21 @@ pub struct CertifiedEvaluation {
 /// All cached and refined order labels use this same complete-performer basis. Paired support remains
 /// inside each performer; request-local context, power and payoff identity are separately fixed by Engine.
 pub(super) fn canonicalize_performers(input: &mut super::expectation::FiniteSeedContext) -> Vec<u8> {
-    let mut performers: Vec<_> = input.performers.iter().map(|p| (format!("{p:?}"), p.clone())).collect();
+    canonicalize_performers_with_basis(input).0
+}
+
+/// The returned basis maps a canonical performer index to its original physical slot.
+pub(super) fn canonicalize_performers_with_basis(
+    input: &mut super::expectation::FiniteSeedContext,
+) -> (Vec<u8>, [usize; 5]) {
+    let mut performers: Vec<_> =
+        input.performers.iter().enumerate().map(|(slot, p)| (format!("{p:?}"), p.clone(), slot)).collect();
     performers.sort_by(|a, b| a.0.cmp(&b.0));
     let keys: Vec<_> = performers.iter().map(|p| &p.0).collect();
     let program = format!("uniform120/full-performers/{keys:?}").into_bytes();
+    let basis = std::array::from_fn(|i| performers[i].2);
     input.performers = performers.into_iter().map(|p| p.1).collect::<Vec<_>>().try_into().expect("five performers");
-    program
+    (program, basis)
 }
 
 fn invalid(message: &str) -> Error {
@@ -537,9 +546,38 @@ pub fn evaluate_luck_context(
     skills: &ournotes_sim::live::full::LuckSkills,
     input: &super::expectation::FiniteSeedContext,
     map: &PayoffMap,
-    mut curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
+    curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
     cancelled: impl FnMut() -> bool,
 ) -> Result<Option<CertifiedEvaluation>, Error> {
+    evaluate_luck_context_until(
+        master,
+        skills,
+        input,
+        map,
+        curves,
+        (&(0..uniform::ORDERS).collect::<Vec<_>>(), |_, _| true),
+        cancelled,
+    )
+}
+
+/// A caller may stop after a complete order enclosure when its remaining-order caps prove exclusion.
+/// A stopped evaluation supplies no aggregate or cache entry.
+pub(super) fn evaluate_luck_context_until(
+    master: &ournotes_sim::master::Master,
+    skills: &ournotes_sim::live::full::LuckSkills,
+    input: &super::expectation::FiniteSeedContext,
+    map: &PayoffMap,
+    mut curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
+    control: (&[usize], impl FnMut(usize, &OrderScoreInterval) -> bool),
+    cancelled: impl FnMut() -> bool,
+) -> Result<Option<CertifiedEvaluation>, Error> {
+    let (schedule, mut keep_going) = control;
+    let mut seen = [false; uniform::ORDERS];
+    if schedule.len() != uniform::ORDERS
+        || schedule.iter().any(|&index| index >= uniform::ORDERS || std::mem::replace(&mut seen[index], true))
+    {
+        return Err(invalid("LUCK order schedule must contain all 120 distinct order indices"));
+    }
     let setup = input.gekisou.as_ref().ok_or_else(|| invalid("LUCK requires Gekisou context"))?;
     let mut session = ournotes_sim::live::full::LuckScoreSession::new(
         master,
@@ -554,7 +592,9 @@ pub fn evaluate_luck_context(
     );
     let mut cancelled = cancelled;
     let mut orders = Vec::with_capacity(uniform::ORDERS);
-    for order in uniform::all_orders() {
+    let labels = uniform::all_orders();
+    for &index in schedule {
+        let order = labels[index];
         if cancelled() {
             return Ok(None);
         }
@@ -566,7 +606,7 @@ pub fn evaluate_luck_context(
         let mean = F64Interval::new(summary.final_mean.lower, summary.final_mean.upper)?
             .intersect(F64Interval::new(support.0 as f64, support.1 as f64)?)
             .ok_or_else(|| invalid("LUCK mean and support disagree"))?;
-        orders.push(OrderScoreInterval {
+        let value = OrderScoreInterval {
             order,
             mean,
             support,
@@ -574,7 +614,11 @@ pub fn evaluate_luck_context(
             final_life: summary.exact_final_life.map(|life| (life, life)),
             tails: BTreeMap::new(),
             refined_payoff: None,
-        });
+        };
+        if !keep_going(index, &value) {
+            return Ok(None);
+        }
+        orders.push(value);
         if cancelled() {
             return Ok(None);
         }

@@ -116,6 +116,70 @@ JavaScript's safe range cannot silently compare equal. Only diagnostics/timing
 fields are excluded. They record runtime, runner, manifest and WASM identities.
 This verifies the declared corpus and transport, not every browser or game parity.
 
+## Paired completion measurements
+
+The separate synthetic completion corpus exercises three LUCK ranges, repeated
+lotteries, range-start probability conditions, paired-member formation predicates,
+Rush-dependent score effects, recovery and judgement-converting Snaps. Its short
+chart has 60 active notes; the long chart has 720 active notes over approximately
+120 seconds. The smaller pool contains 310 canonical teams; the larger pool
+contains 13,600. Both retain every eligible leader, optional unique Snap binding
+and all 120 performance orders. Free and lottery-free Mission requests provide
+controls. These inputs describe synthetic workloads rather than a player population.
+
+```sh
+OURNOTES_LUCK_BENCH_OUT=work/luck-inputs cargo test --release --locked \
+  --test adapter_fixture_export export_luck_search_benchmarks -- --ignored
+cargo build --release --locked --manifest-path tools/search-harness/Cargo.toml --bin profile_case
+node tools/search-harness/benchmark.cjs work/luck-inputs/benchmark.json \
+  BASELINE_PROFILE_CASE CANDIDATE_PROFILE_CASE work/luck-native --runtime native --repeats 2
+node tools/search-harness/benchmark.cjs work/luck-inputs/benchmark.json \
+  BASELINE_WEB_PACKAGE CANDIDATE_WEB_PACKAGE work/luck-browser --runtime browser --repeats 2
+```
+
+`--cases NAME,...` selects named immutable requests. The runner alternates AB/BA
+by repeat and case, runs one request at a time, preserves original input hashes,
+and records completion status, exclusive phase timings, work counters, refinement
+diagnostics and memory. Native `profile_case` binaries supply additional recorder
+and curve timings. Native variants must use the same build features and settings;
+browser variants must use matching release `wasm-bindgen --target web` packages.
+The report identifies each binary or WASM module by its SHA-256. Keep the build
+commands and source revisions with the report. Optional `--baseline-source ROOT`
+and `--candidate-source ROOT` arguments record each checkout's HEAD and hashes
+of source files, including uncommitted source changes.
+
+The optional `export_wide_luck_search_benchmarks` exporter uses the same output
+environment variable and writes `wide-benchmark.json`. Its short and long score
+requests each retain 18 members across nine characters, six Snaps, every leader
+and all optional unique bindings: 81,668,160 canonical teams. These larger finite
+domains are completion workloads; the small exhaustive oracle remains separate.
+
+Browser requests execute synchronously inside a fresh Chromium Worker, without
+shared WASM memory. The runner reports linear memory before and after each
+request, with dataset loading outside the search timing boundary. Playwright uses
+its installed Chromium by default; `OURNOTES_CHROMIUM` selects an explicit browser
+executable. The external Worker/process timeout only detects a failed runner;
+the unchanged request retains its own 60-second deadline.
+
+Each answer is stored in full. Two `Complete` answers must agree on the ordered
+canonical Top-K. Any returned team shared by two answers must have intersecting
+score and payoff certificates, compared as exact rational endpoints. A narrower
+enclosure is admissible; an exact expectation supplies a point certificate.
+The dataset, metric, probability law, result identity and resolved context must
+agree even when a request remains incomplete. An incomplete answer remains incomplete even when its
+returned teams match another run. This comparison checks consistency between
+builds; the independent enumerator and probability-law tests supply their separate
+correctness checks.
+
+The `nominal_luck_full_laws_match_independent_team_ranking` integration test
+enumerates a separate 12-team domain and all 120 orders of each team. It aggregates
+complete score/life laws and ranks the teams independently of search traversal,
+payoff enclosures and Top-K. Score, nonconstant threshold probability, capped score,
+terminal-life probability and client PT are checked at K = 1, 3 and 12, including
+disabled caches. The complete-law backend has separate Cartesian probability-branch
+tests in `ournotes-sim`; the integration oracle shares that backend and the client
+reward model.
+
 ## Mock rosters
 
 ```sh

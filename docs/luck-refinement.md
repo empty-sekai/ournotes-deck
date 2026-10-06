@@ -20,7 +20,12 @@ initialized state share a complete terminal law in this fixed context.
 The in-process identity contains the complete derived model state. The two score
 lookup tables have sorted entries; other model maps use deterministic hashing.
 Finite floating values retain their round-tripping representation, including
-signed zero. NaN-bearing and opaque states use independent evaluation. Identity
+signed zero. Empty note/factor frame lists and arrays of bitwise-positive-zero
+score diffs have a lossless representation containing their lengths. Nonempty
+lists and any nonzero or negative-zero diff retain their complete contents.
+The calculator and diff views destructure every field exhaustively, so adding
+a field requires updating the identity. NaN-bearing and opaque states use
+independent evaluation. Identity
 construction is bounded to 512 KiB. The session retains at most 64 complete laws
 and 32 MiB of identity and atom payload, evicting the oldest entries at capacity.
 
@@ -29,6 +34,71 @@ check. A hit therefore consumes zero additional replay segments or frames and
 is available even when the execution allowance is exhausted. Cancellation is
 checked before either replay or reuse. A session with zero entries evaluates
 each order independently.
+
+## Certified summary reuse
+
+`LuckScoreSession` fixes the master and classified skills, chart, parameters,
+frame and timing schedule, and rank arrivals. Before weighting or replay, it
+can identify the complete initialized model with the same lossless identity.
+Equal initialized models in this context have the same nominal terminal law.
+Any completed all-path score, support and life certificate for one therefore
+also encloses the other. Only completed summaries enter this session cache.
+
+The cache retains at most 64 summaries and 8 MiB of identity and result payload,
+further limited by the supplied curve-cache byte allowance. A zero allowance or
+no curve cache clears and disables summary reuse. Cancellation is checked
+before initialization and before returning a retained certificate. Every
+performance order still contributes its own equally weighted, distinct label
+to the 120-order aggregate. A summary hit skips recorder and bound replay;
+actual probability propagation counters count only work that executes.
+
+The factor replay also has exact identity transitions. A query of the current
+score frame with no mandatory or possible lottery filing changes no replay
+state. A frame with no ordinary float commands and no probe filings leaves
+the factor and probe classes unchanged, records zero diffs, and immediately
+undoes to those same factor values. Its notes still retain or join their
+executed-state certificates according to whether every path executes that
+frame. Later filings and rank rewinds use the ordinary replay rules.
+
+## Reusing factor histories at another power
+
+An admitted recorder can also compile the completed factor and combo histories into
+an immutable score-bound program. The recorder's dependency check establishes that
+ordinary effects, cumulative values, converted judgements, life, query times and
+rank arrivals do not read initial total power or score. Power enters only the note
+calculator. Nonzero power commands are rejected by the existing admission checks.
+Solo rank is fixed; external ranks retain their declared arrival timeline.
+
+The program identifies the complete initialized model with only initial total power
+normalized. Chart notes and skill events are retained once in an exact shared scope:
+the constructor copies these same values into the model. That scope also includes
+every classified skill, play frame, judgement, seed and binary32 delta-time bit.
+All other initialized fields remain in the model identity. Reuse additionally
+requires the same retained certified probability-curve object. Oversized identities
+or an unavailable admission certificate use the ordinary evaluation path.
+
+Each interned note kernel keeps the note type, judgement, life-positive predicate
+and every binary32 endpoint of the executed factor and combo enclosures. Note uses
+separately keep their original probability-curve index and whether lottery commands
+were already filed at that query. A new power reevaluates the original binary32
+operations and integer floors; it does not scale a previous score. Note means are
+added in their original filing order. Signed range differences, integer rank
+percentages and shared fixed-bonus coefficients retain the same arithmetic.
+
+Only rank-observed and terminal score queries need arithmetic on reuse. Their
+unchanged-prefix cancellation thresholds are compiled from **all** intervening
+queries, including unmeasured ones. A pending rank bonus is filed by its actual next
+query; several confirmations before that query retain the native last-pending-value
+rule. The final note expectation keeps its separate, fully probability-linked
+observations instead of substituting an earlier query's mean.
+
+This cache belongs to `LuckDpCache` and holds at most 128 programs and 32 MiB,
+further limited by its configured byte allowance. It counts retained container
+capacity, keys, kernels and references, plus each shared run scope and retained
+curve allocation once. Zero capacity disables reuse. Only completed programs enter
+the cache. Each evaluation checks cancellation and numeric admissibility again;
+an overflow or interrupted evaluation supplies no completed bound. A cache hit is
+still an all-path enclosure, and does not itself prove an exact payoff or ranking.
 
 ## Work and completion
 
@@ -41,11 +111,18 @@ Cancellation is checked during playback. Budget exhaustion, unsupported random d
 ```sh
 cargo test --release --locked -p ournotes-sim --lib luck_exact
 cargo test --release --locked -p ournotes-sim --lib nominal_tests
+cargo test --release --locked -p ournotes-sim --lib program_tests
 cargo test --release --locked -p ournotes-search --lib refinement_tests
 cargo test --release --locked --test adapter_fixture_export luck_refinement
 ```
 
 The Cartesian tests compare all terminal score/life atoms and exact masses, including a long deterministic prefix, separated draws with intermediate checkpoints, external rank confirmations, partial-work interruption and draw-counter preservation.
+
+Program tests compare fresh and reused enclosures bit for bit at several powers,
+including binary32 integer-precision boundaries, and cover all 120 performer orders
+at a second power. They also check complete weighted probability branches, rank
+rewinds and simultaneous confirmations, run-scope and paired-Snap changes,
+cancellation, numeric refusal, zero capacity and eviction.
 
 ## Boundary-candidate order storage
 

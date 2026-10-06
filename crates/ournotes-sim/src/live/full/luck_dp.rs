@@ -701,6 +701,18 @@ struct Dp<'a, M: Mass> {
     spare: Distribution<M>,
     peak: usize,
     transitions: u64,
+    work: Option<&'a mut LuckDpCacheStats>,
+    complete: bool,
+}
+
+impl<M: Mass> Drop for Dp<'_, M> {
+    fn drop(&mut self) {
+        if let Some(work) = self.work.as_mut() {
+            work.propagated_curves += u64::from(self.complete);
+            work.peak_states = work.peak_states.max(self.peak);
+            work.transitions = work.transitions.saturating_add(self.transitions);
+        }
+    }
 }
 
 impl<'a, M: Mass> Dp<'a, M> {
@@ -716,6 +728,8 @@ impl<'a, M: Mass> Dp<'a, M> {
             spare: Distribution::default(),
             peak: 1,
             transitions: 0,
+            work: None,
+            complete: false,
         }
     }
 
@@ -1716,15 +1730,17 @@ fn record_frame<M: Mass>(
 
 /// Propagate the lottery-state distribution through a transcript.
 fn propagate<M: Mass>(transcript: &Transcript<M>) -> Result<DpResult<M::Weights>, Error> {
-    Ok(propagate_cancellable(transcript, &mut || false)?.expect("complete propagation"))
+    Ok(propagate_cancellable(transcript, &mut || false, None)?.expect("complete propagation"))
 }
 
 fn propagate_cancellable<M: Mass>(
     transcript: &Transcript<M>,
     cancelled: &mut impl FnMut() -> bool,
+    work: Option<&mut LuckDpCacheStats>,
 ) -> Result<Option<DpResult<M::Weights>>, Error> {
     let t = transcript;
     let mut dp = Dp::<M>::new(t.templates.clone(), &t.machine);
+    dp.work = work;
     let mut steps: Vec<(i32, M::Weights)> = Vec::new();
     let mut previous_lot = false;
     let mut queued = vec![false; t.luck.len()];
@@ -1850,6 +1866,7 @@ fn propagate_cancellable<M: Mass>(
     if let Some(failure) = &t.failure {
         return Err(failure.clone());
     }
+    dp.complete = true;
     Ok(Some(DpResult { steps, probes: t.probes.clone(), peak_states: dp.peak, transitions: dp.transitions }))
 }
 
@@ -1868,6 +1885,7 @@ pub struct LuckDpCache {
     words: usize,
     capacity_words: usize,
     stats: LuckDpCacheStats,
+    pub(super) programs: super::luck_score_bounds::ProgramCache,
 }
 
 /// Use of a [`LuckDpCache`]. Timings are filled only in diagnostic builds.
@@ -1879,6 +1897,22 @@ pub struct LuckDpCacheStats {
     /// Compiled recorder states considered and reused by score sessions.
     pub recording_lookups: u64,
     pub recording_hits: u64,
+    /// Complete score certificates reused for equal initialized models within a score session.
+    pub summary_lookups: u64,
+    pub summary_hits: u64,
+    pub summary_peak_entries: usize,
+    pub summary_peak_bytes: usize,
+    pub program_lookups: u64,
+    pub program_hits: u64,
+    pub program_compilations: u64,
+    pub program_evictions: u64,
+    pub program_peak_entries: usize,
+    pub program_peak_bytes: usize,
+    /// Completed uncached propagations; cache reuse adds no propagation work.
+    pub propagated_curves: u64,
+    /// Largest live distribution and transitions of uncached propagation, including interrupted work.
+    pub peak_states: usize,
+    pub transitions: u64,
     pub evictions: u64,
     pub peak_entries: usize,
     /// The largest total key size held, in bytes.
@@ -1894,7 +1928,33 @@ impl LuckDpCache {
     }
 
     pub fn stats(&self) -> LuckDpCacheStats {
-        self.stats
+        let mut stats = self.stats;
+        let programs = self.programs.stats;
+        stats.program_lookups = programs.lookups;
+        stats.program_hits = programs.hits;
+        stats.program_compilations = programs.compilations;
+        stats.program_evictions = programs.evictions;
+        stats.program_peak_entries = programs.peak_entries;
+        stats.program_peak_bytes = programs.peak_bytes;
+        stats
+    }
+
+    pub(super) fn program_capacity(&self) -> usize {
+        self.capacity_words.saturating_mul(std::mem::size_of::<u64>()).min(32 * 1024 * 1024)
+    }
+
+    pub(super) fn summary_capacity(&self) -> usize {
+        self.capacity_words.saturating_mul(std::mem::size_of::<u64>()).min(8 * 1024 * 1024)
+    }
+
+    pub(super) fn summary_lookup(&mut self, hit: bool) {
+        self.stats.summary_lookups += 1;
+        self.stats.summary_hits += u64::from(hit);
+    }
+
+    pub(super) fn summary_retained(&mut self, entries: usize, bytes: usize) {
+        self.stats.summary_peak_entries = self.stats.summary_peak_entries.max(entries);
+        self.stats.summary_peak_bytes = self.stats.summary_peak_bytes.max(bytes);
     }
 
     pub fn len(&self) -> usize {
@@ -2014,7 +2074,7 @@ impl LuckDpCache {
         }
         #[cfg(feature = "search-diagnostics")]
         let started = std::time::Instant::now();
-        let result = propagate_cancellable(&transcript, cancelled);
+        let result = propagate_cancellable(&transcript, cancelled, Some(&mut self.stats));
         #[cfg(feature = "search-diagnostics")]
         {
             self.stats.propagate_ms += started.elapsed().as_secs_f64() * 1e3;
@@ -2688,9 +2748,13 @@ mod tests {
             }
             if capacity == 0 {
                 assert_eq!(cache.stats().recording_lookups, 0);
+                assert_eq!(cache.stats().summary_lookups, 0);
                 assert!(cache.is_empty());
             } else {
-                assert!(cache.stats().recording_hits >= 7);
+                let stats = cache.stats();
+                assert!(stats.summary_hits >= 6);
+                assert!(stats.recording_hits + stats.summary_hits >= 7);
+                assert!(stats.summary_peak_entries <= 64 && stats.summary_peak_bytes <= capacity);
             }
         }
     }
@@ -2744,6 +2808,7 @@ mod tests {
                 assert_eq!(summary_words(&actual), summary_words(&expected), "context {change}");
             }
         }
+        assert_eq!(cache.stats().summary_hits, 8);
     }
 
     #[test]
@@ -2778,7 +2843,7 @@ mod tests {
             values.push(summary_words(&actual));
         }
         assert_ne!(values[0], values[1]);
-        assert_eq!(cache.stats().recording_hits, 2);
+        assert_eq!(cache.stats().summary_hits, 2);
     }
 
     #[test]
@@ -2812,7 +2877,71 @@ mod tests {
             assert!(partial.is_none(), "cooperative check {stop_at}");
             let completed = session.summary(&deck, Some(&mut cache), || false).unwrap().unwrap();
             assert_eq!(summary_words(&completed), summary_words(&expected));
+            let work = cache.stats();
+            assert!(session.summary(&deck, Some(&mut cache), || true).unwrap().is_none());
+            assert_eq!(cache.stats().summary_hits, work.summary_hits);
+            let reused = session.summary(&deck, Some(&mut cache), || false).unwrap().unwrap();
+            assert_eq!(summary_words(&reused), summary_words(&expected));
+            assert_eq!(cache.stats().summary_hits, work.summary_hits + 1);
+            assert_eq!(cache.stats().transitions, work.transitions);
         }
+    }
+
+    #[test]
+    fn probability_work_counts_propagation_and_preserves_cancelled_work() {
+        let (master, notes, params, setup, play, delta) = random_fixture();
+        let skills = luck_skills(&master).unwrap();
+        let deck = [Performer { gekisou_skill: Some((2, 1)), ..Default::default() }];
+        for capacity in [0, 1 << 20] {
+            let mut cache = LuckDpCache::new(capacity);
+            let first = cache
+                .certified(&master, &skills, &notes, &[], params, &setup, &play, &delta, &deck, None, None)
+                .unwrap();
+            let expected_runs = if capacity == 0 { 2 } else { 1 };
+            cache.certified(&master, &skills, &notes, &[], params, &setup, &play, &delta, &deck, None, None).unwrap();
+            let stats = cache.stats();
+            assert_eq!(stats.propagated_curves, expected_runs);
+            assert_eq!(stats.transitions, expected_runs * first.transitions);
+            assert_eq!(stats.peak_states, first.peak_states);
+        }
+        let transcript =
+            record::<ProbabilityMass>(&master, &skills, &notes, &[], params, &setup, &play, &delta, &deck, None, None)
+                .unwrap();
+        let mut stats = LuckDpCacheStats::default();
+        let mut checks = 0;
+        let result = propagate_cancellable(
+            &transcript,
+            &mut || {
+                checks += 1;
+                checks == 8
+            },
+            Some(&mut stats),
+        )
+        .unwrap();
+        assert!(result.is_none());
+        assert_eq!(stats.propagated_curves, 0);
+        assert!(stats.transitions > 0 && stats.peak_states > 0);
+    }
+
+    #[test]
+    fn disabling_curve_capacity_releases_complete_summary_reuse() {
+        let (master, notes, params, setup, play, delta) = random_fixture();
+        let skills = luck_skills(&master).unwrap();
+        let deck = [Performer { gekisou_skill: Some((2, 1)), ..Default::default() }];
+        let mut cache = LuckDpCache::new(1 << 20);
+        let mut disabled = LuckDpCache::new(0);
+        let mut session = LuckScoreSession::new(&master, &skills, &notes, &[], params, &setup, &play, &delta, None);
+        let first = session.summary(&deck, Some(&mut cache), || false).unwrap().unwrap();
+        let repeated = session.summary(&deck, Some(&mut cache), || false).unwrap().unwrap();
+        assert_eq!(summary_words(&first), summary_words(&repeated));
+        assert_eq!(cache.stats().summary_hits, 1);
+        let independent = session.summary(&deck, Some(&mut disabled), || false).unwrap().unwrap();
+        assert_eq!(summary_words(&first), summary_words(&independent));
+        assert_eq!(disabled.stats().summary_lookups, 0);
+        assert_eq!(disabled.stats().propagated_curves, 1);
+        let resumed = session.summary(&deck, Some(&mut cache), || false).unwrap().unwrap();
+        assert_eq!(summary_words(&first), summary_words(&resumed));
+        assert_eq!(cache.stats().summary_hits, 1, "disabled capacity removed retained summaries");
     }
 
     #[test]

@@ -246,7 +246,7 @@ impl<'a> LuckExactSession<'a> {
     }
 }
 
-fn initialized_identity(model: &mut LiveModel) -> Option<String> {
+pub(super) fn initialized_identity(model: &mut LiveModel) -> Option<String> {
     // These two lookup tables use randomized hash iteration. Include all entries in sorted order and
     // retain their original storage for execution. All other model maps use deterministic hashing.
     let notes = std::mem::take(&mut model.score.calc.note_factor_percent);
@@ -259,8 +259,9 @@ fn initialized_identity(model: &mut LiveModel) -> Option<String> {
     identity
 }
 
-// Every reachable model type derives Debug. Oversized and opaque states simply use independent replay.
-fn state_identity(state: &impl fmt::Debug) -> Option<String> {
+// Complete Debug views retain all fields, including lossless empty-frame storage lengths.
+// Oversized and opaque states simply use independent replay.
+pub(super) fn state_identity(state: &impl fmt::Debug) -> Option<String> {
     struct Bounded(String);
     impl Write for Bounded {
         fn write_str(&mut self, value: &str) -> fmt::Result {
@@ -725,6 +726,24 @@ mod tests {
         assert_eq!(session.laws.len(), 1);
         let mut separate = LuckExactSession::new(&master, &notes, &[], params, &setup, &play, &delta, None, 1).unwrap();
         assert_eq!(separate.law(&other, &mut empty, || false).unwrap().decline, Some(LuckExactDecline::WorkBudget));
+    }
+
+    #[test]
+    fn long_score_tables_have_a_bounded_complete_initialized_identity() {
+        let (master, notes, mut params, setup, play, delta) = fixture();
+        params.music_length_ms = 180_000;
+        let mut fresh = LiveModel::new_gekisou(&master, &[], &notes, &[], params, &setup).unwrap();
+        let before = format!("{fresh:?}");
+        let identity = initialized_identity(&mut fresh).expect("complete compact initialized state");
+        assert!(identity.len() < 32 * 1024);
+        assert_eq!(format!("{fresh:?}"), before, "identity construction preserves the execution state");
+        let mut session = LuckExactSession::new(&master, &notes, &[], params, &setup, &play, &delta, None, 64).unwrap();
+        let mut budget = LuckExactBudget::default();
+        let first = session.law(&[], &mut budget, || false).unwrap();
+        let second = session.law(&[], &mut budget, || false).unwrap();
+        assert_eq!(first.law.unwrap().atoms(), second.law.unwrap().atoms());
+        assert!(first.stats.frames > 0);
+        assert_eq!(second.stats, LuckExactStats::default());
     }
 
     #[test]

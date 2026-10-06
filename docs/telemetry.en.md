@@ -128,6 +128,7 @@ In time order, without overlap; small gaps between phases belong to none. Each e
 | `conversionCompile` | Gekisou score: compile the bounds of each conversion part |
 | `seed` | Warm start before the joint traversal (see `incumbents.warmStart`) |
 | `search` | Main search; with conversion parts one entry per part, `label` being `free`, `snap <Snap ID> slot <slot>` or `pair slots <i>,<j>` |
+| `lotteryRefinement` | Complete-law refinement after the physical LUCK domain closes |
 | `evaluate` | Evaluate the requested deck |
 | `warmStart`, `proposals` | The two stages of the heuristic candidate strategy |
 | `verify` | Result check of the canonical Power/Skip search |
@@ -143,9 +144,10 @@ Exclusive time (milliseconds) by activity from the start of solving to its end; 
 | `compositionMs` | Member-composition traversal node work |
 | `fineBoundMs` | Per-order raw and fine caps of complete teams |
 | `cutoffTableMs` | Building simulation cutoff tables |
-| `simulationMs` | Whole-live simulations run to the end |
+| `simulationMs` | Live simulation and certified probability/score playback |
 | `stoppedSimulationMs` | Whole-live simulations stopped by the cutoff |
 | `warmStartMs` | Warm start and polishing, excluding the simulations and cutoff tables they run |
+| `intervalFrontierMs` | Certified candidate insertion, interval ranking and refinement bookkeeping, excluding probability playback |
 | `otherMs` | The rest: preparation, compilation, result assembly, other traversals, and computing `proof.upperBound` after a stop (`proof.boundMs`) |
 
 ## `leaves`
@@ -158,8 +160,8 @@ Exclusive time (milliseconds) by activity from the start of solving to its end; 
 | `partial` | Candidates whose evaluation a stop interrupted |
 | `cheapPruned`, `finePruned` | Teams dropped before any simulation: the sum of their per-order cheap caps, or of their raw and fine caps, stays below the K-th |
 | `started` | Teams whose performance orders started to run |
-| `orderBoundPruned` | Teams dropped after some orders: their exact payoffs plus the caps of the other orders stay below the K-th |
-| `simulations` | Whole-live simulations (one performance order each) run to the end |
+| `orderBoundPruned` | Teams dropped by remaining-order caps: completed exact payoffs, or certified score upper endpoints for LUCK, plus the caps of the other orders stay below the K-th; includes reuse of that complete-program upper bound |
+| `simulations` | Completed performance-order evaluations or certified order enclosures, including completed orders of a subsequently excluded LUCK candidate |
 | `cutoff.tables` | Performance orders simulated with a cutoff table |
 | `cutoff.unavailable` | Performance orders without a finite cutoff table |
 | `cutoff.stopped` | Simulations stopped early (the team cannot reach the Top-K) |
@@ -211,6 +213,8 @@ Counters accumulate within the request; exhausting an allowance or declining ref
 | `completedOrders` | Orders with a complete mass-one law, including laws reused for an equal initialized model |
 | `installedOrders` | Complete laws successfully used to narrow the ranking frontier |
 | `declinedOrders` | Orders without a complete law due to unsupported inputs or random sources, work allowances, cancellation or arithmetic capacity |
+| `declines` | Provider refusal counts: `domain`, `branchDepth`, `workBudget`, `arithmetic`, `unhandledRandom`, `cancelled`, `unsupported` |
+| `budgetExhausted` | The shared replay or frame allowance reached zero; this flag alone establishes no ranking result |
 | `arithmeticDeclines` | Complete laws not installed because search-side exact payoff arithmetic could not represent the result |
 | `replayRuns`, `frames`, `terminalPaths` | Replay segments started, frames executed and terminal paths completed across all refinement attempts; reused complete laws add zero playback work |
 
@@ -227,6 +231,22 @@ work accounting and retained ranking certificates.
 (row tables of the PT bonus bound) and `rushWindows` (Rush entry windows), each `{lookups, hits, evictions, peakEntries}`; `evictions` counts entries
 dropped (all of them when a cache is cleared). `bonusRowsRefused` counts lookups that gave up the bound because the
 table was full.
+
+`luckCurves` exposes the request's lottery and score-summary reuse. `propagatedCurves` counts completed uncached
+DP propagations; `peakStates` and `transitions` include uncached propagation work even when interrupted. Hits add
+no propagation work. `recordingLookups` and `recordingHits` count compiled recorder reuse. `summaryLookups` and
+`summaryHits` count complete score-summary reuse for equal initialized models; `summaryPeakEntries` and
+`summaryPeakBytes` bound the largest session cache observed. A zero request cache capacity disables these caches.
+`programLookups` and `programHits` count reuse of compiled all-path factor histories whose admitted control
+flow is independent of initial total power. Each hit reevaluates the original note arithmetic and signed rank
+operations at the requested power. `programCompilations` counts completed programs, including those refused
+retention by capacity; `programEvictions`, `programPeakEntries` and `programPeakBytes` describe the bounded
+resident cache, including its shared chart/run context and retained probability curves. This cache is separate
+from the deterministic native `ScoreProgram` cache. Reuse adds no factor-history replay work.
+`leaves.simulations` counts completed order enclosures, including those in a candidate subsequently excluded by
+remaining-order caps; summary hits still supply complete order enclosures without playback.
+`luckScoreCaps` counts reuse of certified whole-program score upper bounds retained after partial-order
+exclusion. These entries supply upper bounds, not candidate values or completion certificates.
 
 ## `memory`
 

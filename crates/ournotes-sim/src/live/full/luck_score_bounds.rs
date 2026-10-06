@@ -13,9 +13,11 @@ use serde::Serialize;
 
 #[cfg(feature = "search-diagnostics")]
 mod profile;
+mod program;
 mod replay;
 #[cfg(feature = "search-diagnostics")]
 pub use profile::{LuckScoreProfile, take_luck_score_profile};
+pub(super) use program::ProgramCache;
 
 const FIELDS: usize = 6;
 
@@ -461,12 +463,27 @@ fn snapshot_difference(
     queries: &[QueryParts],
     fixed: &[(i32, u8, F64Interval, I32Interval)],
 ) -> Result<(F64Interval, I32Interval), Error> {
-    let (start_index, start, end_index, end) = (start, start.map(|index| &queries[index]), end, &queries[end]);
-    // The last frame every query after `start` up to `end` left as `start` summed it.
-    let kept = start_index.zip(start).filter(|&(index, _)| index <= end_index).map(|(index, start)| {
-        let executed = queries[index + 1..=end_index].iter().map(|q| q.executed_from).min().unwrap_or(i32::MAX);
-        start.to.min(executed.saturating_sub(1))
-    });
+    snapshot_difference_with_kept(
+        start.map(|index| &queries[index]),
+        &queries[end],
+        kept_prefix(start, end, queries),
+        fixed,
+    )
+}
+
+fn kept_prefix(start: Option<usize>, end: usize, queries: &[QueryParts]) -> Option<i32> {
+    start.filter(|&index| index <= end).map(|index| {
+        let executed = queries[index + 1..=end].iter().map(|q| q.executed_from).min().unwrap_or(i32::MAX);
+        queries[index].to.min(executed.saturating_sub(1))
+    })
+}
+
+fn snapshot_difference_with_kept(
+    start: Option<&QueryParts>,
+    end: &QueryParts,
+    kept: Option<i32>,
+    fixed: &[(i32, u8, F64Interval, I32Interval)],
+) -> Result<(F64Interval, I32Interval), Error> {
     let later = |notes: &[(i32, I32Interval, F64Interval)], kept: i32| {
         notes.iter().filter(|&&(frame, _, _)| frame > kept).fold(
             (F64Interval::ZERO, 0i64, 0i64),
@@ -506,19 +523,50 @@ fn snapshot_difference(
     Ok((mean, checked_support(lower, upper)?))
 }
 
+fn rank_bonus_bounds(
+    mean: F64Interval,
+    support: I32Interval,
+    percent: i64,
+) -> Result<(F64Interval, I32Interval), Error> {
+    let x = i128::from(support.lower()) * i128::from(percent) / 100;
+    let y = i128::from(support.upper()) * i128::from(percent) / 100;
+    let bonus_support = I32Interval::new(
+        i32::try_from(x.min(y)).map_err(|_| refuse("rank bonus wraps"))?,
+        i32::try_from(x.max(y)).map_err(|_| refuse("rank bonus wraps"))?,
+    )?;
+    let bonus = if support.lower() == support.upper() {
+        bonus_support.as_real()
+    } else {
+        rank_mean_bounds(mean, support, percent)?
+    };
+    Ok((bonus, bonus_support))
+}
+
+fn note_mass(curve: &LuckDpCertifiedResult, index: Option<usize>) -> [ProbabilityMass; 4] {
+    index.map_or([ProbabilityMass::ONE, ProbabilityMass::ZERO, ProbabilityMass::ZERO, ProbabilityMass::ZERO], |i| {
+        curve.steps[i].1
+    })
+}
+
 fn link_note_probability(
     note: &mut LuckNoteBounds,
     curve: &LuckDpCertifiedResult,
 ) -> Result<(F64Interval, I32Interval), Error> {
     let index = curve.steps.partition_point(|(time, _)| *time <= note.time_ms);
-    let mass = index
-        .checked_sub(1)
-        .map_or([ProbabilityMass::ONE, ProbabilityMass::ZERO, ProbabilityMass::ZERO, ProbabilityMass::ZERO], |index| {
-            curve.steps[index].1
-        });
+    let mass = note_mass(curve, index.checked_sub(1));
+    let (mean, support) = link_buckets(&note.buckets, mass)?;
+    note.probability = Some(mass.map(|probability| probability.interval().into()));
+    note.mean = Some(mean.into());
+    Ok((mean, support))
+}
+
+fn link_buckets(
+    buckets: &[Option<IntegerBounds>; 4],
+    mass: [ProbabilityMass; 4],
+) -> Result<(F64Interval, I32Interval), Error> {
     let mut mean = F64Interval::ZERO;
     let (mut lower, mut upper) = (i32::MAX, i32::MIN);
-    for (bucket, probability) in note.buckets.iter().zip(mass) {
+    for (bucket, probability) in buckets.iter().zip(mass) {
         let possible = probability.interval().upper() > 0.0;
         // No native path reaches this probe class at the note, so its true mass is zero.
         let Some(bucket) = bucket else {
@@ -535,13 +583,24 @@ fn link_note_probability(
     }
     let support = I32Interval::new(lower, upper)?;
     mean = mean.intersect(support.as_real()).ok_or_else(|| refuse("note probability mean misses its support"))?;
-    note.probability = Some(mass.map(|probability| probability.interval().into()));
-    note.mean = Some(mean.into());
     Ok((mean, support))
 }
 
 fn note_bounds(
     calc: &LiveScoreCalculator,
+    note: &NoteCommand,
+    executed: &Classes,
+    combo: F32Interval,
+    gekisou: F32Interval,
+    rush_percent: i32,
+) -> Result<(LuckNoteBounds, I32Interval), Error> {
+    note_bounds_at_power(calc, calc.state.band_total_power, note, executed, combo, gekisou, rush_percent)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn note_bounds_at_power(
+    calc: &LiveScoreCalculator,
+    power: i32,
     note: &NoteCommand,
     executed: &Classes,
     combo: F32Interval,
@@ -554,7 +613,7 @@ fn note_bounds(
     let judge_percent =
         *calc.judgement_score_factor_percent.get(&note.score_type).ok_or_else(|| refuse("unknown score judgement"))?;
     let t = point(calc.score_adjustment_factor)?
-        .multiply(point(calc.state.band_total_power as f32)?)?
+        .multiply(point(power as f32)?)?
         .multiply(point(calc.music_difficulty_factor)?)?;
     let b = point(note_percent as f32 / 100f32)?.multiply(t)?.multiply(point(judge_percent as f32 / 100f32)?)?;
     let mut buckets = [None; 4];
@@ -661,6 +720,8 @@ pub fn luck_score_bounds_with_ranking(
         true,
         None,
         None,
+        None,
+        None,
         &mut || false,
     )
     .map(|value| value.expect("complete score bounds"))
@@ -717,6 +778,50 @@ pub struct LuckScoreSession<'a> {
     delta_times: &'a [f32],
     ranking: Option<&'a [crate::replay::RankConfirmation]>,
     recordings: luck_dp::RecordingCache,
+    summaries: SummaryCache,
+    program_scope: Option<std::sync::Arc<program::Scope>>,
+    program_scope_ready: bool,
+}
+
+struct CachedSummary {
+    identity: String,
+    value: LuckScoreBounds,
+    bytes: usize,
+}
+
+#[derive(Default)]
+struct SummaryCache {
+    entries: std::collections::VecDeque<CachedSummary>,
+    bytes: usize,
+    capacity: usize,
+}
+
+impl SummaryCache {
+    fn limit(&mut self, capacity: usize) {
+        self.capacity = capacity;
+        while self.bytes > capacity {
+            self.bytes -= self.entries.pop_front().expect("retained summary").bytes;
+        }
+    }
+
+    fn get(&self, identity: &str) -> Option<&LuckScoreBounds> {
+        self.entries.iter().find(|entry| entry.identity == identity).map(|entry| &entry.value)
+    }
+
+    fn insert(&mut self, identity: String, value: &LuckScoreBounds) {
+        debug_assert!(value.queries.is_empty() && value.final_notes.is_empty());
+        let bytes = identity.capacity()
+            + std::mem::size_of::<CachedSummary>()
+            + value.ranges.len() * std::mem::size_of::<LuckRangeScoreBounds>();
+        if bytes > self.capacity || self.capacity == 0 {
+            return;
+        }
+        while self.entries.len() >= 64 || self.bytes + bytes > self.capacity {
+            self.bytes -= self.entries.pop_front().expect("retained summary").bytes;
+        }
+        self.entries.push_back(CachedSummary { identity, value: value.clone(), bytes });
+        self.bytes += bytes;
+    }
 }
 
 impl<'a> LuckScoreSession<'a> {
@@ -744,6 +849,9 @@ impl<'a> LuckScoreSession<'a> {
             delta_times,
             ranking,
             recordings: Default::default(),
+            summaries: Default::default(),
+            program_scope: None,
+            program_scope_ready: false,
         }
     }
 
@@ -755,6 +863,14 @@ impl<'a> LuckScoreSession<'a> {
         curves: Option<&mut LuckDpCache>,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Option<LuckScoreSummary>, Error> {
+        self.summaries.limit(curves.as_ref().map_or(0, |curves| curves.summary_capacity()));
+        if !self.program_scope_ready
+            && curves.as_ref().is_some_and(|cache| cache.program_capacity() > 0)
+            && self.setup.missions.iter().take(self.setup.fevers.len()).any(|&mission| mission == gekisou::M_LUCK)
+        {
+            self.program_scope = program::scope(self.skills, self.notes, self.events, self.play, self.delta_times);
+            self.program_scope_ready = true;
+        }
         let bounds = luck_score_bounds_internal(
             self.master,
             self.skills,
@@ -769,6 +885,8 @@ impl<'a> LuckScoreSession<'a> {
             false,
             curves,
             Some(&mut self.recordings),
+            Some(&mut self.summaries),
+            self.program_scope.as_ref(),
             &mut cancelled,
         )?;
         Ok(bounds.map(|bounds| LuckScoreSummary {
@@ -815,8 +933,10 @@ fn luck_score_bounds_internal(
     delta_times: &[f32],
     ranking: Option<&[crate::replay::RankConfirmation]>,
     details: bool,
-    curves: Option<&mut LuckDpCache>,
+    mut curves: Option<&mut LuckDpCache>,
     recordings: Option<&mut luck_dp::RecordingCache>,
+    mut summaries: Option<&mut SummaryCache>,
+    program_scope: Option<&std::sync::Arc<program::Scope>>,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<LuckScoreBounds>, Error> {
     if cancelled() {
@@ -832,6 +952,28 @@ fn luck_score_bounds_internal(
         LiveModel::new_gekisou(master, deck, notes, events, params, setup)?
     };
     check_recorder(&model, skills)?;
+    let identity = summaries
+        .as_ref()
+        .filter(|cache| cache.capacity > 0 && !details)
+        .and_then(|_| super::luck_exact::initialized_identity(&mut model));
+    if cancelled() {
+        return Ok(None);
+    }
+    if let Some(identity) = &identity {
+        let cached = summaries.as_ref().and_then(|cache| cache.get(identity));
+        if let Some(curves) = curves.as_mut() {
+            curves.summary_lookup(cached.is_some());
+        }
+        if let Some(cached) = cached {
+            #[cfg(feature = "search-diagnostics")]
+            profile::record(LuckScoreProfile {
+                evaluations: 1,
+                model_setup_ms: phase_start.elapsed().as_secs_f64() * 1e3,
+                ..Default::default()
+            });
+            return Ok(Some(cached.clone()));
+        }
+    }
     #[cfg(feature = "search-diagnostics")]
     let model_setup_ms = phase_start.elapsed().as_secs_f64() * 1e3;
     #[cfg(feature = "search-diagnostics")]
@@ -851,7 +993,7 @@ fn luck_score_bounds_internal(
         })
     } else {
         let mut empty = LuckDpCache::new(0);
-        let curves = curves.unwrap_or(&mut empty);
+        let curves = curves.as_deref_mut().unwrap_or(&mut empty);
         let Some(probability) = curves.certified_cancellable(
             master,
             skills,
@@ -902,6 +1044,43 @@ fn luck_score_bounds_internal(
     if 100i32.checked_add(rush_percent).is_none() {
         return Err(refuse("Rush factor may wrap"));
     }
+    let program_capacity = if !details && has_luck && program_scope.is_some() {
+        curves.as_ref().map_or(0, |cache| cache.program_capacity())
+    } else {
+        0
+    };
+    let program_identity = (program_capacity > 0)
+        .then(|| program::identity(&mut model, program_scope.expect("program scope"), rush_percent))
+        .flatten();
+    if cancelled() {
+        return Ok(None);
+    }
+    let cached_program = curves.as_deref_mut().and_then(|cache| {
+        cache.programs.limit(program_capacity);
+        program_identity.as_ref().and_then(|identity| cache.programs.get(identity, &probability))
+    });
+    if let Some(program) = cached_program {
+        #[cfg(feature = "search-diagnostics")]
+        let program_start = std::time::Instant::now();
+        let result = program.evaluate(calc.state.band_total_power, cancelled)?;
+        #[cfg(feature = "search-diagnostics")]
+        profile::record(LuckScoreProfile {
+            evaluations: u64::from(result.is_some()),
+            model_setup_ms,
+            curve_dp_ms,
+            bound_replay_ms: program_start.elapsed().as_secs_f64() * 1e3,
+            program_run_ms: program_start.elapsed().as_secs_f64() * 1e3,
+            ..Default::default()
+        });
+        if let (Some(bounds), Some(cache), Some(identity)) = (&result, summaries.as_mut(), identity) {
+            cache.insert(identity, bounds);
+            if let Some(curves) = curves {
+                curves.summary_retained(cache.entries.len(), cache.bytes);
+            }
+        }
+        return Ok(result);
+    }
+    let mut program_builder = program_identity.as_ref().map(|_| program::Builder::new(program_capacity));
     model.set_luck_weights(skills, Vec::new())?;
     model.score.begin_bounds(
         probes,
@@ -923,6 +1102,8 @@ fn luck_score_bounds_internal(
     let recorder_run_ms = phase_start.elapsed().as_secs_f64() * 1e3;
     #[cfg(feature = "search-diagnostics")]
     let phase_start = std::time::Instant::now();
+    #[cfg(feature = "search-diagnostics")]
+    let mut breakdown = LuckScoreProfile::default();
     if model.random.draws() != 0 {
         return Err(refuse("the supposedly deterministic recorder consumed random draws"));
     }
@@ -1003,6 +1184,8 @@ fn luck_score_bounds_internal(
                 probability_ready = probability_ready.max(*time);
             }
             BoundsEvent::Rank { range, time_ms, percent, start, end } => {
+                #[cfg(feature = "search-diagnostics")]
+                let step_start = std::time::Instant::now();
                 let Some(end) = *end else {
                     return Err(refuse("rank end query was not recorded"));
                 };
@@ -1010,17 +1193,10 @@ fn luck_score_bounds_internal(
                 // Both snapshots refer to the very same filed bonus values. Cancel their integer
                 // coefficients before enclosing the remaining difference; never assume independence.
                 let (mean, support) = snapshot_difference(*start, end, &query_parts, &fixed)?;
-                let x = i128::from(support.lower()) * i128::from(*percent) / 100;
-                let y = i128::from(support.upper()) * i128::from(*percent) / 100;
-                let bonus_support = I32Interval::new(
-                    i32::try_from(x.min(y)).map_err(|_| refuse("rank bonus wraps"))?,
-                    i32::try_from(x.max(y)).map_err(|_| refuse("rank bonus wraps"))?,
-                )?;
-                let bonus = if support.lower() == support.upper() {
-                    bonus_support.as_real()
-                } else {
-                    rank_mean_bounds(mean, support, *percent)?
-                };
+                let (bonus, bonus_support) = rank_bonus_bounds(mean, support, *percent)?;
+                if let Some(builder) = &mut program_builder {
+                    builder.rank(*range, *start, end, *percent, &query_parts);
+                }
                 pending = Some((get_frame(*time_ms), bonus, bonus_support));
                 ranges.push(LuckRangeScoreBounds {
                     range: *range,
@@ -1032,6 +1208,10 @@ fn luck_score_bounds_internal(
                     bonus_mean: bonus.into(),
                     bonus_support: bonus_support.into(),
                 });
+                #[cfg(feature = "search-diagnostics")]
+                {
+                    breakdown.rank_bounds_ms += step_start.elapsed().as_secs_f64() * 1e3;
+                }
             }
             BoundsEvent::Query { time_ms, to } => {
                 // The admitted controller/ordinary predicates never read score. Only native rank
@@ -1043,7 +1223,15 @@ fn luck_score_bounds_internal(
                 // Thus production need not re-enclose every note thousands of unused times.
                 let measure =
                     details || detailed_queries.contains(&query_means.len()) || query_means.len() + 1 == trace.queries;
+                #[cfg(feature = "search-diagnostics")]
+                let step_start = std::time::Instant::now();
                 replay.query(*to)?;
+                #[cfg(feature = "search-diagnostics")]
+                {
+                    breakdown.factor_replay_ms += step_start.elapsed().as_secs_f64() * 1e3;
+                }
+                #[cfg(feature = "search-diagnostics")]
+                let step_start = std::time::Instant::now();
                 let u = added.map_or(*to, |frame| (*to).min(frame - 1));
                 let start = if u < prev { u + 1 } else { prev + 1 };
                 let mandatory_u = mandatory_added.map_or(*to, |frame| (*to).min(frame - 1));
@@ -1055,6 +1243,7 @@ fn luck_score_bounds_internal(
                 let (mut lo, mut hi) = (0i64, 0i64);
                 let mut mean = F64Interval::ZERO;
                 let mut rank_notes = detailed_queries.contains(&query_means.len()).then(Vec::new);
+                let mut program_notes = Vec::new();
                 // A note first enters a query at or after `start` (its filing lowers `added`, and an unqueried
                 // note lies after `prev`), so every note's observation is checked in this window once.
                 let first = by_frame.partition_point(|&(f, _)| (f as i32) < start);
@@ -1074,6 +1263,12 @@ fn luck_score_bounds_internal(
                             .or_insert(current);
                     }
                 }
+                #[cfg(feature = "search-diagnostics")]
+                {
+                    breakdown.combo_history_ms += step_start.elapsed().as_secs_f64() * 1e3;
+                }
+                #[cfg(feature = "search-diagnostics")]
+                let step_start = std::time::Instant::now();
                 // Measured sums keep the filing order of their outward-rounded additions.
                 let measured_notes: &[_] = if measure { &filed } else { &[] };
                 for &(frame, index, ref note, at) in
@@ -1086,6 +1281,18 @@ fn luck_score_bounds_internal(
                     factor_widths(executed, &mut factor_width);
                     let (mut bounds, mut support) =
                         note_bounds(&calc, note, executed, combo, gekisou_combo, rush_percent)?;
+                    if let Some(builder) = &mut program_builder
+                        && let Some(index) = builder.note(
+                            note,
+                            *executed,
+                            combo,
+                            gekisou_combo,
+                            &probability,
+                            note.time_ms <= probability_ready,
+                        )
+                    {
+                        program_notes.push((frame as i32, index));
+                    }
                     let note_mean = if note.time_ms <= probability_ready {
                         let (mean, linked_support) = link_note_probability(&mut bounds, &probability)?;
                         support = linked_support;
@@ -1104,10 +1311,18 @@ fn luck_score_bounds_internal(
                         measured.push(bounds);
                     }
                 }
+                #[cfg(feature = "search-diagnostics")]
+                {
+                    breakdown.note_enclosures += note_count as u64;
+                    breakdown.note_bounds_ms += step_start.elapsed().as_secs_f64() * 1e3;
+                }
                 let note_support = checked_support(lo, hi)?;
                 let note_mean = mean;
                 if let Some((frame, bonus, support)) = pending.take() {
                     fixed.push((frame, u8::from(frame > *to), bonus, support));
+                    if let Some(builder) = &mut program_builder {
+                        builder.file_rank();
+                    }
                 }
                 let mut fixed_coefficients = Vec::with_capacity(fixed.len());
                 for &(frame, offset, bonus, support) in &fixed {
@@ -1128,6 +1343,16 @@ fn luck_score_bounds_internal(
                     executed_from: start,
                     notes: rank_notes,
                 });
+                if measure && let Some(builder) = &mut program_builder {
+                    builder.query(program::Query {
+                        original: query_means.len() - 1,
+                        to: *to,
+                        executed_from: start,
+                        notes: program_notes,
+                        fixed: query_parts.last().expect("query part").fixed_coefficients.clone(),
+                        rank_notes: detailed_queries.contains(&(query_means.len() - 1)),
+                    });
+                }
                 if details {
                     queries.push(LuckScoreQueryBounds {
                         time_ms: *time_ms,
@@ -1150,6 +1375,8 @@ fn luck_score_bounds_internal(
     }
     let mut final_mean = F64Interval::ZERO;
     let mut final_notes = Vec::new();
+    #[cfg(feature = "search-diagnostics")]
+    let step_start = std::time::Instant::now();
     for (note_index, &(frame, index, ref note, at)) in
         filed.iter().filter(|(frame, _, _, _)| *frame as i32 <= prev).enumerate()
     {
@@ -1159,14 +1386,27 @@ fn luck_score_bounds_internal(
         let (combo, gekisou_combo) =
             *retained_combos.get(&(frame, index)).ok_or_else(|| refuse("final note combo is missing"))?;
         let (mut bounds, _) = note_bounds(&calc, note, &replay.notes[at].executed, combo, gekisou_combo, rush_percent)?;
+        #[cfg(feature = "search-diagnostics")]
+        {
+            breakdown.note_enclosures += 1;
+        }
         if note.time_ms > probability_ready {
             return Err(refuse("final note has pending lottery commands"));
+        }
+        if let Some(builder) = &mut program_builder
+            && let Some(index) = builder.note(note, replay.notes[at].executed, combo, gekisou_combo, &probability, true)
+        {
+            builder.final_note(index);
         }
         let (mean, _) = link_note_probability(&mut bounds, &probability)?;
         final_mean = final_mean.add(mean);
         if details {
             final_notes.push(bounds);
         }
+    }
+    #[cfg(feature = "search-diagnostics")]
+    {
+        breakdown.note_bounds_ms += step_start.elapsed().as_secs_f64() * 1e3;
     }
     let final_note_mean = final_mean;
     let mut final_rank_mean = F64Interval::ZERO;
@@ -1181,14 +1421,22 @@ fn luck_score_bounds_internal(
         final_mean = F64Interval::integer(model.score() as i128);
     }
     #[cfg(feature = "search-diagnostics")]
-    profile::record(LuckScoreProfile {
-        evaluations: 1,
-        model_setup_ms,
-        curve_dp_ms,
-        recorder_run_ms,
-        bound_replay_ms: phase_start.elapsed().as_secs_f64() * 1e3,
-    });
-    Ok(Some(LuckScoreBounds {
+    {
+        breakdown.evaluations = 1;
+        breakdown.model_setup_ms = model_setup_ms;
+        breakdown.curve_dp_ms = curve_dp_ms;
+        breakdown.recorder_run_ms = recorder_run_ms;
+        breakdown.bound_replay_ms = phase_start.elapsed().as_secs_f64() * 1e3;
+        breakdown.factor_queries = replay.work.queries;
+        breakdown.factor_quiet_queries = replay.work.quiet_queries;
+        breakdown.factor_execute_frames = replay.work.execute_frames;
+        breakdown.factor_empty_frames = replay.work.empty_frames;
+        breakdown.factor_undo_frames = replay.work.undo_frames;
+        breakdown.paired_paths = replay.work.paired_paths.get();
+        breakdown.peak_paired_paths = replay.work.peak_paired_paths.get();
+        profile::record(breakdown);
+    }
+    let bounds = LuckScoreBounds {
         model: "independent nominal draws; all-path native arithmetic enclosure, not an exact expectation or search completion; note probabilities link after their native lottery commands are filed",
         final_support: final_support.into(),
         exact_final_life: Some(model.current_life()),
@@ -1202,13 +1450,31 @@ fn luck_score_bounds_internal(
         actual_queries: trace.queries,
         probability_peak_states: probability.peak_states,
         probability_transitions: probability.transitions,
-    }))
+    };
+    if let (Some(mut builder), Some(identity), Some(cache)) = (program_builder, program_identity, curves.as_deref_mut())
+    {
+        builder.final_fixed(fixed.iter().map(|&(frame, offset, _, _)| offset + u8::from(frame <= prev)).collect());
+        if let Some(program) = builder.finish(calc, rush_percent, probability, &bounds) {
+            cache.programs.insert(identity, program);
+        }
+    }
+    if let (Some(cache), Some(identity)) = (summaries.as_mut(), identity) {
+        cache.insert(identity, &bounds);
+        if let Some(curves) = curves {
+            curves.summary_retained(cache.entries.len(), cache.bytes);
+        }
+    }
+    Ok(Some(bounds))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    mod program_tests {
+        include!("luck_score_bounds/program_tests.rs");
+    }
 
     #[test]
     fn snapshot_difference_cancels_only_shared_fixed_bonus_coefficients() {
@@ -1578,6 +1844,8 @@ mod tests {
             &delta,
             None,
             false,
+            None,
+            None,
             None,
             None,
             &mut || false,
