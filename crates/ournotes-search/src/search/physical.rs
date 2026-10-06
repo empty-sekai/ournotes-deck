@@ -1270,12 +1270,12 @@ pub(crate) fn solve_physical_impl(
     Ok(engine.outcome(strategy, exit_reason, fixed.is_some(), results, telemetry, start.elapsed()))
 }
 
-/// Gekisou score: partition the physical domain by its converting Snaps.
-/// - none: the conversion-free sub-domain keeps the raw judgement reach;
-/// - exactly one, `c` in physical slot `s`: the sub-domain holds no other converting Snap, so per-entry reach
-///   widens only by the windows of `c`, and `s` is forced to `c`;
-/// - two or more: split by the first two slots, in search order, that hold converting Snaps. Both are forced to
-///   converting Snaps and the other earlier slots exclude them.
+/// Gekisou score: partition the physical domain by the Snaps selected from its compiled conversion reach.
+/// - none: the sub-domain contains all choices outside the selected set;
+/// - exactly one, `c` in physical slot `s`: the sub-domain contains `c` and those other choices, and `s` is forced
+///   to `c`;
+/// - two or more: split by the first two slots, in search order, that hold selected Snaps. Both are forced to
+///   selected Snaps and the other earlier slots exclude them.
 ///
 /// The parts are disjoint and cover the domain. They share one Top-K and its canonical order. A failed part compile
 /// falls back to one pool-wide search.
@@ -1287,7 +1287,7 @@ fn joint_regimes(
     e: &mut Engine<'_, '_>,
 ) -> Result<(), Error> {
     use super::joint::{JointBounds, SLOTS, SlotRules};
-    let converting = super::snaps::conversion_snaps(e.pool, plan.domain.snaps())?;
+    let converting = bounds.conversion_snaps(&plan.domain);
     (e.rec.tracked, e.rec.bounded) = (true, true);
     if converting.is_empty() {
         e.rec.begin(&mut e.tel, "search", None);
@@ -1375,7 +1375,10 @@ fn joint_regimes(
             prepare.elapsed().as_secs_f64() * 1000.0;
         e.rec.end(&mut e.tel);
         let mut part = match result {
-            Ok(part) => part,
+            Ok(part) => {
+                e.tel.environment.bounds.conversion.as_mut().expect("conversion context").prepared_domains += 1;
+                part
+            }
             Err(error) => {
                 e.tel.environment.bounds.conversion.as_mut().expect("conversion context").fallback =
                     Some(error.to_string());

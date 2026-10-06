@@ -1591,18 +1591,35 @@ an entry keeps its raw judgement. The windows come from the conversion analysis 
 whole-pool closure), so they only over-approximate. Until the windows are known, the whole-pool closure remains
 the fallback.
 
-The reach depends on which converting Snaps a deck may hold, so Gekisou score partitions the physical domain:
+Gekisou score selects partition boundaries from the compiled per-member conversion masks. A Snap is selected when
+its mask adds a judgement beyond that member's own conversion reach at some entry and performance position.
+These masks include the mission gates, condition reach and registration windows. All permitted choices remain in
+the candidate domain; the selected set determines how the solver groups them:
 
-- no converting Snap: an envelope compiled for that sub-domain;
-- exactly one, `c` in physical slot `s`: the sub-domain keeps `c` as its only converting Snap, slot `s` must take
+- no selected Snap: an envelope compiled for all choices outside the selected set;
+- exactly one, `c` in physical slot `s`: the sub-domain keeps `c` as its only selected Snap, slot `s` must take
   `c` and every other slot excludes it;
-- two or more: split by the first two slots in search order that hold converting Snaps; both must take converting
+- two or more: split by the first two slots in search order that hold selected Snaps; both must take selected
   Snaps and the other earlier slots exclude them.
 
-The parts are disjoint and cover the domain (a team's converting Snaps do not depend on its layout); they share one
-Top-K, so canonical order and tie handling are unchanged. A forced slot is charged in the cheap relaxation only with its allowed choices; excluded masks filter
+The parts are disjoint and cover the domain (a team's selected Snaps do not depend on its layout); they share one
+Top-K with canonical order and tie handling. A forced slot is charged in the cheap relaxation only with its allowed choices; excluded masks filter
 enumeration only. All other bounds remain valid unforced relaxations. A failed part compile falls back to one
-pool-wide search.
+pool-wide search. An empty selected set uses the prepared whole-domain envelope directly.
+
+The resource and character prefix tables read position-mean gains. Their compiler verifies that each gain row
+has identical binary64 values at all five positions and stores one shared column per profile and correlation
+scale. Each edge uses the same upward rounding, and each retained row receives edges in member order (then Snap
+choice order for a character row). Every prefix position therefore reads the exact quantized maxima of its
+position-mean relaxation. Other applicable bounds cover a request whose gain rows differ across positions.
+The residual resource relaxation has identical rows for its free slots: it uses the largest positive increments
+of distinct available Snaps over the repeatable empty choice. The residual character relaxation uses the largest
+available distinct-character values. Both are exact assignment optima for the shared rows, with checked integer
+sums of their quantized edges. Conversion telemetry reports the selected Snap count, the slot-rule part count and
+the number of domain envelopes prepared. A budget stop between preparations retains the prepared whole-domain
+bound for every remaining part. Parts sharing an envelope are traversed together, and the next group's envelope
+is prepared after those traversals finish. At most one additional group envelope is resident alongside the
+whole-domain envelope.
 
 ### COMBO
 

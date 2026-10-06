@@ -29,13 +29,13 @@ impl TopSnaps {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct CharacterEdge {
     character: usize,
     value: i64,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct ResidualRow([Option<CharacterEdge>; 4]);
 impl ResidualRow {
     fn insert(&mut self, character: usize, value: i64, count: usize) {
@@ -60,7 +60,8 @@ impl ResidualRow {
 /// retained edges. Each character is distinct within a row; ties are harmless
 /// because no canonical binding is returned or used to certify physical Top-K.
 /// The caller supplies k<=4 rows and quantized edges in 0..=1e15, so all sums
-/// remain exact in i64. Enumerating their product visits at most 4^4 bindings.
+/// remain exact in i64. Equal rows use their largest k distinct characters directly; other rows enumerate at
+/// most 4^4 bindings.
 fn residual_value(rows: &[ResidualRow]) -> Option<i64> {
     fn visit(rows: &[ResidualRow], chosen: &mut [usize; 4], depth: usize, value: i64, best: &mut Option<i64>) {
         if depth == rows.len() {
@@ -76,12 +77,18 @@ fn residual_value(rows: &[ResidualRow]) -> Option<i64> {
         }
     }
     debug_assert!(rows.len() <= 4);
+    if let Some(first) = rows.first()
+        && rows.iter().all(|row| row == first)
+    {
+        return first.0[..rows.len()].iter().try_fold(0i64, |sum, edge| sum.checked_add(edge.map(|e| e.value)?));
+    }
     let mut best = None;
     visit(rows, &mut [0; 4], 0, 0, &mut best);
     best
 }
 
 pub(super) struct PrefixCharacterTables {
+    /// Position-mean gains give every position the same rows, indexed by profile, scale and character.
     rows: Vec<TopSnaps>,
     characters: Vec<i64>,
 }
@@ -91,12 +98,11 @@ impl PrefixCharacterTables {
         let mut characters: Vec<_> = domain.members().iter().map(|&m| pool.members[m].character_id).collect();
         characters.sort_unstable();
         characters.dedup();
-        // Optional storage. Retain the existing capacity gate even though the
-        // residual value solver no longer needs canonical matcher's i128 weights.
+        // Bounded optional storage for the domain characters.
         if characters.len() > 4096 {
             return None;
         }
-        let cells = b.lead.len().checked_mul(15)?.checked_mul(characters.len())?;
+        let cells = b.lead.len().checked_mul(3)?.checked_mul(characters.len())?;
         if cells > 250_000 {
             return None;
         }
@@ -136,19 +142,17 @@ impl PrefixCharacterTables {
                 fixed += super::prefix_resource::quantized(power, gain, r)?;
             }
             let count = 5 - depth;
-            let mut rows = [ResidualRow::default(); 4];
-            for (row, &slot) in SLOTS[depth..].iter().enumerate() {
-                let offset = ((profile * 5 + positions[slot]) * 3 + scale) * self.characters.len();
-                for &character in &columns {
-                    if let Some(q) = self.rows[offset + character].best(&chosen) {
-                        rows[row].insert(character, q, count);
-                    }
+            let mut shared = ResidualRow::default();
+            let offset = (profile * 3 + scale) * self.characters.len();
+            for &character in &columns {
+                if let Some(q) = self.rows[offset + character].best(&chosen) {
+                    shared.insert(character, q, count);
                 }
             }
             // Every future position takes one distinct character. Future Snap
             // reuse and required-card constraints are relaxed; prefix resources
             // and the native position of every assigned slot remain fixed.
-            let extra = residual_value(&rows[..count])?;
+            let extra = residual_value(&[shared; 4][..count])?;
             let upper = add_up((fixed + extra) as f64, (r * keyed.map_or(b.a0, |k| k.a0)).next_up());
             let cap =
                 (((upper * upper).next_up() / (4.0 * r)).next_up() * (1.0 + b.eps).next_up()).next_up().ceil() as i128;
@@ -158,15 +162,18 @@ impl PrefixCharacterTables {
     }
 }
 
-/// Both prefix tables, each None past its own storage gate, in one pass: they hold the same quantized edge of every
-/// (profile, member, choice, position, scale), so each edge is quantized once. The loops run in the order each table
-/// was once filled in alone, so every resource row still receives its edges by member and every character row by
-/// member then choice. An edge outside the quantized range leaves both unavailable, as it did each one alone.
+/// Both prefix tables, each None past its own storage gate, in one pass. Position-mean gains give every position
+/// the same quantized edge of each (profile, member, choice, scale), so all positions share one column. Every
+/// resource row receives its edges by member and every character row by member then choice. Compilation checks
+/// exact bit equality across positions and the quantized range of every edge.
 pub(super) fn compile_prefix_tables(
     b: &JointBounds,
     pool: &Pool,
     domain: &CandidateDomain,
 ) -> (Option<super::prefix_resource::PrefixResourceTables>, Option<PrefixCharacterTables>) {
+    if b.gains.iter().flatten().any(|g| g.iter().any(|v| v.to_bits() != g[0].to_bits())) {
+        return (None, None);
+    }
     let mut resource = super::prefix_resource::PrefixResourceTables::empty(b, domain);
     let mut character = PrefixCharacterTables::empty(b, pool, domain);
     if resource.is_none() && character.is_none() {
@@ -178,18 +185,15 @@ pub(super) fn compile_prefix_tables(
             let column = character.as_ref().map(|t| t.characters.binary_search(&id).expect("character of the domain"));
             for choice in 0..=domain.snaps().len() {
                 let power = b.a[m] + b.lead[profile][m] + if choice == 0 { 0 } else { b.w[m][choice - 1] };
-                for position in 0..5 {
-                    for (scale, &r) in b.correlation_scales.iter().enumerate() {
-                        let Some(q) = super::prefix_resource::quantized(power, b.gains[m][choice][position], r) else {
-                            return (None, None);
-                        };
-                        if let Some(t) = resource.as_mut() {
-                            t.insert(profile, position, scale, choice, id, q);
-                        }
-                        if let (Some(t), Some(column)) = (character.as_mut(), column) {
-                            t.rows[((profile * 5 + position) * 3 + scale) * t.characters.len() + column]
-                                .insert(choice, q);
-                        }
+                for (scale, &r) in b.correlation_scales.iter().enumerate() {
+                    let Some(q) = super::prefix_resource::quantized(power, b.gains[m][choice][0], r) else {
+                        return (None, None);
+                    };
+                    if let Some(t) = resource.as_mut() {
+                        t.insert(profile, scale, choice, id, q);
+                    }
+                    if let (Some(t), Some(column)) = (character.as_mut(), column) {
+                        t.rows[(profile * 3 + scale) * t.characters.len() + column].insert(choice, q);
                     }
                 }
             }
@@ -247,6 +251,25 @@ mod tests {
             }
         }
         residual_value(&retained[..rows.len()])
+    }
+
+    #[test]
+    fn shared_character_rows_match_full_assignment_enumeration() {
+        for count in 0..=4 {
+            for columns in 0..=7 {
+                for seed in 0..17 {
+                    let edges: Vec<_> = (0..columns)
+                        .filter(|&c| (c + seed) % 4 != 0)
+                        .flat_map(|c| {
+                            let value = 1_000_000_000_000_000 - ((c * 13 + seed * 7) % 19) as i64;
+                            [(c, value), (c, value - 1)]
+                        })
+                        .collect();
+                    let rows = vec![edges; count];
+                    assert_eq!(retained_value(&rows), brute_full(&rows), "{rows:?}");
+                }
+            }
+        }
     }
 
     #[test]

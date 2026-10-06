@@ -248,10 +248,12 @@ pub struct PtRegime {
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Conversion {
-    /// Converting Snaps of the domain.
+    /// Snaps selected from the compiled per-entry conversion reach.
     pub snaps: usize,
     /// Search parts (each partition with each of its slot rules), searched one after another.
     pub parts: usize,
+    /// Domain envelopes compiled for these parts; several slot-rule parts share each envelope.
+    pub prepared_domains: usize,
     pub fallback: Option<String>,
     pub compile_ms: f64,
 }

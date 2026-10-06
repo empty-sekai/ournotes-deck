@@ -5,7 +5,13 @@ use ournotes_sim::{cards::Roster, data::DeckData};
 use serde_json::json;
 
 fn inputs() -> (DeckData, Roster) {
-    let synth = synthetic_master(6, 2, 5);
+    let mut synth = synthetic_master(6, 2, 5);
+    super::common::set_column(&mut synth, "MasterSupportSkillEffect", &mut |row| {
+        if row["_skillEffectType"] == 12006 {
+            row["_skillTargetIDs"] = json!([12]);
+            row["_effectValue"] = json!(6);
+        }
+    });
     (
         DeckData::from_json(&data_document(&synth, 6, 2, 5).to_string()).unwrap(),
         Roster::from_json(&roster_document(6, 2, 5).to_string()).unwrap(),

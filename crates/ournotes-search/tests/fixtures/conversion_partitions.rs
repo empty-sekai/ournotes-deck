@@ -4,11 +4,23 @@ use ournotes_search::{engine, search::Completion, types::Strategy};
 use ournotes_sim::{cards::Roster, data::DeckData};
 use serde_json::json;
 
+fn inputs(members: i64) -> (DeckData, Roster) {
+    let mut synth = synthetic_master(members, 2, 5);
+    super::common::set_column(&mut synth, "MasterSupportSkillEffect", &mut |row| {
+        if row["_skillEffectType"] == 12006 {
+            row["_skillTargetIDs"] = json!([12]);
+            row["_effectValue"] = json!(6);
+        }
+    });
+    (
+        DeckData::from_json(&data_document(&synth, members, 2, 5).to_string()).unwrap(),
+        Roster::from_json(&roster_document(members, 2, 5).to_string()).unwrap(),
+    )
+}
+
 #[test]
 fn conversion_parts_interleave_preparation_with_complete_traversals() {
-    let synth = synthetic_master(5, 2, 5);
-    let data = DeckData::from_json(&data_document(&synth, 5, 2, 5).to_string()).unwrap();
-    let roster = Roster::from_json(&roster_document(5, 2, 5).to_string()).unwrap();
+    let (data, roster) = inputs(5);
     let mut request = joint_request("mission", true, json!({"kind":"score"}));
     request.k = 31;
     let actual = engine::recommend(&data, &roster, &request).unwrap();
@@ -33,9 +45,7 @@ fn conversion_parts_interleave_preparation_with_complete_traversals() {
 
 #[test]
 fn conversion_parts_stopped_before_preparation_keep_the_full_domain_bound() {
-    let synth = synthetic_master(6, 2, 5);
-    let data = DeckData::from_json(&data_document(&synth, 6, 2, 5).to_string()).unwrap();
-    let roster = Roster::from_json(&roster_document(6, 2, 5).to_string()).unwrap();
+    let (data, roster) = inputs(6);
     let mut request = joint_request("mission", true, json!({"kind":"score"}));
     request.strategy = Strategy::Exhaustive;
     let reference = engine::recommend(&data, &roster, &request).unwrap();
