@@ -138,3 +138,28 @@ member-order target. Agreement of the model with the game is a separate question
 power-parameterized expression with optional checked monotonicity certificates.
 They do not replace physical search or establish equality between different deck
 programs.
+
+## Conversion partition preparation
+
+A Gekisou conversion partition retains its member domain and permitted Snap choices together with its slot rules.
+Each rule set owns one traversal. These traversals are disjoint and their union is the requested team domain.
+
+The envelope for a partition is prepared immediately before its first traversal. Traversals of the same partition
+share that envelope; its final traversal releases it. Each partition's traversals are consecutive, so only one
+partition envelope is retained in addition to the pool-wide envelope. The incumbent-first schedule prioritizes
+each partition by its best evaluated incumbent, then orders that partition's rules by their incumbents. The
+incumbent-first order and the static order enumerate the same rule sets and use the same canonical Top-K comparison. Preparation changes the lifetime of compiled tables,
+not the set of candidate teams or the meaning of a bound.
+
+A stop before preparation or before a traversal leaves the remaining partitions covered by the pool-wide root
+bound. A stop inside a traversal combines that traversal's open-prefix bounds with the pool-wide bound for later
+partitions. The maximum also includes retained incumbents when the final whole-domain bound is reported.
+If a partition cannot compile, a traversal using the pool-wide envelope covers the outstanding domain.
+
+The synthetic regression `conversion_envelopes_are_prepared_between_traversals_and_stops_cover_later_parts`
+checks preparation order, canonical results against exhaustive search, and whole-domain bounds at deterministic
+candidate-budget stops. Run it with:
+
+```sh
+cargo test --release --test adapter_fixture_export conversion_envelopes
+```
