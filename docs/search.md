@@ -2116,3 +2116,46 @@ independent member caps and those assignments attain the ceiling; other inputs a
 `tools/search-harness/browser.cjs` runs the recommendation package in a Chromium Worker on original UTF-8 inputs
 and compares every semantic outcome field with a native reference outcome, keeping JSON number tokens as strings so
 integers beyond JavaScript's safe range cannot compare equal by rounding.
+
+
+## Window-weighted factor roundings
+
+A complete candidate contributes one member and Snap-effect class at each of five performance positions.
+For an allowed choice `c` at position `k`, let `N(c,k)` bound lifetime factor commands and let `E(c,k)` bound
+the total executions of those commands. For a command whose timestamp belongs to a closed interval `I`,
+`Exec::over(I)` bounds the replay count of every native score frame it can occupy. A start command with a fixed
+time and its finish interval can use separate counts. Cumulative replacements retain their lifetime activation
+and processing-frame bounds. Count products and sums round outward.
+
+Consequently `N = sum_k max_c N(c,k)` and `E = sum_k max_c E(c,k)` bound every legal team and every performance
+order. They are relaxations: the maximizing choices need not be jointly feasible. The independent cap
+`max_frame_executions * N` remains valid, so its minimum with `E` is valid as well. This minimum counts execution
+work without assigning every command the replay count of an unrelated frame.
+
+With `F` the admitted factor norm and `u = 2^-24`, define `W = 3E + 2N`. The three execution roundings cover state
+application, frame difference and undo; the two lifetime roundings cover integer conversion and division. For
+`Wu < 1`, the existing rounding-feedback argument yields `D <= Wu(1+F)/(1-Wu)`, with outward arithmetic and the
+existing amplification reserve. The finite-factor, positive-factor and nonwrapping-score guards still apply.
+
+A carrier prefix represents a subset of this pool's legal completions. Its command, execution and factor limits
+can therefore be intersected with `N`, `E` and `F`, respectively. This intersection retains the pool certificate
+even when an independent positional relaxation for the prefix is looser. The additive score envelope uses the
+same `W`; the full-team and prefix certificates thus share the same arithmetic premises.
+
+The regression `late_factor_windows_retain_global_and_prefix_certificates` checks every legal fixture team,
+all 120 performance orders and each available prefix cap. Its guard timer permits historical recalculation while
+its scoring effects occupy late frames. Separate unit tests check uneven replay counts, invalid count inputs,
+feedback admission, prefix intersections and exact integer-reference factor pulses.
+
+Execution geometry covers every score frame reachable through the final possible note rewrite, including tail
+frames whose binary32 undo error can feed into earlier notes. Each play frame contributes its certified command
+floor, filed judgement times and Gekisou command floor; rank confirmations contribute their application times and
+rewind starts. The horizon is at least the last note time and every processing time that can rewrite any note.
+After this horizon, all certified rewinds begin strictly after the last note frame, so filed note scores remain
+unchanged. Unknown command floors retain the complete playback horizon. This suffix argument limits roundoff
+work without dropping tail commands that can influence a later replay of an earlier note.
+
+The regressions `execution_counts_include_factor_roundoff_after_the_last_note` and
+`a_settled_suffix_keeps_earlier_tail_roundoff_in_the_certificate` check both sides of that boundary, including an
+explicit add/undo pair with a nonzero residual. The sustained-COMBO fixture retains its complete class and
+per-order bound audit under the same execution geometry.

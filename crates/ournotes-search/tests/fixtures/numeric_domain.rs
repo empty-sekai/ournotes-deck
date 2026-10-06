@@ -637,3 +637,72 @@ fn best_order_diagnostic_rejects_external_rank_snapshots() {
     let error = search::search_best_order_diagnostic(&pool, &request);
     assert!(matches!(error, Err(Error::Unsupported(message)) if message.contains("external rank snapshots")));
 }
+
+#[test]
+fn late_factor_windows_retain_global_and_prefix_certificates() {
+    let mut synth = synthetic_master(5, 1, 5);
+    set_column(&mut synth, "MasterMemberCard", &mut |r| r["_liveSkillID"] = json!(1));
+    replace_table(
+        &mut synth,
+        "MasterLiveSkillEffect",
+        json!([
+            {"_id":1,"_liveSkillID":1,"_level":4,"_skillEffectType":2000,
+             "_effectValue":100_000,"_activationTimeSecond":0.1}
+        ]),
+    );
+    set_column(&mut synth, "MasterSupportCard", &mut |r| {
+        r["_supportSkillId01"] = json!(3);
+        r["_supportSkillId02"] = json!(0);
+    });
+    set_column(&mut synth, "MasterSupportSkillEffect", &mut |r| {
+        if r["_supportSkillID"] == 3 {
+            r["_skillEffectType"] = json!(3003);
+            r["_skillTargetIDs"] = json!([]);
+            r["_skillTriggerConditionGroup"] = json!(53);
+            r["_skillConditionGroup"] = json!(0);
+            r["_skillReleaseConditionGroup"] = json!(63);
+            r["_effectValue"] = json!(0);
+            r["_activationTimeSecond"] = json!(0.001);
+        }
+    });
+    set_column(&mut synth, "MasterLiveMusicScore", &mut |r| r["_fullComboCount"] = json!(2));
+    let mut document = data_document(&synth, 5, 1, 5);
+    document["charts"][0]["notes"] = json!({"id":[1,2],"op":[1,1],"judgementType":[1,1],"timeMs":[163760,163800]});
+    document["charts"][0]["skillEvents"] = json!({"timeMs":[163720,163720,163720,163720,163720]});
+    let data = DeckData::from_json(&document.to_string()).unwrap();
+    let roster = Roster::from_json(&roster_document(5, 1, 5).to_string()).unwrap();
+    let mut wire = joint_request_json("free", false, json!({"kind":"score"}));
+    wire["constraints"]["leader"] = json!(1);
+    wire["k"] = json!(6);
+    wire["execution"]["play"] = json!({"kind":"stream","stream":{
+        "frames":(0..=163840).step_by(40).collect::<Vec<_>>(),
+        "judged":[[4094,1,5,163760],[4095,2,5,163800]]
+    }});
+    let mut request: RecommendationRequest = serde_json::from_value(wire).unwrap();
+    let built = handler::build_card_pool(&data, &roster, &request).unwrap();
+    let bounded = search::recommend_built(&built).unwrap();
+    assert_eq!(bounded.completion, Completion::Complete);
+    assert!(bounded.telemetry.environment.bounds.compiled, "{:?}", bounded.telemetry.environment.bounds);
+    assert_eq!(bounded.results.len(), 6);
+    request.strategy = Strategy::Exhaustive;
+    let oracle = engine::recommend(&data, &roster, &request).unwrap();
+    assert_eq!(oracle.completion, Completion::Complete);
+    assert_eq!(bounded.results, oracle.results);
+    #[cfg(feature = "search-diagnostics")]
+    {
+        let mut scratch = search::diagnostics::PrefixAuditScratch::default();
+        for deck in &oracle.results {
+            let audit = search::diagnostics::audit_order_caps(&built, deck.members, deck.snaps).unwrap();
+            assert_eq!(audit["orders"], 120);
+            assert_eq!(audit["violations"], 0, "{audit}");
+            let payoff: i128 = deck.expected_payoff.as_ref().unwrap().numerator.parse().unwrap();
+            for depth in 1..=5 {
+                let (cap, power) =
+                    search::diagnostics::prefix_upper(&built, deck.members, deck.snaps, depth, &mut scratch)
+                        .unwrap()
+                        .expect("compiled prefix");
+                assert!(cap >= payoff && power >= i64::from(deck.power));
+            }
+        }
+    }
+}

@@ -182,13 +182,21 @@ pub(super) fn additive_joint_envelope(
     [result.0, result.1, result.2].iter().all(|v| v.is_finite()).then_some(result)
 }
 
-/// The drift of the factor state of a deck whose performers file at most `n_cmd` factor commands with factors
-/// summing to at most `f_tot`, each frame executing at most `e_max` times up to the last note: every float operation
-/// on the state rounds by at most 2^-24 of a value below `1 + f_tot`; each execution applies the commands (two
-/// roundings each: state and frame diff) and each undo one more; each mill value is also cast to binary32 then
-/// divided, two representation roundings. None without a finite certificate.
-pub(super) fn factor_drift(e_max: f64, n_cmd: f64, f_tot: f64) -> Option<f64> {
-    let ops = (((3.0 * e_max).next_up() * n_cmd).next_up() + (2.0 * n_cmd).next_up()).next_up();
+/// Total native roundings for a bound on command executions and lifetime commands.
+/// An execution charges state application, frame-difference accumulation and undo;
+/// a lifetime command also charges its integer cast and division.
+pub(super) fn factor_roundings(executions: f64, commands: f64) -> f64 {
+    ((3.0 * executions).next_up() + (2.0 * commands).next_up()).next_up()
+}
+
+/// Absolute factor-state error for command executions bounded at their own score-frame windows.
+/// Every operation has ideal magnitude at most `1 + f_tot`. The amplification
+/// accounts for feedback from previous rounding errors; an unavailable certificate declines the cap.
+pub(super) fn factor_drift(executions: f64, commands: f64, f_tot: f64) -> Option<f64> {
+    if [executions, commands, f_tot].iter().any(|v| !v.is_finite() || *v < 0.0) {
+        return None;
+    }
+    let ops = factor_roundings(executions, commands);
     let amplification = float_margin::amplification(ops, 2f64.powi(-24))?;
     Some((((ops * 2f64.powi(-24)).next_up() * (1.0 + f_tot).next_up()).next_up() * amplification).next_up())
 }

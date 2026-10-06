@@ -196,12 +196,12 @@ pub(super) fn windows(
             // a second event of the position restarts the effect without removing the first factor
             let end = if events.len() >= 2 { i64::MAX } else { geo.end(ev, i0, r.act, ext, unbounded) };
             push(ev as i64, end, note, judge, 0, 0);
-            cmds += 2.0 * c;
-            cmds_plain += 2.0 * c;
+            cmds = (cmds + 2.0 * c).next_up();
+            cmds_plain = (cmds_plain + 2.0 * c).next_up();
             add(&mut fac, note, judge, 1.0);
-            let op = c * (geo.exec.over(ev as i64, ev as i64) + geo.exec.over(ev as i64, end));
-            ops += op;
-            ops_plain += op;
+            let op = product_up(c, (geo.exec.over(ev as i64, ev as i64) + geo.exec.over(ev as i64, end)).next_up());
+            ops = (ops + op).next_up();
+            ops_plain = (ops_plain + op).next_up();
             spans.push((ev as i64, end, note + judge.iter().copied().fold(0f64, f64::max)));
         }
     }
@@ -298,12 +298,15 @@ pub(super) fn windows(
                 let exec = geo.frames[i0];
                 let end = geo.end(exec, i0, r.act, 0.0, false);
                 push(exec as i64, end, note, judge, 0, 0);
-                cmds += 2.0 * c;
-                cmds_plain += 2.0 * c;
+                cmds = (cmds + 2.0 * c).next_up();
+                cmds_plain = (cmds_plain + 2.0 * c).next_up();
                 add(&mut fac, note, judge, 1.0);
-                let op = c * (geo.exec.over(exec as i64, exec as i64) + geo.exec.over(exec as i64, end));
-                ops += op;
-                ops_plain += op;
+                let op = product_up(
+                    c,
+                    (geo.exec.over(exec as i64, exec as i64) + geo.exec.over(exec as i64, end)).next_up(),
+                );
+                ops = (ops + op).next_up();
+                ops_plain = (ops_plain + op).next_up();
                 spans.push((exec as i64, end, note + judge.iter().copied().fold(0f64, f64::max)));
             }
         } else {
@@ -311,13 +314,13 @@ pub(super) fn windows(
             let churn = if r.churn { POOL + 1.0 } else { 1.0 };
             let judge5 = judge.map(|x| x * POOL);
             push(i64::MIN, i64::MAX, note * POOL, judge5, 0, 0);
-            let count = 2.0 * c * geo.frames.len() as f64 * churn;
-            cmds += count;
-            cmds_plain += count;
+            let count = product_up(product_up(2.0 * c, geo.frames.len() as f64), churn);
+            cmds = (cmds + count).next_up();
+            cmds_plain = (cmds_plain + count).next_up();
             add(&mut fac, note, judge, POOL);
-            let op = 2.0 * c * geo.frames.len() as f64 * geo.exec.max as f64 * churn;
-            ops += op;
-            ops_plain += op;
+            let op = product_up(count, geo.exec.max as f64);
+            ops = (ops + op).next_up();
+            ops_plain = (ops_plain + op).next_up();
             spans.push((i64::MIN, i64::MAX, (note + judge.iter().copied().fold(0f64, f64::max)) * POOL));
         }
     }
@@ -341,6 +344,84 @@ mod lifetime_command_tests {
     use super::*;
     use ournotes_sim::live::score::ScoreFactorState;
     use ournotes_sim::live::skill::{FactorCommand, apply_factor};
+
+    #[test]
+    fn a_settled_suffix_keeps_earlier_tail_roundoff_in_the_certificate() {
+        let params = LiveParams {
+            skill_target_music_type: 0,
+            total_power: 1000,
+            music_level: 1,
+            converted_note_count: 1,
+            music_length_ms: 1000,
+            score_music_length_ms: None,
+            assist_factor: 1.0,
+        };
+        let play = LivePlay {
+            frames: [0, 40, 80, 120, 160, 200]
+                .into_iter()
+                .map(|time_ms| ournotes_sim::live::full::PlayFrame { time_ms, judged: Vec::new() })
+                .collect(),
+            base_seed: 0,
+        };
+        let setup = FullSetup { notes: Vec::new(), events: Vec::new(), play, params, gk: None };
+        // A late command at t=120 can rewrite the note at t=40. The command
+        // frames at t=80 and t=120 remain relevant to its floating-point state.
+        let exec = Exec::new(&setup, &[40], None, &[0, 0, 40, 0, 120, 160]);
+        assert!(exec.over(80, 120) > 0.0);
+        assert_eq!(exec.over(160, 200), 0.0);
+        // With an unknown floor, the same suffix stays in the certificate.
+        let full = Exec::new(&setup, &[40], None, &[]);
+        assert!(full.over(160, 200) > 0.0);
+    }
+
+    #[test]
+    fn execution_counts_include_factor_roundoff_after_the_last_note() {
+        let params = LiveParams {
+            skill_target_music_type: 0,
+            total_power: 1000,
+            music_level: 1,
+            converted_note_count: 1,
+            music_length_ms: 1000,
+            score_music_length_ms: None,
+            assist_factor: 1.0,
+        };
+        let play = LivePlay {
+            frames: [0, 40, 80, 120]
+                .into_iter()
+                .map(|time_ms| ournotes_sim::live::full::PlayFrame { time_ms, judged: Vec::new() })
+                .collect(),
+            base_seed: 0,
+        };
+        let setup = FullSetup { notes: Vec::new(), events: Vec::new(), play, params, gk: None };
+        let executions = Exec::new(&setup, &[40], None, &[0; 4]);
+        assert!(executions.over(80, 120) > 0.0);
+        assert!(executions.over(200, 240) == 0.0);
+        let mut state = ScoreFactorState::new(1000);
+        let initial = state.note_score_up;
+        let command = FactorCommand { note_mill: 129999, ..Default::default() };
+        apply_factor(&mut state, &command);
+        let frame_difference = command.note_mill as f32 / 100000f32;
+        state.note_score_up -= frame_difference;
+        assert!(state.note_score_up > initial);
+        let error = factor_drift(executions.over(80, 120), 1.0, 1.29999).unwrap();
+        assert!((state.note_score_up as f64 - initial as f64).abs() <= error);
+    }
+
+    #[test]
+    fn window_execution_counts_preserve_a_finite_rounding_certificate() {
+        // Commands occupy frames replayed eight times, while an unrelated frame
+        // is replayed 6000 times. Both counts bound the same complete schedule.
+        let (commands, executions, norm) = (8_000.0, 64_000.0, 0.7);
+        assert!(factor_drift(6000.0 * commands, commands, norm).is_none());
+        let drift = factor_drift(executions, commands, norm).unwrap();
+        assert!(drift > 0.0 && drift < 0.5);
+        assert!(factor_roundings(executions, commands) >= 208_000.0);
+        for invalid in [f64::NAN, f64::INFINITY, -1.0] {
+            assert!(factor_drift(invalid, commands, norm).is_none());
+            assert!(factor_drift(executions, invalid, norm).is_none());
+            assert!(factor_drift(executions, commands, invalid).is_none());
+        }
+    }
 
     #[test]
     fn score_frame_mapping_and_execution_limits_use_the_scoring_clock() {
@@ -396,8 +477,7 @@ mod lifetime_command_tests {
         let commands = command_count(pulses as f64, 1.0, (pulses * 2) as f64, None, 2.0);
         let executions = commands * repeats as f64;
         let norm = 6.0;
-        let amplification = float_margin::amplification(3.0 * executions + 2.0 * commands, 2f64.powi(-24)).unwrap();
-        let error = (3.0 * executions + 2.0 * commands) * 2f64.powi(-24) * norm * amplification;
+        let error = factor_drift(executions, commands, norm - 1.0).unwrap();
         let mut state = ScoreFactorState::new(1000);
         let mut actual_commands = 0usize;
         for pulse in 0..pulses {
@@ -458,11 +538,11 @@ pub(super) fn command_floor_times<'r>(setup: &FullSetup, mut rows: impl Iterator
         .collect()
 }
 
-/// How many times each 40 ms score frame up to the last judged note can be executed (its first run and the re-runs
-/// after a command lands in it or before it), from the frame schedule and the notes judged in each play frame: in a
-/// play frame, both recalculations re-execute score frames only from the earliest frame a command filed in that play
-/// frame can land in (the certified timer floor and the chart time of each judged note) up to
-/// the current one. Commands that land after the last note cannot change a note's score and count as none.
+/// Execution counts through the final possible note rewrite. Command floors,
+/// filed judgements and rank confirmations determine that horizon. Tail factor
+/// frames reached before it remain counted: undoing them can leave binary32
+/// error in the state used to replay an earlier note. Unproved command floors
+/// keep the complete play in the execution domain.
 pub(super) struct Exec {
     pub(super) e: Vec<u32>,
     pub(super) max: u32,
@@ -479,11 +559,9 @@ impl Exec {
             return Exec { e: Vec::new(), max: 2, max_frame, sparse: Vec::new() };
         };
         let clamp = |t: i32| score_frames.at(t as i64);
-        let g_last = clamp(last_note);
+        let note_last = clamp(last_note);
         let notes: HashMap<i32, i32> = setup.notes.iter().map(|n| (n.note_id, n.time_ms)).collect();
-        let mut diff = vec![0i64; g_last as usize + 2];
-        for (i, f) in setup.play.frames.iter().enumerate() {
-            let to = clamp(f.time_ms);
+        let lower = |i: usize, f: &ournotes_sim::live::full::PlayFrame| {
             let mut lo = command_floors.get(i).copied().map(clamp).unwrap_or(0);
             for j in &f.judged {
                 if let Some(&t) = notes.get(&j.note_id) {
@@ -493,6 +571,24 @@ impl Exec {
             if let Some(x) = gk.and_then(|g| g.exec_lo.get(i)) {
                 lo = lo.min(clamp(*x));
             }
+            lo
+        };
+        let mut horizon = last_note;
+        for (i, frame) in setup.play.frames.iter().enumerate() {
+            if lower(i, frame) <= note_last {
+                horizon = horizon.max(frame.time_ms);
+            }
+        }
+        for &(start, applied) in gk.map_or(&[][..], |g| &g.confirm[..]) {
+            if clamp(start) < note_last {
+                horizon = horizon.max(applied);
+            }
+        }
+        let g_last = clamp(horizon);
+        let mut diff = vec![0i64; g_last as usize + 2];
+        for (i, f) in setup.play.frames.iter().enumerate().filter(|(_, f)| f.time_ms <= horizon) {
+            let to = clamp(f.time_ms);
+            let lo = lower(i, f);
             let hi = to.min(g_last);
             if lo <= hi {
                 diff[lo as usize] += 2;
@@ -525,8 +621,8 @@ impl Exec {
         Exec { e, max, max_frame, sparse }
     }
 
-    /// Executions of the worst score frame a command in chart-time range `[a, b]` can land in (0 past the last
-    /// note).
+    /// Executions of the worst score frame a command in closed chart-time range
+    /// `[a, b]` can occupy (zero beyond the last possible note rewrite).
     pub(super) fn over(&self, a: i64, b: i64) -> f64 {
         let score_frames = ScoreFrames { last: self.max_frame - 1 };
         let clamp = |t: i64| score_frames.at(t) as usize;
