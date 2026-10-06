@@ -107,3 +107,38 @@ fn certified_interval_frontier_does_not_publish_a_scalar_global_bound() {
     assert!(proof.best.is_none() && proof.kth.is_none());
     assert!(proof.global_upper_bound.is_none(), "scalar top is empty; intervals belong to the certified frontier");
 }
+
+#[test]
+fn conversion_envelopes_are_prepared_between_traversals_and_stops_cover_later_parts() {
+    let (data, roster) = inputs();
+    let mut request = joint_request("mission", true, json!({"kind":"score"}));
+    request.strategy = Strategy::Exhaustive;
+    let oracle = engine::recommend(&data, &roster, &request).unwrap();
+    assert_eq!(oracle.completion, Completion::Complete);
+    request.strategy = Strategy::BranchAndBound;
+    let complete = engine::recommend(&data, &roster, &request).unwrap();
+    assert_eq!(complete.results, oracle.results);
+    let phases = &complete.telemetry.phases;
+    let compilations: Vec<_> = phases
+        .iter()
+        .enumerate()
+        .filter_map(|(index, phase)| (phase.name == "conversionCompile").then_some(index))
+        .collect();
+    assert!(compilations.len() > 1);
+    for pair in compilations.windows(2) {
+        assert!(phases[pair[0] + 1..pair[1]].iter().any(|phase| phase.name == "search"));
+    }
+    for limit in [1, 2, 9] {
+        request.limits.max_candidates = Some(limit);
+        let stopped = engine::recommend(&data, &roster, &request).unwrap();
+        assert_eq!(stopped.completion, Completion::TimedOut);
+        let count = stopped.telemetry.phases.iter().filter(|phase| phase.name == "conversionCompile").count();
+        assert!(count <= compilations.len());
+        if limit == 1 {
+            assert!(count < compilations.len());
+        }
+        assert!(stopped.telemetry.proof.parts_done < stopped.telemetry.proof.parts);
+        let upper: i128 = stopped.telemetry.proof.global_upper_bound.as_ref().unwrap().parse().unwrap();
+        assert!(upper >= payoff(&oracle.results[0]));
+    }
+}
