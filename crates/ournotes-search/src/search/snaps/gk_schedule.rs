@@ -914,8 +914,8 @@ mod timer_floor_tests {
         r.effect_type = 15000;
         r.value = -1;
         let broad = command_floor_times(&s, [&r].into_iter());
-        assert_eq!(Exec::new(&s, &[80], None, &compact).e, [4, 4, 4]);
-        assert_eq!(Exec::new(&s, &[80], None, &broad).e, [8, 6, 4]);
+        assert_eq!(Exec::new(&s, &[80], None, &compact).e, [4, 4, 4, 2]);
+        assert_eq!(Exec::new(&s, &[80], None, &broad).e, [8, 6, 4, 2]);
         let (_, compact) = rerun_floors(&s, &[0], &[i32::MAX; 4], &[], &compact);
         let (_, broad) = rerun_floors(&s, &[0], &[i32::MAX; 4], &[], &broad);
         assert_eq!(compact, [0, 0, 1, 2]);
@@ -1244,8 +1244,20 @@ pub(super) struct KeyedDrift {
     pub(super) judgement_max: f64,
     pub(super) chain_extra: f64,
     pub(super) e_max: f64,
+    /// Every prefix's legal completions also satisfy these pool-wide limits.
+    pub(super) execution_limit: f64,
+    pub(super) command_limit: f64,
+    pub(super) factor_limit: f64,
     pub(super) cmd_top: [f64; 5],
     pub(super) fac_top: [f64; 5],
+}
+
+impl KeyedDrift {
+    fn drift(&self, n_cmd: f64, f_tot: f64) -> Option<f64> {
+        let commands = n_cmd.min(self.command_limit);
+        let executions = (self.e_max * commands).next_up().min(self.execution_limit);
+        factor_drift(executions, commands, f_tot.min(self.factor_limit))
+    }
 }
 
 /// The envelope of the completions of one placed carrier lists and count of slots to fill (see `CarrierKeys`): `A0`
@@ -1446,7 +1458,7 @@ impl CarrierKeys {
     /// to at most `f_tot` (`commands_of`).
     pub(crate) fn a0_of(&self, env: &KeyedEnvelope, (n_cmd, f_tot): (f64, f64)) -> f64 {
         let Some(d) = &self.additive else { return env.a0 };
-        let drift = factor_drift(d.e_max, n_cmd, f_tot).expect("prefix drift at most the pool-wide one");
+        let drift = d.drift(n_cmd, f_tot).expect("prefix counts bounded by the admitted pool certificate");
         let delta = float_margin::with_chain(drift, d.chain_extra).expect("finite prefix drift");
         additive_joint_envelope(env.a0, env.a0, delta, d.roundings, env.sensitivity, d.chain_extra)
             .expect("prefix envelope at most the pool-wide one")
@@ -1852,5 +1864,30 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod keyed_drift_tests {
+    use super::*;
+
+    #[test]
+    fn prefix_counts_intersect_the_complete_pool_certificate() {
+        let d = KeyedDrift {
+            roundings: factor_roundings(200.0, 20.0),
+            judgement_max: 1.0,
+            chain_extra: 0.0,
+            e_max: 100_000.0,
+            execution_limit: 200.0,
+            command_limit: 20.0,
+            factor_limit: 0.7,
+            cmd_top: [4.0; 5],
+            fac_top: [0.14; 5],
+        };
+        let pool = factor_drift(200.0, 20.0, 0.7).unwrap();
+        assert!(factor_drift(d.e_max * 200.0, 200.0, 1000.0).is_none());
+        assert_eq!(d.drift(200.0, 1000.0), Some(pool));
+        assert!(d.drift(1.0, 0.1).unwrap() < pool);
+        assert!(d.drift(0.0, 0.0).unwrap() < pool);
     }
 }

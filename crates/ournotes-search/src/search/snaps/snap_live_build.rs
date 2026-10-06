@@ -970,6 +970,7 @@ impl<'a> SnapLive<'a> {
         let mut contrib: Vec<Vec<[Contrib; 5]>> = vec![Vec::new(); n];
         // command and factor totals for the drift margin: per position, the largest over members and classes
         let mut cmd_k = [0f64; 5];
+        let mut executions_k = [0f64; 5];
         let mut fac_k = [0f64; 5];
         // with a combo range, every deck's combo count bounds: a combo ramp window adds its factor at them
         let pool_reads = match gkf.as_ref() {
@@ -988,6 +989,7 @@ impl<'a> SnapLive<'a> {
                     let fac = fac.iter().copied().fold(0f64, f64::max);
                     let judge = w.iter().any(|x| x.judge.iter().any(|&j| j != 0.0));
                     cmd_k[k] = cmd_k[k].max(cmds);
+                    executions_k[k] = executions_k[k].max(if ops.is_nan() { f64::INFINITY } else { ops });
                     fac_k[k] = fac_k[k].max(fac);
                     let cb = if fine.gcombo.is_some() { combo_windows(&c.rows) } else { Vec::new() };
                     arr[k] = Contrib {
@@ -1105,12 +1107,13 @@ impl<'a> SnapLive<'a> {
             }
             global += best;
         }
-        // drift of the factor state (`factor_drift`): the performers at the five positions file at most `cmd_k`
-        // commands with factors at most `fac_k` each
+        // Each position chooses one member/class. Independent maxima over those
+        // choices bound every team's lifetime commands, command executions and factor norm.
         let e_max = exec.max as f64;
         let n_cmd = cmd_k.iter().fold(0.0f64, |sum, &x| (sum + x).next_up());
         let f_tot = fac_k.iter().fold(0.0f64, |sum, &x| (sum + x).next_up());
-        let drift = factor_drift(e_max, n_cmd, f_tot)
+        let executions = executions_k.iter().fold(0.0f64, |sum, &x| (sum + x).next_up()).min((e_max * n_cmd).next_up());
+        let drift = factor_drift(executions, n_cmd, f_tot)
             .ok_or_else(|| Error::Domain("factor command count has no finite drift certificate".into()))?;
         // with Gekisou on, the chain also multiplies by the Gekisou combo and luck factors, each computed in binary32
         let chain_extra = if gk_on { GK_CHAIN_EPS } else { 0.0 };
@@ -1144,8 +1147,7 @@ impl<'a> SnapLive<'a> {
         }
         let judgement_max =
             settings.judgement_score_factor_percent.values().copied().max().map(|p| (p as f64 / 100.0).next_up());
-        let n_upper = cmd_k.iter().fold(0.0f64, |acc, &v| (acc + v).next_up());
-        let roundings = (((3.0 * e_max).next_up() * n_upper).next_up() + (2.0 * n_upper).next_up()).next_up();
+        let roundings = factor_roundings(executions, n_cmd);
         let additive = judgement_max.and_then(|j| factor_error_sensitivity(&coef, j)).map(|b| (roundings, b));
         let joint_additive =
             additive.and_then(|(roundings, b)| additive_joint_envelope(a0, global, eps, roundings, b, chain_extra));
@@ -1200,6 +1202,9 @@ impl<'a> SnapLive<'a> {
                         judgement_max: judgement_max.expect("judgement factors"),
                         chain_extra,
                         e_max,
+                        execution_limit: executions,
+                        command_limit: n_cmd,
+                        factor_limit: f_tot,
                         cmd_top,
                         fac_top,
                     }
