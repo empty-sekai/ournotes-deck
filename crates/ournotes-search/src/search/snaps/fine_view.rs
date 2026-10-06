@@ -360,42 +360,51 @@ impl FineView<'_> {
             }
             if let Some(terms) = scratch.terms.as_mut() {
                 terms.entries.push((c.times[e], z, rk));
-                let pre = f.pre_plain.get(e).copied().unwrap_or(pre);
-                let plain = if f.gcombo.is_some() { pre * gk_g[e] * combo / f.cnc } else { pre * combo / f.cnc };
-                let rush_off = zval_at(vmask as usize, plain, acc_e).min(z);
-                if let Some(off) = &mut terms.rush_off {
-                    // Only the native Rush multiplier changes. All score-up/probe windows and the original
-                    // full-history drift remain in both classes; a currently inactive command can leave drift.
-                    off.push(rush_off);
-                }
-                if let Some(off) = &mut terms.probe_off {
-                    let keep_old_if_unproved = |conditional: f64, old: f64| {
-                        if conditional.is_finite() && conditional >= 0.0 { conditional.min(old) } else { old }
-                    };
-                    // Only matched probes' ideal amplitudes disappear. Every ordinary/unmatched window,
-                    // judgement factor, combo ramp and the original complete command-history drift remains.
-                    off.push([
-                        keep_old_if_unproved(zval_at(vmask as usize, plain, probe_acc_e), rush_off),
-                        keep_old_if_unproved(zval_at(vmask as usize, k, probe_acc_e), z),
-                    ]);
-                }
-                if let (Some(factors), Some(caps)) = (&terms.native_note_factors, &mut terms.native_note_caps) {
-                    let field = factors[e];
-                    let cap = |bucket: usize| {
-                        // The trace field already includes the initial one and complete note-field drift.
-                        // Retain the old combined allowance for judgement/window arithmetic; counting part of
-                        // the note error again is conservative. Negative field uppers may safely use zero.
-                        let base = (field[bucket & 1].max(0.0) + drift).next_up();
-                        let value = zval_with_base(vmask as usize, if bucket & 2 == 0 { plain } else { k }, base);
-                        if value.is_finite() && value >= 0.0 { value.min(z) } else { z }
-                    };
-                    let mut row = std::array::from_fn(cap);
-                    // Positive/nonconditioned probe amplitudes and the nonnegative Rush factor make cell 3
-                    // another valid upper for every class. This also preserves the four-cap input contract.
-                    for bucket in 0..3 {
-                        row[bucket] = row[bucket].min(row[3]);
+                // Ordinary cutoff tables request only the original entries and conversion rows.
+                // Compute optional terminal values only when their matching output has a consumer.
+                if terms.rush_off.is_some()
+                    || terms.probe_off.is_some()
+                    || (terms.native_note_factors.is_some() && terms.native_note_caps.is_some())
+                {
+                    let pre = f.pre_plain.get(e).copied().unwrap_or(pre);
+                    let plain = if f.gcombo.is_some() { pre * gk_g[e] * combo / f.cnc } else { pre * combo / f.cnc };
+                    if terms.rush_off.is_some() || terms.probe_off.is_some() {
+                        let rush_off = zval_at(vmask as usize, plain, acc_e).min(z);
+                        if let Some(off) = &mut terms.rush_off {
+                            // Only the native Rush multiplier changes. All score-up/probe windows and the original
+                            // full-history drift remain in both classes; a currently inactive command can leave drift.
+                            off.push(rush_off);
+                        }
+                        if let Some(off) = &mut terms.probe_off {
+                            let keep_old_if_unproved = |conditional: f64, old: f64| {
+                                if conditional.is_finite() && conditional >= 0.0 { conditional.min(old) } else { old }
+                            };
+                            // Only matched probes' ideal amplitudes disappear. Every ordinary/unmatched window,
+                            // judgement factor, combo ramp and the original complete command-history drift remains.
+                            off.push([
+                                keep_old_if_unproved(zval_at(vmask as usize, plain, probe_acc_e), rush_off),
+                                keep_old_if_unproved(zval_at(vmask as usize, k, probe_acc_e), z),
+                            ]);
+                        }
                     }
-                    caps.push(row);
+                    if let (Some(factors), Some(caps)) = (&terms.native_note_factors, &mut terms.native_note_caps) {
+                        let field = factors[e];
+                        let cap = |bucket: usize| {
+                            // The trace field already includes the initial one and complete note-field drift.
+                            // Retain the old combined allowance for judgement/window arithmetic; counting part of
+                            // the note error again is conservative. Negative field uppers may safely use zero.
+                            let base = (field[bucket & 1].max(0.0) + drift).next_up();
+                            let value = zval_with_base(vmask as usize, if bucket & 2 == 0 { plain } else { k }, base);
+                            if value.is_finite() && value >= 0.0 { value.min(z) } else { z }
+                        };
+                        let mut row = std::array::from_fn(cap);
+                        // Positive/nonconditioned probe amplitudes and the nonnegative Rush factor make cell 3
+                        // another valid upper for every class. This also preserves the four-cap input contract.
+                        for bucket in 0..3 {
+                            row[bucket] = row[bucket].min(row[3]);
+                        }
+                        caps.push(row);
+                    }
                 }
             }
             if f.rank.is_empty() {
