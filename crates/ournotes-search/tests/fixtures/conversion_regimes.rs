@@ -48,7 +48,7 @@ fn compiled_conversion_reach_preserves_every_snap_assignment() {
         replace_table(
             &mut synth,
             "MasterGekisouSupportSkillEffect",
-            json!([{"_id":1,"_gekisouSupportSkillID":1,"_level":1,"_skillTriggerType":1,
+            json!([{"_id":9001,"_gekisouSupportSkillID":1,"_level":1,"_skillTriggerType":1,
                 "_skillTriggerConditionGroup":53,"_skillTargetIDs":[12],"_skillEffectType":12006,
                 "_activationTimeSecond":5.0,"_effectValue":6}]),
         );
@@ -62,7 +62,7 @@ fn compiled_conversion_reach_preserves_every_snap_assignment() {
         let mut request: ournotes_search::types::RecommendationRequest = serde_json::from_value(wire).unwrap();
         let bounded = engine::recommend(&data, &roster, &request).unwrap();
         assert_eq!(bounded.completion, Completion::Complete);
-        assert!(bounded.telemetry.environment.bounds.compiled);
+        assert!(bounded.telemetry.environment.bounds.compiled, "{:?}", bounded.telemetry.environment.bounds.fallback);
         assert_eq!(bounded.results.len(), 31, "five slots with two distinct optional Snaps");
         assert_eq!(bounded.telemetry.proof.parts, [1, 6, 21][converters]);
         assert_eq!(bounded.telemetry.proof.parts_done, bounded.telemetry.proof.parts);
