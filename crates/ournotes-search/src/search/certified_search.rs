@@ -541,39 +541,45 @@ pub fn evaluate_luck_context(
     cancelled: impl FnMut() -> bool,
 ) -> Result<Option<CertifiedEvaluation>, Error> {
     let setup = input.gekisou.as_ref().ok_or_else(|| invalid("LUCK requires Gekisou context"))?;
-    evaluate_orders(
-        map,
-        |order| {
-            let performers = order.map(|slot| input.performers[slot].clone());
-            let summary = ournotes_sim::live::full::luck_score_summary_with_curves(
-                master,
-                skills,
-                &performers,
-                &input.notes,
-                &input.events,
-                input.params,
-                setup,
-                &input.play,
-                &input.delta_times,
-                input.rank_confirmations.as_deref(),
-                curves.as_deref_mut(),
-            )?;
-            let support = (summary.final_support.lower, summary.final_support.upper);
-            let mean = F64Interval::new(summary.final_mean.lower, summary.final_mean.upper)?
-                .intersect(F64Interval::new(support.0 as f64, support.1 as f64)?)
-                .ok_or_else(|| invalid("LUCK mean and support disagree"))?;
-            Ok(OrderScoreInterval {
-                order,
-                mean,
-                support,
-                exact_mean: summary.exact_constant_score.map(|s| fraction(s as i128)),
-                final_life: summary.exact_final_life.map(|life| (life, life)),
-                tails: BTreeMap::new(),
-                refined_payoff: None,
-            })
-        },
-        cancelled,
-    )
+    let mut session = ournotes_sim::live::full::LuckScoreSession::new(
+        master,
+        skills,
+        &input.notes,
+        &input.events,
+        input.params,
+        setup,
+        &input.play,
+        &input.delta_times,
+        input.rank_confirmations.as_deref(),
+    );
+    let mut cancelled = cancelled;
+    let mut orders = Vec::with_capacity(uniform::ORDERS);
+    for order in uniform::all_orders() {
+        if cancelled() {
+            return Ok(None);
+        }
+        let performers = order.map(|slot| input.performers[slot].clone());
+        let Some(summary) = session.summary(&performers, curves.as_deref_mut(), &mut cancelled)? else {
+            return Ok(None);
+        };
+        let support = (summary.final_support.lower, summary.final_support.upper);
+        let mean = F64Interval::new(summary.final_mean.lower, summary.final_mean.upper)?
+            .intersect(F64Interval::new(support.0 as f64, support.1 as f64)?)
+            .ok_or_else(|| invalid("LUCK mean and support disagree"))?;
+        orders.push(OrderScoreInterval {
+            order,
+            mean,
+            support,
+            exact_mean: summary.exact_constant_score.map(|s| fraction(s as i128)),
+            final_life: summary.exact_final_life.map(|life| (life, life)),
+            tails: BTreeMap::new(),
+            refined_payoff: None,
+        });
+        if cancelled() {
+            return Ok(None);
+        }
+    }
+    aggregate_orders(orders, map).map(Some)
 }
 
 #[cfg(test)]

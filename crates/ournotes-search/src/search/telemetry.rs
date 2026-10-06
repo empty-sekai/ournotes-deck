@@ -660,8 +660,10 @@ pub struct LuckCurves {
     pub usage: CacheUse,
     /// The largest total key size held.
     pub peak_key_bytes: usize,
-    /// Diagnostic builds only: the reduced native recordings (run for every lookup) and the propagations of the
-    /// curves that missed.
+    /// Compiled recorder states considered and reused within score sessions.
+    pub recording_lookups: u64,
+    pub recording_hits: u64,
+    /// Diagnostic builds only: the reduced recordings and the propagations of newly encountered curves.
     pub record_ms: f64,
     pub propagate_ms: f64,
 }
@@ -676,6 +678,8 @@ impl LuckCurves {
                 peak_entries: stats.peak_entries,
             },
             peak_key_bytes: stats.peak_key_bytes,
+            recording_lookups: stats.recording_lookups,
+            recording_hits: stats.recording_hits,
             record_ms: stats.record_ms,
             propagate_ms: stats.propagate_ms,
         };
