@@ -479,7 +479,8 @@ on the queries). A row is
   and none of its trigger and reset checkers (and, when the trigger can hold, its condition checker) is impure. It
   never starts, and checking it changes nothing;
 - *inert*: it can start but cannot reach the score, and none of its trigger, reset, condition and release checkers
-  is impure and its cumulative condition is valid: life recovery and guard when life is rigid; a judgement conversion
+  is impure and its cumulative condition is valid: life recovery, guard and damage reduction when life is rigid;
+  a judgement conversion
   when no raw judgement of the stream is one of its targets other than the one it converts to (a conversion that
   never converts changes neither the judgement nor the order of the other conversions);
 - *active*: anything else (score factors, extensions of the member's live skill, and every row with an impure
@@ -523,13 +524,19 @@ pool-wide ones, so the candidate's combo counts and percentages are never larger
 the exclusivity of the final judgement: it uses `max_j jp(j)*(1+max(0,N_e)+max(0,J_e(j))+D)`, with the
 candidate's factor error `D`, before the separate score-chain allowance and floors.
 
-Life of a candidate. When no performer of a candidate has a life recovery or guard row that can start, every life the
-simulation computes when a note reads its life is at most `max(0, base - filed minimum damage)`. The filed damage is from the
-entries judged in earlier frames, or earlier in the same frame, the note itself included, with chart times up to the
+Ordinary life damage. For a candidate whose life state consists of base life and judgement damage, a note reads
+at most `max(0, base - filed minimum damage)`. The filed damage comes from entries judged in earlier frames, or earlier in
+the same frame, the note itself included, with chart times up to the
 note's: damage only lowers the life and floors at 0, and a life query folds every filed command up to its time at
 least once (with the frame cache, some of them twice). The damage of an entry is at least the smallest damage of its
 reachable judgements. Where this bound is 0 the note's life is 0, and `Z_e` is the assist factor times the life-zero
-factor. When no allowed card has a life recovery or guard row, the coefficients above the candidates use it too.
+factor. When all allowed cards have this life behavior, the pool-wide coefficients use it too.
+
+Life effects. Recovery (`3001`), guard (`3003`) and damage reduction (`3004`) use the general life
+interval when their activation can affect the score. Damage reduction changes the damage commands that a life
+query folds, so its member and Snap classes retain the general score envelope. The recovery-specific folds below
+use Snap and Gekisou recoveries triggered at their own skill events. A candidate or prefix that can include guard,
+damage reduction, recovery at another trigger, or a life effect in a live skill uses the general envelope.
 
 Life with recoveries. The life controller keeps a log of life commands (note damage at the note's chart time,
 recovery and guard at their execution times) in 40 ms life frames, and a query at time `t` folds the commands with
@@ -557,8 +564,8 @@ when the life starts at 0. With positive starting life, a fold that reaches 0 en
 adds at most the counted recoveries and subtracts at least the required damage, so it is at most `x + r - d` and
 at most `2 * base`. Both cases are bounded by `min(2 * base, max(0, x + r - d))`. Repeated damage only lowers the result.
 
-For a candidate whose only life-raising rows are such recoveries (no guard, no recovery with another trigger, none in
-the live skills), the search folds, slot by slot, every entry's smallest damage and the candidate's recoveries at their
+For a candidate whose life-raising rows consist entirely of such recoveries, the search folds, slot by slot,
+every entry's smallest damage and the candidate's recoveries at their
 events, and takes the end `t0` of the first slot at which this fold is 0. An entry at chart time `t_e` reads life 0
 when `t0 <= t_e` and every entry at a chart time up to `t0` is judged no later than it: its query folds all those
 damages and only recoveries this fold contains, at most as often, so the life it reads is at most the fold's value at
@@ -568,8 +575,9 @@ Final life. The final life of a play is the life the query at the last play fram
 at times up to that frame's time. For such a candidate, the same slot-by-slot fold over the smallest damage of the
 entries at chart times up to the last play frame's time and the candidate's recoveries at their events is at least
 that life, and it is 0 from the first slot at which it reaches 0. A score and life target pays nothing in an order
-where this fold is below its least final life, so the per-order caps of that order are 0. The bound is not used when
-life is rigid (recovery and guard rows are then left out of the snap classes).
+where this fold is below its least final life, so the per-order caps of that order are 0. This bound requires the
+classes to retain every life-preserving row. When life is rigid for score evaluation, the final-life target is
+evaluated by the live simulation.
 
 Windows. A factor started at `exec` holds for the notes with chart times in `[exec, finish)`: its start and end
 commands are filed at those times, and a command filed in a score frame that was already executed undoes and

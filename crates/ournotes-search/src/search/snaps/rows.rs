@@ -475,7 +475,7 @@ pub(super) fn live_rows(env: &Env, id: i64, level: i64) -> Result<Vec<Row>, Erro
                     r.id
                 )));
             }
-            if !matches!(r.skill_effect_type, 2000 | 2004 | 3001 | 3003 | 12006 | 13005 | 15000) {
+            if !matches!(r.skill_effect_type, 2000 | 2004 | 3001 | 3003 | 3004 | 12006 | 13005 | 15000) {
                 return Err(Error::Unsupported(format!("skill effect type {}", r.skill_effect_type)));
             }
             let targets = if matches!(r.skill_effect_type, 2004 | 12006 | 13005) {
@@ -581,9 +581,9 @@ pub(super) struct LiveRow {
 }
 
 /// Effect types a Gekisou or Gekisou support row may have.
-pub(super) const GK_TYPES: [i64; 18] = [
-    2000, 2001, 2004, 3001, 3003, 4004, 11000, 11001, 11002, 11003, 11005, 12000, 12004, 12006, 13000, 13002, 13005,
-    15000,
+pub(super) const GK_TYPES: [i64; 19] = [
+    2000, 2001, 2004, 3001, 3003, 3004, 4004, 11000, 11001, 11002, 11003, 11005, 12000, 12004, 12006, 13000, 13002,
+    13005, 15000,
 ];
 
 /// Classification of one row for a member.
@@ -614,7 +614,7 @@ pub(super) fn support_status(env: &Env, r: &Row, a: Attr<'_>) -> Result<(Status,
     let modelled = if r.gk {
         GK_TYPES.contains(&r.effect_type)
     } else {
-        matches!(r.effect_type, 2000 | 2004 | 3001 | 3003 | 12006 | 13005 | 15000)
+        matches!(r.effect_type, 2000 | 2004 | 3001 | 3003 | 3004 | 12006 | 13005 | 15000)
     };
     if !modelled && can_start {
         return Err(Error::Unsupported(format!("skill effect type {}", r.effect_type)));
@@ -663,7 +663,7 @@ pub(super) fn support_status(env: &Env, r: &Row, a: Attr<'_>) -> Result<(Status,
                 Status::Inert
             }
         }
-        3001 | 3003 => {
+        3001 | 3003 | 3004 => {
             if env.life_rigid {
                 Status::Inert
             } else {
