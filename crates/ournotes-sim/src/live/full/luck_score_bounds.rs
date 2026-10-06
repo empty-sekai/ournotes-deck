@@ -660,7 +660,10 @@ pub fn luck_score_bounds_with_ranking(
         ranking,
         true,
         None,
+        None,
+        &mut || false,
     )
+    .map(|value| value.expect("complete score bounds"))
 }
 
 /// The same arithmetic and native snapshot proof without retaining diagnostic query/note reports. `skills` is
@@ -696,29 +699,88 @@ pub fn luck_score_summary_with_curves(
     ranking: Option<&[crate::replay::RankConfirmation]>,
     curves: Option<&mut LuckDpCache>,
 ) -> Result<LuckScoreSummary, Error> {
-    let bounds = luck_score_bounds_internal(
-        master,
-        skills,
-        deck,
-        notes,
-        events,
-        params,
-        setup,
-        play,
-        delta_times,
-        ranking,
-        false,
-        curves,
-    )?;
-    Ok(LuckScoreSummary {
-        final_mean: bounds.final_mean,
-        final_support: bounds.final_support,
-        exact_constant_score: (bounds.final_support.lower == bounds.final_support.upper)
-            .then_some(bounds.final_support.lower),
-        exact_final_life: bounds.exact_final_life,
-        probability_peak_states: bounds.probability_peak_states,
-        probability_transitions: bounds.probability_transitions,
-    })
+    let mut session = LuckScoreSession::new(master, skills, notes, events, params, setup, play, delta_times, ranking);
+    Ok(session.summary(deck, curves, || false)?.expect("complete score summary"))
+}
+
+/// Certified score evaluations sharing one immutable master and live context. The session reuses a lottery
+/// recording when the compiled effect rows, resolved checkers, life interpreter and probe flags coincide.
+/// Each returned summary evaluates the requested deck's complete score command schedule.
+pub struct LuckScoreSession<'a> {
+    master: &'a Master,
+    skills: &'a LuckSkills,
+    notes: &'a [LiveNote],
+    events: &'a [(i32, i32)],
+    params: LiveParams,
+    setup: &'a GekisouSetup,
+    play: &'a LivePlay,
+    delta_times: &'a [f32],
+    ranking: Option<&'a [crate::replay::RankConfirmation]>,
+    recordings: luck_dp::RecordingCache,
+}
+
+impl<'a> LuckScoreSession<'a> {
+    /// Fix the context whose frames and lottery probabilities every evaluation uses.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        master: &'a Master,
+        skills: &'a LuckSkills,
+        notes: &'a [LiveNote],
+        events: &'a [(i32, i32)],
+        params: LiveParams,
+        setup: &'a GekisouSetup,
+        play: &'a LivePlay,
+        delta_times: &'a [f32],
+        ranking: Option<&'a [crate::replay::RankConfirmation]>,
+    ) -> Self {
+        Self {
+            master,
+            skills,
+            notes,
+            events,
+            params,
+            setup,
+            play,
+            delta_times,
+            ranking,
+            recordings: Default::default(),
+        }
+    }
+
+    /// Complete all-path bounds for `deck`, or `None` when cancellation interrupts a frame or replay step.
+    /// The optional curve cache bounds the session's recorder-key storage to at most one MiB and 32 entries.
+    pub fn summary(
+        &mut self,
+        deck: &[Performer],
+        curves: Option<&mut LuckDpCache>,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<LuckScoreSummary>, Error> {
+        let bounds = luck_score_bounds_internal(
+            self.master,
+            self.skills,
+            deck,
+            self.notes,
+            self.events,
+            self.params,
+            self.setup,
+            self.play,
+            self.delta_times,
+            self.ranking,
+            false,
+            curves,
+            Some(&mut self.recordings),
+            &mut cancelled,
+        )?;
+        Ok(bounds.map(|bounds| LuckScoreSummary {
+            final_mean: bounds.final_mean,
+            final_support: bounds.final_support,
+            exact_constant_score: (bounds.final_support.lower == bounds.final_support.upper)
+                .then_some(bounds.final_support.lower),
+            exact_final_life: bounds.exact_final_life,
+            probability_peak_states: bounds.probability_peak_states,
+            probability_transitions: bounds.probability_transitions,
+        }))
+    }
 }
 
 /// Prepares a Gekisou live without a LUCK range for a run that draws no random value. A deck that reads no lottery
@@ -754,7 +816,12 @@ fn luck_score_bounds_internal(
     ranking: Option<&[crate::replay::RankConfirmation]>,
     details: bool,
     curves: Option<&mut LuckDpCache>,
-) -> Result<LuckScoreBounds, Error> {
+    recordings: Option<&mut luck_dp::RecordingCache>,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<LuckScoreBounds>, Error> {
+    if cancelled() {
+        return Ok(None);
+    }
     #[cfg(feature = "search-diagnostics")]
     let phase_start = std::time::Instant::now();
     let mut model = if let Some(ranking) = ranking {
@@ -782,10 +849,10 @@ fn luck_score_bounds_internal(
             peak_states: 1,
             transitions: 0,
         })
-    } else if let Some(curves) = curves {
-        curves.certified(master, skills, notes, events, params, setup, play, delta_times, deck, None, ranking)?
     } else {
-        std::sync::Arc::new(luck_rush_dp_certified_with_ranking(
+        let mut empty = LuckDpCache::new(0);
+        let curves = curves.unwrap_or(&mut empty);
+        let Some(probability) = curves.certified_cancellable(
             master,
             skills,
             notes,
@@ -797,7 +864,13 @@ fn luck_score_bounds_internal(
             deck,
             None,
             ranking,
-        )?)
+            recordings,
+            cancelled,
+        )?
+        else {
+            return Ok(None);
+        };
+        probability
     };
     #[cfg(feature = "search-diagnostics")]
     let curve_dp_ms = phase_start.elapsed().as_secs_f64() * 1e3;
@@ -836,7 +909,16 @@ fn luck_score_bounds_internal(
     );
     #[cfg(feature = "search-diagnostics")]
     let phase_start = std::time::Instant::now();
-    model.run_timed(play, delta_times)?;
+    if delta_times.len() != play.frames.len() {
+        return Err(Error::Input("one delta time per frame".into()));
+    }
+    model.random.set_seed(play.base_seed);
+    for (index, (frame, &delta)) in play.frames.iter().zip(delta_times).enumerate() {
+        if index.is_multiple_of(64) && cancelled() {
+            return Ok(None);
+        }
+        model.frame_timed(frame.time_ms, &frame.judged, delta)?;
+    }
     #[cfg(feature = "search-diagnostics")]
     let recorder_run_ms = phase_start.elapsed().as_secs_f64() * 1e3;
     #[cfg(feature = "search-diagnostics")]
@@ -883,7 +965,10 @@ fn luck_score_bounds_internal(
     // changes their in-prefix contribution; the filing offset is permanent.
     let mut fixed = Vec::<(i32, u8, F64Interval, I32Interval)>::new();
     let mut pending = None;
-    for event in &trace.events {
+    for (event_index, event) in trace.events.iter().enumerate() {
+        if event_index.is_multiple_of(64) && cancelled() {
+            return Ok(None);
+        }
         match event {
             BoundsEvent::Note { frame, index, note } => {
                 let at = replay.file_note(*frame, note.time_ms, note.note_id)?;
@@ -1065,7 +1150,12 @@ fn luck_score_bounds_internal(
     }
     let mut final_mean = F64Interval::ZERO;
     let mut final_notes = Vec::new();
-    for &(frame, index, ref note, at) in filed.iter().filter(|(frame, _, _, _)| *frame as i32 <= prev) {
+    for (note_index, &(frame, index, ref note, at)) in
+        filed.iter().filter(|(frame, _, _, _)| *frame as i32 <= prev).enumerate()
+    {
+        if note_index.is_multiple_of(64) && cancelled() {
+            return Ok(None);
+        }
         let (combo, gekisou_combo) =
             *retained_combos.get(&(frame, index)).ok_or_else(|| refuse("final note combo is missing"))?;
         let (mut bounds, _) = note_bounds(&calc, note, &replay.notes[at].executed, combo, gekisou_combo, rush_percent)?;
@@ -1098,7 +1188,7 @@ fn luck_score_bounds_internal(
         recorder_run_ms,
         bound_replay_ms: phase_start.elapsed().as_secs_f64() * 1e3,
     });
-    Ok(LuckScoreBounds {
+    Ok(Some(LuckScoreBounds {
         model: "independent nominal draws; all-path native arithmetic enclosure, not an exact expectation or search completion; note probabilities link after their native lottery commands are filed",
         final_support: final_support.into(),
         exact_final_life: Some(model.current_life()),
@@ -1112,7 +1202,7 @@ fn luck_score_bounds_internal(
         actual_queries: trace.queries,
         probability_peak_states: probability.peak_states,
         probability_transitions: probability.transitions,
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -1489,7 +1579,10 @@ mod tests {
             None,
             false,
             None,
+            None,
+            &mut || false,
         )
+        .unwrap()
         .unwrap();
         assert!(compact.queries.is_empty() && compact.final_notes.is_empty());
         assert_eq!(compact.final_mean.lower, full.final_mean.lower);
@@ -1869,6 +1962,21 @@ mod tests {
         }];
         let events = [(0, 80)];
         let bounds = luck_score_bounds(&master, &deck, &notes, &events, params, &setup, &play, &delta).unwrap();
+        let skills = luck_skills(&master).unwrap();
+        let mut cache = LuckDpCache::new(1 << 20);
+        let mut session = LuckScoreSession::new(&master, &skills, &notes, &events, params, &setup, &play, &delta, None);
+        for converted in [true, false, true, false] {
+            let mut candidate = deck.clone();
+            if !converted {
+                candidate[0].support_skills.retain(|&(skill, _)| skill != 102);
+            }
+            let direct = luck_score_summary_with_ranking(
+                &master, &skills, &candidate, &notes, &events, params, &setup, &play, &delta, None,
+            )
+            .unwrap();
+            let cached = session.summary(&candidate, Some(&mut cache), || false).unwrap().unwrap();
+            assert_eq!(serde_json::to_value(cached).unwrap(), serde_json::to_value(direct).unwrap());
+        }
         let mut reference = None;
         for seed in -16..32 {
             let mut native = LiveModel::new_gekisou(&master, &deck, &notes, &events, params, &setup).unwrap();

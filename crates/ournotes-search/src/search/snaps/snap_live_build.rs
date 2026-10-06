@@ -326,9 +326,9 @@ impl<'a> SnapLive<'a> {
                 damaging = true;
             }
         }
-        // Without recovery and guard every life the simulation computes for a note is at most the base minus the
-        // damage of the entries already filed at that point (judged in earlier frames or earlier in the same frame,
-        // itself included) with chart times up to the note's: damage only lowers life, a life query folds every filed
+        // With ordinary damage, every life a note reads is at most max(0, base - filed damage). The filed damage
+        // comes from entries already judged in earlier frames or earlier in the same frame, including the note
+        // itself, with chart times up to the note's: damage only lowers life, a life query folds every filed
         // command up to its time at least once (the frame cache can fold some twice), and the floor is 0. The damage
         // of an entry is at least the smallest damage of its reachable judgements.
         let dmin: Vec<i64> = reached
@@ -522,7 +522,7 @@ impl<'a> SnapLive<'a> {
         let mut combo_max: Vec<f64> = Vec::new();
         let mut best_combo = 0f64;
         let life_f = if env.life_lo > 0 { 1.0 } else { (onus as f64).max(1.0) };
-        let pool_life_up = all_rows().any(|r| matches!(r.effect_type, 3001 | 3003));
+        let pool_life_up = all_rows().any(|r| matches!(r.effect_type, 3001 | 3003 | 3004));
         let mut coef = Coef::default();
         let adj64 = adj as f64;
         let mdf64 = mdf as f64;
@@ -648,7 +648,8 @@ impl<'a> SnapLive<'a> {
             coef.max_jp.push(max_jp);
             coef.jp.push(jp);
             coef.vmask.push(vmask);
-            // with no life recovery or guard among the allowed cards, the life-zero factor where life is certainly 0
+            // Recovery, guard and damage reduction use the pool-wide life factor. Ordinary damage can establish
+            // life zero at an entry from the damage already filed there.
             coef.z.push(
                 if pool_life_up || setup.gk.as_ref().is_some_and(|g| g.confirmations.is_some()) || !dead_stream[i] {
                     assist as f64 * life_f
@@ -854,8 +855,9 @@ impl<'a> SnapLive<'a> {
                 .map(|x| (convert_to(x.row.effect_type, x.row.value), x.row.targets.clone()))
                 .filter(|c| c.0 != -1)
                 .collect();
-            let live_life =
-                member_live[m].iter().any(|x| matches!(x.row.effect_type, 3001 | 3003) && x.out.is_none_or(|o| o.yes));
+            let live_life = member_live[m]
+                .iter()
+                .any(|x| matches!(x.row.effect_type, 3001 | 3003 | 3004) && x.out.is_none_or(|o| o.yes));
             fine.life[m] = classes[m]
                 .iter()
                 .map(|c| {
@@ -863,7 +865,7 @@ impl<'a> SnapLive<'a> {
                     for r in c.rows.iter().filter(|r| r.can_start) {
                         match r.effect_type {
                             3001 if r.event_bound => up += (r.value as i32).max(0) as i64,
-                            3001 | 3003 => other = true,
+                            3001 | 3003 | 3004 => other = true,
                             _ => {}
                         }
                     }

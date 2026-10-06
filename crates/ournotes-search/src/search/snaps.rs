@@ -126,7 +126,6 @@ mod score_windows;
 mod setup;
 mod snap_live;
 mod snap_live_build;
-pub(crate) use conversion::conversion_snaps;
 use envelope_data::*;
 use fine_view::*;
 pub(crate) use fine_view::{JointFineBounds, JointScratch};

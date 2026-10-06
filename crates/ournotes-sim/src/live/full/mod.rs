@@ -63,12 +63,12 @@ pub use luck_dp::{
     luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
 };
 pub use luck_exact::{
-    LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactStats,
-    luck_exact_law_with_ranking,
+    LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactSession,
+    LuckExactStats, luck_exact_law_with_ranking,
 };
 mod luck_score_bounds;
 pub use luck_score_bounds::{
-    LuckScoreBounds, LuckScoreSummary, luck_score_bounds, luck_score_bounds_with_ranking,
+    LuckScoreBounds, LuckScoreSession, LuckScoreSummary, luck_score_bounds, luck_score_bounds_with_ranking,
     luck_score_summary_with_curves, luck_score_summary_with_ranking, prepare_lottery_free,
 };
 #[cfg(feature = "search-diagnostics")]
