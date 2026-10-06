@@ -330,17 +330,20 @@ impl Engine<'_, '_> {
 /// Warm start on the whole domain with its whole-domain bounds: greedy dives from the best leader pairs, a
 /// best-improvement local search on the leaf bound, exact evaluation of the dive decks and of the best decks the
 /// local search saw, then polishing rounds around the best deck. Certified seeding starts new proposals during
-/// the first quarter of the remaining time; an in-flight evaluation uses the request's complete deadline.
-/// Certified requests evaluate at most min(K, DIVES) seed proposals; the complete-domain traversal handles
-/// subsequent candidates.
+/// the first quarter of the remaining time for unbounded score targets. Bounded
+/// targets use the complete request deadline for their finite proposal shortlist.
+/// Certified requests allow POOL proposals for a domain with one empty Snap binding,
+/// POOL for bounded score targets, and min(K, DIVES) otherwise.
+/// The complete-domain traversal handles subsequent candidates.
 pub(super) fn seed(e: &mut Engine<'_, '_>) -> Result<(), Error> {
     let Some(w) = e.warm.take() else { return Ok(()) };
     e.rec.begin(&mut e.tel, "seed", None);
     let (_, resume) = e.rec.clock.lap(slot::WARM);
-    let seed_deadline = e.certified.as_ref().and_then(|_| e.budget.deadline()).map(|deadline| {
-        let now = crate::search::budget::now();
-        now + deadline.saturating_duration_since(now) / 4
-    });
+    let seed_deadline =
+        e.certified.as_ref().filter(|_| !bounded_target(e.metric)).and_then(|_| e.budget.deadline()).map(|deadline| {
+            let now = crate::search::budget::now();
+            now + deadline.saturating_duration_since(now) / 4
+        });
     let result = seed_inner(&w, e, seed_deadline);
     e.rec.clock.lap(resume);
     e.rec.end(&mut e.tel);
@@ -351,9 +354,19 @@ pub(super) fn seed(e: &mut Engine<'_, '_>) -> Result<(), Error> {
     result
 }
 
+fn bounded_target(metric: &crate::types::Metric) -> bool {
+    matches!(
+        metric,
+        crate::types::Metric::CappedScore { .. }
+            | crate::types::Metric::ScoreAtLeast { .. }
+            | crate::types::Metric::ScoreAndLifeAtLeast { .. }
+    )
+}
+
 fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>, deadline: Option<Instant>) -> Result<(), Error> {
     let initial_evaluations = e.tel.incumbents.warm_start.evaluations;
-    let proposal_limit = e.request.k.min(DIVES) as u64;
+    let proposal_limit =
+        if w.domain.snaps().is_empty() || bounded_target(e.metric) { POOL } else { e.request.k.min(DIVES) } as u64;
     let certified_seed_complete = |e: &Engine<'_, '_>| {
         e.certified.is_some()
             && e.tel.incumbents.warm_start.evaluations.saturating_sub(initial_evaluations) >= proposal_limit

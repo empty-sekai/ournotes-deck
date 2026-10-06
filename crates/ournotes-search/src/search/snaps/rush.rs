@@ -149,14 +149,16 @@ impl RushSpec {
                 // false. Conditions/releases can only remove activity earlier.
                 next_false[f].map_or(i64::MAX, |i| g.times[i] as i64)
             } else {
-                // A release checker skips the first elapsed-time check, so its nominal timer is not a bound on
-                // the active span without a separate lifecycle certificate.
-                let timed = if self.release == 0 { frame_end(&g.times, g.times[f], f, self.act) } else { i64::MAX };
+                // A release checker skips the first elapsed-time check, so its timed end is first tested two
+                // frames after the start.
+                let timed = if self.release == 0 {
+                    frame_end(&g.times, g.times[f], f, self.act)
+                } else {
+                    release_frame_end(&g.times, g.times[f], f, self.act)
+                };
                 if self.release != 0 && self.released_on_complete {
                     // Release is first queried in the second frame after start.
                     timed.min(g.completion_from(f + 2).map_or(i64::MAX, |i| g.times[i] as i64))
-                } else if self.release != 0 && self.act <= 0.0 {
-                    i64::MAX
                 } else {
                     timed
                 }
@@ -314,6 +316,21 @@ mod tests {
         let masks = mask(flags);
         assert_eq!(spec.spans(&masks).unwrap(), vec![(40, 160, 1.0), (80, 200, 1.0)]);
         assert_eq!(envelope((0..9).map(|i| (i, i + 2)).collect(), false), vec![(0, 10, POOL)]);
+    }
+
+    #[test]
+    fn one_shot_release_timer_ends_from_the_second_frame_after_start() {
+        let spec = RushSpec {
+            frames: frames(vec![true; 8]),
+            gate: 2,
+            trigger_type: 1,
+            act: 0.01,
+            release: 1,
+            released_on_complete: false,
+        };
+        let flags = vec![false, true, false, false, false, false, true, false];
+        let masks = mask(flags);
+        assert_eq!(spec.spans(&masks).unwrap(), vec![(40, 120, 1.0), (240, i64::MAX, 1.0)]);
     }
 
     #[test]

@@ -351,12 +351,26 @@ impl LiveScoreCalculator {
         score_type: i32,
         gekisou: Option<&dyn GekisouComboInfo>,
     ) -> Result<i32, Error> {
+        self.note_score_and_score_up(current_combo, current_life, time_ms, note_operate_type, score_type, gekisou)
+            .map(|(score, _)| score)
+    }
+
+    pub(crate) fn note_score_and_score_up(
+        &self,
+        current_combo: i32,
+        current_life: i32,
+        time_ms: i32,
+        note_operate_type: i32,
+        score_type: i32,
+        gekisou: Option<&dyn GekisouComboInfo>,
+    ) -> Result<(i32, f32), Error> {
         let cum = self.table(COMBO, current_combo)?;
         let combo_up = self.state.combo_score_up;
         let gk = self.gekisou_combo_bonus_factor(gekisou, time_ms)?;
         let (score_up, luck) = self.score_up_and_luck(score_type, time_ms);
         let combo_factor = gk * (combo_up + (min_ignoring_nan(cum, 1f32) + 1f32));
-        self.note_score_core(current_life, note_operate_type, score_type, combo_factor, score_up, luck)
+        let score = self.note_score_core(current_life, note_operate_type, score_type, combo_factor, score_up, luck)?;
+        Ok((score, score_up))
     }
 
     /// The note score from explicit combo, score-up and luck factors ([`LiveScoreCalculator::score_up_and_luck`]).

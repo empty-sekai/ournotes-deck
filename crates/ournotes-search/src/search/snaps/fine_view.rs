@@ -31,7 +31,7 @@ impl FineView<'_> {
             + (representation * state).next_up())
         .next_up();
         let drift = ((magnitude * 2f64.powi(-24)).next_up() * amplification).next_up();
-        if drift.is_finite() { drift } else { f64::INFINITY }
+        if drift.is_finite() { float_margin::snapshot_allowance(drift, self.chain_extra > 0.0) } else { f64::INFINITY }
     }
 
     /// The relative allowance of the native chain after the score-up factor.

@@ -512,20 +512,17 @@ impl GkFrames {
             };
             return at(x);
         }
-        // Release checkers skip the first elapsed-time check. A nominal duration alone then does not bound the
-        // last active frame, including when the first post-start update is the final play frame.
+        // Release checkers skip the first elapsed-time check, so the timed end is first tested two frames after the
+        // start; no end is bounded when the first post-start update is the final play frame.
         let timed = if r.release == 0 {
             (frame_end(&self.times, self.times[f], f, r.act), register_end(&self.times, f, r.act))
         } else {
-            (i64::MAX, i64::MAX)
+            (release_frame_end(&self.times, self.times[f], f, r.act), release_register_end(&self.times, f, r.act))
         };
         if r.release != 0 && Self::released_on_complete(env, r) {
             // the release is asked from the second frame after the start on
             let rel = at(self.completion_from(f + 2));
             return (timed.0.min(rel.0), timed.1.min(rel.1));
-        }
-        if r.release != 0 && r.act <= 0.0 {
-            return (i64::MAX, i64::MAX);
         }
         timed
     }
@@ -840,6 +837,30 @@ pub(super) fn frame_end(frames: &[i32], exec: i32, i0: usize, act: f32) -> i64 {
     }
 }
 
+/// `register_end` for a one-shot effect with a release checker started in frame `i0`: its first post-start update
+/// skips the elapsed-time check, so the strict timed-end test first runs in frame `i0 + 2`, and the end is processed
+/// in that frame at the latest when the test already holds there. `i64::MAX` when no frame is late enough, or when
+/// the activation is not positive (only the release can end it).
+pub(super) fn release_register_end(frames: &[i32], i0: usize, act: f32) -> i64 {
+    if act.is_nan() || act <= 0.0 || i0 + 2 >= frames.len() {
+        return i64::MAX;
+    }
+    match register_end(frames, i0, act) {
+        i64::MAX => i64::MAX,
+        end => end.max(i0 as i64 + 2),
+    }
+}
+
+/// `frame_end` for a one-shot effect with a release checker started in frame `i0` with a trigger time at most
+/// `exec`: it ends no later than the frame `release_register_end` reports. A timed finish there files `exec + ceil(d)`;
+/// a release in that frame or before files the current frame time.
+pub(super) fn release_frame_end(frames: &[i32], exec: i32, i0: usize, act: f32) -> i64 {
+    match release_register_end(frames, i0, act) {
+        i64::MAX => i64::MAX,
+        end => (exec as i64 + ournotes_sim::num::ceil_to_i32(act * 1000f32) as i64).max(frames[end as usize] as i64),
+    }
+}
+
 /// The time of play frame `frame`, `i64::MAX` past the play (as `end_of` reports an end no frame processes).
 pub(super) fn frame_time(frames: &[i32], frame: i64) -> i64 {
     usize::try_from(frame).ok().and_then(|i| frames.get(i)).map_or(i64::MAX, |&t| t as i64)
@@ -911,6 +932,29 @@ mod filed_end_tests {
         // no frame past the duration: never filed
         assert_eq!(frame_time(&frames, register_end(&frames, i0, 10.0)), i64::MAX);
         assert_eq!(frame_end(&frames, 2000, i0, 10.0), i64::MAX);
+    }
+
+    /// A release checker skips the elapsed-time check in the frame after the start: a duration that has already
+    /// passed there is first tested two frames after the start, and a release in that frame files its time.
+    #[test]
+    fn a_release_timer_ends_from_the_second_frame_after_its_start() {
+        let frames: Vec<i32> = (0..400).map(|k| 16 * k).collect();
+        let i0 = frames.iter().position(|&t| t == 2000).unwrap();
+        assert_eq!(frame_end(&frames, 2000, i0, 0.004), 2016);
+        assert_eq!(release_frame_end(&frames, 2000, i0, 0.004), 2032);
+        assert_eq!(frame_time(&frames, release_register_end(&frames, i0, 0.004)), 2032);
+        assert_eq!(release_frame_end(&frames, 2000, i0, 1.0), 3008);
+        assert_eq!(frame_time(&frames, release_register_end(&frames, i0, 1.0)), 3008);
+        let n = frames.len();
+        assert_eq!(release_frame_end(&frames, frames[n - 3], n - 3, 0.004), frames[n - 1] as i64);
+        for i in [n - 2, n - 1] {
+            assert_eq!(release_frame_end(&frames, frames[i], i, 0.004), i64::MAX);
+            assert_eq!(release_register_end(&frames, i, 0.004), i64::MAX);
+        }
+        for act in [0.0, -1.0, f32::NAN, 10.0, f32::INFINITY] {
+            assert_eq!(release_frame_end(&frames, 2000, i0, act), i64::MAX);
+            assert_eq!(release_register_end(&frames, i0, act), i64::MAX);
+        }
     }
 
     #[test]

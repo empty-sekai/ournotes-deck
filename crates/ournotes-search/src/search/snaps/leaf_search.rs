@@ -485,7 +485,15 @@ impl Leaf<'_, '_, '_> {
     pub(super) fn simulate_deck(&mut self, c: &Cand) -> Result<i32, Error> {
         self.sims += 1;
         let (perf, power) = self.performers(c)?;
-        self.sl.setup.score(self.sl.master, &perf, power)
+        let setup = self.sl.setup;
+        let params = LiveParams { total_power: power, ..setup.params };
+        let mut model = LiveModel::new(self.sl.master, &perf, &setup.notes, &setup.events, params)?;
+        if self.sl.eps >= 0.5 {
+            model.track_score_up_factors();
+        }
+        let score = model.run(&setup.play)?;
+        certify_score_up(self.sl, &model, power)?;
+        Ok(score)
     }
 
     /// The performers of a candidate, in performance order, and its power.
@@ -507,12 +515,18 @@ impl Leaf<'_, '_, '_> {
 pub(super) struct SeedRunner {
     pub(super) fresh: LiveModel,
     pub(super) prefix: Option<LiveModel>,
+    power: i32,
 }
 
 impl SeedRunner {
     pub(super) fn new(leaf: &Leaf, c: &Cand) -> Result<SeedRunner, Error> {
         let (perf, power) = leaf.performers(c)?;
-        Ok(SeedRunner { fresh: leaf.sl.setup.gekisou_model(leaf.sl.master, &perf, power)?, prefix: None })
+        let mut fresh = leaf.sl.setup.gekisou_model(leaf.sl.master, &perf, power)?;
+        if leaf.sl.eps >= 0.5 {
+            fresh.track_score_up_factors();
+            fresh.begin_score_program_recording()?;
+        }
+        Ok(SeedRunner { fresh, prefix: None, power })
     }
 
     pub(super) fn run(&mut self, sl: &SnapLive, seed: i32, count: &mut LeafCounts) -> Result<i32, Error> {
@@ -524,12 +538,12 @@ impl SeedRunner {
             let mut lm = p.clone();
             lm.set_seed(seed);
             count.prefix_frames_saved += f0 as u64;
-            return setup.play_from(&mut lm, f0);
+            return play_certified(sl, &mut lm, f0, self.power);
         }
         let mut lm = self.fresh.clone();
         lm.set_seed(seed);
         if f0 == 0 {
-            return setup.play_from(&mut lm, 0);
+            return play_certified(sl, &mut lm, 0, self.power);
         }
         let g = setup.gk.as_ref().ok_or_else(|| Error::Game("a Gekisou live without a Gekisou setup".into()))?;
         for (f, &dt) in setup.play.frames[..f0].iter().zip(&g.dt[..f0]) {
@@ -539,6 +553,25 @@ impl SeedRunner {
             return Err(Error::Game("a random draw before the first frame that can draw".into()));
         }
         self.prefix = Some(lm.clone());
-        setup.play_from(&mut lm, f0)
+        play_certified(sl, &mut lm, f0, self.power)
     }
+}
+
+fn certify_score_up(sl: &SnapLive, model: &LiveModel, power: i32) -> Result<(), Error> {
+    if sl.eps >= 0.5 && model.minimum_score_up().is_none_or(|value| value.is_nan() || value <= 0.5) {
+        return Err(Error::Domain("observed score factors cannot certify the power representative".into()));
+    }
+    if sl.eps >= 0.5 && sl.setup.gk.is_some() {
+        let monotone = model.recorded_score_program()?.and_then(|program| program.certify_nondecreasing(0, power));
+        if monotone.is_none() {
+            return Err(Error::Domain("Gekisou score program does not certify the power representative".into()));
+        }
+    }
+    Ok(())
+}
+
+fn play_certified(sl: &SnapLive, model: &mut LiveModel, from: usize, power: i32) -> Result<i32, Error> {
+    let score = sl.setup.play_from(model, from)?;
+    certify_score_up(sl, model, power)?;
+    Ok(score)
 }

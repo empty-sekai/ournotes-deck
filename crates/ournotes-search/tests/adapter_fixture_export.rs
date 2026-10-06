@@ -3,6 +3,8 @@
 mod common;
 #[path = "fixtures/damage_reduction.rs"]
 mod damage_reduction;
+#[path = "fixtures/release_ranges.rs"]
+mod release_ranges;
 use common::{Rng, Synth, extend_table, replace_table, set_column, synth_snaps};
 use ournotes_search::types::{DeckInput, Limits, Metric, SimulationInput, Strategy};
 use ournotes_sim::{cards::Roster, data::DeckData};
