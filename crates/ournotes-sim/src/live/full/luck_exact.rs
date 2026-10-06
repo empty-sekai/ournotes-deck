@@ -1,13 +1,13 @@
 //! A bounded, complete tree of independent nominal LUCK outcomes.
 //!
-//! Each prefix replays a fresh full model. There is deliberately no state merging, seeded sampling or
-//! partial-mass normalization. A law is returned only after every positive-mass branch has terminated.
+//! Branches resume from complete frame checkpoints with the selected outcomes and draw cursor preserved.
+//! A law is returned after every positive-mass branch has terminated and its masses sum to one.
 use super::{GekisouSetup, LiveModel, LiveNote, LiveParams, LivePlay, Performer};
 use crate::{Error, live::random::LiveRandom, master::Master, replay::RankConfirmation};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, rc::Rc};
 
-const MAX_NOTES: usize = 32;
-const MAX_FRAMES: usize = 512;
+/// Distance between complete frame checkpoints. An interrupted frame is replayed from the latest checkpoint.
+const CHECKPOINT_FRAMES: usize = 256;
 const MAX_BRANCH_DEPTH: usize = 32;
 const MAX_ORDER_RUNS: u64 = 32_768;
 
@@ -25,9 +25,10 @@ impl Default for LuckExactBudget {
 }
 
 impl LuckExactBudget {
-    /// Admission is request-wide: every candidate/order shares the declared chart and frame schedule.
-    pub fn admits_chart(notes: usize, frames: usize) -> bool {
-        notes <= MAX_NOTES && frames <= MAX_FRAMES
+    /// Whether one complete playback fits the default request-wide frame allowance.
+    /// Note density does not restrict the probability law's domain.
+    pub fn admits_chart(_notes: usize, frames: usize) -> bool {
+        u64::try_from(frames).is_ok_and(|frames| frames <= Self::default().remaining_frames)
     }
 
     pub fn exhausted(&self) -> bool {
@@ -153,16 +154,13 @@ pub fn luck_exact_law_with_ranking(
     if delta_times.len() != play.frames.len() {
         return Err(Error::Input("one delta time per frame".into()));
     }
-    if !LuckExactBudget::admits_chart(notes.len(), play.frames.len()) {
-        return Ok(declined(stats, LuckExactDecline::Domain));
-    }
     if cancelled() {
         return Ok(declined(stats, LuckExactDecline::Cancelled));
     }
     if budget.exhausted() {
         return Ok(declined(stats, LuckExactDecline::WorkBudget));
     }
-    let fresh = if let Some(ranking) = ranking {
+    let mut fresh = if let Some(ranking) = ranking {
         let mut model = LiveModel::new_gekisou_external(master, deck, notes, events, params, setup)?;
         model.set_rank_confirmation_timeline(ranking)?;
         model
@@ -172,9 +170,10 @@ pub fn luck_exact_law_with_ranking(
     if fresh.draws() != 0 {
         return Ok(declined(stats, LuckExactDecline::UnhandledRandom));
     }
-    let mut pending = vec![(Vec::<usize>::new(), LuckExactMass::ONE)];
+    fresh.set_random(LiveRandom::with_nominal_prefix(Vec::new()));
+    let mut pending = vec![(Vec::<usize>::new(), LuckExactMass::ONE, 0usize, Rc::new(fresh))];
     let mut atoms = BTreeMap::<(i32, i32), LuckExactMass>::new();
-    while let Some((prefix, mass)) = pending.pop() {
+    while let Some((prefix, mass, mut checkpoint_frame, mut checkpoint)) = pending.pop() {
         if cancelled() {
             return Ok(declined(stats, LuckExactDecline::Cancelled));
         }
@@ -183,15 +182,20 @@ pub fn luck_exact_law_with_ranking(
         }
         budget.remaining_runs -= 1;
         stats.replay_runs += 1;
-        let mut model = fresh.clone();
-        model.set_random(LiveRandom::with_nominal_prefix(prefix.clone()));
+        let mut model = (*checkpoint).clone();
+        model.random.extend_nominal_prefix(prefix.clone())?;
         let mut execution_error = None;
-        for (frame, &dt) in play.frames.iter().zip(delta_times) {
+        let start_frame = checkpoint_frame;
+        for (frame_index, (frame, &dt)) in play.frames.iter().zip(delta_times).enumerate().skip(start_frame) {
             if cancelled() {
                 return Ok(declined(stats, LuckExactDecline::Cancelled));
             }
             if budget.remaining_frames == 0 {
                 return Ok(declined(stats, LuckExactDecline::WorkBudget));
+            }
+            if frame_index - checkpoint_frame >= CHECKPOINT_FRAMES {
+                checkpoint_frame = frame_index;
+                checkpoint = Rc::new(model.clone());
             }
             budget.remaining_frames -= 1;
             stats.frames += 1;
@@ -222,7 +226,7 @@ pub fn luck_exact_law_with_ranking(
                 };
                 let mut next = prefix.clone();
                 next.push(choice);
-                pending.push((next, next_mass));
+                pending.push((next, next_mass, checkpoint_frame, Rc::clone(&checkpoint)));
             }
             continue;
         }
@@ -329,6 +333,124 @@ mod tests {
             .collect();
         let delta = vec![0.1; frames.len()];
         (master, notes, params, setup, LivePlay { frames, base_seed: 918 }, delta)
+    }
+
+    #[test]
+    fn checkpoints_after_lottery_draws_match_fresh_cartesian_playback() {
+        let (master, mut notes, mut params, mut setup, mut play, _) = fixture();
+        notes.push(LiveNote { note_id: 2, note_operate_type: 1, judgement_type: 1, time_ms: 60_100 });
+        setup.fevers[0].1 = 60_200;
+        params.music_length_ms = 63_200;
+        params.converted_note_count = 2;
+        play.frames = (0..=630)
+            .map(|index| PlayFrame {
+                time_ms: index * 100,
+                judged: match index {
+                    1 => vec![JudgedNote { note_id: 1, judgement: 5, judgement_time_ms: 100 }],
+                    601 => vec![JudgedNote { note_id: 2, judgement: 5, judgement_time_ms: 60_100 }],
+                    _ => Vec::new(),
+                },
+            })
+            .collect();
+        let delta = vec![0.1; play.frames.len()];
+        let attempt = luck_exact_law_with_ranking(
+            &master,
+            &[],
+            &notes,
+            &[],
+            params,
+            &setup,
+            &play,
+            &delta,
+            None,
+            &mut LuckExactBudget::default(),
+            || false,
+        )
+        .unwrap();
+        let law = attempt.law.expect("complete separated-draw law");
+        let mut counts = BTreeMap::new();
+        // Four independent fair choices cover each possible draw. Unread suffix choices replicate
+        // a shorter terminal path with exactly its cylinder probability.
+        for bits in 0..16 {
+            let prefix = (0..4).map(|index| (bits >> index) & 1).collect();
+            let mut model = LiveModel::new_gekisou(&master, &[], &notes, &[], params, &setup).unwrap();
+            model.run_with_random(&play, &delta, LiveRandom::with_nominal_prefix(prefix)).unwrap();
+            assert!(model.random.nominal_covers_draws());
+            *counts.entry((model.score(), model.current_life())).or_insert(0u128) += 1;
+        }
+        assert_eq!(law.atoms().len(), counts.len());
+        for atom in law.atoms() {
+            assert_eq!(atom.mass, LuckExactMass::reduced(counts[&(atom.score, atom.final_life)], 16).unwrap());
+        }
+    }
+
+    #[test]
+    fn long_chart_checkpoints_preserve_the_complete_cartesian_law() {
+        let (master, mut notes, mut params, mut setup, mut play, _) = fixture();
+        let shift = 60_000;
+        for note in &mut notes {
+            note.time_ms += shift;
+        }
+        for frame in &mut play.frames {
+            frame.time_ms += shift;
+            for note in &mut frame.judged {
+                note.judgement_time_ms += shift;
+            }
+        }
+        for (start, end) in &mut setup.fevers {
+            *start += shift;
+            *end += shift;
+        }
+        params.music_length_ms += shift;
+        params.converted_note_count = 40;
+        let mut prefix = Vec::new();
+        for index in 0..600 {
+            let judged = if (1..40).contains(&index) {
+                let note_id = index + 1;
+                notes.push(LiveNote { note_id, note_operate_type: 1, judgement_type: 1, time_ms: index * 100 });
+                vec![JudgedNote { note_id, judgement: 5, judgement_time_ms: index * 100 }]
+            } else {
+                Vec::new()
+            };
+            prefix.push(PlayFrame { time_ms: index * 100, judged });
+        }
+        prefix.append(&mut play.frames);
+        play.frames = prefix;
+        let delta = vec![0.1; play.frames.len()];
+        let ranking = [RankConfirmation { frame: 600, range: 0, rank: 1, percent: 23 }];
+        assert!(LuckExactBudget::admits_chart(notes.len(), play.frames.len()));
+        let result = luck_exact_law_with_ranking(
+            &master,
+            &[],
+            &notes,
+            &[],
+            params,
+            &setup,
+            &play,
+            &delta,
+            Some(&ranking),
+            &mut LuckExactBudget::default(),
+            || false,
+        )
+        .unwrap();
+        let law = result.law.expect("complete long-chart law");
+        assert_eq!(result.stats.terminal_paths, 4);
+        assert_eq!(result.stats.replay_runs, 7);
+        assert!(result.stats.frames < result.stats.replay_runs * play.frames.len() as u64);
+        let mut counts = BTreeMap::new();
+        for first in 0..2 {
+            for next in 0..2 {
+                let mut model = LiveModel::new_gekisou_external(&master, &[], &notes, &[], params, &setup).unwrap();
+                model.set_rank_confirmation_timeline(&ranking).unwrap();
+                model.run_with_random(&play, &delta, LiveRandom::with_nominal_prefix(vec![first, next])).unwrap();
+                assert!(model.random.nominal_prefix_consumed() && model.random.nominal_covers_draws());
+                *counts.entry((model.score(), model.current_life())).or_insert(0u128) += 1;
+            }
+        }
+        assert_eq!(law.atoms().len(), counts.len());
+        for atom in law.atoms() {
+            assert_eq!(atom.mass, LuckExactMass::reduced(counts[&(atom.score, atom.final_life)], 4).unwrap());
+        }
     }
 
     #[test]

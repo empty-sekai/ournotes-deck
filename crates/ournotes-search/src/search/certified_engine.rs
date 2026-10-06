@@ -103,7 +103,7 @@ pub(super) struct CertifiedState {
     score_cache: BTreeMap<(Vec<u8>, i32), CertifiedEvaluation>,
     /// Refinement can hit its deadline after the physical traversal already closed the domain.
     domain_exhausted: bool,
-    /// Fixed on the first scored leaf; long charts retain no per-candidate 120-order refinement state.
+    /// Fixed on the first scored leaf; retention follows the default refinement frame allowance.
     refinement_admitted: Option<bool>,
     /// The master's lottery-related skills, classified once per request.
     luck_skills: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
@@ -475,10 +475,11 @@ mod refinement_tests {
     }
 
     #[test]
-    fn charts_outside_refinement_admission_retain_no_per_order_entry_state() {
+    fn refinement_state_admission_follows_the_frame_allowance() {
         use crate::search::certified_search::OrderScoreInterval;
         use ournotes_sim::live::full::LuckExactBudget;
-        for (notes, frames, expected) in [(33, 193, false), (12, 513, false), (12, 193, true)] {
+        for (notes, frames, expected) in [(33, 193, true), (1067, 8000, true), (12, 8_000_001, false), (12, 193, true)]
+        {
             let orders = uniform::all_orders()
                 .into_iter()
                 .map(|order| OrderScoreInterval {
