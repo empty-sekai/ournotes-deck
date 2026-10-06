@@ -1,6 +1,8 @@
 //! Explicitly synthetic UTF-8 transport corpus input; no game assets or native truth.
 #[path = "../../ournotes-sim/tests/common/mod.rs"]
 mod common;
+#[path = "fixtures/damage_reduction.rs"]
+mod damage_reduction;
 use common::{Rng, Synth, extend_table, replace_table, set_column, synth_snaps};
 use ournotes_search::types::{DeckInput, Limits, Metric, SimulationInput, Strategy};
 use ournotes_sim::{cards::Roster, data::DeckData};
