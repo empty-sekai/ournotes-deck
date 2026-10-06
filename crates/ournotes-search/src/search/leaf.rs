@@ -2,17 +2,18 @@
 //! it cannot enter the Top-K.
 //!
 //! Contract of [`Engine::evaluate_orders`]: given a team in its canonical layout, its power and optionally the joint
-//! bounds, return either the exact evaluation (one simulation per performance order, every outcome kept) or `Pruned`
-//! only when the team provably ranks after the current K-th (payoff below it, or equal with a smaller power), or
-//! `Stopped` when the budget ran out. Per-order caps (`JointBounds::order_cheap_caps`, `tighten_order_caps`) and the
-//! cutoff tables are the upper bounds it may use.
+//! bounds, return a complete evaluation (finite payoffs or certified LUCK intervals for all performance orders),
+//! or `Pruned` only when the team provably ranks after the current K-th (payoff below it, or equal with a smaller
+//! power), or `Stopped` when the budget ran out. Original per-order caps, admitted terminal Rush mean caps for
+//! Score and the cutoff tables may prove exclusion; an upper-only preparation never supplies a candidate value.
 //!
 //! The orders play as one tree ([`OrderedLive::simulate_orders_bounded`]): the frames before a member acts are the
 //! same in every order that agrees on the members that acted, so they play once. A node's bound is the sum, over its
 //! orders, of the order's cap and of its cutoff table at the node's settled prefix: until a member of an open
 //! position acts, the node's live is the live of each of its orders, so each table applies to the shared prefix.
 use super::*;
-use ournotes_sim::live::full::{LiveModel, OrdersOutcome, Settled};
+use crate::search::certified_search::{LuckContextEvent, LuckContextOutcome};
+use ournotes_sim::live::full::{LiveModel, LuckRushPreparation, OrdersOutcome, Settled};
 use ournotes_sim::live::random::LiveRandom;
 use std::ops::ControlFlow;
 
@@ -49,6 +50,11 @@ struct CertifiedOrderCutoff {
 
 fn canonical_order_caps(caps: &[i128], basis: [usize; 5]) -> Vec<i128> {
     uniform::all_orders().iter().map(|order| caps[uniform::order_index(&order.map(|slot| basis[slot]))]).collect()
+}
+
+/// Event positions in the original physical deck for each canonical performer order.
+fn canonical_order_positions(basis: [usize; 5]) -> Vec<[usize; 5]> {
+    uniform::all_orders().iter().map(|order| uniform::positions_of(&order.map(|slot| basis[slot]))).collect()
 }
 
 impl CertifiedOrderCutoff {
@@ -143,28 +149,80 @@ impl Engine<'_, '_> {
                     // keeps its proved cap, and complete aggregation restores the canonical order.
                     schedule.sort_by(|&a, &b| cutoff.caps[b].cmp(&cutoff.caps[a]).then(a.cmp(&b)));
                 }
+                let prepare_upper =
+                    order_cutoff.is_some() && cut.is_some_and(|(bounds, _)| bounds.supports_rush_mean_upper());
+                // `basis[canonical slot]` is the original physical slot. The exact native DP deck and the fine
+                // cap must put that same complete performer, including its Snap, at the same event position.
+                let physical_positions = canonical_order_positions(basis);
+                let mut bound_scratch = std::mem::take(&mut self.bound_scratch);
+                let mut upper_work = telemetry::LotteryUpper::default();
                 let mut completed_orders = 0u64;
-                let mut pruned = false;
                 let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
-                let result = crate::search::certified_search::evaluate_luck_context_until(
+                let result = crate::search::certified_search::evaluate_luck_context_bounded(
                     master,
                     &skills,
                     &input,
                     &crate::search::certified_search::PayoffMap::Score,
                     Some(&mut curves),
-                    (&schedule, |index, order| {
-                        completed_orders += 1;
-                        pruned = order_cutoff.as_mut().is_some_and(|cutoff| cutoff.offer(index, order.mean.upper()));
-                        !pruned
+                    (&schedule, prepare_upper, |event| match event {
+                        LuckContextEvent::UpperAttempt => {
+                            upper_work.attempted_orders += 1;
+                            true
+                        }
+                        LuckContextEvent::UpperPrepared { index, preparation } => match preparation {
+                            LuckRushPreparation::Ready(terminal) => {
+                                upper_work.prepared_orders += 1;
+                                let (bounds, domain) = cut.expect("Score prepass requires compiled bounds");
+                                let Some(upper) = bounds.rush_mean_upper(
+                                    domain,
+                                    physical,
+                                    i64::from(power),
+                                    &physical_positions[index],
+                                    &mut bound_scratch,
+                                    terminal,
+                                ) else {
+                                    upper_work.incompatible_caps += 1;
+                                    return true;
+                                };
+                                upper_work.bounded_orders += 1;
+                                let cutoff = order_cutoff.as_mut().expect("Score prepass requires a cutoff");
+                                if upper.ceil() < cutoff.caps[index] as f64 {
+                                    upper_work.tightened_orders += 1;
+                                }
+                                let excluded = cutoff.offer(index, upper);
+                                upper_work.pruned_teams += u64::from(excluded);
+                                !excluded
+                            }
+                            LuckRushPreparation::Unavailable { reason, .. } => {
+                                upper_work.declined_orders += 1;
+                                upper_work.declines.record(*reason);
+                                true
+                            }
+                            LuckRushPreparation::Stopped => {
+                                upper_work.stopped_orders += 1;
+                                true
+                            }
+                        },
+                        LuckContextEvent::UpperFinished { elapsed_ms } => {
+                            upper_work.elapsed_ms += elapsed_ms;
+                            true
+                        }
+                        LuckContextEvent::Scored { index, order } => {
+                            completed_orders += 1;
+                            !order_cutoff.as_mut().is_some_and(|cutoff| cutoff.offer(index, order.mean.upper()))
+                        }
                     }),
                     || self.expired(),
                 );
                 self.rec.clock.lap(resume);
+                self.bound_scratch = bound_scratch;
+                self.tel.leaves.lottery_upper.add(upper_work);
                 self.tel.leaves.simulations += completed_orders;
                 self.tel.caches.luck_curves.record(curves.stats());
                 self.certified.as_mut().expect("certified request").luck_curves = curves;
-                let Some(score) = result? else {
-                    if pruned {
+                let score = match result? {
+                    LuckContextOutcome::Full(score) => score,
+                    LuckContextOutcome::UpperOnly => {
                         self.cache_certified_score_cap(
                             physical,
                             power,
@@ -173,7 +231,7 @@ impl Engine<'_, '_> {
                         self.tel.leaves.order_bound_pruned += 1;
                         return Ok(Leaf::Pruned);
                     }
-                    return Ok(Leaf::Stopped);
+                    LuckContextOutcome::Stopped => return Ok(Leaf::Stopped),
                 };
                 self.cache_certified_score(program.clone(), power, &score);
                 score
@@ -499,7 +557,7 @@ mod certified_cutoff_tests {
     use super::*;
 
     #[test]
-    fn every_performer_basis_preserves_unequal_physical_order_caps() {
+    fn every_performer_basis_preserves_unequal_physical_order_caps_and_positions() {
         let powers = [2i128, 3, 5, 7, 11];
         let positions = [13i128, 17, 19, 23, 29];
         let orders = uniform::all_orders();
@@ -509,14 +567,22 @@ mod certified_cutoff_tests {
             .collect();
         for basis in &orders {
             let remapped = canonical_order_caps(&caps, *basis);
+            let physical_positions = canonical_order_positions(*basis);
             let canonical_powers = basis.map(|slot| powers[slot]);
-            for (order, actual) in orders.iter().zip(remapped) {
+            for ((order, actual), at) in orders.iter().zip(remapped).zip(physical_positions) {
                 let expected: i128 = order
                     .iter()
                     .enumerate()
                     .map(|(position, &slot)| canonical_powers[slot] * positions[position])
                     .sum();
                 assert_eq!(actual, expected);
+                // The native DP uses canonical performers; FineView uses physical member/Snap pairs. Both
+                // must place the same complete performer at every event position for all 120 orders.
+                for (position, &slot) in order.iter().enumerate() {
+                    assert_eq!(at[basis[slot]], position);
+                }
+                let physical: i128 = (0..5).map(|slot| powers[slot] * positions[at[slot]]).sum();
+                assert_eq!(actual, physical);
             }
         }
     }

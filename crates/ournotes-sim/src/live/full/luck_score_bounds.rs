@@ -11,13 +11,26 @@ use crate::live::certified::{F32Interval, F64Interval, I32Interval, ProbabilityM
 use crate::live::score::get_luck_factor_percent;
 use serde::Serialize;
 
+mod native_total;
+mod ordinary_magnitude;
+mod prepass;
 #[cfg(feature = "search-diagnostics")]
 mod profile;
 mod program;
+mod rank_trace;
+mod terminal_kernel;
+mod terminal_prefix;
+mod trace_drift;
+pub use prepass::{LuckRushDecline, LuckRushPreparation, LuckTerminalRush};
 mod replay;
 #[cfg(feature = "search-diagnostics")]
 pub use profile::{LuckScoreProfile, take_luck_score_profile};
 pub(super) use program::ProgramCache;
+
+#[cfg(feature = "search-diagnostics")]
+pub(super) fn record_trace_only_query(first: bool, active: bool) {
+    profile::record_trace_only_query(first, active);
+}
 
 const FIELDS: usize = 6;
 
@@ -75,7 +88,8 @@ pub(super) struct BoundsTrace {
     pub combo: ComboObserver,
     pub has_luck: bool,
     /// Recorder-only admission: every direct probe has this common mission gate. None retains the unrestricted
-    /// filing schedule. This scratch is not read after the trace is taken; its resulting events are the replay input.
+    /// filing schedule. Terminal probability caps also retain it to match the DP's LUCK score-probe class;
+    /// full factor replay uses only the resulting events.
     pub filing_gate: Option<Option<i64>>,
 }
 
@@ -672,7 +686,9 @@ fn note_bounds_with_factors(
     let mut lower = i32::MAX;
     let mut upper = i32::MIN;
     for (bucket, out) in buckets.iter_mut().enumerate() {
-        let Some([combo_factor, up]) = factors(bucket & 1)? else { continue };
+        let Some([combo_factor, up]) = factors(bucket & 1)? else {
+            continue;
+        };
         if !combo_factor.lower().is_finite() || !combo_factor.upper().is_finite() {
             return Err(refuse("nonfinite combo-factor support"));
         }
@@ -898,7 +914,7 @@ impl<'a> LuckScoreSession<'a> {
     }
 
     /// Complete all-path bounds for `deck`, or `None` when cancellation interrupts a frame or replay step.
-    /// The optional curve cache bounds the session's recorder-key storage to at most one MiB and 32 entries.
+    /// The optional curve cache bounds the session's recorder-key storage to at most one MiB and 128 entries.
     pub fn summary(
         &mut self,
         deck: &[Performer],
@@ -1135,8 +1151,10 @@ fn luck_score_bounds_internal(
         setup.missions.iter().take(setup.fevers.len()).any(|&mission| mission == gekisou::M_LUCK),
     );
     model.score.certify_bounds_filings(probe_gate);
+    // Optional private recording: unknown observers and every no-LUCK/external run keep native execution.
+    model.try_enable_bounds_record_only();
     #[cfg(feature = "search-diagnostics")]
-    let phase_start = std::time::Instant::now();
+    let recorder_timer = profile::RecorderTimer::start();
     if delta_times.len() != play.frames.len() {
         return Err(Error::Input("one delta time per frame".into()));
     }
@@ -1148,7 +1166,7 @@ fn luck_score_bounds_internal(
         model.frame_timed(frame.time_ms, &frame.judged, delta)?;
     }
     #[cfg(feature = "search-diagnostics")]
-    let recorder_run_ms = phase_start.elapsed().as_secs_f64() * 1e3;
+    drop(recorder_timer);
     #[cfg(feature = "search-diagnostics")]
     let phase_start = std::time::Instant::now();
     #[cfg(feature = "search-diagnostics")]
@@ -1213,7 +1231,6 @@ fn luck_score_bounds_internal(
             evaluations: u64::from(result.is_some()),
             model_setup_ms,
             curve_dp_ms,
-            recorder_run_ms,
             program_key_ms,
             program_lookup_ms,
             program_recorded_key_ms,
@@ -1539,7 +1556,6 @@ fn luck_score_bounds_internal(
         breakdown.evaluations = 1;
         breakdown.model_setup_ms = model_setup_ms;
         breakdown.curve_dp_ms = curve_dp_ms;
-        breakdown.recorder_run_ms = recorder_run_ms;
         breakdown.program_key_ms = program_key_ms;
         breakdown.program_lookup_ms = program_lookup_ms;
         breakdown.program_recorded_key_ms = program_recorded_key_ms;
@@ -1588,6 +1604,10 @@ fn luck_score_bounds_internal(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    mod prepass_tests {
+        include!("luck_score_bounds/prepass_tests.rs");
+    }
 
     mod program_tests {
         include!("luck_score_bounds/program_tests.rs");

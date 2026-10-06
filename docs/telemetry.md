@@ -150,13 +150,78 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | `partial` | 被停止打断评估的候选数 |
 | `cheapPruned`、`finePruned` | 一局都没模拟就放弃的队伍：各出场顺序的廉价上界之和，或原始与精细上界之和，低于第 K 名 |
 | `started` | 开始逐个出场顺序模拟的队伍数 |
-| `orderBoundPruned` | 部分出场顺序算完后，已得收益（LUCK 使用认证上端点）加上其余顺序的上界仍低于第 K 名截断值而放弃的队伍数 |
+| `orderBoundPruned` | 各顺序的已得收益（LUCK 使用认证期望分上界）加上其余顺序的上界仍低于第 K 名截断值而排除的队伍数；包含仅准备上界就证明排除，以及完整评分程序上界的缓存复用 |
 | `simulations` | 完整求值的出场顺序数；LUCK 路径包含完整的区间证书 |
 | `cutoff.tables` | 带截断表模拟的出场顺序数 |
 | `cutoff.unavailable` | 没有有限截断表的出场顺序数 |
 | `cutoff.stopped` | 中途截断的模拟次数（该队伍不可能进入 Top-K） |
 | `cutoff.stoppedAt[i]` | 截断发生时已播放帧占全谱的比例落在 `[i/10, (i+1)/10)` 的次数 |
 | `peakRetained` | Top-K 保留的最多编成数 |
+
+### `leaves.lotteryUpper`
+
+期望分目标在已有认证截断值时，准备各出场顺序的终端 Rush／得分探针联合概率律，用来收紧期望分上界。
+完成原生录制与 DP 的能力证明不提供完整得分模拟、候选值或完整收益概率律。
+只有观测到共同 LUCK 门控、对应精细上界分解也获接受时，匹配的正向直接探针才可按四个联合概率桶加权。
+其他窗口保留原幅度；满足条件时仍可单独对原生 Rush 倍率加权。完整命令历史的浮点漂移、历史排名及转换预算余量均保留。
+
+| 字段 | 含义 |
+|---|---|
+| `attemptedOrders` | 已开始的准备次数 |
+| `preparedOrders` | 完成录制、DP 和末次得分查询检查的能力证明数 |
+| `declinedOrders`、`declines` | 拒绝次数与原因：`noLuckRange`、`externalRanking`、`recorderAdmission`、`scoreArithmetic`、`probabilityDomain`、`unfinishedRanges`、`terminalQuery` |
+| `stoppedOrders` | 被取消或协作式时限打断的准备次数 |
+| `boundedOrders` | 终端概率律与原生完整分数上界或对应精细上界分解获接受的顺序数 |
+| `incompatibleCaps` | 无法证明上界分解、数值域或终端音符映射的次数；继续保留原上界 |
+| `tightenedOrders` | 新上界使该顺序保留的整数上界下降的次数 |
+| `prunedTeams` | 仅准备上界就已证明排除的队伍数 |
+| `elapsedMs` | 准备与上界加权耗时；已包含在 `time.simulationMs`，不额外计入互斥耗时 |
+
+这些准备不增加 `leaves.simulations`，也不增加诊断中的完整评分 `evaluations`。
+尚未处理的出场顺序保留原上界；`Complete` 仍要求全候选域上的规范排名证明。
+
+### 诊断用录制工作量
+
+`search-diagnostics` 构建还通过 `LuckScoreProfile` / `luckProfile` 输出以下字段。
+它们描述私有确定性分数录制器，与后续因子回放及 DP 工作分开。
+
+| 字段 | 含义 |
+|---|---|
+| `recorderTraceOnlyRuns` | 实际至少进入一次 calculate 的私有结构录制器数；仅启用但未运行的不计 |
+| `recorderTraceOnlyQueries` | 实际进入结构录制分支的 calculate 次数，包括随后返回错误的调用 |
+| `recorderTraceOnlyActiveQueries` | 上述调用中，原生撤销或执行帧区间非空的次数；其余调用原本已经无需数值帧循环 |
+| `recorderRunMs` | 原有确定性录制阶段的耗时，包括取消或拒绝前的部分工作 |
+
+三项计数在实际进入时立即累加，后续中断或失败不会丢失已发生的工作。它们不表示省略的音符评分次数，
+也不表示已执行的概率分支数；非空帧区间仍可能没有音符。这些字段不增加完整评分 `evaluations`
+或 `leaves.simulations`。
+
+完整 bounds 计算中的 `recorderRunMs` 保持原帧录制区间：从加权录制器准备之后，到录制后检查和上界回放之前。
+上界预处理保留自身原有录制区间，包含加权设置与终端检查。两者都在提前返回时保留已经消耗的时间；
+后续命中已录制程序缓存不会重复累加该时间。`recorderRunMs` 已包含于外层模拟／预处理耗时，
+不是额外的互斥活动，不能再加到该父级总计上。即使省略原生数值执行，它仍包含 controller、生命值、
+Combo 与结构校验；DP 和后续因子回放保持各自的阶段。
+
+### 诊断用终端因子统计
+
+原生 `profile_case` 的诊断构建将调用线程的 `LuckScoreProfile` 输出为 `luckProfile`。
+以下字段描述可选的终端因子前缀证书，与公开的 `leaves.lotteryUpper` 计数分开。
+因子证书被拒绝时，终端联合概率律的准备结果仍可有效；这些算术证书不计作完整评分。
+
+| 字段 | 含义 |
+|---|---|
+| `terminalFactorBuilds` | 完成的可选因子前缀证书数 |
+| `terminalFactorRefusals` | 因适用条件、分配或数值检查而拒绝的可选因子证书数；不含取消 |
+| `terminalFactorMs` | 准备这些可选因子证书的耗时，包括拒绝及中断的尝试 |
+| `terminalFactorAdditions` | 成功准备中，各浮点字段非零加法次数的认证上界之和；这是可能发生的原生工作量上界，不是实际执行的回放次数 |
+| `terminalFactorUndos` | 成功准备中，相关帧差量减法次数的认证上界之和 |
+| `terminalFactorProbeRuns` | 成功准备中，可能探针录入位置按时间非递减的连续段数之和 |
+| `terminalFactorMaximumState` | 成功证书采用的精确实数中间浮点字段幅度上界的最大值 |
+| `terminalFactorMaximumDrift` | 成功证书中最大的浮点字段漂移余量；它是因子余量，不是得分区间宽度 |
+
+计数及耗时在各次准备之间累加，最后两个字段取最大值。`terminalFactorMs` 已包含于原有准备／模拟耗时，
+不能再加到该父级总计上。操作次数不依赖概率质量；较小的次数表示全路径工作量上界更紧，
+不表示减少候选域或删除抽签分支。
 
 ## `joint`
 
@@ -218,7 +283,19 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 
 `luckCurves` 记录本次请求的概率曲线与评分摘要复用。`propagatedCurves` 是实际完整执行的 DP 传播次数，不含通过缓存复用的曲线。
 `peakStates` 是传播期间的活跃状态数峰值，`transitions` 是实际执行的转移次数；两者均包含传播中断前的工作。缓存命中不增加传播工作量。
-`recordingLookups`、`recordingHits` 记录已编译 recorder 的查询与复用次数。`summaryLookups`、`summaryHits` 记录初始模型
+`recordingLookups`、`recordingHits` 记录已编译 recorder 的查询与复用次数。`recordingPeakEntries`、`recordingPeakBytes`
+记录 session 中保留的完整身份数及键存储字节数峰值；后者包含共享字节字典、完整原始键或差异编码及条目容器容量，
+不包含共享概率对象或编码期间的临时分配。每次命中仍比较完整键的所有字节。
+`sharedRecordingLookups`、`sharedRecordingHits` 记录独立请求级缓存的查询与命中，仅复用无需生命值解释器的完整录制。
+复用同时要求原录制键及完整拥有的上下文相等，后者包括初始模型、谱面、判定、设置与排名输入；只有不计算分数的约简解释器
+可以归一化初始合力。`sharedRecordingScopeBuilds`、`sharedRecordingScopeBytes`、`sharedRecordingScopeDeclines`
+分别记录上下文构造次数、成功编码字节总量及可选构造拒绝；`sharedRecordingScopeMs` 是包含在 `recordMs` 内的诊断计时。
+`sharedRecordingKeyDeclines`、`sharedRecordingCapacityDeclines` 分别记录身份键与保留容量的拒绝。
+`sharedRecordingPeakEntries`、`sharedRecordingPeakBytes` 是该独立缓存的条目与字节峰值，最多 128 条、1 MiB，并受曲线缓存
+配置容量限制；字节数包含拥有的上下文、完整键、条目容器容量及各个不同的共享概率对象分配一次，不是进程 RSS，也不包含
+原 session 缓存或编码临时分配。两张表可能保留同一录制身份。不满足条件时沿用原 session 缓存及录制流程；容量拒绝不改变
+概率结果或完成状态。
+`summaryLookups`、`summaryHits` 记录初始模型
 相等时完整评分摘要的查询与复用次数；`summaryPeakEntries`、`summaryPeakBytes` 记录观察到的 session 缓存条目数和字节数峰值。
 `programLookups`、`programHits` 记录因子历史程序按初始模型键的查询与复用次数，总合力作为重新计算的参数。
 `programRecordedLookups`、`programRecordedHits` 记录完成自身录制和终态检查后，按完整回放输入键的查询与复用次数。

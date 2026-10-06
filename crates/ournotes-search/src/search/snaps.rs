@@ -120,6 +120,7 @@ mod float_margin;
 mod gk_schedule;
 mod gk_windows;
 mod leaf_search;
+mod luck_mean;
 mod rows;
 mod rush;
 mod score_windows;

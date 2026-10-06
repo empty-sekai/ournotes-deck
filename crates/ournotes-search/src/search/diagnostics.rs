@@ -1,7 +1,8 @@
 //! Opt-in bound auditing and harness ablations, separate from production policy.
 //!
-//! Every bound audited here is a payoff numerator over the 120 performance orders (the denominator of every played
-//! result), so an admissible bound of a prefix is at least the numerator of each of its completions.
+//! Prefix bounds are payoff numerators over the 120 performance orders (the denominator of every played
+//! result), so a prefix bound is at least the numerator of each completion. Per-order audits instead report
+//! the corresponding score or payoff cap with its actual order label.
 use super::expectation::PhysicalDeck;
 use super::uniform::{self, MEAN_ORDERS, ORDERS};
 mod cutoff;
@@ -817,6 +818,86 @@ fn luck_certified_output(result: ournotes_sim::live::full::LuckDpCertifiedResult
         .collect();
     serde_json::json!({"status":"certified","steps":steps,"probes":result.probes,
         "maxBucketWidth":max_bucket_width,"peakStates":result.peak_states,"transitions":result.transitions})
+}
+
+/// Audit-only expected-score caps for every real performer order of one legal public-ID deck. Each order
+/// completes its own admitted recorder/DP preparation in this BuiltProblem's unchanged simulation context.
+/// The result preserves unavailable capabilities and cap decompositions; it is never a candidate evaluation.
+pub fn luck_order_mean_caps(
+    built: &BuiltProblem<'_>,
+    members: [i64; 5],
+    snaps: [Option<i64>; 5],
+) -> Result<serde_json::Value, Error> {
+    use ournotes_sim::live::full::{LuckDpCache, LuckRushPreparation, LuckScoreSession, luck_skills};
+    if !matches!(built.context.spec.metric, crate::types::Metric::Score) {
+        return Err(Error::Input("terminal Rush cap audit requires the Score objective".into()));
+    }
+    let p = physical(built, members, snaps)?;
+    let (input, setup) = luck_input(built, members, snaps)?;
+    let power = power_of(built, &p)?;
+    if i64::from(input.params.total_power) != power {
+        return Err(Error::Domain("terminal Rush audit power differs from the native context".into()));
+    }
+    let skills = luck_skills(built.pool.master)?;
+    let mut session = LuckScoreSession::new(
+        built.pool.master,
+        &skills,
+        &input.notes,
+        &input.events,
+        input.params,
+        &setup,
+        &input.play,
+        &input.delta_times,
+        input.rank_confirmations.as_deref(),
+    );
+    // The production curve cache uses this byte allowance whenever request caching is enabled.
+    let capacity = if built.context.spec.limits.cache_entries == 0 { 0 } else { 32 * 1024 * 1024 };
+    let mut curves = LuckDpCache::new(capacity);
+    let mut scratch = super::snaps::JointScratch::default();
+    let mut orders = Vec::with_capacity(ORDERS);
+    let (mut available, mut refused, mut tightened) = (0u64, 0u64, 0u64);
+    for order in uniform::all_orders() {
+        let positions = uniform::positions_of(&order);
+        let bound = built.context.plan.joint.as_ref();
+        let original = bound.and_then(|bound| bound.fine_upper(built.domain(), &p, power, &positions, &mut scratch));
+        let performers = order.map(|slot| input.performers[slot].clone());
+        let prepared = session.rush_cap_preparation(&performers, Some(&mut curves), || false);
+        let (upper, reason, error) = match prepared {
+            LuckRushPreparation::Ready(terminal) => {
+                let upper = bound.and_then(|bound| {
+                    bound.rush_mean_upper(built.domain(), &p, power, &positions, &mut scratch, &terminal)
+                });
+                (upper, upper.is_none().then(|| "IncompatibleCap".to_owned()), None)
+            }
+            LuckRushPreparation::Unavailable { reason, error } => {
+                (None, Some(format!("{reason:?}")), Some(error.to_string()))
+            }
+            LuckRushPreparation::Stopped => (None, Some("Stopped".to_owned()), None),
+        };
+        available += u64::from(upper.is_some());
+        refused += u64::from(upper.is_none());
+        let improves = upper.zip(original).is_some_and(|(upper, original)| upper.ceil() < original as f64);
+        tightened += u64::from(improves);
+        orders.push(serde_json::json!({
+            "order":order,"positions":positions,"originalUpper":original.map(|value| value.to_string()),
+            "meanUpper":upper,"tightened":improves,"refusal":reason,"error":error
+        }));
+    }
+    let params = input.params;
+    Ok(serde_json::json!({
+        "scope":"Diagnostic expected-score upper endpoints only; no candidate value, score support, probability law or completion certificate.",
+        "members":members,"snaps":snaps,"power":power,"orders":orders,
+        "availableOrders":available,"refusedOrders":refused,"tightenedOrders":tightened,
+        "parameters":{
+            "skillTargetMusicType":params.skill_target_music_type,"totalPower":params.total_power,
+            "musicLevel":params.music_level,"convertedNoteCount":params.converted_note_count,
+            "musicLengthMs":params.music_length_ms,"scoreMusicLengthMs":params.score_music_length_ms,
+            "assistFactor":params.assist_factor,"assistFactorBits":params.assist_factor.to_bits(),
+            "seed":input.play.base_seed,"noteCount":input.notes.len(),"frameCount":input.play.frames.len(),
+            "deltaTimeBits":input.delta_times.iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+            "externalRanking":input.rank_confirmations.is_some()
+        }
+    }))
 }
 
 /// All-path native score enclosure of one physical deck in its supplied performance order. Unsupported

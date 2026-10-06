@@ -1386,8 +1386,10 @@ certificates are described in [score programs](score-programs.md).
 
 These arguments apply to one compiled bound and its declared candidate domain. Let `N(D) = 120 U(D)` be a team's
 scaled expected payoff, `P(D)` its power, and `C(N)` the legal completions of a node. A payoff cap `U(N)`
-must satisfy `N(D) <= U(N)` for every `D` in `C(N)`. For LUCK, an orderwise cap also covers every admitted lottery outcome before averaging. A power cap used after payoff equality need only cover the
-completions that can reach that payoff cap; a general power cap covers all completions.
+must satisfy `N(D) <= U(N)` for every `D` in `C(N)`. The prefix and assignment envelopes below cover every
+admitted LUCK outcome before averaging. The separate [terminal Rush cap](#terminal-rush-caps-for-expected-score-exclusion)
+bounds an order's expectation directly and is used only for Score exclusion. A power cap used after payoff
+equality need only cover the completions that can reach that payoff cap; a general power cap covers all completions.
 
 ### Position means and component maxima
 
@@ -1785,8 +1787,16 @@ same immutable context. Equal full models have the same nominal terminal law; a 
 support and life enclosure for one therefore encloses the other. Summary storage holds at most 64 entries and
 8 MiB of identity and result payload, further limited by the optional curve-cache byte capacity. Zero capacity
 or an absent curve cache clears and disables summary reuse. All 120 distinct order labels remain in the aggregate.
-Recorder-key storage is bounded by the optional curve-cache capacity, at most
-one MiB and 32 entries.
+Recorder-key storage is bounded by the optional curve-cache capacity, at most one MiB and 128 entries.
+The first retained complete raw key supplies an immutable byte dictionary. Later keys keep their original
+length and every differing byte run, or their complete bytes when that is smaller. A hash only prefilters
+lookups; matching reconstructs and compares every original byte, so the recorder-key equivalence is unchanged.
+Dictionary and key buffers are boxed slices, and the actual entry-buffer capacity shares the same allowance.
+The dictionary survives eviction of its original entry and is released when a capacity reduction clears the
+cache. Individual oldest entries are evicted at capacity; duplicates keep their existing certificate and do
+not add to the byte count. A zero allowance, oversized raw key, allocation refusal or size overflow leaves
+independent evaluation available. This storage allowance covers recorder keys and entry slots; it does not
+include the shared probability objects referenced by those entries.
 
 The request's `LuckDpCache` separately identifies a curve by its complete transcript: range templates, lottery
 tables, probes, frame transitions, judged notes, gauge speeds, chance actions and pending draws. Integer words
@@ -1842,6 +1852,240 @@ Sources: [score sessions](../crates/ournotes-sim/src/live/full/luck_score_bounds
 [team score cache](../crates/ournotes-search/src/search/certified_engine.rs),
 [order cancellation](../crates/ournotes-search/src/search/certified_search.rs),
 [seeding allocation](../crates/ournotes-search/src/search/warm.rs).
+
+#### Terminal Rush caps for expected-score exclusion
+
+A Score search with a certified K-th cutoff can prepare terminal joint Rush/probe laws before replaying a
+candidate's factor histories. Each order uses its actual complete performers, paired Snaps and the same admitted
+lottery DP as the full scorer. Preparation also completes the deterministic native recorder, checks zero
+unexpected random draws and range FINISH, and requires the last score query to have observed every terminal
+note's probability-readiness marker. A later marker cannot retroactively certify an earlier query. Pending rank
+bonuses and external rank snapshots retain the full scoring path. A raw curve supplies no such capability.
+
+A prepared order first tries the [native whole-score upper](#native-terminal-note-and-rank-caps), which proves
+its terminal notes and every rank bonus directly. If available at the exact power, it skips the fine-cap
+calculation below. An unavailable optional native upper keeps this fine-cap decomposition as the fallback.
+
+For the fine-cap decomposition, the capability grants score-probe conditioning only when the completed recorder observed held direct probes
+with the common LUCK gate, `Some(2)`. An absent, different or uncertified gate permits only the original Rush
+conditioning. Matching fine-bound refs must represent positive note-only 2000 effects with a direct singleton
+positive 7021 trigger, sustained activation, zero activation time, no release and zero judgement-factor
+components. The complete recorder independently verifies fixed conditions and the absence of cumulative state,
+execute limits and resets. Untested samples or the presence of 7021 inside a compound condition do not establish
+this admission.
+
+The selected Snap's contribution uses its complete ordered row signature, including the mission gate, effect
+shape, values and activation-time bits. Pure conditions proved always true may normalize to no condition.
+`SnapLive::new` records the absence of all deliberately inadmissible diagnostic ablations before building these
+classes. That fact remains attached to the fine view when the thread-local switch changes or the view is moved;
+resetting a switch cannot repair a class key built without its Gekisou rows. The existing nonnegative arithmetic,
+conversion-closure and music-length finish-frame admissions remain required.
+
+Let `z_e` be the original integer fine cap of note `e`, `N = sum_e z_e`, and `C` the original order cap.
+For ranked orders, that cap is `ceil((N + sum_e z_e*(r_e-1) + conversion) * (1+eps))`; without ranks it
+retains the original integer conversion allowance. Keep the exact integer difference `R = C-N`. It contains
+all original rank and conversion terms, roundoff inflation and final rounding. Historical rank snapshots
+therefore keep their old all-history caps.
+
+For a note whose eligible conversion-budget rows add no target outside its existing non-budget judgement
+mask, form caps in the DP's four joint classes. The probe class uses `bucket & 1` and the native Rush multiplier
+uses `bucket & 2`:
+
+| Bucket | Score probe | Native Rush | Terminal note cap |
+|---|---|---|---|
+| 0 | off | off | Remove matched probe amplitudes and the Rush multiplier |
+| 1 | on | off | Keep all original windows; remove only the Rush multiplier |
+| 2 | off | on | Remove matched probe amplitudes; keep the Rush multiplier |
+| 3 | on | on | Original `z_e` |
+
+Only the matched probes' ideal amplitudes are removed. Every ordinary or unmatched window, judgement-specific
+factor, combo or cumulative ramp, life bound and native floor remains. The alternate window difference array
+uses outward intervals, and a matched ref is omitted consistently from both original and mask-replacement
+windows. The original complete command-history drift and chain allowances remain in every bucket: an inactive
+probe's earlier starts, ends and rewinds can still leave a floating-point residue. An invalid conditional term
+keeps the old cap.
+
+If any eligible budget row has a target outside the note's non-budget judgement mask, all four caps remain
+`z_e`, before testing a zero all-on conversion gain. Differences of two native floors need not be monotone in
+either multiplier. When every eligible target is already in that mask, adding a target leaves the mask exactly
+unchanged in every bucket, so no conversion increment needs this protection. The full mask used for combo
+breaks remains unchanged. Individual note caps need not cover conversion gains; the original remainder does.
+The proved decomposition is `native score <= sum_e cap_e(probe_e, Rush_e) + R`.
+
+Accumulate each of the four certified masses times its nonnegative integer cap directly with outward
+arithmetic, then add `R` and intersect with `C`. This uses linearity of expectation without assuming independence
+between notes, probe states, Rush multipliers or historical rank snapshots. Without probe authority, buckets
+0/1 and 2/3 must have equal caps. Admission requires the exact terminal note-time multiset, finite nonnegative
+integer caps no larger than `z_e`, rank factors at least one, and `0 <= C <= i32::MAX`. Unknown mappings and
+numeric domains keep their original order caps.
+
+All 120 order caps remain represented. Unfinished orders keep their previous caps; completed preparations
+can lower only their own expected-score cap. Exclusion still requires the full cap sum to be strictly below
+the certified cutoff, or equal with lower power, preserving every canonical tie. An upper-only exit has no
+candidate value or score law. Cancellation is separate, and only 120 completed order evaluations produce a
+candidate evaluation. Preparation and full scoring share one session's completed lottery recordings.
+Threshold, capped-score, event-PT and final-life objectives keep their full payoff laws.
+
+Sources: [terminal recorder capability](../crates/ournotes-sim/src/live/full/luck_score_bounds/prepass.rs),
+[cap decomposition](../crates/ournotes-search/src/search/snaps/luck_mean.rs),
+[conditional fine caps](../crates/ournotes-search/src/search/snaps/fine_view.rs),
+[source-ref matching](../crates/ournotes-search/src/search/snaps/rush.rs),
+[class construction](../crates/ournotes-search/src/search/snaps/snap_live_build.rs),
+[native branch checks](../crates/ournotes-sim/src/live/full/luck_score_bounds/prepass_tests.rs),
+[construction and finish-frame checks](../crates/ournotes-search/src/search/snaps/terminal_cap_tests.rs),
+[all-order control flow](../crates/ournotes-search/src/search/certified_search.rs),
+[canonical order mapping and exclusion](../crates/ournotes-search/src/search/leaf.rs).
+
+#### Terminal factor prefixes
+
+A completed terminal recorder can additionally bound the native `note_score_up` field without building its
+full interval factor histories. This optional certificate uses the actual ordinary commands, their native
+binary32 deltas and every original score query. It requires a fresh calculator, the recorder's possible-filing
+certificate, zero initial floating combo-score adjustment and no nonzero power or floating combo-score command.
+Other inputs keep the terminal caps above.
+
+A terminal note may retain an execution from an earlier query. Nevertheless, its ordinary exact-real factor
+prefix agrees with the complete recorded prefix. An ordinary command filed later that precedes that note has a
+score frame no later than the note's frame. Its mandatory filing rewinds the next relevant query far enough to
+execute the note again. Thus a retained old execution cannot omit a newly filed preceding ordinary command.
+The prefix builder sorts by score frame, command time, owner and filing ordinal, with all commands at the note's
+time applied before the note. It preserves duplicate notes and the exact sorted terminal note-time multiset.
+It adds native binary32 deltas as exact real constants with outward binary64 sums; it does not substitute an
+integer-window approximation for those deltas.
+
+The complete query and filing history supplies a floating-point drift allowance. Let `p` be the previous query
+endpoint, `t` the current endpoint and `a` the earliest intervening note, ordinary factor or possible Rush/probe
+filing. Set `u = min(t, a-1)`, or `u = t` when there is no filing, and `h = min(p, u)+1`. Every actual undo is in
+`[h,p]`, and every actual execution is in `[h,t]`; reversed ranges are empty. Counting all possible filings can
+only widen those ranges. In particular, the certificate retains backwards queries, late filings and operations
+after the last scored note. It never removes an operation using a note-time probability mass.
+
+For one floating field, let `E_f` and `U_f` count these execution and undo ranges at frame `f`. Let `C_f` count
+all possible nonzero commands in that frame and `B_f` bound their absolute native-delta sum. Future recorded
+commands may enter these final frame bounds, which remains conservative for every earlier query. Define:
+
+    A = sum_f E_f*C_f
+    U = sum_f U_f*[C_f > 0]
+    H = sum_f E_f*C_f*B_f
+    N = 2*A + U
+
+Each state addition and each `FrameDiff` addition has its own local rounding error. A stored diff error is
+consumed by at most one undo before that diff resets; it is not amplified by all later undos. If `M` bounds the
+absolute exact-real field state after every intermediate native operation, `q = 2^-24` and `eta = 2^-150`, the
+sum of absolute local errors is bounded by the outward evaluation of
+
+    D = (q*((A+U)*M + H) + N*eta) / (1-N*q).
+
+The certificate requires `N*q < 1` and `max(M, max_f B_f)+D < f32::MAX`. These guards establish both a finite
+drift and the absence of a first native overflow. Counts use checked integers, allocations are fallible and
+nonfinite arithmetic declines the optional certificate.
+
+The fallback state magnitude includes the initial field and the ordinary commands' full lifetime absolute-delta sum.
+For each admitted untimed direct probe row, start and end commands alternate with exactly opposite native
+values. Partition the recorded probe opportunities into nondecreasing runs of `(score frame, chart time)`.
+Within one run, any score prefix selects a contiguous segment of that alternating sequence, so its magnitude
+is at most one row amplitude; summing the absolute amplitudes over all runs also covers backdated finish
+clamps. This argument bounds every intermediate state, including commands that do not precede a scored note.
+
+An optional ordinary-state certificate can tighten this magnitude. It inserts each actual binary32 command
+into its final `(score frame, command time, owner, filing ordinal)` position in original filing order. An
+outward binary64 interval tree retains the sum and minimum/maximum of all internal command prefixes, including
+the empty prefix. The maximum over every historical filed set, plus the initial field, bounds the ordinary
+state. Keeping only the final set or frame-end sums would omit earlier states and within-frame peaks.
+
+During native undo, the state follows prefixes of the preceding query's filed set, already included in that
+historical maximum. After undo reaches the kept prefix, it also equals the current filed set's prefix: any new
+command inside it would force its entire score frame to be undone. Execution then follows internal prefixes
+of the current set. This proves coverage of every intermediate ordinary state. The same unconditional probe
+run amplitude is added; `A`, `U`, `N`, `H` and every frame-diff magnitude remain unchanged. The smaller of the
+two proved magnitudes can therefore enter the existing drift formula.
+
+This optional construction limits its command, index and reused scalar-tree buffer capacities to four MiB.
+That is a temporary payload bound, not total process memory. Allocation or arithmetic refusal keeps the
+lifetime-sum magnitude; cancellation still stops preparation. No probability mass changes an operation count.
+
+Probe-off/on field bounds can use their distinct ideal amplitudes only with the common certified LUCK gate,
+nonnegative row values and at most one such run. Otherwise both classes receive the same unconditional
+run-amplitude bound. A linked positive probe-on amplitude has lower bound zero: `may_hold` may include a
+fixed condition that is actually false, so it proves an upper sum rather than a required active sum. Both
+classes retain `D`, including earlier probe starts, ends and rewinds. The returned
+`LuckTerminalRush::note_score_up_upper` pairs include the initial one and this full native history allowance;
+an unknown note mapping returns no factor certificate.
+
+The fine-bound caller combines these optional field bounds with its existing nonnegative combo, judgement,
+life, chain and native-floor envelopes. It also keeps the original combined drift to cover the unchanged
+judgement/window arithmetic; any duplicate allowance is conservative. It tightens terminal note terms only,
+keeps the original `C`, `N` and `R = C-N` decomposition, and applies the same conversion-budget protections.
+Historical rank snapshots continue to use their original bounds. Invalid field caps retain the prior note
+caps; an optional construction refusal retains the terminal probability capability. Cancellation still stops
+preparation. Neither a terminal field bound nor its probability-weighted upper bound supplies a candidate value,
+a complete probability law or a `Complete` status.
+
+Sources: [terminal prefix adapter](../crates/ournotes-sim/src/live/full/luck_score_bounds/terminal_prefix.rs),
+[operation counts and drift](../crates/ournotes-sim/src/live/full/luck_score_bounds/trace_drift.rs),
+[historical ordinary magnitudes](../crates/ournotes-sim/src/live/full/luck_score_bounds/ordinary_magnitude.rs),
+[independent scalar history checks](../crates/ournotes-sim/src/live/full/luck_score_bounds/trace_drift_tests.rs),
+[terminal capability](../crates/ournotes-sim/src/live/full/luck_score_bounds/prepass.rs),
+[fine-bound factors](../crates/ournotes-search/src/search/snaps/fine_view.rs),
+[unchanged remainder](../crates/ournotes-search/src/search/snaps/luck_mean.rs).
+
+#### Native terminal note and rank caps
+
+The same admitted recording can optionally provide `LuckTerminalRush::native_note_bucket_caps(power, times)`.
+Each original `Note` supplies its actual converted judgement, note type and frozen life. For each `(frame, index)`
+note identity, all recorded ordinary and Gekisou `Combo` observations form an interval hull, covering a stored
+execution retained from an earlier query. Six field intervals use the actual ordinary prefixes plus/minus `D`
+and the admitted probe amplitudes above. The existing native note kernel preserves binary32 operation grouping,
+constants and both floors. Signed support, saturation, nonfinite inputs and unproved mappings retain the prior
+caps. The power and complete note-time multiset must match. Notes at the same exact time share their
+componentwise maximum in this time-only interface, so different input-occurrence orders cannot mismatch
+conversions, types or life values.
+
+When a native per-note upper `u_e` contains the actual converted terminal note `T_e`, it can lower a fallback
+note cap `b_e` without changing the old remainder: `max(0, T_e-min(b_e,u_e)) = max(0, T_e-b_e)`. Thus the new
+intersection creates no conversion excess for `R` to pay. This argument applies to the complete native note
+kernel; a field-only cap still uses the conversion-budget protections described above.
+
+`LuckTerminalRush::native_score_mean_upper(power)` additionally proves the whole score, including every native
+rank. Its private plan preserves original Query and event ordinals. Each rank requires adjacent start/end
+queries with `0 <= start.to <= end.to`, no intervening note, factor, possible Rush/probe or pending-rank filing,
+and identical complete fixed-bonus identity/coefficient vectors. The earlier stored note prefix and earlier
+bonuses then cancel exactly in the native wrapping difference. Only newly executed notes in score frames
+`(start.to,end.to]` remain; selecting notes by chart-range time would not preserve native frame rounding.
+
+Each historical kernel includes only Notes and ordinary commands filed before that rank's original end Query.
+Later backdated commands never enter this earlier ideal prefix. The complete trace's nonnegative operation
+counts and lifetime magnitudes already cover every earlier execution, so all these queries reuse the same
+`D` and complete Combo hulls. Their own captured probability-readiness markers must cover each included note;
+a later marker cannot repair a historical gap. Raw note identities are retained for these internal sums,
+without the public time-only interface's same-time maximum.
+
+For each rank, direct outward accumulation of the four joint masses gives an upper `m` on the expected new-note
+sum `X`. The separate ceiling `X_max = sum_e max_b u_e,b` must be nonnegative and fit `i32`. Native range score
+is `end.wrapping_sub(start)`; cancellation modulo 2^32 plus this support check establishes the ordinary integer
+`X`, even if the shared snapshot prefix wrapped. For a nonnegative native percentage `p`, the bonus is
+`floor(i128(X)*p/100)`, cast to `i32`. Its support `floor(i128(X_max)*p/100)` must also fit, while its expectation
+is bounded by the outward value `p*m/100`. The expectation is not floored and is not presented as an exact law.
+
+The native pending fixed bonus is last-write-wins until the next Query. When filed at raw, unclamped frame `f`,
+its permanent offset is `o = [f > filing_query.to]`; its coefficient at a later endpoint `t` is `o + [f <= t]`.
+The plan retains these identities and final coefficients, including zero for overwritten pending ranks and the
+possible coefficient two. It rejects an unfiled final rank. The independent ceiling of terminal notes plus
+all final coefficients times rank-support ceilings must fit nonnegative `i32`. Only then does their outward
+expected sum bound the final native score without wrap.
+
+Any rank-plan, readiness, kernel or support failure declines this whole-score upper and preserves the earlier
+caps and scorer. `Some` supplies an exclusion upper for one fixed order at the matching power, not a candidate
+value, nonlinear payoff, probability law or `Complete` status. The existing all-order cutoff and canonical
+ranking obligations are unchanged; thresholds, capped scores, PT and final-life payoffs retain their full laws.
+
+Sources: [native note kernels](../crates/ournotes-sim/src/live/full/luck_score_bounds/terminal_kernel.rs),
+[historical prefix adapter](../crates/ournotes-sim/src/live/full/luck_score_bounds/terminal_prefix.rs),
+[rank query plan](../crates/ournotes-sim/src/live/full/luck_score_bounds/rank_trace.rs),
+[whole-score expectation upper](../crates/ournotes-sim/src/live/full/luck_score_bounds/native_total.rs),
+[capability and cancellation](../crates/ournotes-sim/src/live/full/luck_score_bounds/prepass.rs),
+[shared production and diagnostic cap entry](../crates/ournotes-search/src/search/joint.rs),
+[native probability-branch checks](../crates/ournotes-sim/src/live/full/luck_score_bounds/prepass_tests.rs).
 
 #### Order and payoff enclosures
 

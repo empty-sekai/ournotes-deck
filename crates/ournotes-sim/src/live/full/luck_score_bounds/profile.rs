@@ -8,6 +8,9 @@ pub struct LuckScoreProfile {
     pub model_setup_ms: f64,
     pub curve_dp_ms: f64,
     pub recorder_run_ms: f64,
+    pub recorder_trace_only_runs: u64,
+    pub recorder_trace_only_queries: u64,
+    pub recorder_trace_only_active_queries: u64,
     pub bound_replay_ms: f64,
     pub factor_replay_ms: f64,
     pub combo_history_ms: f64,
@@ -26,6 +29,27 @@ pub struct LuckScoreProfile {
     pub paired_paths: u64,
     pub peak_paired_paths: usize,
     pub note_enclosures: u64,
+    pub terminal_factor_builds: u64,
+    pub terminal_factor_refusals: u64,
+    pub terminal_factor_ms: f64,
+    pub terminal_factor_additions: u64,
+    pub terminal_factor_undos: u64,
+    pub terminal_factor_probe_runs: u64,
+    pub terminal_factor_maximum_state: f64,
+    pub terminal_factor_maximum_drift: f64,
+    pub terminal_kernel_builds: u64,
+    pub terminal_kernel_refusals: u64,
+    pub terminal_kernel_ms: f64,
+    pub terminal_kernel_notes: u64,
+    pub terminal_kernel_combo_observations: u64,
+    pub native_score_builds: u64,
+    pub native_score_plan_refusals: u64,
+    pub native_score_ready_refusals: u64,
+    pub native_score_kernel_refusals: u64,
+    pub native_score_support_refusals: u64,
+    pub native_score_ms: f64,
+    pub native_score_rank_windows: u64,
+    pub native_score_rank_notes: u64,
 }
 
 thread_local! {
@@ -39,6 +63,9 @@ pub(super) fn record(value: LuckScoreProfile) {
         total.model_setup_ms += value.model_setup_ms;
         total.curve_dp_ms += value.curve_dp_ms;
         total.recorder_run_ms += value.recorder_run_ms;
+        total.recorder_trace_only_runs += value.recorder_trace_only_runs;
+        total.recorder_trace_only_queries += value.recorder_trace_only_queries;
+        total.recorder_trace_only_active_queries += value.recorder_trace_only_active_queries;
         total.bound_replay_ms += value.bound_replay_ms;
         total.factor_replay_ms += value.factor_replay_ms;
         total.combo_history_ms += value.combo_history_ms;
@@ -57,11 +84,61 @@ pub(super) fn record(value: LuckScoreProfile) {
         total.paired_paths += value.paired_paths;
         total.peak_paired_paths = total.peak_paired_paths.max(value.peak_paired_paths);
         total.note_enclosures += value.note_enclosures;
+        total.terminal_factor_builds += value.terminal_factor_builds;
+        total.terminal_factor_refusals += value.terminal_factor_refusals;
+        total.terminal_factor_ms += value.terminal_factor_ms;
+        total.terminal_factor_additions += value.terminal_factor_additions;
+        total.terminal_factor_undos += value.terminal_factor_undos;
+        total.terminal_factor_probe_runs += value.terminal_factor_probe_runs;
+        total.terminal_factor_maximum_state =
+            total.terminal_factor_maximum_state.max(value.terminal_factor_maximum_state);
+        total.terminal_factor_maximum_drift =
+            total.terminal_factor_maximum_drift.max(value.terminal_factor_maximum_drift);
+        total.terminal_kernel_builds += value.terminal_kernel_builds;
+        total.terminal_kernel_refusals += value.terminal_kernel_refusals;
+        total.terminal_kernel_ms += value.terminal_kernel_ms;
+        total.terminal_kernel_notes += value.terminal_kernel_notes;
+        total.terminal_kernel_combo_observations += value.terminal_kernel_combo_observations;
+        total.native_score_builds += value.native_score_builds;
+        total.native_score_plan_refusals += value.native_score_plan_refusals;
+        total.native_score_ready_refusals += value.native_score_ready_refusals;
+        total.native_score_kernel_refusals += value.native_score_kernel_refusals;
+        total.native_score_support_refusals += value.native_score_support_refusals;
+        total.native_score_ms += value.native_score_ms;
+        total.native_score_rank_windows += value.native_score_rank_windows;
+        total.native_score_rank_notes += value.native_score_rank_notes;
     });
 }
 
-/// Return and reset the calling thread's completed certificate timings. These counters are diagnostic
-/// measurements only; they neither change a score bound nor certify a request's completion.
+/// Count actual structural calculate entries immediately, including work before an error or cancellation.
+/// Active means that the native undo or execution frame interval is nonempty; no frame or note is scanned.
+pub(super) fn record_trace_only_query(first: bool, active: bool) {
+    PROFILE.with(|profile| {
+        let mut total = profile.borrow_mut();
+        total.recorder_trace_only_runs += u64::from(first);
+        total.recorder_trace_only_queries += 1;
+        total.recorder_trace_only_active_queries += u64::from(active);
+    });
+}
+
+/// Keep the full recorder's original timing boundary while retaining work on every early return.
+pub(super) struct RecorderTimer(std::time::Instant);
+
+impl RecorderTimer {
+    pub(super) fn start() -> Self {
+        Self(std::time::Instant::now())
+    }
+}
+
+impl Drop for RecorderTimer {
+    fn drop(&mut self) {
+        let elapsed = self.0.elapsed().as_secs_f64() * 1e3;
+        PROFILE.with(|profile| profile.borrow_mut().recorder_run_ms += elapsed);
+    }
+}
+
+/// Return and reset the calling thread's diagnostic certificate work and timings. Recorder work includes
+/// partial attempts that stop or fail; these measurements neither change a score bound nor certify completion.
 pub fn take_luck_score_profile() -> LuckScoreProfile {
     PROFILE.with(|profile| std::mem::take(&mut *profile.borrow_mut()))
 }

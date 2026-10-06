@@ -136,6 +136,7 @@ impl NoteCommand {
 pub(crate) struct IncrementalCalculator {
     pub(super) minimum_score_up: Option<f32>,
     pub(super) bounds_trace: Option<BoundsTrace>,
+    bounds_record_only: Option<BoundsRecordOnly>,
     program: Option<Recorder>,
     pub calc: LiveScoreCalculator,
     max_frame: i32,
@@ -160,6 +161,16 @@ pub(crate) struct IncrementalCalculator {
     /// Diagnostics only: undos of a frame already declared settled (a broken settledness argument).
     #[cfg(feature = "search-diagnostics")]
     pub settled_violations: u64,
+}
+
+/// Private, one-way structural recording. A malformed note must still fail at the first query that would
+/// execute it. Valid notes need no retained entry; their immutable percentage-map lookups were checked once.
+#[derive(Clone, Debug, Default)]
+struct BoundsRecordOnly {
+    invalid_notes: Vec<(usize, usize)>,
+    capacity_failed: bool,
+    #[cfg(feature = "search-diagnostics")]
+    diagnostic_started: bool,
 }
 
 /// Empty frame storage has a lossless length representation. Nonempty entries keep their complete state.
@@ -194,6 +205,7 @@ impl fmt::Debug for IncrementalCalculator {
         let Self {
             minimum_score_up,
             bounds_trace,
+            bounds_record_only,
             program,
             calc,
             max_frame,
@@ -217,6 +229,7 @@ impl fmt::Debug for IncrementalCalculator {
         let mut view = f.debug_struct("IncrementalCalculator");
         view.field("minimum_score_up", minimum_score_up)
             .field("bounds_trace", bounds_trace)
+            .field("bounds_record_only", bounds_record_only)
             .field("program", program)
             .field("calc", calc)
             .field("max_frame", max_frame)
@@ -247,6 +260,7 @@ impl IncrementalCalculator {
         IncrementalCalculator {
             minimum_score_up: None,
             bounds_trace: None,
+            bounds_record_only: None,
             program: None,
             calc,
             max_frame,
@@ -307,6 +321,16 @@ impl IncrementalCalculator {
 
     pub(crate) fn add_note(&mut self, cmd: NoteCommand) {
         let f = self.file(cmd.time_ms);
+        if let Some(recording) = &mut self.bounds_record_only
+            && (!self.calc.note_factor_percent.contains_key(&cmd.note_type)
+                || !self.calc.judgement_score_factor_percent.contains_key(&cmd.score_type))
+        {
+            if recording.invalid_notes.try_reserve(1).is_err() {
+                recording.capacity_failed = true;
+            } else {
+                recording.invalid_notes.push((f, self.notes[f].len()));
+            }
+        }
         if let Some(trace) = &mut self.bounds_trace {
             trace.events.push(BoundsEvent::Note { frame: f, index: self.notes[f].len(), note: cmd });
             trace.combo.filed(f);
@@ -342,6 +366,92 @@ impl IncrementalCalculator {
         if let Some(trace) = &mut self.bounds_trace {
             trace.filing_gate = Some(gate);
         }
+    }
+
+    /// Only the private fresh solo-LUCK bounds model may call this after its deterministic admission.
+    /// Native score, field, program and settled-prefix observations cannot consume this model afterwards.
+    pub(super) fn try_enable_bounds_record_only(&mut self) -> bool {
+        let expected = ScoreFactorState::new(self.calc.state.band_total_power);
+        let actual = &self.calc.state;
+        let initial_fields = [
+            actual.combo_score_up.to_bits() == expected.combo_score_up.to_bits(),
+            actual.note_score_up.to_bits() == expected.note_score_up.to_bits(),
+            actual.just.to_bits() == expected.just.to_bits(),
+            actual.perfect.to_bits() == expected.perfect.to_bits(),
+            actual.great.to_bits() == expected.great.to_bits(),
+            actual.good.to_bits() == expected.good.to_bits(),
+        ];
+        if self.bounds_record_only.is_some()
+            || self.program.is_some()
+            || self.minimum_score_up.is_some()
+            || self.prev != -1
+            || self.added != -1
+            || self.score != 0
+            || self.rank_bonus != 0
+            || self.pending_fixed.is_some()
+            || !self.fixed.is_empty()
+            || self.settled_frame != 0
+            || self.settled_total != 0
+            || self.settled_fixed != 0
+            || !self.order_f.is_empty()
+            || !self.order_n.is_empty()
+            || self.notes.iter().any(|notes| !notes.is_empty())
+            || self.factors.iter().any(|factors| !factors.is_empty())
+            || self.diffs.iter().any(|diff| !diff.is_bitwise_zero())
+            || initial_fields.contains(&false)
+            || actual.added_luck_bonus != 0
+            || actual.gekisou_rank_bonus_score != 0
+            || self.calc.converted_note_count <= 0
+            || ![
+                self.calc.score_adjustment_factor,
+                self.calc.music_difficulty_factor,
+                self.calc.life_onus_factor,
+                self.calc.event_bonus_factor,
+                self.calc.assist_factor,
+            ]
+            .iter()
+            .all(|value| value.is_finite())
+            || self.calc.luck_weight.as_ref().is_none_or(|weights| !weights.steps.is_empty())
+            || !bounds_combo_table_is_valid(self.calc.combo_table.as_ref())
+            || self.bounds_trace.as_ref().is_none_or(|trace| {
+                !trace.has_luck || trace.filing_gate.is_none() || trace.queries != 0 || !trace.events.is_empty()
+            })
+        {
+            return false;
+        }
+        self.bounds_record_only = Some(BoundsRecordOnly::default());
+        true
+    }
+
+    /// The only fallible note-score operations omitted by structural recording are the immutable percentage
+    /// lookups. Combo lookups remain in the unchanged query observer, with a structurally valid fresh table.
+    fn validate_record_only_notes(&self, from: i32, to: i32) -> Result<(), Error> {
+        let recording = self.bounds_record_only.as_ref().expect("private record-only mode");
+        if self.program.is_some() || self.minimum_score_up.is_some() || self.settled_frame != 0 {
+            return Err(Error::Unsupported("bounds-only recording cannot serve a numeric observer".into()));
+        }
+        if recording.capacity_failed {
+            return Err(Error::Capacity("bounds-only note validation capacity".into()));
+        }
+        let first = recording
+            .invalid_notes
+            .iter()
+            .copied()
+            .filter(|&(frame, _)| from <= frame as i32 && frame as i32 <= to)
+            .min_by_key(|&(frame, index)| {
+                let note = &self.notes[frame][index];
+                (frame, note.time_ms, note.note_id, index)
+            });
+        if let Some((frame, index)) = first {
+            let note = &self.notes[frame][index];
+            if !self.calc.note_factor_percent.contains_key(&note.note_type) {
+                return Err(Error::Game(format!("note type {} has no score percent", note.note_type)));
+            }
+            if !self.calc.judgement_score_factor_percent.contains_key(&note.score_type) {
+                return Err(Error::Game(format!("score type {} has no score percent", note.score_type)));
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn bounds_potential_rush(&mut self, time_ms: i32) {
@@ -452,6 +562,13 @@ impl IncrementalCalculator {
         (self.notes.len(), notes)
     }
 
+    /// Tests only: each addressable note's stored integer score from its last actual execution.
+    #[cfg(test)]
+    pub(crate) fn executed_note_scores(&self) -> Vec<(i32, i32)> {
+        let executed = (self.prev + 1).max(0) as usize;
+        self.notes.iter().take(executed).flatten().map(|note| (note.note_id, note.added)).collect()
+    }
+
     fn fixed_at(&self, f: i32) -> Option<i32> {
         self.fixed.iter().find(|x| x.0 == f).map(|x| x.1)
     }
@@ -470,15 +587,26 @@ impl IncrementalCalculator {
         }
         let u = if self.added < 0 { to } else { to.min(self.added - 1) };
         let start = if u < self.prev {
-            for f in (u + 1..=self.prev).rev() {
-                self.undo(f as usize);
+            if self.bounds_record_only.is_none() {
+                for f in (u + 1..=self.prev).rev() {
+                    self.undo(f as usize);
+                }
             }
             u + 1
         } else {
             self.prev + 1
         };
-        for f in start..=to {
-            self.execute(f as usize, combo, gekisou)?;
+        if let Some(_recording) = &mut self.bounds_record_only {
+            #[cfg(feature = "search-diagnostics")]
+            {
+                let first = !std::mem::replace(&mut _recording.diagnostic_started, true);
+                super::luck_score_bounds::record_trace_only_query(first, u < self.prev || start <= to);
+            }
+            self.validate_record_only_notes(start, to)?;
+        } else {
+            for f in start..=to {
+                self.execute(f as usize, combo, gekisou)?;
+            }
         }
         if let Some((ft, fs)) = self.pending_fixed.take() {
             let ff = get_frame(ft);
@@ -606,6 +734,22 @@ impl IncrementalCalculator {
         }
         Ok(())
     }
+}
+
+/// Fresh master-built tables have matching arrays. Preserve the ordinary numeric path for malformed custom
+/// tables; otherwise every immutable COMBO/GEKISOU_COMBO lookup is total for every integer count.
+fn bounds_combo_table_is_valid(table: Option<&crate::live::score::ComboTable>) -> bool {
+    let Some(table) = table else { return true };
+    let (Some(thresholds), Some(cumulatives)) = (&table.thresholds, &table.cumulatives) else {
+        return false;
+    };
+    thresholds.len() == cumulatives.len()
+        && thresholds.iter().zip(cumulatives).all(|(thresholds, cumulatives)| {
+            thresholds.as_ref().is_none_or(|thresholds| {
+                thresholds.is_empty()
+                    || cumulatives.as_ref().is_some_and(|cumulatives| cumulatives.len() == thresholds.len())
+            })
+        })
 }
 
 fn observe_score_up(minimum: &mut Option<f32>, score_up: f32) {

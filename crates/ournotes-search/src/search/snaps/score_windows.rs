@@ -221,6 +221,7 @@ pub(super) fn windows(
                 Some(spec) => {
                     rush_rows.push(rush::RushRef {
                         spec: spec.clone(),
+                        effect_type: r.effect_type,
                         note,
                         judge,
                         run_cap: r.rush_run_cap,

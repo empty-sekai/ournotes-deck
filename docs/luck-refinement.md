@@ -35,6 +35,74 @@ is available even when the execution allowance is exhausted. Cancellation is
 checked before either replay or reuse. A session with zero entries evaluates
 each order independently.
 
+## Complete recorder identity storage
+
+Within an immutable `LuckScoreSession`, a complete recorder key identifies its resolved rows, checkers,
+performer positions, effect ordering, life-interpreter inputs and probe plan. Completed lottery curves can
+be reused for equal recorder keys before another recording pass.
+
+The cache stores the first retained complete raw key as an immutable byte dictionary. A later key retains
+its original length and either its complete bytes or every consecutive run of bytes that differs from the
+dictionary at the same positions. Reconstruction is exact: omitted positions equal the dictionary by the
+encoder's comparison, and every other position is explicitly retained. Extending or shortening the key
+preserves its original length and all necessary suffix bytes. Thus `decode(base, encode(base, key)) == key`;
+no input field or floating-point representation is discarded. Lookup checks full reconstructed equality
+after a hash prefilter.
+
+Dictionary and key payloads use boxed slices. Their byte lengths and the entry buffer's actual allocated
+capacity share an allowance of at most one MiB and 128 entries. Shared probability objects are not included
+in this recorder-key storage allowance. The dictionary is independent of its original entry's lifetime;
+it remains unchanged while entries use it. Eviction removes individual oldest entries, and duplicate
+insertion preserves the existing certificate without charging it twice. Only the existing completed
+recording and propagation paths insert entries. Cancellation, refusal, zero capacity and unrepresentable
+or oversized storage keep independent evaluation available.
+
+## Request-shared reduced recordings
+
+`LuckDpCache` can reuse a completed reduced recording across score sessions after each caller passes the
+original preparation, row/checker compilation and optional-life checks. This reuse requires both the
+optional life interpreter and its performer input to be absent. Preparations with either present keep the
+existing session-local recording and propagation path.
+
+The identity combines the unchanged complete recorder key with an owned scope. The key contains the
+resolved rows, ordered nonempty condition updaters, Gekisou appliers and controller tables/state, probe
+metadata, and ordered actions with their probability and activation-time bits. The scope contains every
+external note, event, setup, play frame and judgement, seed, delta-time bit, rank arrival and non-power
+parameter, together with the complete remaining initialized model. It retains full initial life and random
+state, score-frame shape, calculator tables and conversion metadata. Lists and options preserve lengths,
+order and presence; floating scope inputs preserve their bits. NaN-bearing or opaque identities decline
+shared reuse. Hashes only prefilter complete key and scope equality.
+
+The reduced interpreter performs no further master lookup: its prepared rows, tables and initial state,
+plus notes, play and deltas, determine every recording step. Initial total power can be normalized to zero
+because the score-calculator constructor stores it only in the initial power field, which this interpreter
+never reads. Its before/after controller calls supply literal score zero; admitted score appliers only
+file factor commands. Frame shape and all other filing inputs remain scoped. Equal identities therefore
+produce equal complete transcripts and certified curves, including their probe metadata. Candidate score
+and ranking retain their separate proofs. Full initial life state remains necessary even without a life
+interpreter, because a retained native checker may still read life.
+
+A private, immutable `LuckScoreSession` memoizes one bounded owned scope at its current allowance. The
+current reduced constructor places every deck-dependent initialized value in the original recorder key;
+this is the additional condition that makes the memo independent of performer order. A future
+deck-dependent residual field must extend that key or disable the memo. Full initialized-state formatting
+alone does not prove that memoization condition. The first cross-session comparison checks all owned bytes
+before interning equal scopes; later pointer equality refers to that retained immutable allocation.
+Direct cache calls without a session construct their own owned scope. A changed scope misses and replaces
+the table only when a complete result is inserted.
+
+The shared table has an independent allowance of at most 1 MiB and 128 entries. It counts its retained
+scope, dictionary and delta-key buffers, actual entry-buffer capacity, and each distinct retained curve
+allocation and its vector capacities once. The existing session-local table keeps its separate 1 MiB,
+128-entry key-storage allowance; both tables may retain a key while sharing the same curve allocation.
+These component budgets exclude allocator metadata and do not specify total process memory. Duplicate
+insertion preserves the existing curve and accounting, and zero capacity clears shared reuse.
+
+Only an already completed transcript-cache result or successful complete propagation can create a shared
+entry. Cancellation is checked after preparation and immediately around lookup, before a hit is counted
+or returned. Interrupted or refused recording/propagation creates no entry. Scope, key and capacity
+refusals keep independent evaluation available; cancellation remains cancellation.
+
 ## Certified summary reuse
 
 `LuckScoreSession` fixes the master and classified skills, chart, parameters,
@@ -86,6 +154,112 @@ endpoints use the full traversal to retain its min/max visitation order; nonfini
 results also retain its original refusal path. Differential tests compare every
 endpoint bit with that full traversal across all six fields, tied-owner command
 orders, probe switches, signed zeros and overflow cases.
+
+## Private structural score recording
+
+The bounds evaluator and upper preparation can omit numeric note and factor execution from their private
+deterministic recorder. This applies only after recorder admission to a fresh solo model with an actual LUCK
+range and empty weighted recording. The recorder still runs the original controller, conditions, life,
+judgement conversion, command filing and frame schedule. It preserves every original Query ordinal, the
+complete Combo observations with their binary32 bits, lottery-readiness events, and the frozen inputs of
+every filed note.
+
+Admission additionally excludes external ranking, public native-score observers, score-program capture,
+minimum-score-up tracking, settled prefixes, raw frame hooks and previously started models. The discarded
+private score and range-score snapshots are not observations: solo rank and its percentage are independent
+of those amounts, and the later replay reconstructs every numeric rank bonus from the original query
+identities. The optimized model cannot be returned or resumed as a native score model. Free Live,
+Gekisou without LUCK and contexts declined by this additional gate keep their existing recorder path.
+
+The structural calculator keeps the original rewind and execution interval, pending fixed-score overwrite
+and filing order, raw fixed-frame identities and duplicate-frame error. A malformed note is remembered at
+filing and fails at the first Query that would execute it, using the native frame, time, note-ID and insertion
+order. Missing note or judgement percentage errors therefore still precede a duplicate pending fixed-frame
+error when native execution would encounter them first. Allocation failure remains a refusal.
+
+These checks rely on immutable note and judgement percentage maps throughout the private recording.
+Fresh Combo-table shape and the original ComboCounter construction and judgement updates establish that
+the omitted duplicate Combo reads cannot fail or mutate later observations; the complete original
+ComboObserver path remains in place. A new writer of those maps, a new numeric observer, or a new fallible
+numeric primitive requires a corresponding admission/checking proof before using this path. Unknown cases
+keep the native recorder.
+
+Recording alone supplies no numeric score, support, probability law or completion certificate. The existing
+random-draw, FINISH, query-count and probability-readiness checks still apply, followed by the independent
+probability and native-arithmetic enclosure. Differential tests compare every trace event and floating-point
+bit against a recorder that executes native scoring, and compare all remaining controller, condition, life
+and conversion state. Separate cases check error order, fixed-frame identity, changing Combo inputs and
+observer refusals.
+
+## Expected-score upper preparation
+
+Before full factor replay, a Score candidate with a valid K-th cutoff can prepare each order's terminal joint
+Rush/probe law. `LuckScoreSession::rush_cap_preparation` returns `Ready`, `Unavailable` with a fixed refusal cause,
+or `Stopped`. It requires the same admitted recorder and DP, completed ranges, a ready last query and no pending
+rank bonus. The returned capability can supply an optional native whole-score expectation upper or weight a
+caller-proved fine-cap decomposition. Neither supplies a score-support object, exact law or candidate value.
+External ranking and unknown terminal mappings retain full scoring.
+
+`LuckTerminalRush::probe_gate()` grants `Some(2)` only for held direct probes under the completed recorder's
+common LUCK gate. `weighted_note_upper` changes only the native Rush multiplier. `weighted_note_bucket_upper`
+can additionally weight matched ideal probe amplitudes in all four joint classes. Without that gate authority,
+the latter requires equal caps across the probe bit. Both methods preserve the terminal note-time multiset and
+sum the certified joint masses directly with outward arithmetic; no marginal product or independence assumption
+is used.
+
+The fine-bound caller matches only positive note-only direct 7021 effects with the admitted untimed sustained
+shape and complete class-signature provenance captured at construction. Ordinary or unmatched windows, combo
+and life caps, all native command-history drift, historical rank allowances and conversion gains remain.
+If an eligible conversion-budget row adds a target outside the existing non-budget judgement mask, that note
+keeps its original cap in every bucket, including zero-gain rows: a difference of native floors can increase
+when either multiplier decreases. Already-contained targets leave the exact mask unchanged in every bucket
+and need no such protection. The full combo-break mask remains unchanged.
+The [search proof](search.md#terminal-rush-caps-for-expected-score-exclusion) specifies the conditional note caps
+and the exact unchanged remainder containing rank, conversion and rounding terms.
+
+The completed recorder can optionally supply `note_score_up_upper` for that exact terminal note multiset.
+It combines each note's actual ordinary native-delta prefix with a drift certificate derived from every query
+and possible filing, without constructing interval factor histories. A late preceding ordinary command forces
+a terminal note to execute again, so a retained old execution cannot omit such a command. Checked execution and
+undo counts bound both state and stored-diff roundoff, including subnormals; a finite feedback and magnitude
+check rejects possible overflow. Untimed inverse probe rows contribute an unconditional bound across all
+nondecreasing filing-time runs. Distinct probe-off/on amplitudes additionally require the common LUCK gate,
+nonnegative rows and at most one run.
+
+This optional route requires zero initial floating combo-score adjustment and no nonzero floating combo-score
+or power command. Its field bounds include the initial one and full history drift. The caller retains the
+existing combo, judgement, life, native-floor and chain envelopes, the old combined drift for their unchanged
+arithmetic, and the original rank/conversion remainder. A failed optional certificate keeps the previous
+terminal caps; cancellation remains `Stopped`. The [terminal prefix proof](search.md#terminal-factor-prefixes)
+specifies the retained-execution argument, operation counts and rounding inequality.
+
+`native_note_bucket_caps(power, times)` also uses every original note's actual conversion, type and frozen life,
+all historical ordinary/Gekisou Combo observations, and six factor-prefix intervals in the existing native note
+kernel. It preserves both floors. Same-time notes share their componentwise maximum for the exact time-multiset
+interface. Probe-on lower amplitude is zero because a possible fixed row need not actually hold. A native cap
+containing the actual converted terminal score can intersect a fallback cap without increasing its positive
+conversion excess, so the original remainder remains valid.
+
+`native_score_mean_upper(power)` is the first optional Score cap. It reuses that native kernel for terminal
+notes and each rank's historical end Query, using only ordinary commands and Notes filed by that Query. The
+complete history's drift and Combo hulls remain valid at every earlier execution. Adjacent rank snapshots must
+have ordered nonnegative score-frame endpoints, no intervening possible filing and identical earlier fixed
+bonus coefficients. Their common stored prefix then cancels, leaving only new frames. Every included note needs
+its own Query's prior readiness marker; later markers do not repair a gap.
+
+The range sum, rank bonus with a nonnegative percentage, and final terminal-plus-fixed sum each need an
+independent nonnegative `i32` support proof. Rank expectation uses the outward product of the expected range upper and
+`percent/100`, without flooring that expectation. The plan preserves native pending overwrite, next-Query
+filing offsets and final fixed coefficients. Failure of any rank declines the entire optional whole-score
+upper; successful per-note caps and the fine remainder remain available. A matching whole-score upper skips
+Fine evaluation. The [native cap proof](search.md#native-terminal-note-and-rank-caps) states the cancellation,
+integer arithmetic and retained-prefix conditions.
+
+Preparation and full scoring share one session's recorder cache. Every unfinished order retains its previous
+cap, and `UpperOnly` can return only after the whole 120-order cap sum proves exclusion. It is distinct from a
+complete evaluation and from cancellation. Preparing all 120 orders alone never completes an evaluation;
+`leaves.lotteryUpper` records this work separately from completed simulations. Nonlinear payoff objectives
+continue to use the complete scorer and refinement provider below.
 
 ## Reusing factor histories at another power
 

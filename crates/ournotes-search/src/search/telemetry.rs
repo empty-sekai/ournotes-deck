@@ -426,6 +426,8 @@ pub struct Leaves {
     pub started: u64,
     /// Teams dropped after some orders: their exact payoffs plus the caps of the other orders stay below the K-th.
     pub order_bound_pruned: u64,
+    /// Terminal Rush cap preparation; none of these preparations is a completed score simulation.
+    pub lottery_upper: LotteryUpper,
     /// Whole-live simulations (one performance order each) run to the end.
     pub simulations: u64,
     pub cutoff: Cutoff,
@@ -434,6 +436,75 @@ pub struct Leaves {
     /// Diagnostics only: the census of the teams the caps leave open at a fixed threshold (`set_census`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub census: Option<Census>,
+}
+
+/// Upper-bound work from admitted terminal Rush laws. These counts do not certify a candidate value or completion.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LotteryUpper {
+    pub attempted_orders: u64,
+    pub prepared_orders: u64,
+    pub declined_orders: u64,
+    pub declines: LotteryUpperDeclines,
+    pub stopped_orders: u64,
+    /// Prepared terminal laws with an accepted native whole-score upper or matching fine-cap decomposition.
+    pub bounded_orders: u64,
+    /// Fine-cap decomposition, arithmetic, or terminal note mapping could not be proved.
+    pub incompatible_caps: u64,
+    pub tightened_orders: u64,
+    /// Teams excluded during the upper-only prepass, without completing a score evaluation for that team.
+    pub pruned_teams: u64,
+    /// Includes preparation and cap weighting; this is part of time.simulationMs, not an extra activity.
+    pub elapsed_ms: f64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LotteryUpperDeclines {
+    pub no_luck_range: u64,
+    pub external_ranking: u64,
+    pub recorder_admission: u64,
+    pub score_arithmetic: u64,
+    pub probability_domain: u64,
+    pub unfinished_ranges: u64,
+    pub terminal_query: u64,
+}
+
+impl LotteryUpperDeclines {
+    pub(crate) fn record(&mut self, decline: ournotes_sim::live::full::LuckRushDecline) {
+        use ournotes_sim::live::full::LuckRushDecline;
+        let counter = match decline {
+            LuckRushDecline::NoLuckRange => &mut self.no_luck_range,
+            LuckRushDecline::ExternalRanking => &mut self.external_ranking,
+            LuckRushDecline::RecorderAdmission => &mut self.recorder_admission,
+            LuckRushDecline::ScoreArithmetic => &mut self.score_arithmetic,
+            LuckRushDecline::ProbabilityDomain => &mut self.probability_domain,
+            LuckRushDecline::UnfinishedRanges => &mut self.unfinished_ranges,
+            LuckRushDecline::TerminalQuery => &mut self.terminal_query,
+        };
+        *counter += 1;
+    }
+}
+
+impl LotteryUpper {
+    pub(crate) fn add(&mut self, value: Self) {
+        self.attempted_orders += value.attempted_orders;
+        self.prepared_orders += value.prepared_orders;
+        self.declined_orders += value.declined_orders;
+        self.stopped_orders += value.stopped_orders;
+        self.bounded_orders += value.bounded_orders;
+        self.incompatible_caps += value.incompatible_caps;
+        self.tightened_orders += value.tightened_orders;
+        self.pruned_teams += value.pruned_teams;
+        self.elapsed_ms += value.elapsed_ms;
+        self.declines.no_luck_range += value.declines.no_luck_range;
+        self.declines.external_ranking += value.declines.external_ranking;
+        self.declines.recorder_admission += value.declines.recorder_admission;
+        self.declines.score_arithmetic += value.declines.score_arithmetic;
+        self.declines.probability_domain += value.declines.probability_domain;
+        self.declines.unfinished_ranges += value.declines.unfinished_ranges;
+        self.declines.terminal_query += value.declines.terminal_query;
+    }
 }
 
 /// The teams whose per-order caps reach a census threshold, counted instead of simulated.
@@ -701,6 +772,22 @@ pub struct LuckCurves {
     /// Compiled recorder states considered and reused within score sessions.
     pub recording_lookups: u64,
     pub recording_hits: u64,
+    pub recording_peak_entries: usize,
+    pub recording_peak_bytes: usize,
+    /// Complete reduced recordings reused across sessions after full no-life context equality.
+    pub shared_recording_lookups: u64,
+    pub shared_recording_hits: u64,
+    pub shared_recording_scope_builds: u64,
+    pub shared_recording_scope_bytes: u64,
+    pub shared_recording_scope_declines: u64,
+    /// Diagnostic builds only; included in `record_ms`.
+    pub shared_recording_scope_ms: f64,
+    pub shared_recording_key_declines: u64,
+    pub shared_recording_capacity_declines: u64,
+    pub shared_recording_peak_entries: usize,
+    /// Owned scope, exact keys, entry capacity and distinct retained probability allocations.
+    /// This independent allowance excludes the session-local table and is not process RSS.
+    pub shared_recording_peak_bytes: usize,
     pub summary_lookups: u64,
     pub summary_hits: u64,
     pub summary_peak_entries: usize,
@@ -735,6 +822,18 @@ impl LuckCurves {
             peak_key_bytes: stats.peak_key_bytes,
             recording_lookups: stats.recording_lookups,
             recording_hits: stats.recording_hits,
+            recording_peak_entries: stats.recording_peak_entries,
+            recording_peak_bytes: stats.recording_peak_bytes,
+            shared_recording_lookups: stats.shared_recording_lookups,
+            shared_recording_hits: stats.shared_recording_hits,
+            shared_recording_scope_builds: stats.shared_recording_scope_builds,
+            shared_recording_scope_bytes: stats.shared_recording_scope_bytes,
+            shared_recording_scope_declines: stats.shared_recording_scope_declines,
+            shared_recording_scope_ms: stats.shared_recording_scope_ms,
+            shared_recording_key_declines: stats.shared_recording_key_declines,
+            shared_recording_capacity_declines: stats.shared_recording_capacity_declines,
+            shared_recording_peak_entries: stats.shared_recording_peak_entries,
+            shared_recording_peak_bytes: stats.shared_recording_peak_bytes,
             summary_lookups: stats.summary_lookups,
             summary_hits: stats.summary_hits,
             summary_peak_entries: stats.summary_peak_entries,

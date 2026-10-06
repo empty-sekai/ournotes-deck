@@ -16,6 +16,9 @@ use super::*;
 use crate::live::certified::ProbabilityMass;
 use crate::num::{FxHashMap, floor_to_i32};
 
+mod recording_cache;
+mod shared_recording;
+
 /// A complete nominal lottery curve and the size of its sparse computation.
 #[derive(Clone, Debug)]
 pub struct LuckDpResult {
@@ -1307,12 +1310,15 @@ impl<M: Mass> Transcript<M> {
 #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LuckRecordProfile {
+    /// Recorder preparations that completed mechanism compilation, including subsequent cache hits.
     pub calls: u64,
-    /// Recordings whose reduced model kept no condition skill, and recordings that ran the life recorder.
+    /// Prepared reduced models without any condition skill.
     pub without_skills: u64,
+    /// Preparations that construct an optional life/judgement model; a cache hit can skip its frame loop.
     pub with_life: u64,
     pub total_ms: f64,
     pub life_setup_ms: f64,
+    /// Actual time executing optional life/judgement frames; cache hits add no frame work.
     pub life_frames_ms: f64,
     pub before_ms: f64,
     pub after_ms: f64,
@@ -1395,8 +1401,8 @@ struct PreparedRecording<M> {
 /// performer input; every other interpreter input is fixed by the session.
 #[derive(Default)]
 pub(super) struct RecordingCache {
-    entries: FxHashMap<Vec<u8>, std::sync::Arc<LuckDpCertifiedResult>>,
-    bytes: usize,
+    storage: recording_cache::Storage<LuckDpCertifiedResult>,
+    shared_scope: Option<shared_recording::ScopeMemo>,
 }
 
 impl RecordingCache {
@@ -1434,22 +1440,24 @@ impl RecordingCache {
         .into_bytes()
     }
 
+    fn get(&self, key: &[u8]) -> Option<&std::sync::Arc<LuckDpCertifiedResult>> {
+        self.storage.get(key)
+    }
+
+    fn report(&self, stats: &mut LuckDpCacheStats) {
+        let (entries, bytes) = self.storage.retained();
+        stats.recording_peak_entries = stats.recording_peak_entries.max(entries);
+        stats.recording_peak_bytes = stats.recording_peak_bytes.max(bytes);
+    }
+
     fn insert(&mut self, key: Vec<u8>, value: std::sync::Arc<LuckDpCertifiedResult>, capacity: usize) {
-        if key.len() > capacity || capacity == 0 {
-            return;
-        }
-        if self.entries.len() >= 32 || self.bytes + key.len() > capacity {
-            self.entries.clear();
-            self.bytes = 0;
-        }
-        self.bytes += key.len();
-        self.entries.insert(key, value);
+        self.storage.insert(key, value, capacity);
     }
 
     fn limit(&mut self, capacity: usize) {
-        if self.bytes > capacity {
-            self.entries.clear();
-            self.bytes = 0;
+        self.storage.limit(capacity);
+        if capacity == 0 {
+            self.shared_scope = None;
         }
     }
 }
@@ -1885,6 +1893,7 @@ pub struct LuckDpCache {
     words: usize,
     capacity_words: usize,
     stats: LuckDpCacheStats,
+    shared_recordings: shared_recording::SharedRecordings,
     pub(super) programs: super::luck_score_bounds::ProgramCache,
 }
 
@@ -1897,6 +1906,23 @@ pub struct LuckDpCacheStats {
     /// Compiled recorder states considered and reused by score sessions.
     pub recording_lookups: u64,
     pub recording_hits: u64,
+    /// Retained complete recorder identities, including their dictionary and entry-buffer storage.
+    pub recording_peak_entries: usize,
+    pub recording_peak_bytes: usize,
+    /// Complete no-life recorder identities reused across immutable score sessions.
+    pub shared_recording_lookups: u64,
+    pub shared_recording_hits: u64,
+    /// Scope construction attempts and complete encoded scope bytes; a session constructs at most once per allowance.
+    pub shared_recording_scope_builds: u64,
+    pub shared_recording_scope_bytes: u64,
+    pub shared_recording_scope_declines: u64,
+    /// Diagnostic scope-construction time, included in record_ms.
+    pub shared_recording_scope_ms: f64,
+    pub shared_recording_key_declines: u64,
+    pub shared_recording_capacity_declines: u64,
+    /// Separate request table: scope, exact key storage and distinct retained curve allocations.
+    pub shared_recording_peak_entries: usize,
+    pub shared_recording_peak_bytes: usize,
     /// Complete score certificates reused for equal initialized models within a score session.
     pub summary_lookups: u64,
     pub summary_hits: u64,
@@ -1935,6 +1961,17 @@ impl LuckDpCache {
 
     pub fn stats(&self) -> LuckDpCacheStats {
         let mut stats = self.stats;
+        let shared = self.shared_recordings.stats;
+        stats.shared_recording_lookups = shared.lookups;
+        stats.shared_recording_hits = shared.hits;
+        stats.shared_recording_scope_builds = shared.scope_builds;
+        stats.shared_recording_scope_bytes = shared.scope_bytes;
+        stats.shared_recording_scope_declines = shared.scope_declines;
+        stats.shared_recording_scope_ms = shared.scope_ms;
+        stats.shared_recording_key_declines = shared.key_declines;
+        stats.shared_recording_capacity_declines = shared.capacity_declines;
+        stats.shared_recording_peak_entries = shared.peak_entries;
+        stats.shared_recording_peak_bytes = shared.peak_bytes;
         let programs = self.programs.stats;
         stats.program_lookups = programs.lookups;
         stats.program_hits = programs.hits;
@@ -2031,12 +2068,14 @@ impl LuckDpCache {
         if cancelled() {
             return Ok(None);
         }
+        let recording_capacity = self.recording_capacity();
         if let Some(recordings) = recordings.as_mut() {
-            recordings.limit(self.recording_capacity());
+            recordings.limit(recording_capacity);
         }
+        self.shared_recordings.limit(recording_capacity);
         #[cfg(feature = "search-diagnostics")]
         let started = std::time::Instant::now();
-        let prepared = prepare_recording::<ProbabilityMass>(
+        let mut prepared = prepare_recording::<ProbabilityMass>(
             master,
             skills,
             notes,
@@ -2049,11 +2088,19 @@ impl LuckDpCache {
             probes,
             ranking,
         )?;
-        let recording_key =
-            recordings.as_ref().filter(|_| self.capacity_words > 0).map(|_| RecordingCache::key(&prepared));
+        if cancelled() {
+            return Ok(None);
+        }
+        let recording_key = (self.capacity_words > 0
+            && (recordings.is_some() || (prepared.life.is_none() && prepared.life_deck.is_none())))
+        .then(|| RecordingCache::key(&prepared));
         if let (Some(recordings), Some(key)) = (recordings.as_ref(), recording_key.as_ref()) {
+            recordings.report(&mut self.stats);
             self.stats.recording_lookups += 1;
-            if let Some(found) = recordings.entries.get(key) {
+            if let Some(found) = recordings.get(key) {
+                if cancelled() {
+                    return Ok(None);
+                }
                 self.stats.recording_hits += 1;
                 #[cfg(feature = "search-diagnostics")]
                 {
@@ -2061,6 +2108,55 @@ impl LuckDpCache {
                 }
                 return Ok(Some(found.clone()));
             }
+        }
+        let mut shared_scope = None;
+        if prepared.life.is_none()
+            && prepared.life_deck.is_none()
+            && let Some(key) = recording_key.as_ref()
+        {
+            let context = shared_recording::Context {
+                notes,
+                events: skill_events,
+                params,
+                setup,
+                play,
+                deltas: delta_times,
+                ranking,
+            };
+            let scope = self.shared_recordings.prepare_scope(
+                recordings.as_deref_mut().map(|cache| &mut cache.shared_scope),
+                &mut prepared,
+                context,
+                key,
+                cancelled,
+            );
+            let mut scope = match scope {
+                Ok(value) => value,
+                Err(()) => return Ok(None),
+            };
+            if let Some(scope) = &mut scope {
+                let found = self.shared_recordings.get(scope, key, cancelled);
+                shared_recording::SharedRecordings::remember_scope(
+                    recordings.as_deref_mut().map(|cache| &mut cache.shared_scope),
+                    scope,
+                );
+                let found = match found {
+                    Ok(value) => value,
+                    Err(()) => return Ok(None),
+                };
+                if let Some(found) = found {
+                    if let Some(recordings) = recordings.as_mut() {
+                        recordings.insert(key.clone(), found.clone(), recording_capacity);
+                        recordings.report(&mut self.stats);
+                    }
+                    #[cfg(feature = "search-diagnostics")]
+                    {
+                        self.stats.record_ms += started.elapsed().as_secs_f64() * 1e3;
+                    }
+                    return Ok(Some(found));
+                }
+            }
+            shared_scope = scope;
         }
         let transcript = timed(|p| &mut p.total_ms, || record_prepared(prepared, notes, play, delta_times, cancelled));
         #[cfg(feature = "search-diagnostics")]
@@ -2075,9 +2171,16 @@ impl LuckDpCache {
         if let Some(key) = &key {
             self.stats.lookups += 1;
             if let Some(found) = self.entries.get(&key[..]) {
+                if cancelled() {
+                    return Ok(None);
+                }
                 self.stats.hits += 1;
+                if let (Some(scope), Some(raw)) = (shared_scope, recording_key.as_ref()) {
+                    self.shared_recordings.insert(scope, raw.clone(), found.clone());
+                }
                 if let (Some(recordings), Some(key)) = (recordings.as_mut(), recording_key) {
                     recordings.insert(key, found.clone(), self.recording_capacity());
+                    recordings.report(&mut self.stats);
                 }
                 return Ok(Some(found.clone()));
             }
@@ -2096,11 +2199,18 @@ impl LuckDpCache {
             peak_states: result.peak_states,
             transitions: result.transitions,
         });
+        if cancelled() {
+            return Ok(None);
+        }
         if let Some(key) = key {
             self.insert(key, result.clone());
         }
+        if let (Some(scope), Some(raw)) = (shared_scope, recording_key.as_ref()) {
+            self.shared_recordings.insert(scope, raw.clone(), result.clone());
+        }
         if let (Some(recordings), Some(key)) = (recordings, recording_key) {
             recordings.insert(key, result.clone(), self.recording_capacity());
+            recordings.report(&mut self.stats);
         }
         Ok(Some(result))
     }
@@ -2676,6 +2786,14 @@ mod tests {
         assert_eq!(dp.steps, samples);
     }
 
+    mod recording_cache_tests {
+        include!("luck_dp/recording_cache_tests.rs");
+    }
+
+    mod shared_recording_tests {
+        include!("luck_dp/shared_recording_tests.rs");
+    }
+
     fn curve_words(curve: &LuckDpCertifiedResult) -> Vec<u64> {
         let mut out = Vec::new();
         for (time, joint) in &curve.steps {
@@ -3012,7 +3130,14 @@ mod tests {
             .certified(&master, &skills, &notes, &[], params, &setup, &play, &delta, &decks[2], None, None)
             .unwrap();
         assert_eq!(curve_words(&again), direct[2]);
-        assert_eq!(cache.stats().hits, 3);
+        // The identical complete recording now hits before transcript construction. Keep the two cache
+        // layers and actual propagation work distinct instead of reporting a transcript lookup that did not run.
+        let reused = cache.stats();
+        assert_eq!((reused.lookups, reused.hits), (stats.lookups, stats.hits));
+        assert_eq!(reused.shared_recording_lookups, stats.shared_recording_lookups + 1);
+        assert_eq!(reused.shared_recording_hits, stats.shared_recording_hits + 1);
+        assert_eq!(reused.propagated_curves, stats.propagated_curves);
+        assert_eq!(reused.transitions, stats.transitions);
     }
 
     #[test]

@@ -19,6 +19,7 @@ pub(super) struct RushSpec {
 #[derive(Clone, Debug)]
 pub(super) struct RushRef {
     pub(super) spec: Rc<RushSpec>,
+    pub(super) effect_type: i64,
     pub(super) note: f64,
     pub(super) judge: [f64; 4],
     pub(super) run_cap: bool,
@@ -30,12 +31,62 @@ pub(super) struct RushRef {
 }
 
 impl RushRef {
+    /// Under the same complete native recorder admission and a normal class key, this ref's ideal note
+    /// amplitude is zero when the LUCK score-probe class is off. This never removes its command-history drift.
+    pub(super) fn terminal_probe(&self, gate: Option<i64>) -> bool {
+        gate == Some(MISSION_LUCK)
+            && self.spec.gate == MISSION_LUCK
+            && self.effect_type == 2000
+            && self.spec.trigger_type == 2
+            && self.spec.act == 0.0
+            && self.spec.release == 0
+            && self.note.is_finite()
+            && self.note > 0.0
+            && self.judge == [0.0; 4]
+    }
+
     pub(super) fn counts(&self, masks: Option<&RushMasks>) -> (f64, f64) {
         let Some(masks) = masks.filter(|m| self.run_cap && self.spec.valid(m)) else {
             return (self.ops, self.cmds);
         };
         let runs = (masks.max_runs[(self.spec.gate - 1) as usize] as f64).next_up().min(self.max_runs);
         ((self.ops_per_run * runs).next_up().min(self.ops), (self.cmds_per_run * runs).next_up().min(self.cmds))
+    }
+}
+
+#[cfg(test)]
+pub(super) fn test_probe(note: f64) -> RushRef {
+    let count = 11;
+    RushRef {
+        spec: Rc::new(RushSpec {
+            frames: Rc::new(GkFrames {
+                times: (0..count).map(|frame| frame as i32 * 40).collect(),
+                gate: [vec![false; count], vec![true; count], vec![false; count]],
+                current: vec![None; count],
+                start: Vec::new(),
+                complete: vec![false; count],
+                ranges: Vec::new(),
+                states: vec![Vec::new(); count],
+                wlo: vec![-1000; count],
+                next_complete: vec![None; count + 3],
+                ent: Vec::new(),
+                combo_triggers: None,
+            }),
+            gate: MISSION_LUCK,
+            trigger_type: 2,
+            act: 0.0,
+            release: 0,
+            released_on_complete: false,
+        }),
+        effect_type: 2000,
+        note,
+        judge: [0.0; 4],
+        run_cap: true,
+        ops: 80.0,
+        ops_per_run: 10.0,
+        cmds: 16.0,
+        cmds_per_run: 2.0,
+        max_runs: 8.0,
     }
 }
 
@@ -271,6 +322,45 @@ mod tests {
     }
 
     #[test]
+    fn terminal_probe_requires_the_observed_luck_gate_and_untimed_positive_note_shape() {
+        assert!(test_probe(0.2).terminal_probe(Some(MISSION_LUCK)));
+        for gate in [None, Some(0), Some(1), Some(3), Some(4)] {
+            assert!(!test_probe(0.2).terminal_probe(gate));
+        }
+        for gate in [0, 1, 3, 4] {
+            let mut row = test_probe(0.2);
+            Rc::get_mut(&mut row.spec).unwrap().gate = gate;
+            assert!(!row.terminal_probe(Some(MISSION_LUCK)));
+        }
+        for trigger in [0, 1, 3] {
+            let mut row = test_probe(0.2);
+            Rc::get_mut(&mut row.spec).unwrap().trigger_type = trigger;
+            assert!(!row.terminal_probe(Some(MISSION_LUCK)));
+        }
+        for act in [-1.0, 0.04, f32::NAN] {
+            let mut row = test_probe(0.2);
+            Rc::get_mut(&mut row.spec).unwrap().act = act;
+            assert!(!row.terminal_probe(Some(MISSION_LUCK)));
+        }
+        let mut released = test_probe(0.2);
+        Rc::get_mut(&mut released.spec).unwrap().release = 1;
+        assert!(!released.terminal_probe(Some(MISSION_LUCK)));
+        for kind in [2001, 2004, 2005] {
+            let mut row = test_probe(0.2);
+            row.effect_type = kind;
+            assert!(!row.terminal_probe(Some(MISSION_LUCK)));
+        }
+        for value in [0.0, -0.2, f64::INFINITY, f64::NAN] {
+            assert!(!test_probe(value).terminal_probe(Some(MISSION_LUCK)));
+        }
+        for index in 0..4 {
+            let mut row = test_probe(0.2);
+            row.judge[index] = 0.01;
+            assert!(!row.terminal_probe(Some(MISSION_LUCK)));
+        }
+    }
+
+    #[test]
     fn singleton_admission_rejects_negation_and_short_circuit_groups() {
         let master = Master::from_json_tables(|name| {
             (name == "MasterSkillCondition").then_some(
@@ -387,6 +477,7 @@ mod tests {
                 release: 0,
                 released_on_complete: false,
             }),
+            effect_type: 2000,
             note: 1.4,
             judge: [0.0; 4],
             run_cap: true,

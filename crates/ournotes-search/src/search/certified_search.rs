@@ -567,16 +567,77 @@ pub(super) fn evaluate_luck_context_until(
     skills: &ournotes_sim::live::full::LuckSkills,
     input: &super::expectation::FiniteSeedContext,
     map: &PayoffMap,
-    mut curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
+    curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
     control: (&[usize], impl FnMut(usize, &OrderScoreInterval) -> bool),
     cancelled: impl FnMut() -> bool,
 ) -> Result<Option<CertifiedEvaluation>, Error> {
     let (schedule, mut keep_going) = control;
+    match evaluate_luck_context_bounded(
+        master,
+        skills,
+        input,
+        map,
+        curves,
+        (schedule, false, |event| match event {
+            LuckContextEvent::Scored { index, order } => keep_going(index, order),
+            _ => true,
+        }),
+        cancelled,
+    )? {
+        LuckContextOutcome::Full(score) => Ok(Some(score)),
+        LuckContextOutcome::UpperOnly | LuckContextOutcome::Stopped => Ok(None),
+    }
+}
+
+/// Notifications from a candidate's all-order bound preparation and complete order scoring.
+/// Returning false may exclude the candidate only for a Ready preparation or a complete Scored order.
+/// The caller must independently prove that its new cap and every unfinished order's retained cap exclude it.
+pub(super) enum LuckContextEvent<'a> {
+    UpperAttempt,
+    UpperPrepared {
+        index: usize,
+        preparation: &'a ournotes_sim::live::full::LuckRushPreparation,
+    },
+    /// Includes preparation and the caller's bound work; a subset of the surrounding simulation activity.
+    UpperFinished {
+        elapsed_ms: f64,
+    },
+    Scored {
+        index: usize,
+        order: &'a OrderScoreInterval,
+    },
+}
+
+/// UpperOnly supplies no candidate value, score law or cacheable complete evaluation.
+/// Stopped preserves cancellation and deadline exhaustion independently of cap exclusion.
+pub(super) enum LuckContextOutcome {
+    Full(CertifiedEvaluation),
+    UpperOnly,
+    Stopped,
+}
+
+/// A Score caller with valid caps can prepare terminal Rush laws before factor-history replay. One session is
+/// retained through both stages, so completed lottery recordings remain reusable by the subsequent full scorer.
+/// Only a complete set of all 120 scored orders can reach Full, even when every prepass order was prepared.
+pub(super) fn evaluate_luck_context_bounded(
+    master: &ournotes_sim::master::Master,
+    skills: &ournotes_sim::live::full::LuckSkills,
+    input: &super::expectation::FiniteSeedContext,
+    map: &PayoffMap,
+    mut curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
+    control: (&[usize], bool, impl FnMut(LuckContextEvent<'_>) -> bool),
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<LuckContextOutcome, Error> {
+    use ournotes_sim::live::full::LuckRushPreparation;
+    let (schedule, prepare_upper, mut observe) = control;
     let mut seen = [false; uniform::ORDERS];
     if schedule.len() != uniform::ORDERS
         || schedule.iter().any(|&index| index >= uniform::ORDERS || std::mem::replace(&mut seen[index], true))
     {
         return Err(invalid("LUCK order schedule must contain all 120 distinct order indices"));
+    }
+    if prepare_upper && !matches!(map, PayoffMap::Score) {
+        return Err(invalid("terminal Rush upper bounds require the Score objective"));
     }
     let setup = input.gekisou.as_ref().ok_or_else(|| invalid("LUCK requires Gekisou context"))?;
     let mut session = ournotes_sim::live::full::LuckScoreSession::new(
@@ -590,17 +651,44 @@ pub(super) fn evaluate_luck_context_until(
         &input.delta_times,
         input.rank_confirmations.as_deref(),
     );
-    let mut cancelled = cancelled;
-    let mut orders = Vec::with_capacity(uniform::ORDERS);
     let labels = uniform::all_orders();
+    if prepare_upper {
+        let started = crate::clock::Instant::now();
+        let finish = |observe: &mut dyn FnMut(LuckContextEvent<'_>) -> bool| {
+            observe(LuckContextEvent::UpperFinished { elapsed_ms: started.elapsed().as_secs_f64() * 1e3 });
+        };
+        for &index in schedule {
+            if cancelled() {
+                finish(&mut observe);
+                return Ok(LuckContextOutcome::Stopped);
+            }
+            observe(LuckContextEvent::UpperAttempt);
+            let performers = labels[index].map(|slot| input.performers[slot].clone());
+            let preparation = session.rush_cap_preparation(&performers, curves.as_deref_mut(), &mut cancelled);
+            let keep_going = observe(LuckContextEvent::UpperPrepared { index, preparation: &preparation });
+            match preparation {
+                LuckRushPreparation::Stopped => {
+                    finish(&mut observe);
+                    return Ok(LuckContextOutcome::Stopped);
+                }
+                LuckRushPreparation::Ready(_) if !keep_going => {
+                    finish(&mut observe);
+                    return Ok(LuckContextOutcome::UpperOnly);
+                }
+                LuckRushPreparation::Ready(_) | LuckRushPreparation::Unavailable { .. } => {}
+            }
+        }
+        finish(&mut observe);
+    }
+    let mut orders = Vec::with_capacity(uniform::ORDERS);
     for &index in schedule {
         let order = labels[index];
         if cancelled() {
-            return Ok(None);
+            return Ok(LuckContextOutcome::Stopped);
         }
         let performers = order.map(|slot| input.performers[slot].clone());
         let Some(summary) = session.summary(&performers, curves.as_deref_mut(), &mut cancelled)? else {
-            return Ok(None);
+            return Ok(LuckContextOutcome::Stopped);
         };
         let support = (summary.final_support.lower, summary.final_support.upper);
         let mean = F64Interval::new(summary.final_mean.lower, summary.final_mean.upper)?
@@ -615,15 +703,15 @@ pub(super) fn evaluate_luck_context_until(
             tails: BTreeMap::new(),
             refined_payoff: None,
         };
-        if !keep_going(index, &value) {
-            return Ok(None);
+        if !observe(LuckContextEvent::Scored { index, order: &value }) {
+            return Ok(LuckContextOutcome::UpperOnly);
         }
         orders.push(value);
         if cancelled() {
-            return Ok(None);
+            return Ok(LuckContextOutcome::Stopped);
         }
     }
-    aggregate_orders(orders, map).map(Some)
+    aggregate_orders(orders, map).map(LuckContextOutcome::Full)
 }
 
 #[cfg(test)]

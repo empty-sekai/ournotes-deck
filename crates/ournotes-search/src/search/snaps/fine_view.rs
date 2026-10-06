@@ -1,5 +1,17 @@
 //! Per-note candidate caps and the joint fine-bound view used by physical search.
 use super::*;
+use ournotes_sim::live::certified::F64Interval;
+
+/// Outward accumulation of an unchanged window in the probe-off envelope. The original envelope and its full
+/// history drift are accumulated independently; an invalid conditional term becomes unbounded and keeps the old cap.
+fn probe_off_window(events: &mut [F64Interval], lo: u32, hi: u32, factor: f64) {
+    if events.is_empty() {
+        return;
+    }
+    let factor = F64Interval::point(factor).unwrap_or(F64Interval::WHOLE);
+    events[lo as usize] = events[lo as usize].add(factor);
+    events[hi as usize] = events[hi as usize].subtract(factor);
+}
 
 /// Immutable per-note envelope shared by the legacy compiler and physical native-root search.
 pub(super) struct FineView<'a> {
@@ -111,6 +123,11 @@ impl FineView<'_> {
         }
         let ne = self.coef.times.len();
         let judge = parts.iter().any(|p| p.judge);
+        let probe_gate = scratch.terms.as_ref().and_then(|terms| terms.probe_gate);
+        scratch.probe_note.clear();
+        if probe_gate == Some(MISSION_LUCK) {
+            scratch.probe_note.resize(ne + 1, F64Interval::ZERO);
+        }
         scratch.note.clear();
         scratch.note.resize(ne + 1, 0.0);
         if judge {
@@ -144,6 +161,12 @@ impl FineView<'_> {
                 }
                 scratch.note[w.lo as usize] += w.note;
                 scratch.note[w.hi as usize] -= w.note;
+                if !scratch.probe_note.is_empty() {
+                    let matched = w.ramp == 0 && w.rush != 0 && p.rush[w.rush as usize - 1].terminal_probe(probe_gate);
+                    if !matched {
+                        probe_off_window(&mut scratch.probe_note, w.lo, w.hi, w.note);
+                    }
+                }
                 if judge {
                     for j in 0..4 {
                         scratch.judge[j][w.lo as usize] += w.judge[j];
@@ -159,6 +182,11 @@ impl FineView<'_> {
                         }
                         scratch.note[lo as usize] += row.note * mult;
                         scratch.note[hi as usize] -= row.note * mult;
+                        // The same ref decision applies to replacements: a removed probe must not reappear
+                        // through a mask-refined window. The unconditioned envelope retains the full replacement.
+                        if !scratch.probe_note.is_empty() && !row.terminal_probe(probe_gate) {
+                            probe_off_window(&mut scratch.probe_note, lo, hi, row.note * mult);
+                        }
                         if judge {
                             for j in 0..4 {
                                 scratch.judge[j][lo as usize] += row.judge[j] * mult;
@@ -171,7 +199,9 @@ impl FineView<'_> {
         }
         // The envelope-computation error of the refined windows is absolute in score-up units, as the drift.
         let drift = if refined {
-            let Some(error) = rounding.as_ref().and_then(|r| r.absolute_error()) else { return i64::MAX };
+            let Some(error) = rounding.as_ref().and_then(|r| r.absolute_error()) else {
+                return i64::MAX;
+            };
             let drift = (drift + error).next_up();
             if !drift.is_finite() {
                 return i64::MAX;
@@ -182,6 +212,7 @@ impl FineView<'_> {
         };
         let p = power.max(0) as f64;
         let mut acc = 0f64;
+        let mut probe_acc = F64Interval::ZERO;
         let mut accj = [0f64; 4];
         let mut total = 0i64;
         let mut ranked = 0f64;
@@ -286,6 +317,13 @@ impl FineView<'_> {
             let k = if f.gcombo.is_some() { pre * gk_g[e] * combo / f.cnc } else { pre * combo / f.cnc };
             acc += scratch.note[e];
             let acc_e = acc + scratch.ramp[e];
+            let probe_acc_e = if scratch.probe_note.is_empty() {
+                acc_e
+            } else {
+                probe_acc = probe_acc.add(scratch.probe_note[e]);
+                // Combo/cumulative ramps are never removed with a direct probe.
+                probe_acc.add(F64Interval::point(scratch.ramp[e]).unwrap_or(F64Interval::WHOLE)).upper()
+            };
             if judge {
                 for j in 0..4 {
                     accj[j] += scratch.judge[j][e];
@@ -298,8 +336,7 @@ impl FineView<'_> {
                     CandLife::Unknown => false,
                 };
             let ze = if dead { f.z_dead } else { c.z[e] };
-            let zval = |m: usize| {
-                let base = 1.0 + acc_e.max(0.0) + drift;
+            let zval_with_base = |m: usize, k: f64, base: f64| {
                 let mut v = f.mjp[m] * base;
                 if judge {
                     // One note has ONE final judgement. P/Just possibilities are alternatives,
@@ -312,6 +349,8 @@ impl FineView<'_> {
                 let y = x.floor();
                 if ze == 1.0 { y } else { (ze * y * (1.0 + 2f64.powi(-20))).floor() }
             };
+            let zval_at = |m: usize, k: f64, note_factor: f64| zval_with_base(m, k, 1.0 + note_factor.max(0.0) + drift);
+            let zval = |m| zval_at(m, k, acc_e);
             let z = zval(vmask as usize);
             let rk = if f.rank.is_empty() { 1.0 } else { f.rank[e] };
             #[cfg(feature = "search-diagnostics")]
@@ -321,6 +360,43 @@ impl FineView<'_> {
             }
             if let Some(terms) = scratch.terms.as_mut() {
                 terms.entries.push((c.times[e], z, rk));
+                let pre = f.pre_plain.get(e).copied().unwrap_or(pre);
+                let plain = if f.gcombo.is_some() { pre * gk_g[e] * combo / f.cnc } else { pre * combo / f.cnc };
+                let rush_off = zval_at(vmask as usize, plain, acc_e).min(z);
+                if let Some(off) = &mut terms.rush_off {
+                    // Only the native Rush multiplier changes. All score-up/probe windows and the original
+                    // full-history drift remain in both classes; a currently inactive command can leave drift.
+                    off.push(rush_off);
+                }
+                if let Some(off) = &mut terms.probe_off {
+                    let keep_old_if_unproved = |conditional: f64, old: f64| {
+                        if conditional.is_finite() && conditional >= 0.0 { conditional.min(old) } else { old }
+                    };
+                    // Only matched probes' ideal amplitudes disappear. Every ordinary/unmatched window,
+                    // judgement factor, combo ramp and the original complete command-history drift remains.
+                    off.push([
+                        keep_old_if_unproved(zval_at(vmask as usize, plain, probe_acc_e), rush_off),
+                        keep_old_if_unproved(zval_at(vmask as usize, k, probe_acc_e), z),
+                    ]);
+                }
+                if let (Some(factors), Some(caps)) = (&terms.native_note_factors, &mut terms.native_note_caps) {
+                    let field = factors[e];
+                    let cap = |bucket: usize| {
+                        // The trace field already includes the initial one and complete note-field drift.
+                        // Retain the old combined allowance for judgement/window arithmetic; counting part of
+                        // the note error again is conservative. Negative field uppers may safely use zero.
+                        let base = (field[bucket & 1].max(0.0) + drift).next_up();
+                        let value = zval_with_base(vmask as usize, if bucket & 2 == 0 { plain } else { k }, base);
+                        if value.is_finite() && value >= 0.0 { value.min(z) } else { z }
+                    };
+                    let mut row = std::array::from_fn(cap);
+                    // Positive/nonconditioned probe amplitudes and the nonnegative Rush factor make cell 3
+                    // another valid upper for every class. This also preserves the four-cap input contract.
+                    for bucket in 0..3 {
+                        row[bucket] = row[bucket].min(row[3]);
+                    }
+                    caps.push(row);
+                }
             }
             if f.rank.is_empty() {
                 total = total.saturating_add(z as i64);
@@ -335,6 +411,20 @@ impl FineView<'_> {
                 if *next < elig.len() && elig[*next] as usize == e {
                     *next += 1;
                     if vmask & (1 << to) == 0 {
+                        if let Some(terms) = scratch.terms.as_mut() {
+                            // An uncovered target needs the original conversion remainder. A difference of two
+                            // native floors need not decrease with either multiplier, even when its all-on gain
+                            // is zero. Covered targets already belong to every conditional judgement mask.
+                            if let Some(off) = &mut terms.rush_off {
+                                *off.last_mut().expect("one off cap per entry") = z;
+                            }
+                            if let Some(off) = &mut terms.probe_off {
+                                *off.last_mut().expect("one off pair per entry") = [z; 2];
+                            }
+                            if let Some(caps) = &mut terms.native_note_caps {
+                                *caps.last_mut().expect("one native terminal cap per entry") = [z; 4];
+                            }
+                        }
                         let d = (zval((vmask | (1 << to)) as usize) - z) * rk;
                         if d > 0.0 {
                             scratch.bterms[bi].push(d);
@@ -374,6 +464,7 @@ pub(crate) struct JointFineBounds {
     pub(super) chain_extra: f64,
     pub(super) contrib: Vec<Vec<[Contrib; 5]>>,
     pub(super) class_of: Vec<Vec<u16>>,
+    pub(super) terminal_caps_admitted: bool,
     pub(super) raw: Option<raw::RawEnvelope>,
 }
 #[derive(Default)]
@@ -601,6 +692,71 @@ impl JointFineBounds {
         (total, scratch.0.terms.take().unwrap_or_default())
     }
 
+    /// Whether the static fine-bound shape can admit a terminal Rush mean cap.
+    pub(crate) fn supports_rush_mean_upper(&self) -> bool {
+        self.terminal_caps_admitted && !self.fine.pre_plain.is_empty() && !self.fine.network_ranking
+    }
+
+    /// Terminal-note cap ingredients with and without Rush and, under an observed LUCK gate, matching direct
+    /// probe amplitudes. Rank snapshots and conversion-budget gains keep their original worst-case caps.
+    /// These ingredients alone are not probability or score-law certificates.
+    pub(crate) fn rush_cap_terms(
+        &self,
+        power: i64,
+        members: [usize; 5],
+        choices: [usize; 5],
+        positions: &[usize; 5],
+        scratch: &mut JointScratch,
+        probe_gate: Option<i64>,
+    ) -> Option<(i64, CapTerms)> {
+        if !self.supports_rush_mean_upper() {
+            return None;
+        }
+        let probe_gate = probe_gate.filter(|&gate| gate == MISSION_LUCK);
+        scratch.0.terms = Some(CapTerms {
+            rush_off: Some(Vec::new()),
+            probe_off: probe_gate.map(|_| Vec::new()),
+            probe_gate,
+            ..CapTerms::default()
+        });
+        let total = self.upper(power, members, choices, positions, scratch, None);
+        Some((total, scratch.0.terms.take().expect("requested cap terms")))
+    }
+
+    /// Same original FineView total/remainder, with optional independently certified terminal note fields.
+    /// The original entries and every conversion/rank term remain unchanged; only the separate terminal caps
+    /// can tighten. The simulator binds the field vector to the exact complete note-time multiset.
+    pub(crate) fn rush_cap_terms_with_trace(
+        &self,
+        power: i64,
+        members: [usize; 5],
+        choices: [usize; 5],
+        positions: &[usize; 5],
+        scratch: &mut JointScratch,
+        terminal: &ournotes_sim::live::full::LuckTerminalRush,
+    ) -> Option<(i64, CapTerms)> {
+        let factors = terminal.note_score_up_upper(&self.coef.times);
+        let actual = terminal.native_note_bucket_caps(power, &self.coef.times);
+        if factors.is_none() && actual.is_none() {
+            return self.rush_cap_terms(power, members, choices, positions, scratch, terminal.probe_gate());
+        }
+        if !self.supports_rush_mean_upper() {
+            return None;
+        }
+        let probe_gate = terminal.probe_gate().filter(|&gate| gate == MISSION_LUCK);
+        scratch.0.terms = Some(CapTerms {
+            rush_off: Some(Vec::new()),
+            probe_off: probe_gate.map(|_| Vec::new()),
+            probe_gate,
+            native_note_factors: factors.map(|values| values.to_vec()),
+            native_note_caps: factors.map(|_| Vec::new()),
+            native_actual_caps: actual.map(|values| values.to_vec()),
+            ..CapTerms::default()
+        });
+        let total = self.upper(power, members, choices, positions, scratch, None);
+        Some((total, scratch.0.terms.take().expect("requested terminal cap terms")))
+    }
+
     /// Choices are domain Snap indexes plus one (zero means no Snap). Positions are fixed by the native root.
     pub(crate) fn upper(
         &self,
@@ -613,7 +769,9 @@ impl JointFineBounds {
     ) -> i64 {
         let classes: [usize; 5] =
             std::array::from_fn(
-                |s| if choices[s] == 0 { 0 } else { self.class_of[members[s]][choices[s] - 1] as usize },
+                |s| {
+                    if choices[s] == 0 { 0 } else { self.class_of[members[s]][choices[s] - 1] as usize }
+                },
             );
         let parts = std::array::from_fn(|s| &self.contrib[members[s]][classes[s]][positions[s]]);
         let mut src = [0; 5];
@@ -636,6 +794,20 @@ impl JointFineBounds {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CapTerms {
     pub(crate) entries: Vec<(i32, f64, f64)>,
+    /// Optional terminal-note caps with the Rush multiplier removed, with identical windows/drift. Entries
+    /// with an eligible budget target outside the nonbudget judgement mask retain their original cap.
+    pub(crate) rush_off: Option<Vec<f64>>,
+    /// Probe-off caps with Rush off/on. Only matched positive direct probes are removed. An eligible budget target
+    /// outside the nonbudget judgement mask keeps both cells unchanged; the simulator certifies the probe gate.
+    pub(crate) probe_off: Option<Vec<[f64; 2]>>,
+    pub(super) probe_gate: Option<i64>,
+    /// Input native note-score-up field uppers (including initial one and drift), probe off/on.
+    pub(super) native_note_factors: Option<Vec<[f64; 2]>>,
+    /// Separate terminal caps from those fields; original entries retain rank/conversion authority.
+    pub(crate) native_note_caps: Option<Vec<[f64; 4]>>,
+    /// Full native caps already containing each note's actual converted judgement and frozen life.
+    /// These remain separate from the field-only caps protected by the conversion-budget mask guard.
+    pub(crate) native_actual_caps: Option<Vec<[i32; 4]>>,
     pub(crate) conv: f64,
     pub(crate) ranked: bool,
     pub(crate) network_ranking: bool,
@@ -650,6 +822,7 @@ pub(super) struct Scratch {
     pub(super) rush_cache: rush::WindowCache,
     pub(super) rush_replacements: Vec<Option<Rc<rush::EntryWindows>>>,
     pub(super) note: Vec<f64>,
+    pub(super) probe_note: Vec<F64Interval>,
     pub(super) judge: [Vec<f64>; 4],
     /// Gekisou combo factors, bonus events and sums of one candidate.
     pub(super) gk_g: Vec<f64>,

@@ -9,6 +9,9 @@ pub(crate) struct SnapLive<'a> {
     pub(super) classes: Vec<Vec<Class>>,
     /// Class of each allowed snap for each member.
     pub(super) class_of: Vec<Vec<u16>>,
+    /// Captured when construction begins: no deliberately inadmissible diagnostic switch changed the envelope
+    /// or its full class keys. Resetting a thread-local switch later cannot restore this proof.
+    pub(super) terminal_caps_admitted: bool,
     /// `contrib[m][c][k]`.
     pub(super) contrib: Vec<Vec<[Contrib; 5]>>,
     /// Identity of each member for the simulation (equal ids: interchangeable performers with equal snap classes).
@@ -395,6 +398,7 @@ impl<'a> SnapLive<'a> {
             chain_extra: self.chain_extra,
             contrib: self.contrib,
             class_of: self.class_of,
+            terminal_caps_admitted: self.terminal_caps_admitted,
             raw,
         }
     }

@@ -68,8 +68,9 @@ pub use luck_exact::{
 };
 mod luck_score_bounds;
 pub use luck_score_bounds::{
-    LuckScoreBounds, LuckScoreSession, LuckScoreSummary, luck_score_bounds, luck_score_bounds_with_ranking,
-    luck_score_summary_with_curves, luck_score_summary_with_ranking, prepare_lottery_free,
+    LuckRushDecline, LuckRushPreparation, LuckScoreBounds, LuckScoreSession, LuckScoreSummary, LuckTerminalRush,
+    luck_score_bounds, luck_score_bounds_with_ranking, luck_score_summary_with_curves, luck_score_summary_with_ranking,
+    prepare_lottery_free,
 };
 #[cfg(feature = "search-diagnostics")]
 pub use luck_score_bounds::{LuckScoreProfile, take_luck_score_profile};
@@ -1456,6 +1457,40 @@ impl LiveModel {
         self.score.calc.luck_weight = Some(std::sync::Arc::new(LuckWeights { values, steps }));
         self.luck_suppressed = suppressed;
         Ok(())
+    }
+
+    /// The bounds/prepass recorder is private and discarded after its trace is consumed. Under its admitted
+    /// solo-LUCK closure no control input reads score: controller snapshots feed only rank amounts, while solo
+    /// rank 1 and the master percentage remain fixed. Full probability replay reconstructs those amounts.
+    /// This cannot authorize an ordinary native run, a no-LUCK exact score, or a numeric observer.
+    fn try_enable_bounds_record_only(&mut self) -> bool {
+        if self.program_has_started
+            || self.frame_time != 0
+            || !self.trace.is_empty()
+            || self.is_live_finished
+            || self.random.draws() != 0
+            || self.prev_confirmed_rank.is_some()
+            || self.frame_rank_confirmation.is_some()
+            || !self.rank_timeline.is_empty()
+            || self.next_rank_confirmation != 0
+            || self.raw_runtime.is_some()
+            || self.raw_pending.is_some()
+            || self.phase_life.is_some()
+            || self.rush_effect_log.is_some()
+            || self.gk.as_ref().is_none_or(|gk| {
+                gk.external_ranking
+                    || gk.solo_score_queries
+                    || !gk.ctrl.luck_weighted
+                    || !gk.ctrl.ranges.iter().any(|range| range.mission == gekisou::M_LUCK)
+            })
+        {
+            return false;
+        }
+        #[cfg(feature = "search-diagnostics")]
+        if self.rush_probes.is_some() {
+            return false;
+        }
+        self.score.try_enable_bounds_record_only()
     }
 
     /// Seeds the live's random streams, as [`LiveModel::run`] does with the play's base seed. Before any value has

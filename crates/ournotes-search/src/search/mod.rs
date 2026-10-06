@@ -9,6 +9,8 @@
 
 pub(crate) mod dispatch;
 pub use dispatch::recommend_built;
+#[cfg(test)]
+mod certified_context_tests;
 pub(crate) mod certified_payoff;
 pub mod certified_search;
 pub mod expectation;

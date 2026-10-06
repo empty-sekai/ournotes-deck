@@ -2953,6 +2953,33 @@ fn nominal_luck_full_laws_match_independent_team_ranking() {
     let mut all_orders = Vec::new();
     orders(&mut Vec::new(), &mut all_orders);
     assert_eq!(all_orders.len(), 120);
+    #[cfg(feature = "search-diagnostics")]
+    let cap_problem = {
+        let mut request = joint_request("mission", true, json!({"kind":"score"}));
+        request.execution =
+            Execution::Live { score_id: SCORE_ID, gekisou: true, play: PlayPolicy::Stream { stream: stream.clone() } };
+        request.limits.cache_entries = 64;
+        ournotes_search::handler::build_card_pool(&data, &roster, &request).unwrap()
+    };
+    #[cfg(feature = "search-diagnostics")]
+    let (mut caps_available, mut caps_refused, mut caps_tightened) = (0u64, 0u64, 0u64);
+    #[cfg(feature = "search-diagnostics")]
+    fn binary_upper(value: f64) -> Rational {
+        assert!(value.is_finite() && value >= 0.0);
+        if value == 0.0 {
+            return (0, 1);
+        }
+        let bits = value.to_bits();
+        let exponent = ((bits >> 52) & 0x7ff) as i32;
+        assert!(exponent > 0, "this synthetic score domain has normal finite caps");
+        let significand = i128::from((bits & ((1u64 << 52) - 1)) | (1u64 << 52));
+        let shift = exponent - 1023 - 52;
+        if shift >= 0 {
+            (significand.checked_shl(shift as u32).unwrap(), 1)
+        } else {
+            (significand, 1i128.checked_shl((-shift) as u32).unwrap())
+        }
+    }
     let mut candidates = Vec::new();
     // The two character-1 alternatives and six optional placements exhaust this declared domain.
     for members in [[1, 2, 3, 4, 5], [2, 4, 3, 5, 6]] {
@@ -2973,26 +3000,82 @@ fn nominal_luck_full_laws_match_independent_team_ranking() {
                 0,
             )
             .unwrap();
+            #[cfg(feature = "search-diagnostics")]
+            let cap_audit = {
+                let audit =
+                    ournotes_search::search::diagnostics::luck_order_mean_caps(&cap_problem, members, snaps).unwrap();
+                assert_eq!(audit["power"].as_i64(), Some(i64::from(input.params.total_power)));
+                assert_eq!(audit["parameters"]["musicLengthMs"], input.params.music_length_ms);
+                assert_eq!(audit["parameters"]["scoreMusicLengthMs"], json!(input.params.score_music_length_ms));
+                assert_eq!(audit["parameters"]["assistFactorBits"], input.params.assist_factor.to_bits());
+                assert_eq!(
+                    audit["parameters"]["deltaTimeBits"],
+                    json!(input.delta_times.iter().map(|value| value.to_bits()).collect::<Vec<_>>())
+                );
+                assert_eq!(audit["orders"].as_array().unwrap().len(), 120);
+                caps_available += audit["availableOrders"].as_u64().unwrap();
+                caps_refused += audit["refusedOrders"].as_u64().unwrap();
+                caps_tightened += audit["tightenedOrders"].as_u64().unwrap();
+                audit
+            };
             let mut law = BTreeMap::<(i32, i32), Rational>::new();
-            for order in &all_orders {
+            for (order_index, order) in all_orders.iter().enumerate() {
+                #[cfg(not(feature = "search-diagnostics"))]
+                let _ = order_index;
                 let performers = order.map(|slot| input.performers[slot].clone());
                 let attempt = session.law(&performers, &mut LuckExactBudget::default(), || false).unwrap();
                 let atoms = attempt.law.as_ref().expect("finite synthetic probability tree").atoms();
                 let mut mass = (0, 1);
+                #[cfg(feature = "search-diagnostics")]
+                let mut order_mean = (0, 1);
                 for atom in atoms {
                     let probability = (atom.mass.numerator as i128, atom.mass.denominator as i128);
                     mass = add(mass, probability);
+                    #[cfg(feature = "search-diagnostics")]
+                    {
+                        order_mean = add(order_mean, (i128::from(atom.score) * probability.0, probability.1));
+                    }
                     let weighted = (probability.0, probability.1 * 120);
                     let entry = law.entry((atom.score, atom.final_life)).or_insert((0, 1));
                     *entry = add(*entry, weighted);
                 }
                 assert_eq!(mass, (1, 1));
+                #[cfg(feature = "search-diagnostics")]
+                {
+                    let audit = &cap_audit["orders"][order_index];
+                    assert_eq!(
+                        audit["order"],
+                        json!(order),
+                        "real order labels must match the independent enumeration"
+                    );
+                    if let Some(upper) = audit["meanUpper"].as_f64() {
+                        let rational = binary_upper(upper);
+                        assert!(
+                            order_mean.0 * rational.1 <= rational.0 * order_mean.1,
+                            "mean cap {upper} is below exact nominal order mean {order_mean:?}; members={members:?} snaps={snaps:?} order={order:?}"
+                        );
+                        let original = audit["originalUpper"].as_str().unwrap().parse::<i128>().unwrap();
+                        assert!(rational.0 <= original * rational.1, "a refinement cannot widen the original cap");
+                        assert!(audit["refusal"].is_null());
+                    } else {
+                        assert!(audit["refusal"].as_str().is_some(), "every unavailable cap keeps an explicit refusal");
+                    }
+                }
             }
             assert_eq!(law.values().copied().fold((0, 1), add), (1, 1));
             candidates.push((members, snaps, input.params.total_power, physical, law));
         }
     }
     assert_eq!(candidates.len(), 12);
+    #[cfg(feature = "search-diagnostics")]
+    {
+        assert_eq!(caps_available + caps_refused, 12 * 120, "the audit covers every legal team and every order");
+        assert!(caps_available > 0, "the fixture must exercise admitted capabilities");
+        assert!(caps_tightened > 0, "at least one cap must improve the integer exclusion bound");
+        eprintln!(
+            "nominal Rush cap audit: {caps_available} available, {caps_refused} refused, {caps_tightened} tightened"
+        );
+    }
     assert!(candidates.iter().all(|candidate| candidate.4.len() > 1));
     let mut scores: Vec<_> =
         candidates.iter().flat_map(|candidate| candidate.4.keys().map(|&(score, _)| score)).collect();

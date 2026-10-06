@@ -1552,6 +1552,14 @@ impl JointBounds {
         self.fine.is_some()
     }
 
+    /// Whether the request's static fine-bound shape can admit a terminal Rush mean cap.
+    /// Completed recorder and probability checks remain necessary for each actual order.
+    pub(crate) fn supports_rush_mean_upper(&self) -> bool {
+        self.points.is_none()
+            && self.min_final_life.is_none()
+            && self.fine.as_ref().is_some_and(|fine| fine.supports_rush_mean_upper())
+    }
+
     /// The fine payoff cap of a complete deck in the performance order with these positions.
     pub(crate) fn fine_upper(
         &self,
@@ -1565,6 +1573,27 @@ impl JointBounds {
         let choices = Self::prefix_choices(domain, p, 5);
         let score_cap = fine.upper(power, p.members, choices, positions, scratch, None) as i128;
         Some(self.points.as_ref().map_or(score_cap, |pt| pt.order_payoff(self.bonus_of(p, &choices), score_cap)))
+    }
+
+    /// An expected-score cap for the same completed terminal recorder and physical performance order.
+    /// This never maps a mean through an event or threshold payoff; those keep their full probability scorer.
+    pub(crate) fn rush_mean_upper(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        power: i64,
+        positions: &[usize; 5],
+        scratch: &mut JointScratch,
+        terminal: &ournotes_sim::live::full::LuckTerminalRush,
+    ) -> Option<f64> {
+        if self.points.is_some() || self.min_final_life.is_some() {
+            return None;
+        }
+        if let Some(upper) = terminal.native_score_mean_upper(power) {
+            return Some(upper);
+        }
+        let choices = Self::prefix_choices(domain, p, 5);
+        self.fine.as_ref()?.rush_mean_upper(power, p.members, choices, positions, scratch, terminal)
     }
 
     /// The event bonus of a complete deck (0 without a PT objective).

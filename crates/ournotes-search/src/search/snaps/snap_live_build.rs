@@ -10,6 +10,15 @@ impl<'a> SnapLive<'a> {
         allowed_members: &[bool],
         setup: &'a FullSetup,
     ) -> Result<SnapLive<'a>, Error> {
+        let terminal_caps_admitted = !ablated(
+            ablate::RANK_BONUS
+                | ablate::LUCK
+                | ablate::GEKISOU_COMBO
+                | ablate::EARLY_STOP_EQUAL
+                | ablate::OBSERVED_MAX
+                | ablate::CLASS_KEY
+                | ablate::PREFIX_LATE,
+        );
         let master: &'a Master = pool.master;
         let settings = LiveScoreSettings::from_master(master)?;
         let combo = ComboTable::from_master(master)?;
@@ -1262,6 +1271,7 @@ impl<'a> SnapLive<'a> {
             setup,
             classes,
             class_of,
+            terminal_caps_admitted,
             contrib,
             sim_id,
             class_gid,
@@ -1308,3 +1318,7 @@ impl<'a> SnapLive<'a> {
         Ok(sl)
     }
 }
+
+#[cfg(test)]
+#[path = "terminal_cap_tests.rs"]
+mod terminal_cap_tests;

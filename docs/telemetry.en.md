@@ -160,13 +160,104 @@ Exclusive time (milliseconds) by activity from the start of solving to its end; 
 | `partial` | Candidates whose evaluation a stop interrupted |
 | `cheapPruned`, `finePruned` | Teams dropped before any simulation: the sum of their per-order cheap caps, or of their raw and fine caps, stays below the K-th |
 | `started` | Teams whose performance orders started to run |
-| `orderBoundPruned` | Teams dropped by remaining-order caps: completed exact payoffs, or certified score upper endpoints for LUCK, plus the caps of the other orders stay below the K-th; includes reuse of that complete-program upper bound |
+| `orderBoundPruned` | Teams dropped by remaining-order caps: completed exact payoffs, or certified expected-score caps for LUCK, plus the caps of the other orders stay below the K-th; includes upper-only preparation and reuse of that complete-program upper bound |
 | `simulations` | Completed performance-order evaluations or certified order enclosures, including completed orders of a subsequently excluded LUCK candidate |
 | `cutoff.tables` | Performance orders simulated with a cutoff table |
 | `cutoff.unavailable` | Performance orders without a finite cutoff table |
 | `cutoff.stopped` | Simulations stopped early (the team cannot reach the Top-K) |
 | `cutoff.stoppedAt[i]` | Stops where the played frames were in `[i/10, (i+1)/10)` of the chart |
 | `peakRetained` | Most decks the Top-K held |
+
+### `leaves.lotteryUpper`
+
+Terminal joint Rush/probe preparation for a Score candidate with a certified cutoff. A completed native
+recorder/DP capability can tighten an expected-score upper bound; it does not complete a score simulation,
+a candidate value or a probability law. The first optional cap proves terminal native-note kernels and every
+historical rank query, including prior readiness, fixed-bonus cancellation and nonwrapping integer support.
+An unavailable whole-score upper retains the fine-bound decomposition: matching positive direct probes may
+use all four joint buckets under the common LUCK gate, while all history drift, historical ranks and conversion
+allowances remain in its unchanged remainder. Native per-note caps can also tighten this fallback.
+
+| Field | Meaning |
+|---|---|
+| `attemptedOrders` | Preparations started |
+| `preparedOrders` | Completed recorder/DP/last-query capabilities |
+| `declinedOrders`, `declines` | Refusals, classified as `noLuckRange`, `externalRanking`, `recorderAdmission`, `scoreArithmetic`, `probabilityDomain`, `unfinishedRanges` or `terminalQuery` |
+| `stoppedOrders` | Preparations interrupted by cancellation or the cooperative deadline |
+| `boundedOrders` | Prepared laws with an accepted native whole-score upper or matching fine-cap decomposition |
+| `incompatibleCaps` | Neither the whole-score upper nor the fallback decomposition was proved; the previous cap remains |
+| `tightenedOrders` | Accepted caps that lower the retained integer order cap |
+| `prunedTeams` | Teams excluded during the upper-only prepass |
+| `elapsedMs` | Preparation, native upper construction and fallback fine-cap weighting time, included in `time.simulationMs` rather than an extra exclusive activity |
+
+None of these preparations increments `leaves.simulations` or the diagnostic full-score `evaluations`.
+Every unfinished order retains its previous cap. `Complete` still requires the full-domain canonical ranking
+certificate.
+
+### Diagnostic recorder work
+
+The `search-diagnostics` build also exposes these fields in `LuckScoreProfile` / `luckProfile`.
+They describe the private deterministic score recorder, independently of later factor replay or DP work.
+
+| Field | Meaning |
+|---|---|
+| `recorderTraceOnlyRuns` | Private structural recorders that actually entered calculate at least once; enabling an unused recorder does not count |
+| `recorderTraceOnlyQueries` | Actual calculate entries in structural mode, including entries that later return an error |
+| `recorderTraceOnlyActiveQueries` | Those entries whose original native undo or execution frame interval was nonempty; other entries were already quiet |
+| `recorderRunMs` | Time in the existing deterministic recorder phase, including partial work before cancellation or refusal |
+
+The three counts are updated at the actual entry and are retained if the attempt later stops or fails.
+They do not count skipped note evaluations or executed probability branches; an active frame interval may
+contain no notes. These fields do not increase full-score `evaluations` or `leaves.simulations`.
+
+For a full bounds evaluation, `recorderRunMs` covers the original frame-recording interval, after weighted
+recorder setup and before post-recording checks and bound replay. Upper preparation keeps its existing
+recorder interval, including weighted setup and terminal checks. Both intervals retain their elapsed work
+on early return. A later recorded-program hit does not add that recorder time a second time.
+`recorderRunMs` is included in the enclosing simulation/preparation time, not an extra exclusive activity;
+it must not be added to that parent total. It contains controller, life, Combo and structural-validation work
+even when native numeric execution is omitted. DP and later factor replay retain their separate phases.
+
+### Diagnostic native cap profile
+
+Native `profile_case` diagnostic builds expose the calling thread's `LuckScoreProfile` as `luckProfile`.
+The fields below describe optional factor-prefix, native-note and whole-score upper certificates; they are
+separate from the public `leaves.lotteryUpper` counters. One optional certificate can decline while an earlier
+capability remains available. These arithmetic certificates do not count as full-score evaluations.
+
+| Field | Meaning |
+|---|---|
+| `terminalFactorBuilds` | Completed optional factor-prefix certificates |
+| `terminalFactorRefusals` | Optional factor certificates refused by their admission, allocation or arithmetic checks; cancellation is excluded |
+| `terminalFactorMs` | Time spent preparing these optional factor certificates, including refused and stopped attempts |
+| `terminalFactorAdditions` | Sum of the certified upper counts of nonzero additions to each floating field, across successful preparations; these are bounds on possible native work, not performed replay operations |
+| `terminalFactorUndos` | Sum of the certified upper counts of relevant frame-diff subtractions across successful preparations |
+| `terminalFactorProbeRuns` | Sum of nondecreasing possible-probe filing runs across successful preparations |
+| `terminalFactorMaximumState` | Largest exact-real intermediate floating-field magnitude bound used by a successful certificate |
+| `terminalFactorMaximumDrift` | Largest floating-field drift allowance of a successful certificate; this is a factor allowance, not a score interval width |
+
+The counts and times add over preparations; the last two fields retain maxima. `terminalFactorMs` is a phase
+within the existing preparation/simulation time and must not be added to that parent total. Probability masses
+do not determine these operation counts. A lower count describes a tighter all-path work bound, not a smaller
+candidate domain or fewer lottery branches.
+
+| Field | Meaning |
+|---|---|
+| `terminalKernelBuilds` | Completed native terminal-note cap vectors |
+| `terminalKernelRefusals` | Optional native-note kernel construction refused; cancellation is excluded |
+| `terminalKernelMs` | Native-note kernel construction and optional whole-score upper work, including refused and stopped attempts |
+| `terminalKernelNotes`, `terminalKernelComboObservations` | Terminal note count and recorded Combo observations across successful native-note cap constructions |
+| `nativeScoreBuilds` | Completed optional whole-score expectation uppers; these are not candidate evaluations |
+| `nativeScorePlanRefusals` | Missing, reversed or nonadjacent rank snapshots, intervening filings, unequal fixed coefficients, pending ranks or other structural/capacity failures |
+| `nativeScoreReadyRefusals` | A Query has not yet captured probability readiness for an included terminal or historical note |
+| `nativeScoreKernelRefusals` | A historical prefix, note mapping or native kernel could not be certified |
+| `nativeScoreSupportRefusals` | Nonnegative, finite arithmetic or nonwrapping note/range/rank/final support could not be established |
+| `nativeScoreMs` | Whole-score construction subphase, included in `terminalKernelMs`; never add it to that parent total |
+| `nativeScoreRankWindows`, `nativeScoreRankNotes` | Rank windows and selected note occurrences handed to historical native-kernel evaluation, including work in later-refused or stopped attempts |
+
+The kernel and whole-score counts add over preparations. Cancellation is excluded from all refusal counters;
+its elapsed work still contributes to phase times. Query-readiness and support checks establish whether an
+upper is usable, independently of the search's time and candidate limits. No profile field changes `Complete`.
 
 ## `joint`
 
@@ -234,7 +325,26 @@ table was full.
 
 `luckCurves` exposes the request's lottery and score-summary reuse. `propagatedCurves` counts completed uncached
 DP propagations; `peakStates` and `transitions` include uncached propagation work even when interrupted. Hits add
-no propagation work. `recordingLookups` and `recordingHits` count compiled recorder reuse. `summaryLookups` and
+no propagation work. `recordingLookups` and `recordingHits` count compiled recorder reuse. `recordingPeakEntries`
+and `recordingPeakBytes` record the largest retained identity count and key storage observed in a session. The
+latter includes the shared byte dictionary, complete raw or delta payloads and entry-buffer capacity; it excludes
+the shared probability objects and temporary encoding allocations. The recorder-key cache retains at most
+128 entries and one MiB, further limited by the supplied curve-cache allowance; immutable dictionary bytes and
+actual entry-buffer capacity count toward that same limit. Full reconstructed key equality decides every hit.
+`sharedRecordingLookups` and `sharedRecordingHits` count a separate request-level table for complete reduced
+recordings that require no life interpreter. Reuse requires both the unchanged recording key and the complete
+owned context, including initialized model state and exact chart, play, setup and ranking inputs. Initial power
+is normalized only because this reduced interpreter never calculates score. `sharedRecordingScopeBuilds`,
+`sharedRecordingScopeBytes` and `sharedRecordingScopeDeclines` count scope construction, total successfully
+encoded bytes and optional refusals. `sharedRecordingScopeMs` is a diagnostic timer included in `recordMs`.
+`sharedRecordingKeyDeclines` and `sharedRecordingCapacityDeclines` count identity and retention refusals.
+`sharedRecordingPeakEntries` and `sharedRecordingPeakBytes` describe its independent allowance of at most
+128 entries and one MiB, further limited by the supplied curve-cache allowance. The latter counts the retained
+scope, complete keys, entry-buffer capacity and each distinct retained probability allocation once; it is not
+process RSS and does not include the unchanged session-local table or temporary encoding allocations. The two
+tables can retain the same recording identity. Unsupported contexts continue through the session-local table
+and ordinary recorder, and capacity refusals do not change the probability result or completion state.
+`summaryLookups` and
 `summaryHits` count complete score-summary reuse for equal initialized models; `summaryPeakEntries` and
 `summaryPeakBytes` bound the largest session cache observed. A zero request cache capacity disables these caches.
 `programLookups` and `programHits` count initialized-model lookups and hits for compiled all-path factor
