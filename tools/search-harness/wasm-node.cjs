@@ -7,12 +7,17 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { projection } = require('./json-tokens.cjs');
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
-// Telemetry without its millisecond fields: equal for two runs of the same complete search.
+// Search work is stable across progress callbacks. Millisecond fields and process-wide linear-memory
+// high-water marks can change: serializing a report may grow WASM memory, which remains allocated.
 const untimed = value => Array.isArray(value) ? value.map(untimed)
   : value && typeof value === 'object'
     ? Object.fromEntries(Object.entries(value).filter(([key]) => !key.endsWith('Ms')).map(([key, v]) => [key, untimed(v)]))
     : value;
-const telemetry = answer => untimed(JSON.parse(answer).result?.telemetry ?? null);
+const telemetry = answer => {
+  const work = untimed(JSON.parse(answer).result?.telemetry ?? null);
+  if (work) delete work.memory;
+  return work;
+};
 const best = result => result.results[0]?.expectedPayoff;
 
 function main() {
