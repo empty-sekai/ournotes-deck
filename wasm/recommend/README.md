@@ -24,6 +24,12 @@ original request/answer/progress shapes; account inputs use the new formats belo
 - Answer: `ournotes-deck.account-recommendation/1`, with `status`, `missing`, `errors`, `final`, and `result`.
 - `capabilities()` returns JSON text identifying formats, supported pairs, and explicit limitations.
 
+Played-live requests accept `metric:{"kind":"bestOrderExpectedScore"}`. The team's value encloses the maximum
+conditional nominal score expectation over all 120 performance orders. `bestExpectedOrder` carries an evaluated
+order and its own expectation interval and optimality, including the lexicographic order tie in the canonical
+team layout (leader at slot 2, other member/Snap pairs sorted into slots 0, 1, 3, 4). Team ranking and order
+optimality remain separate in progress and final answers. The default `score` metric retains uniform averaging.
+
 `recommend` is synchronous. Use a dedicated Worker and terminate it to cancel. Callback exceptions are ignored.
 An input error is a structured answer, not a trap. Only a proven result may be called optimal. Explicit unsupported
 areas remain release gaps; the adapter does not make a sampled or weighted lottery score exact.

@@ -2,6 +2,62 @@
 
 The refinement provider evaluates the complete probability law for one specified performance order under the declared independent nominal LUCK draws. Each semantic draw uses the integer weights produced by the calculation model. Duplicate outcomes with the same result share their combined mass.
 
+## Best conditional order expectation
+
+Played-live requests may declare `metric:{"kind":"bestOrderExpectedScore"}` in the native search request or
+the account recommendation request. For a legal team `D`, let `S(D,o,L)` be its terminal score at performance
+order `o` and nominal lottery outcome `L`. This objective is
+
+\[
+V(D)=\max_{o\in\mathfrak S_5}\mathbb E_L[S(D,o,L)].
+\]
+
+The `score` metric keeps its uniform-order expectation, averaging all 120 conditional laws with weight
+`1/120`. The best-order metric preserves the same legal teams, every eligible leader, and all legal paired
+Snap bindings. Its expectation still uses the nominal lottery law inside each order. A maximum reachable
+terminal score would be a separate maximum over lottery outcomes. Score thresholds, capped scores, life
+events and native event payoffs continue to use their own expectations and boundary refinements.
+
+For every order the search retains a certified expectation enclosure `[l_o,u_o]`. A pending order can use
+the native score range and any independently proved whole-order cap; it has no evaluated outcome. The team
+value remains enclosed by `[max_o l_o,max_o u_o]`, including every pending order. Node bounds use position
+maxima where a uniform-order bound uses position means. The bound grid stores `120` times this maximum;
+per-order exclusion uses `120*max_o u_o`. Mean-only bound providers are outside this objective's admitted
+route. No evaluated subset is averaged or treated as the complete maximum.
+
+Selected members also receive an assignment bound: a 32-mask dynamic program places their existing
+per-position gain envelopes in distinct positions, while free members retain conservative column maxima.
+This excludes impossible combinations where several members each claim the same peak position. Every
+addition rounds upward, and the bound retains the native score envelope's existing rounding allowance.
+It tightens team-prefix exclusion before conditional-order simulation. This dynamic program combines
+upper envelopes; it does not merge native controller or factor-history states merely because they have
+used the same subset of members.
+
+The result's `bestExpectedOrder` contains an actually evaluated physical-slot permutation, member IDs,
+its conditional `expectedScore` when exact, its `scoreInterval`, and `evaluatedOrders`. Its `optimality`
+is `proven` only when its expectation beats every other order, or is proved at least as large while its
+physical permutation wins the lexicographic tie. Search results use the canonical team layout, with the
+leader in slot 2 and the other member/Snap pairs sorted into slots 0, 1, 3, 4; native and formal account
+transports use this same basis. Exact rational comparisons can establish a tie even
+when the enclosing binary64 intervals overlap. Completing 120 evaluations alone does not prove an order
+when their expectations still overlap. Conversely, valid caps can prove the selected order while some
+losing orders remain unevaluated. Conditional evaluations visit larger upper bounds first and skip an
+order once its cap proves it cannot beat the evaluated witness, including the canonical tie. Exact
+frontier refinement likewise excludes order caps below the team's proved maximum floor, and visits
+the remaining largest upper bounds first.
+
+The enclosing team's `scoreInterval` concerns the maximum over all orders. The witness's interval concerns
+that evaluated order. A timeout after one complete order preserves the witness and the pending-order caps,
+with unproven order optimality where necessary. A timeout before any complete order supplies no witness.
+Team rank certification remains separate: equal complete score programs can establish a team tie while
+the best internal order still needs refinement. Overall interruption and completion retain the declared
+search budget semantics.
+
+Order-score caches use complete canonical performer identities and the fixed total power. A reused order
+is mapped back to the current team's physical slots before selecting the lexicographic witness. Pending
+bounds and exact nominal refinements retain those same labels. Cache capacity changes storage and work;
+it does not change the legal order domain or the meaning of a certificate.
+
 ## Nominal skill probabilities
 
 The provider also branches at each native `4011` probability check. Its success mass is the exact finite,
@@ -78,11 +134,47 @@ or oversized storage keep independent evaluation available.
 ## Request-shared reduced recordings
 
 `LuckDpCache` can reuse a completed reduced recording across score sessions after each caller passes the
-original preparation, row/checker compilation and optional-life checks. This reuse requires both the
-optional life interpreter and its performer input to be absent. Preparations with either present keep the
-existing session-local recording and propagation path.
+original preparation, row/checker compilation and optional-life checks. When those checks construct a life
+interpreter, the shared key includes its initialized model through the lossless initialized-state identity.
+The complete score-recorder dependency check may prove that no life, conversion or lifecycle reader consumes
+score values or score-derived rank bonuses. Only under that certificate may the key normalize initial total
+power. Solo ranks remain fixed and external rank arrivals remain exact inputs. A declined certificate keeps
+the actual power, and a proof-mode byte prevents the two routes from aliasing. Compiled skills and checkers,
+controller and rank state, converted judgements, and clocks remain in the identity. Score lookup maps use
+sorted entries and non-NaN floating values retain their round-tripping encodings, including signed zero.
+Arithmetic admission remains a separate requirement.
 
-The identity combines the unchanged complete recorder key with an owned scope. The key contains the
+The life model's notes and events are represented once by the existing order-exact shared scope. Key
+construction temporarily moves those fields out, builds the initialized-state identity, and restores both
+before returning. It also temporarily omits the raw performer input from the reduced key because the full
+compiled life state represents every value consumed by that interpreter; it restores that input afterward.
+The final length-delimited key combines the reduced recorder identity with the initialized life identity.
+Equal keys therefore preserve both the ordered reduced transcript inputs and the state consumed by the
+life interpreter. A difference in a raw card attribute can share a key only when its fully compiled state
+is identical; a difference in a consumed power, skill, damage or conversion input changes the identity.
+Power projection changes only identity construction; the actual native model is restored before playback.
+
+NaN-bearing, opaque or over-512-KiB initialized identities decline shared life reuse. The final combined
+key must also fit the existing one-MiB limit. Refusal keeps session-local raw-key reuse or independent
+recording available, under the same cancellation and complete-propagation requirements.
+
+The request may also reuse the completed life transcript independently of the reduced lottery-controller
+rows. Its key uses the same certified initial-power projection or exact-power fallback, plus the complete
+remaining native life model, exact owned context and full shared scope. Notes and events are omitted from the initialized model only while
+keying because that context preserves their complete order and contents. The transcript stores the life
+integer observed at each of the two skill phases of every frame, and every judgement-kind change. Consecutive equal phase pairs and
+unchanged judgements use lossless omission. Every reduced frame, action and controller query still executes
+in its original order, reading the reconstructed life transcript.
+
+This separate table publishes only after a successful complete recording and complete curve propagation
+or completed-curve reuse; cancellation and failed or partial recordings cannot insert a transcript. Its
+allowance is the smaller of the curve-cache allowance and 1 MiB, with at most 128 entries. Accounting
+includes the retained scope, dictionary/delta keys, entry-buffer capacity, and each distinct transcript
+allocation and its vector capacities. Zero capacity clears reuse, and a refused key or allocation falls
+back to independent native life recording. The `lifeRecording*` telemetry fields report counts and retained
+bytes; they do not expose model identities.
+
+The shared reduced-recording identity combines the unchanged complete recorder key with an owned scope. Its key contains the
 resolved rows, ordered nonempty condition updaters, Gekisou appliers and controller tables/state, probe
 metadata, and ordered actions with their probability and activation-time bits. The scope contains every
 external note, event, setup, play frame and judgement, seed, delta-time bit, rank arrival and non-power
@@ -94,14 +186,16 @@ shared reuse. Hashes only prefilter complete key and scope equality.
 The reduced interpreter performs no further master lookup: its prepared rows, tables and initial state,
 plus notes, play and deltas, determine every recording step. Initial total power can be normalized to zero
 because the score-calculator constructor stores it only in the initial power field, which this interpreter
-never reads. Its before/after controller calls supply literal score zero; admitted score appliers only
+never reads. An optional life calculator uses the separate dependency certificate described above, retaining
+its exact power whenever that certificate is unavailable. The reduced
+interpreter's before/after controller calls supply literal score zero; admitted score appliers only
 file factor commands. Frame shape and all other filing inputs remain scoped. Equal identities therefore
 produce equal complete transcripts and certified curves, including their probe metadata. Candidate score
 and ranking retain their separate proofs. Full initial life state remains necessary even without a life
 interpreter, because a retained native checker may still read life.
 
 A private, immutable `LuckScoreSession` memoizes one bounded owned scope at its current allowance. The
-current reduced constructor places every deck-dependent initialized value in the original recorder key;
+current constructor places every deck-dependent initialized value in the combined recorder/life key;
 this is the additional condition that makes the memo independent of performer order. A future
 deck-dependent residual field must extend that key or disable the memo. Full initialized-state formatting
 alone does not prove that memoization condition. The first cross-session comparison checks all owned bytes
@@ -297,8 +391,9 @@ Before full factor replay, a Score candidate with a valid K-th cutoff can prepar
 Rush/probe law. `LuckScoreSession::rush_cap_preparation` returns `Ready`, `Unavailable` with a fixed refusal cause,
 or `Stopped`. It requires the same admitted recorder and DP, completed ranges, a ready last query and no pending
 rank bonus. The returned capability can supply an optional native whole-score expectation upper or weight a
-caller-proved fine-cap decomposition. Neither supplies a score-support object, exact law or candidate value.
-External ranking and unknown terminal mappings retain full scoring.
+caller-proved fine-cap decomposition. These upper-only interfaces supply neither score support, an exact law
+nor a candidate value. The separately checked `terminal_summary(power)` can instead supply a complete score
+expectation enclosure, as described below. External ranking and unknown terminal mappings retain full scoring.
 
 `LuckTerminalRush::probe_gate()` grants `Some(2)` only for held direct probes under the completed recorder's
 common LUCK gate. `weighted_note_upper` changes only the native Rush multiplier. `weighted_note_bucket_upper`
@@ -336,9 +431,14 @@ specifies the retained-execution argument, operation counts and rounding inequal
 `native_note_bucket_caps(power, times)` also uses every original note's actual conversion, type and frozen life,
 all historical ordinary/Gekisou Combo observations, and six factor-prefix intervals in the existing native note
 kernel. It preserves both floors. Same-time notes share their componentwise maximum for the exact time-multiset
-interface. Probe-on lower amplitude is zero because a possible fixed row need not actually hold. A native cap
-containing the actual converted terminal score can intersect a fallback cap without increasing its positive
-conversion excess, so the original remainder remains valid.
+interface. Probe-on lower amplitude defaults to zero because a possible fixed row need not actually hold. A
+positive lower additionally requires a unique native-row match and a complete fixed-true condition for each
+contributing row, the common LUCK gate, nonnegative rows, at most one nondecreasing filing run and only LUCK
+missions among active ranges. Distinct rows retain their identity even when they share an owner. Mixed mission
+finishes retain zero; unproved or nonmonotone filing schedules retain the unconditional enclosure. Complete command-history drift
+still covers signed apply/undo and retained earlier executions. A native cap containing the actual converted
+terminal score can intersect a fallback cap without increasing its positive conversion excess, so the original
+remainder remains valid.
 
 `native_score_mean_upper(power)` is the first optional Score cap. It reuses that native kernel for terminal
 notes and each rank's historical end Query, using only ordinary commands and Notes filed by that Query. The
@@ -348,18 +448,32 @@ bonus coefficients. Their common stored prefix then cancels, leaving only new fr
 its own Query's prior readiness marker; later markers do not repair a gap.
 
 The range sum, rank bonus with a nonnegative percentage, and final terminal-plus-fixed sum each need an
-independent nonnegative `i32` support proof. Rank expectation uses the outward product of the expected range upper and
-`percent/100`, without flooring that expectation. The plan preserves native pending overwrite, next-Query
-filing offsets and final fixed coefficients. Failure of any rank declines the entire optional whole-score
-upper; successful per-note caps and the fine remainder remain available. A matching whole-score upper skips
-Fine evaluation. The [native cap proof](search.md#native-terminal-note-and-rank-caps) states the cancellation,
-integer arithmetic and retained-prefix conditions.
+independent nonnegative `i32` support proof. The private kernel keeps both native integer endpoints for each
+original note occurrence and weights all four joint masses directly. Historical rank expectation encloses
+the outward product of the expected range interval and `percent/100`, then subtracts an enclosure of the native
+integer-division remainder and intersects with the independent rank support. Neither endpoint floors the
+expectation. The plan preserves native pending overwrite, next-Query filing offsets and final fixed
+coefficients, including coefficient two. Failure of any rank declines the entire optional whole-score
+certificate; successful per-note caps and the fine remainder remain available. A matching whole-score upper
+skips Fine evaluation. The [native expectation proof](search.md#native-terminal-note-and-rank-expectations)
+states the cancellation, integer arithmetic and retained-prefix conditions.
+
+`LuckTerminalRush::terminal_summary(power)` exposes the complete two-sided score expectation, independent
+native integer support and deterministic final life only after this whole-score proof succeeds at exactly the
+prepared power. Only singleton support supplies exact constant-score metadata. This summary covers every
+terminal note and admitted historical rank; it is not a probability law or an exact rational mean merely
+because its interval is narrow. `LuckScoreSession::summary_or_terminal` uses the completed terminal summary
+when available and otherwise calls the existing factor-history scorer. Cancellation returns no summary and
+never becomes a successful fallback. A caller that already prepared an order reuses its complete summary, or
+uses the original scorer after refusal, without repeating a successful preparation.
 
 Preparation and full scoring share one session's recorder cache. Every unfinished order retains its previous
 cap, and `UpperOnly` can return only after the whole 120-order cap sum proves exclusion. It is distinct from a
-complete evaluation and from cancellation. Preparing all 120 orders alone never completes an evaluation;
-`leaves.lotteryUpper` records this work separately from completed simulations. Nonlinear payoff objectives
-continue to use the complete scorer and refinement provider below.
+complete evaluation and from cancellation. Preparing 120 upper-only capabilities does not complete an
+evaluation. In contrast, 120 complete terminal summaries can supply the full uniform expected-score enclosure
+without factor-history replay. Overlapping candidate intervals can still require refinement; neither complete
+summaries nor the `leaves.lotteryUpper` preparation counters alone establish the full-domain ranking or
+`Complete`. Nonlinear payoff objectives continue to use the complete scorer and refinement provider below.
 
 ## Reusing factor histories at another power
 

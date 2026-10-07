@@ -15,10 +15,22 @@ Battle/Arena use the declared room policy and native rank-1 confirmation on rang
 unsupported. LUCK uses certified score laws over the native lottery probabilities; a rank is proved only by separated
 bounds or a verified equal-program certificate. An overlapping frontier remains `RefinementRequired` and unproven.
 
-Live values average all 120 member performance orders. Snaps stay paired with their members. Nonleader layout is
+The default live metric `score` averages all 120 member performance orders. Snaps stay paired with their members. Nonleader layout is
 canonical, with the leader in slot 2. Five fixed member/Snap pairs therefore give at most five teams, one per leader;
 the 120 performance orders never become additional recommended teams. The result preserves the search's order: expected payoff, power, then its
 canonical key. It does not reorder a truncated Top-K under a different secondary objective.
+
+`metric:{"kind":"bestOrderExpectedScore"}` selects a played live's maximum conditional nominal expected
+score over all 120 orders. It accepts no threshold or event-payoff fields and is unavailable for power or skip.
+Each team's `value` describes that complete-order maximum; `bestExpectedOrder` describes an evaluated order
+with `performanceOrder`, `members`, conditional `expectedScore`, `scoreInterval`, `evaluatedOrders`, and
+`optimality`. The order's `optimality` includes the lexicographic slot-order tie in the returned canonical
+`layout`: the leader occupies slot 2, with the other member/Snap pairs sorted into slots 0, 1, 3, 4.
+`members` is that layout's member IDs in `performanceOrder`. This proof is independent of the
+team's `rankCertified` or the result's Top-K proof. Unfinished orders retain conservative bounds when a budget
+expires. The selected performance order is not guaranteed in gameplay. See
+[best conditional order expectation](luck-refinement.md#best-conditional-order-expectation) for the objective,
+complete-domain enclosure and proof contracts.
 
 `metric:{"kind":"challengePoints","eventId":7,"consumption":1}` maximizes newly earned Challenge points from
 an ordinary played or skipped Live. The lower-level search metric is `clientChallengePoints`. It uses the
@@ -54,7 +66,7 @@ Timeout and unresolved-overlap results keep `proven:false`. `value.exact` is a t
 `value.interval` contains certified lower/upper endpoints as exact binary rational fractions. Its integer `score`
 is a downward-rounded display bound when an exact expectation is unavailable. Non-score objectives use the same
 contract under `value.payoff`. `rankCertified` reports whether that team's displayed rank has been established.
-Final deterministic played-live teams include 120 scores and their order statistics. Lottery intervals and progress
+Final deterministic uniform-order played-live teams include 120 scores and their order statistics. Lottery intervals and progress
 omit unavailable exact order scores. A certified rank does not claim that its expectation is known as an exact fraction.
 
 Each progress callback is a complete answer with `final:false`. `recommend` returns `final:true` and is synchronous;

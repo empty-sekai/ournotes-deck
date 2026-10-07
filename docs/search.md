@@ -22,12 +22,14 @@ result, and the complete tie order. The following contracts use different identi
 | `search::search`, Power and Skip score | Power, or the deterministic Skip score with power as its next key | One best representative per set of five member cards | After every Snap ID |
 | `search::search_best_order_diagnostic` | Best performance order for the declared diagnostic objective | One best representative per member set | After every Snap ID |
 | Recommendation facade, Power and deterministic Skip metrics | Declared deterministic payoff, then power | Leader and five member/Snap pairs; nonleader pairs in canonical layout | Before every Snap ID |
-| Recommendation facade, deterministic played Live | Mean terminal payoff over all 120 orders, then power | The same canonical team | Before every Snap ID |
+| Recommendation facade, deterministic played Live with uniform-order metrics | Mean terminal payoff over all 120 orders, then power | The same canonical team | Before every Snap ID |
 | Recommendation facade, LUCK | Expected terminal payoff under the declared order and lottery law | Canonical team, with certified interval ranking | Before every Snap ID |
+| Recommendation facade, `bestOrderExpectedScore` | Maximum conditional expected score over all 120 orders, then power | Canonical team, with an evaluated order witness and separate order optimality | Before every Snap ID |
 | Deterministic `SearchSession` v1 | Its supported deterministic payoff, then power | Five physical member slots and their Snap bindings | Before every Snap ID |
 
-`search::search` accepts Power and Skip; best-order Live optimization is exposed through the explicitly named
-diagnostic entry point. The recommendation facade selects its route in
+`search::search` accepts Power and Skip. Its separate best-order diagnostic retains the member-set representative
+contract, while the recommendation facade's `bestOrderExpectedScore` ranks the complete canonical team domain.
+The recommendation facade selects its route in
 [`handler.rs`](../crates/ournotes-search/src/handler.rs) and
 [`physical.rs`](../crates/ournotes-search/src/search/physical.rs).
 The session's physical-slot contract is specified in [search sessions](search-session.md).
@@ -1842,7 +1844,7 @@ trigger at their frame's time.
 ### LUCK
 
 A LUCK mission decides its lottery with random numbers, so a LUCK chart's outcome is a distribution over draws
-rather than one integer payoff per performance order. Its declared value is
+rather than one integer payoff per performance order. The default uniform-order objective has value
 
     U(t) = (1/120) * sum_{pi in S5} E_{h ~ Q(t,pi)}[payoff(t, pi, h)].
 
@@ -1858,6 +1860,18 @@ This law is distinct from averaging a finite set of seeded `System.Random` execu
 The reported probability-law field is `"lottery":"certifiedNativeLotteryIntervals"`. Exact refinement completes
 all positive-mass paths of an admitted order, or retains the earlier enclosure. Conditional uncertainty over a
 lottery remains separate from the uniform distribution over member orders.
+
+The explicitly declared `bestOrderExpectedScore` objective instead uses
+
+    B(t) = max_{pi in S5} E_{h ~ Q(t,pi)}[score(t, pi, h)].
+
+It keeps the same complete team domain and nominal lottery law. A team enclosure is the maximum of the 120
+order lower endpoints and the maximum of their upper endpoints. An unfinished order contributes its proved
+whole-score cap, and only a completed evaluation can supply the selected order witness. The order witness is
+proven optimal only after every competing order is excluded, with exact equal means using the canonical
+lexicographic order. Completing all 120 intervals does not by itself establish an optimal order when they
+overlap. Team ranking and order optimality are reported separately. See the
+[objective and transport contract](luck-refinement.md) for the physical-slot basis and result fields.
 
 #### Evaluation sessions and cancellation
 
@@ -1880,6 +1894,32 @@ cache. Individual oldest entries are evicted at capacity; duplicates keep their 
 not add to the byte count. A zero allowance, oversized raw key, allocation refusal or size overflow leaves
 independent evaluation available. This storage allowance covers recorder keys and entry slots; it does not
 include the shared probability objects referenced by those entries.
+
+Completed recordings with a life interpreter may also share the request cache. Their key includes the complete
+initialized native life model, including compiled effects, owners, checkers, conversion and damage state.
+Total power remains part of the key unless the score recorder's exhaustive dependency certificate proves
+that no admitted life, judgement or lifecycle reader consumes score. The certificate closes deterministic
+conditions, cumulative values, command writers and frame phases; rank predicates use solo rank 1 or the exact
+external arrival timeline, while range transitions use fever events and the original binary32 stopwatches.
+The proof mode itself is part of key equality. A declined certificate retains exact power.
+Chart notes and events are stored in the exact shared context instead of repeated in each model key.
+The original performer input may be omitted only after its effects are represented by that initialized model;
+different unused performer metadata therefore does not split equal executable states. The reduced lottery model
+and the life model remain separately identified. The reduced model normalizes its unobserved power, while the
+life model uses only the conditional projection proved above. Full byte equality, including floating-point
+identities, decides reuse. An unavailable,
+nonfinite, opaque or oversized identity declines this optional sharing and leaves independent recording available.
+Only completed recordings enter the bounded cache, and cancellation remains distinct from a cache miss.
+
+The deterministic life interpreter also has a separate completed transcript cache. Its identity excludes the
+reduced lottery program, so different admitted lottery writers can share an equal life/judgement history.
+The transcript retains both native phase-life observations for every frame and every converted judgement kind,
+which are the complete outputs consumed by the reduced recorder. Consecutive equal phase observations share a
+run; unchanged judgements are reconstructed from the exact original input. This changes storage rather than
+floating-point execution or effect ordering. A transcript is published only after the associated recording and
+propagation complete successfully. Partial frames, cancellation and capacity refusal publish no transcript.
+The cache holds at most 128 entries and one MiB, further limited by the curve allowance, counting the exact
+scope, identities, entry buffers and all retained transcript vector capacities. Zero capacity disables reuse.
 
 The request's `LuckDpCache` separately identifies a curve by its complete transcript: range templates, lottery
 tables, probes, frame transitions, judged notes, gauge speeds, chance actions and pending draws. Integer words
@@ -1917,8 +1957,9 @@ or power monotonicity is assumed. Numeric refusal and cancellation still return 
 
 Cancellation is checked during recording, probability propagation, score playback and score-bound processing,
 as well as between performance orders and before returning a retained summary. An interrupted summary returns
-no completed value; aggregation requires all 120 distinct orders. Completed cache entries remain valid for later
-evaluations in the same context.
+no completed value; uniform aggregation requires all 120 distinct orders. Best-order aggregation retains the
+full set of pending caps and any already completed witness, without claiming that the interrupted order was
+evaluated. Completed cache entries remain valid for later evaluations in the same context.
 For a request with a time limit, certified warm seeding starts new proposals within the first quarter of the time
 remaining at entry to that phase. An evaluation already in progress retains the full request deadline.
 For cached expected-score requests, legal alternative leaders of the same paired performers are proposed next,
@@ -1930,6 +1971,8 @@ The subsequent traversal retains the complete domain.
 
 Sources: [score sessions](../crates/ournotes-sim/src/live/full/luck_score_bounds.rs),
 [recorder and curve keys](../crates/ournotes-sim/src/live/full/luck_dp.rs),
+[shared initialized-model identity](../crates/ournotes-sim/src/live/full/luck_dp/shared_recording.rs),
+[complete life transcripts](../crates/ournotes-sim/src/live/full/luck_dp/life_recording.rs),
 [power-parameterized factor histories](../crates/ournotes-sim/src/live/full/luck_score_bounds/program.rs),
 [complete recorded replay identity](../crates/ournotes-sim/src/live/full/luck_score_bounds/program/recorded.rs),
 [team score cache](../crates/ournotes-search/src/search/certified_engine.rs),
@@ -1945,7 +1988,7 @@ unexpected random draws and range FINISH, and requires the last score query to h
 note's probability-readiness marker. A later marker cannot retroactively certify an earlier query. Pending rank
 bonuses and external rank snapshots retain the full scoring path. A raw curve supplies no such capability.
 
-A prepared order first tries the [native whole-score upper](#native-terminal-note-and-rank-caps), which proves
+A prepared order first tries the [native whole-score upper](#native-terminal-note-and-rank-expectations), which proves
 its terminal notes and every rank bonus directly. If available at the exact power, it skips the fine-cap
 calculation below. An unavailable optional native upper keeps this fine-cap decomposition as the fallback.
 
@@ -2006,7 +2049,10 @@ All 120 order caps remain represented. Unfinished orders keep their previous cap
 can lower only their own expected-score cap. Exclusion still requires the full cap sum to be strictly below
 the certified cutoff, or equal with lower power, preserving every canonical tie. An upper-only exit has no
 candidate value or score law. Cancellation is separate, and only 120 completed order evaluations produce a
-candidate evaluation. Preparation and full scoring share one session's completed lottery recordings.
+uniform candidate evaluation. A preparation that additionally passes the complete two-sided terminal-score
+proof below may supply its own completed order summary. The scorer transfers that summary instead of replaying
+the same order; an upper-only preparation cannot substitute for an evaluated order. Preparation and fallback
+scoring also share completed lottery recordings.
 Threshold, capped-score, event-PT and final-life objectives keep their full payoff laws.
 
 Sources: [terminal recorder capability](../crates/ournotes-sim/src/live/full/luck_score_bounds/prepass.rs),
@@ -2112,7 +2158,7 @@ Sources: [terminal prefix adapter](../crates/ournotes-sim/src/live/full/luck_sco
 [fine-bound factors](../crates/ournotes-search/src/search/snaps/fine_view.rs),
 [unchanged remainder](../crates/ournotes-search/src/search/snaps/luck_mean.rs).
 
-#### Native terminal note and rank caps
+#### Native terminal note and rank expectations
 
 The same admitted recording can optionally provide `LuckTerminalRush::native_note_bucket_caps(power, times)`.
 Each original `Note` supplies its actual converted judgement, note type and frozen life. For each `(frame, index)`
@@ -2129,7 +2175,7 @@ note cap `b_e` without changing the old remainder: `max(0, T_e-min(b_e,u_e)) = m
 intersection creates no conversion excess for `R` to pay. This argument applies to the complete native note
 kernel; a field-only cap still uses the conversion-budget protections described above.
 
-`LuckTerminalRush::native_score_mean_upper(power)` additionally proves the whole score, including every native
+The whole-score terminal kernel additionally encloses the expectation and integer support of every native
 rank. Its private plan preserves original Query and event ordinals. Each rank requires adjacent start/end
 queries with `0 <= start.to <= end.to`, no intervening note, factor, possible Rush/probe or pending-rank filing,
 and identical complete fixed-bonus identity/coefficient vectors. The earlier stored note prefix and earlier
@@ -2143,32 +2189,51 @@ counts and lifetime magnitudes already cover every earlier execution, so all the
 a later marker cannot repair a historical gap. Raw note identities are retained for these internal sums,
 without the public time-only interface's same-time maximum.
 
-For each rank, direct outward accumulation of the four joint masses gives an upper `m` on the expected new-note
-sum `X`. The separate ceiling `X_max = sum_e max_b u_e,b` must be nonnegative and fit `i32`. Native range score
-is `end.wrapping_sub(start)`; cancellation modulo 2^32 plus this support check establishes the ordinary integer
-`X`, even if the shared snapshot prefix wrapped. For a nonnegative native percentage `p`, the bonus is
-`floor(i128(X)*p/100)`, cast to `i32`. Its support `floor(i128(X_max)*p/100)` must also fit, while its expectation
-is bounded by the outward value `p*m/100`. The expectation is not floored and is not presented as an exact law.
+For each original note occurrence `e` and joint bucket `b`, the native kernel retains both integer endpoints
+`l_e,b <= T_e,b <= u_e,b`. Direct outward accumulation of all four certified masses encloses the expected new-note
+sum `X`. Separately, `sum_e min_b l_e,b` and `sum_e max_b u_e,b` enclose its integer support. This uses linearity
+of expectation and assumes no independence between notes, ranks, probe states or Rush draws. The support must
+be nonnegative and fit `i32`. Native range score is `end.wrapping_sub(start)`; cancellation modulo 2^32 plus
+this support check establishes the ordinary integer `X`, even if the shared snapshot prefix wrapped.
+
+For a nonnegative native percentage `p`, the bonus is `floor(i128(X)*p/100)`, cast to `i32`. Both independently
+truncated support endpoints must also fit. The existing rank operator bounds the expected rounding remainder
+and subtracts its enclosure from the outward interval for `p*E[X]/100`; it then intersects with the integer
+support. Neither endpoint is obtained by flooring the expectation. A singleton support supplies the exact
+constant bonus, while a nonsingleton expectation interval supplies no probability law.
 
 The native pending fixed bonus is last-write-wins until the next Query. When filed at raw, unclamped frame `f`,
 its permanent offset is `o = [f > filing_query.to]`; its coefficient at a later endpoint `t` is `o + [f <= t]`.
 The plan retains these identities and final coefficients, including zero for overwritten pending ranks and the
-possible coefficient two. It rejects an unfiled final rank. The independent ceiling of terminal notes plus
-all final coefficients times rank-support ceilings must fit nonnegative `i32`. Only then does their outward
-expected sum bound the final native score without wrap.
+possible coefficient two. It rejects an unfiled final rank. The independent support of terminal notes plus
+all final coefficients times rank supports must fit nonnegative `i32`. Only then does their outward expected
+sum enclose both endpoints of the final native score without wrap.
 
-Any rank-plan, readiness, kernel or support failure declines this whole-score upper and preserves the earlier
-caps and scorer. `Some` supplies an exclusion upper for one fixed order at the matching power, not a candidate
-value, nonlinear payoff, probability law or `Complete` status. The existing all-order cutoff and canonical
-ranking obligations are unchanged; thresholds, capped scores, PT and final-life payoffs retain their full laws.
+An optional positive probe lower requires an additional proof: each contributing native effect row is consumed
+once, its complete fixed condition is true, all active mission ranges are LUCK, and the admitted filing run
+links its held state to the same probe gate. Equal owners do not collapse distinct rows. Mixed mission finishes
+retain a zero probe lower, and nonmonotone or unproved filing schedules retain their unconditional enclosure.
+The complete trace's drift allowance still covers signed additions, undo and earlier stored executions.
+
+`LuckTerminalRush::terminal_summary(power)` returns a complete score expectation interval, independent integer
+support and deterministic final life only when this whole-score proof succeeds at exactly the prepared power.
+Exact constant score metadata is present only for singleton support. `LuckScoreSession::summary_or_terminal`
+uses that completed summary or falls back to the factor-history evaluator; cancellation cannot become a
+fallback success. Any rank-plan, readiness, kernel or support failure retains the prior scorer.
+
+`native_score_mean_upper(power)` remains a separate exclusion-only capability. Its upper alone is not an
+evaluated order. A complete terminal summary can still require refinement when candidate intervals overlap;
+it does not automatically prove an order, a ranking or `Complete` status. The default all-order and canonical
+ranking obligations are unchanged. Thresholds, capped scores, PT and final-life payoffs retain their full laws.
 
 Sources: [native note kernels](../crates/ournotes-sim/src/live/full/luck_score_bounds/terminal_kernel.rs),
 [historical prefix adapter](../crates/ournotes-sim/src/live/full/luck_score_bounds/terminal_prefix.rs),
 [rank query plan](../crates/ournotes-sim/src/live/full/luck_score_bounds/rank_trace.rs),
-[whole-score expectation upper](../crates/ournotes-sim/src/live/full/luck_score_bounds/native_total.rs),
+[whole-score expectation enclosure](../crates/ournotes-sim/src/live/full/luck_score_bounds/native_total.rs),
 [capability and cancellation](../crates/ournotes-sim/src/live/full/luck_score_bounds/prepass.rs),
 [shared production and diagnostic cap entry](../crates/ournotes-search/src/search/joint.rs),
-[native probability-branch checks](../crates/ournotes-sim/src/live/full/luck_score_bounds/prepass_tests.rs).
+[native probability-branch checks](../crates/ournotes-sim/src/live/full/luck_score_bounds/prepass_tests.rs),
+[independent terminal expectation checks](../crates/ournotes-sim/src/live/full/luck_score_bounds/terminal_expectation_tests.rs).
 
 #### Order and payoff enclosures
 

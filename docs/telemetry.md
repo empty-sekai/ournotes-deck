@@ -161,7 +161,8 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 ### `leaves.lotteryUpper`
 
 期望分目标在已有认证截断值时，准备各出场顺序的终端 Rush／得分探针联合概率律，用来收紧期望分上界。
-完成原生录制与 DP 的能力证明不提供完整得分模拟、候选值或完整收益概率律。
+完成原生录制与 DP 的上界能力本身不提供完整评分或候选值。只有终端音符与全部历史排名的期望上下界、
+独立整数支撑域及最终生命值均获证明时，`terminal_summary` 才提供可复用的完整顺序评分区间；它仍不是完整收益概率律。
 只有观测到共同 LUCK 门控、对应精细上界分解也获接受时，匹配的正向直接探针才可按四个联合概率桶加权。
 其他窗口保留原幅度；满足条件时仍可单独对原生 Rush 倍率加权。完整命令历史的浮点漂移、历史排名及转换预算余量均保留。
 
@@ -177,8 +178,10 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | `prunedTeams` | 仅准备上界就已证明排除的队伍数 |
 | `elapsedMs` | 准备与上界加权耗时；已包含在 `time.simulationMs`，不额外计入互斥耗时 |
 
-这些准备不增加 `leaves.simulations`，也不增加诊断中的完整评分 `evaluations`。
+仅上界准备不增加 `leaves.simulations` 或诊断中的完整评分 `evaluations`。取得完整终局摘要会增加
+`evaluations` 与 `terminalEvaluations`，包括其队伍随后被排除的情形；该计数不表示整队已完成聚合。
 尚未处理的出场顺序保留原上界；`Complete` 仍要求全候选域上的规范排名证明。
+完整终局评分、回退、取消及容量拒绝的四项诊断计数见[英文统计表](telemetry.en.md#diagnostic-native-cap-profile)。
 
 ### 诊断用录制工作量
 
@@ -318,15 +321,23 @@ Combo 与结构校验；DP 和后续因子回放保持各自的阶段。
 `recordingLookups`、`recordingHits` 记录已编译 recorder 的查询与复用次数。`recordingPeakEntries`、`recordingPeakBytes`
 记录 session 中保留的完整身份数及键存储字节数峰值；后者包含共享字节字典、完整原始键或差异编码及条目容器容量，
 不包含共享概率对象或编码期间的临时分配。每次命中仍比较完整键的所有字节。
-`sharedRecordingLookups`、`sharedRecordingHits` 记录独立请求级缓存的查询与命中，仅复用无需生命值解释器的完整录制。
-复用同时要求原录制键及完整拥有的上下文相等，后者包括初始模型、谱面、判定、设置与排名输入；只有不计算分数的约简解释器
-可以归一化初始合力。`sharedRecordingScopeBuilds`、`sharedRecordingScopeBytes`、`sharedRecordingScopeDeclines`
+`sharedRecordingLookups`、`sharedRecordingHits` 记录完整录制的独立请求级缓存查询与命中。
+复用同时要求完整编译录制键及完整拥有的上下文相等，后者包括初始模型、谱面、判定、设置与排名输入。
+通过确定性检查的生命值解释器保留初始状态；仅当现有评分 recorder 的完整依赖检查证明生命值、判定转换及技能生命周期
+均不读取分数时，才可以省略初始合力，否则保留实际值。证明模式本身参与键相等性比较。不计算分数的约简解释器始终可以归一化初始合力。
+`sharedRecordingScopeBuilds`、`sharedRecordingScopeBytes`、`sharedRecordingScopeDeclines`
 分别记录上下文构造次数、成功编码字节总量及可选构造拒绝；`sharedRecordingScopeMs` 是包含在 `recordMs` 内的诊断计时。
 `sharedRecordingKeyDeclines`、`sharedRecordingCapacityDeclines` 分别记录身份键与保留容量的拒绝。
 `sharedRecordingPeakEntries`、`sharedRecordingPeakBytes` 是该独立缓存的条目与字节峰值，最多 128 条、1 MiB，并受曲线缓存
 配置容量限制；字节数包含拥有的上下文、完整键、条目容器容量及各个不同的共享概率对象分配一次，不是进程 RSS，也不包含
 原 session 缓存或编码临时分配。两张表可能保留同一录制身份。不满足条件时沿用原 session 缓存及录制流程；容量拒绝不改变
 概率结果或完成状态。
+`lifeRecordingLookups`、`lifeRecordingHits` 记录不同约简抽签行之间完整生命值与判定轨迹的查询与复用，
+要求完整的已证明生命值身份、合力证明模式及拥有的上下文相等。轨迹保留每帧两个阶段的生命值与所有判定转换；仅对连续相同的生命值观测
+以及未改变的判定做无损压缩。`lifeRecordingDeclines` 记录完整轨迹因可选缓存容量而未被保留的次数。
+`lifeRecordingPeakEntries`、`lifeRecordingPeakBytes` 描述另一项独立的最多 128 条、1 MiB 容量，亦受曲线缓存配置限制；
+字节数包含拥有的上下文、完整身份键、字典、条目容器容量及所有保留轨迹的向量容量。部分完成或取消的录制不会入表，
+容量为 0 时释放该表保留的存储。
 `summaryLookups`、`summaryHits` 记录初始模型
 相等时完整评分摘要的查询与复用次数；`summaryPeakEntries`、`summaryPeakBytes` 记录观察到的 session 缓存条目数和字节数峰值。
 `programLookups`、`programHits` 记录因子历史程序按初始模型键的查询与复用次数，总合力作为重新计算的参数。
