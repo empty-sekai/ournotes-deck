@@ -2689,3 +2689,5 @@ mod maximum_deck_payoff;
 mod maximum_luck_payoff;
 #[path = "fixtures/maximum_matrix.rs"]
 mod maximum_matrix;
+#[path = "fixtures/maximum_power_cap.rs"]
+mod maximum_power_cap;

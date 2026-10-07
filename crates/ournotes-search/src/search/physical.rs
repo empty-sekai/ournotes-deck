@@ -1081,7 +1081,8 @@ pub(crate) fn solve_physical_impl(
         }
         match strategy {
             Strategy::Exhaustive | Strategy::BranchAndBound if live && plan.aggregation == Aggregation::Maximum => {
-                let ranked = if let Some(bounds) = plan.deck_payoff.as_ref().filter(|bounds| !bounds.bounded_only()) {
+                let mut ranked = if let Some(bounds) = plan.deck_payoff.as_ref().filter(|bounds| !bounds.bounded_only())
+                {
                     // A deck-determined payoff ranks the same physical teams under either aggregation.
                     // Each retained team still passes through maximum evaluation to materialize its score and order.
                     engine.tel.environment.traversal = Traversal::Joint;
@@ -1092,6 +1093,25 @@ pub(crate) fn solve_physical_impl(
                 } else {
                     false
                 };
+                if !ranked
+                    && matches!(strategy, Strategy::BranchAndBound)
+                    && matches!(
+                        metric,
+                        Metric::ScoreAtLeast { .. } | Metric::ScoreAndLifeAtLeast { .. } | Metric::CappedScore { .. }
+                    )
+                    && !engine.expired()
+                {
+                    engine.rec.begin(&mut engine.tel, "setup", Some("maximumPowerCap".into()));
+                    let bounds =
+                        super::deck_payoff::DeckPayoffBounds::compile_upper_only(pool, request, &plan.domain, metric);
+                    engine.rec.end(&mut engine.tel);
+                    if let Ok(bounds) = bounds {
+                        engine.tel.environment.traversal = Traversal::Joint;
+                        engine.rec.begin(&mut engine.tel, "search", Some("maximumPowerCap".into()));
+                        ranked = deck_payoff_search::solve_upper_only(&plan.domain, &bounds, &mut engine)?;
+                        engine.rec.end(&mut engine.tel);
+                    }
+                }
                 if !ranked {
                     engine.rec.frontier.clear();
                     engine.tel.environment.traversal =
