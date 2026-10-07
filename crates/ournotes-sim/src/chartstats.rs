@@ -807,7 +807,7 @@ pub fn chart_stats_with(
     Ok(out)
 }
 
-/// Every chart of a deck data file, in score-id order, as `ournotes-deck.chart-stats/3`.
+/// Every chart of a deck data file, in input chart order, as `ournotes-deck.chart-stats/3`.
 /// `replay_seeds` defaults to [`REPLAY_SEEDS`].
 pub fn document(data: &DeckData, replay_seeds: Option<usize>) -> Result<serde_json::Value, Error> {
     document_with(data, &Options { replay_seeds: replay_seeds.unwrap_or(REPLAY_SEEDS), ..Options::default() })

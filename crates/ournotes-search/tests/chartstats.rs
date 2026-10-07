@@ -746,6 +746,7 @@ fn check_chance_aptitude(d: &DeckData, gate: ChanceGate, missions: [i64; 3], che
     assert_eq!(aptitude.variants.len(), 1);
     let variant = &aptitude.variants[0];
     checked(&variant.check);
+    assert!(variant.range_weights.is_some());
     assert_eq!(variant.converted, [0.0; 2]);
     assert!(variant.ranges.iter().all(|range| range.max_combo == [0.0; 2] && range.just_count == [0.0; 2]));
     for perfect in [false, true] {
@@ -810,6 +811,45 @@ fn aptitude_probability_checks_repeat_independently_at_separate_range_starts() {
     let baseline = chance_mean(&d, gate, [1, 1, 3], false, None, false);
     let with = chance_mean(&d, gate, [1, 1, 3], true, None, false);
     assert!(with.ranges.iter().zip(baseline.ranges).all(|(with, base)| with[0] > base[0]));
+}
+
+#[test]
+fn rank_triggered_aptitude_encloses_the_complete_solo_measurement() {
+    let mut d = chance_data(&APT_FEVERS, ChanceGate::Single(100, true), [1, 2, 3]);
+    let condition = d.master.skill_conditions.iter_mut().find(|row| row.id == 900).unwrap();
+    condition.condition_type = 7012;
+    condition.condition_values = vec![1];
+    for set in d.master.skill_condition_sets.iter_mut().filter(|set| set.group == 900) {
+        set.condition_ids = vec![900];
+    }
+    d.master.gekisou_skills.iter_mut().find(|skill| skill.id == 1).unwrap().gekisou_mission_type = 4;
+    d.master.reindex().unwrap();
+    let kinds = chartstats::kinds(&d.master);
+    let plain = kinds.iter().find(|kind| kind.effect_type == 2000 && kind.skill_condition_group == 0).unwrap();
+    let stats = chartstats::chart_stats_with(
+        &d.master,
+        &d.charts[0],
+        std::slice::from_ref(plain),
+        &chartstats::Options { replay_seeds: 1, ..Default::default() },
+    )
+    .unwrap();
+    let variant = &stats.gekisou_aptitude.as_ref().unwrap().variants[0];
+    checked(&variant.check);
+    assert!(variant.weights.is_some());
+    assert!(variant.range_weights.is_none());
+    assert_eq!(variant.check.ranks, Some(vec![1; APT_FEVERS.len()]));
+    for perfect in [false, true] {
+        let baseline = aptitude_run(&d, None, 0, perfect).0;
+        let measured = aptitude_run(
+            &d,
+            Some(Performer { gekisou_skill: Some((1, 3)), gekisou_mission_type: 4, ..Default::default() }),
+            0,
+            perfect,
+        )
+        .0;
+        assert!(measured > baseline);
+        encloses_chance(if perfect { variant.score_perfect } else { variant.score }, f64::from(measured - baseline));
+    }
 }
 
 /// A complete LUCK law after replacing the one SKILL comparison with a fixed Boolean answer. Both

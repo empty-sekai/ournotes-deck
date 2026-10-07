@@ -11,6 +11,10 @@ use crate::live::certified::{F32Interval, F64Interval, I32Interval, ProbabilityM
 use crate::live::score::get_luck_factor_percent;
 use serde::Serialize;
 
+#[cfg(test)]
+mod owner_order_tests;
+#[cfg(test)]
+mod probe_lifecycle_tests;
 #[cfg(feature = "search-diagnostics")]
 mod profile;
 mod replay;
@@ -360,7 +364,7 @@ fn fixed_predicate(checker: &Checker) -> bool {
 /// Therefore every lottery path has the recorder's identical converted judgements, life, combo inputs, ordinary
 /// command filings and effect values. The DP life recorder retains these writers and consumes the same converted
 /// results. A sampled agreement is not the authority for exact_final_life or the ordinary score command history.
-fn check_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<(), Error> {
+pub(super) fn check_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<(), Error> {
     check_recorder_mode(model, skills, false)
 }
 
@@ -378,6 +382,7 @@ fn recorded_predicate(checker: &Checker, conditioned: bool) -> bool {
 }
 
 fn check_recorder_mode(model: &LiveModel, skills: &LuckSkills, conditioned: bool) -> Result<(), Error> {
+    luck_dp::check_model_state_identities(model)?;
     // AddCommand invalidates all four native cache fields, so extra reads preserve the command-log
     // semantics at a constant cap. UpdateLifeMax deliberately does not invalidate: a read before a
     // max change can retain an old-cap recovery. A single reference path cannot certify that domain
@@ -444,6 +449,95 @@ fn check_recorder_mode(model: &LiveModel, skills: &LuckSkills, conditioned: bool
         }
     }
     Ok(())
+}
+
+/// Bind the shared direct-probe class to the native effect lifetime. Fixed-false rows have no holder;
+/// every retained row needs the same legal phase and an extra condition that is proved true.
+pub(super) fn bind_probe_phase(model: &LiveModel, skills: &LuckSkills) -> bool {
+    let related: FxHashSet<_> =
+        model.luck_score_rows(skills).iter().filter(|row| row.may_hold).map(|row| row.row).collect();
+    let mut phase = None;
+    model.cond.iter().flat_map(|skill| skill.updater.effects()).filter(|effect| related.contains(&effect.row)).all(
+        |effect| {
+            matches!(effect.phase, 1 | 2)
+                && *phase.get_or_insert(effect.phase) == effect.phase
+                && effect.condition.as_ref().is_none_or(|condition| luck_dp::fixed_condition(condition) == Some(true))
+        },
+    )
+}
+
+/// A probe that is off and stays off at every skill boundary after music end files no clamped inverse.
+/// Certify that tail against the complete native frame clock and its normal/clamped observer schedule.
+fn check_probe_music_boundary(
+    frame_times: &[i32],
+    curve: &LuckDpCertifiedResult,
+    music_length_ms: i32,
+    phase_bound: bool,
+    trace: &BoundsTrace,
+) -> Result<(), Error> {
+    if music_length_ms <= 0 || trace.probes.is_empty() || !frame_times.iter().any(|&time| time > music_length_ms) {
+        return Ok(());
+    }
+    let unsupported = || refuse("score probe lifetimes beyond music end need a certified inactive tail");
+    if !phase_bound
+        || curve.probe_transitions.len() != frame_times.len()
+        || curve.probe_transitions.iter().any(|&mask| !(1..=15).contains(&mask))
+        || frame_times.windows(2).any(|times| times[0] >= times[1])
+        || frame_times
+            .iter()
+            .zip(&curve.probe_transitions)
+            .any(|(&time, &mask)| time > music_length_ms && mask != 0b0001)
+    {
+        return Err(unsupported());
+    }
+    let last = i32::try_from(trace.frames).ok().filter(|&frames| frames > 0).ok_or_else(unsupported)? - 1;
+    let mut events = trace.events.iter().filter_map(|event| match event {
+        BoundsEvent::Probe { frame, time_ms } => Some((*frame, *time_ms)),
+        _ => None,
+    });
+    for &time in frame_times {
+        let score_frame = get_frame(time).min(last) as usize;
+        if events.next() != Some((score_frame, time)) {
+            return Err(unsupported());
+        }
+        if music_length_ms > 0 && time > music_length_ms {
+            let score_frame = get_frame(music_length_ms).min(last) as usize;
+            if events.next() != Some((score_frame, music_length_ms)) {
+                return Err(unsupported());
+            }
+        }
+    }
+    if events.next().is_some() {
+        return Err(unsupported());
+    }
+    Ok(())
+}
+
+/// Probe filing order follows native phases, condition-skill order and each updater's signed effect key. The
+/// replay's stable owner sort retains this order for probes with equal owners.
+pub(super) fn probes_in_native_order(model: &LiveModel, skills: &LuckSkills) -> Result<Vec<ProbeRow>, Error> {
+    let mut rows: FxHashMap<_, _> = model
+        .luck_score_rows(skills)
+        .into_iter()
+        .filter(|row| row.may_hold)
+        .map(|row| (row.row, ProbeRow { owner: row.owner, value: row.value }))
+        .collect();
+    let mut probes = Vec::with_capacity(rows.len());
+    for phase in PHASES {
+        for skill in &model.cond {
+            let mut effects: Vec<_> = skill.updater.effects().iter().filter(|effect| effect.phase == phase).collect();
+            effects.sort_by_key(|effect| effect.effect_id);
+            for effect in effects {
+                if let Some(row) = rows.remove(&effect.row) {
+                    probes.push(row);
+                }
+            }
+        }
+    }
+    if !rows.is_empty() {
+        return Err(refuse("a score probe has no supported native phase order"));
+    }
+    Ok(probes)
 }
 
 fn f32_real(value: F32Interval) -> F64Interval {
@@ -1010,6 +1104,7 @@ fn luck_score_bounds_internal(
         probability
     } else if !has_luck {
         std::sync::Arc::new(LuckDpCertifiedResult {
+            probe_transitions: vec![1; play.frames.len()],
             steps: Vec::new(),
             probes: vec![false; skills.shapes.len()],
             range_moments: if collect_moments {
@@ -1046,12 +1141,7 @@ fn luck_score_bounds_internal(
     };
     #[cfg(feature = "search-diagnostics")]
     let curve_dp_ms = phase_start.elapsed().as_secs_f64() * 1e3;
-    let probes: Vec<_> = model
-        .luck_score_rows(skills)
-        .into_iter()
-        .filter(|row| row.may_hold)
-        .map(|row| ProbeRow { owner: row.owner, value: row.value })
-        .collect();
+    let probes = probes_in_native_order(&model, skills)?;
     if probes.iter().any(|row| !row.value.is_finite() || row.value <= i32::MIN as f32 / 100000f32) {
         return Err(refuse("a direct score command cannot be safely paired with its signed inverse"));
     }
@@ -1075,6 +1165,7 @@ fn luck_score_bounds_internal(
         return Err(refuse("Rush factor may wrap"));
     }
     model.set_luck_weights(skills, Vec::new())?;
+    let probe_phase_bound = bind_probe_phase(&model, skills);
     model.score.begin_bounds(
         probes,
         setup.missions.iter().take(setup.fevers.len()).any(|&mission| mission == gekisou::M_LUCK),
@@ -1103,7 +1194,8 @@ fn luck_score_bounds_internal(
         calc,
         rush_percent,
         probability,
-        play.frames.len(),
+        play,
+        probe_phase_bound,
         setup.fevers.len(),
         ranking.is_none() || counterfactual_solo,
         details,
@@ -1127,7 +1219,8 @@ pub(super) fn complete_bounds_recording(
     calc: LiveScoreCalculator,
     rush_percent: i32,
     probability: std::sync::Arc<LuckDpCertifiedResult>,
-    frames: usize,
+    play: &LivePlay,
+    probe_phase_bound: bool,
     ranges_len: usize,
     rank_queries: bool,
     details: bool,
@@ -1138,7 +1231,12 @@ pub(super) fn complete_bounds_recording(
         return Err(refuse("terminal query precedes a range FINISH"));
     }
     let trace = model.score.bounds_trace.take().expect("bounds recorder enabled");
-    let query_limit = (frames as u64)
+    let frame_times: Vec<_> = model.trace.iter().map(|&(time, _)| time).collect();
+    if !frame_times.iter().copied().eq(play.frames.iter().map(|frame| frame.time_ms)) {
+        return Err(refuse("the completed recorder frame clock differs from the probability recording"));
+    }
+    check_probe_music_boundary(&frame_times, &probability, model.music_length_ms, probe_phase_bound, &trace)?;
+    let query_limit = (play.frames.len() as u64)
         .checked_mul(2)
         .and_then(|value| value.checked_add(if rank_queries { 2 * ranges_len as u64 } else { 0 }))
         .ok_or_else(|| Error::Capacity("score query count overflow".into()))?;
@@ -1492,7 +1590,7 @@ mod tests {
         assert!(deterministic(&Checker::LifeAtLeast(Some(700))));
     }
 
-    fn fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
+    pub(super) fn fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
         let lots: Vec<_> =
             (0..5).map(|kind| json!({"_id":kind+1,"_chanceLotType":kind,"_lotResult":3,"_weight":1})).collect();
         let tables = json!({

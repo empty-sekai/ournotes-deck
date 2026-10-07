@@ -26,7 +26,7 @@ const HOST_SKILL_BASE: i64 = -1000;
 const APT_CHECK_SALT: u64 = 0x6170_745f_6368_6563;
 const APT_RANK_SALT: u64 = 0x6170_745f_7261_6e6b;
 pub const HOST: &str = "each shape alone on one performer, other positions empty; support skills paired with an effect-free member Gekisou skill of the same mission; member-target conditions measured both ways";
-pub const MODEL: &str = "every Gekisou skill shape of the chart's missions measured alone under independent nominal lottery and skill probabilities; expected increments with minus without as [center, outward interval half-width] on the best and Perfect plays; tail = score - sum(rangeScore + rankBonus); plain-kind weights and rangeWeights are expected cross terms; each variant checked against a full expectation of a random plain deck at fixed ranks and checkPower within the flooring bound; indicators use deterministic judgement counters and expected lottery points; partial Just rates interpolate the no-live-skill increments, while plain-skill cross weights use the best play";
+pub const MODEL: &str = "every Gekisou skill shape of the chart's missions measured alone at solo rank 1 under independent nominal lottery and skill probabilities; expected increments with minus without as [center, outward interval half-width] on the best and Perfect plays; tail = score - sum(rangeScore + rankBonus); plain-kind weights are expected cross terms at rank 1; rangeWeights require linear ranges and a shape independent of confirmed rank; each variant checked against a full expectation of a random plain deck at checkPower within the flooring bound, using fixed ranks in that linear domain and rank 1 elsewhere; indicators use deterministic judgement counters and expected lottery points; partial Just rates interpolate the no-live-skill increments, while plain-skill cross weights use the best play";
 
 /// A skill condition of a shape's effect.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -171,6 +171,7 @@ pub struct Variant {
     #[serde(serialize_with = "super::expectation::serialize_optional_weights")]
     pub weights: Option<Vec<Estimate>>,
     #[serde(serialize_with = "super::expectation::serialize_optional_matrix")]
+    /// Expected range cross terms when the ranges are linear and the shape is independent of confirmed rank.
     pub range_weights: Option<Vec<Vec<Estimate>>>,
     pub check: ExpectationCheck,
 }
@@ -460,6 +461,17 @@ pub(super) struct Inputs<'a> {
     pub judged: i32,
 }
 
+fn reads_confirmed_rank(shape: &Shape) -> bool {
+    shape.effects.iter().any(|effect| {
+        [&effect.trigger, &effect.condition, &effect.release, &effect.reset]
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|condition| condition.condition_type == super::CONDITION_CONFIRMED_RANK)
+            || effect.cumulative.as_ref().is_some_and(|c| c.cumulative_type == super::CONDITION_CONFIRMED_RANK)
+    })
+}
+
 pub(super) fn chart_aptitude(
     live: &Live<'_>,
     kinds: &[Kind],
@@ -475,6 +487,7 @@ pub(super) fn chart_aptitude(
     let none = vec![None; live.positions];
     let mut variants = Vec::new();
     for shape in shapes.iter().filter(|s| s.mission == 4 || infos.iter().any(|r| r.mission == s.mission)) {
+        let linear = inp.linear && !reads_confirmed_rank(shape);
         let bands = if shape.band_condition { vec![Some(true), Some(false)] } else { vec![None] };
         for band in bands {
             let p = performer(&master, shape, band)?;
@@ -512,7 +525,7 @@ pub(super) fn chart_aptitude(
             }
             let mut weights = plain.map(|_| vec![[0.0; 2]; live.positions]);
             let mut range_weights =
-                (plain.is_some() && inp.linear).then(|| vec![vec![[0.0; 2]; infos.len()]; live.positions]);
+                (plain.is_some() && linear).then(|| vec![vec![[0.0; 2]; infos.len()]; live.positions]);
             if let Some(plain) = plain {
                 for k in 0..live.positions {
                     let mut live_skills = none.clone();
@@ -540,14 +553,14 @@ pub(super) fn chart_aptitude(
             let mut rng = Rng(APT_CHECK_SALT ^ salt);
             let mut rank_rng = Rng(APT_RANK_SALT ^ salt);
             let ranks: Vec<_> =
-                infos.iter().map(|_| if inp.linear { 1 + rank_rng.below(super::RANKS) as i32 } else { 1 }).collect();
+                infos.iter().map(|_| if linear { 1 + rank_rng.below(super::RANKS) as i32 } else { 1 }).collect();
             let usable: Vec<_> = plain.into_iter().collect();
             let (deck, rows) = check_deck(kinds, &usable, live.positions, &mut rng);
             let check_master = Live::master_with(&master, &rows);
             let mut baseline = interval(inp.base.score);
             let mut gain = score;
             let mut shifts = vec![0.0; infos.len()];
-            if inp.linear {
+            if linear {
                 gain = tail;
                 for (i, ((base, info), &rank)) in inp.base.ranges.iter().zip(infos).zip(&ranks).enumerate() {
                     let pr = info.percent(rank)? as f64 / 100.0;

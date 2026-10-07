@@ -226,6 +226,7 @@ impl<'a, 'm> Evaluator<'a, 'm> {
                     )?
                 } else {
                     LuckDpCertifiedResult {
+                        probe_transitions: vec![1; play.frames.len()],
                         steps: Vec::new(),
                         probes: vec![false; self.skills.shapes.len()],
                         range_moments: vec![LuckRangeMoments::default(); g.setup.fevers.len()],

@@ -1268,6 +1268,7 @@ mod luck_certified_tests {
     fn result() -> LuckDpCertifiedResult {
         let tenth = ProbabilityMass::from_ratio(1, 10).unwrap();
         LuckDpCertifiedResult {
+            probe_transitions: Vec::new(),
             steps: vec![(123, [tenth, tenth, tenth, ProbabilityMass::from_ratio(7, 10).unwrap()])],
             probes: vec![true],
             range_moments: Vec::new(),

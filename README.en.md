@@ -280,7 +280,7 @@ measured both with `bandMatch: true` and `false`. Each support skill uses a **sy
 skill** of its own mission as host. Each measurement includes one member or support skill alone through the
 whole-live engine.
 
-Each variant's `score`, `scorePerfect`, `tail`, `tailPerfect`, `converted` and range increments use
+Each variant uses solo rank 1. Its `score`, `scorePerfect`, `tail`, `tailPerfect`, `converted` and range increments use
 `[center, interval half-width]`. Score increments subtract the no-skill expectation from the with-skill
 expectation at `model.power`. `score` and `scorePerfect` use their respective best-play and Perfect-play
 baselines, including their own `rankBonus` and `rankBonusPerfect`. Counts proven independent of the lotteries,
@@ -292,10 +292,12 @@ counts, entering combos and `lotteries`, the expected number of baseline lottery
 
 `weights` gives the change in the plain ordinary kind's weight at each performance position; `rangeWeights`
 gives its change within each range. These cross weights measure the interaction of that ordinary skill factor
-with the isolated Gekisou shape, rather than a complete formation's weights. Both are null without a plain kind;
-`rangeWeights` is also null outside the linear range domain. Each variant's `check` compares the prediction with
-the full nominal expectation of an ordinary-skill deck at another power and fixed ranks, subject to the same
-interval and flooring checks.
+with the isolated Gekisou shape. Both are null without a plain kind. `rangeWeights` is available for linear ranges
+when the shape's trigger, condition, release, reset and cumulative predicates are independent of confirmed rank
+(7012); it is null elsewhere. A shape reading confirmed rank retains its rank-1 score increments and ordinary
+cross weights. Its `check` uses rank 1. Within the linear rank domain, `check` compares a prediction at fixed ranks
+with the full nominal expectation of an ordinary-skill deck at another power, subject to the same interval and
+flooring checks. Rank-dependent shape measurements apply to the declared rank-1 scenario.
 
 **Model limits:**
 
@@ -305,11 +307,14 @@ interval and flooring checks.
 - The theoretical best play has no Great or Miss: combo protection 12004, Great-to-Perfect 12006 and judgement
   window extension 4004 have zero effect here. Just-count effects 13000/13002 and luck-point effect 11002 can change
   range indicators without increasing score. Shapes of other missions are gated off and omitted on this chart.
-- Ordinary-skill factors and rank changes use the linear formula, with rank rounding differences checked by
+- Ordinary-skill factors and rank changes within the linear rank domain use the linear formula, with rank rounding differences checked by
   `check`. Below 100% Just, interpolation of the no-ordinary-skill increment between Just and Perfect plays is
   approximate: conversion 13005, per-Just support 2001 and Just-count effect 13002 are nonlinear. Perfect-play
   cross weights are not measured, so full aptitude with nonzero ordinary skills is unavailable below 100% Just.
   Scaling by `1 − 0.2q` for Great proportion q is also approximate.
+- Certified score intervals require distinct effect-state identities. Sustained direct score probes beyond a
+  positive music length require an inactive tail proved at every original frame, consistent native phase order
+  and a complete recorder clock. Inputs outside these domains or the complete-order work budget return an error.
 
 These interpolation and scaling limits concern statistical summaries. A declared per-note play uses the shared
 `replay` API with its actual frame order, skills and seed; see the [model contract](docs/native-validation.en.md#calculation-contract-of-the-shared-model).

@@ -8,11 +8,7 @@ use std::{rc::Rc, sync::Arc};
 
 use super::{
     GekisouSetup, LiveModel, LiveNote, LiveParams, LivePlay, LuckDpCertifiedResult, LuckRangeScoreBounds,
-    LuckScoreExpectation, LuckSkills, Performer, RealBounds,
-    conditions::Checker,
-    gekisou,
-    luck_score_bounds::{self, ProbeRow},
-    setting,
+    LuckScoreExpectation, LuckSkills, Performer, RealBounds, conditions::Checker, gekisou, luck_score_bounds, setting,
 };
 use crate::{
     Error,
@@ -249,12 +245,7 @@ pub(crate) fn nominal_score_expectation_for_chart(
         return Err(unsupported("model initialization consumed an unhandled draw"));
     }
     condition_score_model(&mut fresh, skills)?;
-    let probes: Vec<_> = fresh
-        .luck_score_rows(skills)
-        .into_iter()
-        .filter(|r| r.may_hold)
-        .map(|r| ProbeRow { owner: r.owner, value: r.value })
-        .collect();
+    let probes = luck_score_bounds::probes_in_native_order(&fresh, skills)?;
     if probes.iter().any(|row| !row.value.is_finite() || row.value <= i32::MIN as f32 / 100000f32) {
         return Err(unsupported("a direct score command cannot be safely paired with its signed inverse"));
     }
@@ -279,6 +270,7 @@ pub(crate) fn nominal_score_expectation_for_chart(
     }
     let has_luck = setup.missions.iter().take(setup.fevers.len()).any(|&m| m == gekisou::M_LUCK);
     fresh.set_luck_weights(skills, Vec::new())?;
+    let probe_phase_bound = luck_score_bounds::bind_probe_phase(&fresh, skills);
     fresh.score.begin_bounds(probes, has_luck);
     fresh.set_random(LiveRandom::with_nominal_skill_prefix());
     let mut pending = vec![(Vec::<bool>::new(), ProbabilityMass::ONE, 0usize, Rc::new(fresh))];
@@ -337,7 +329,8 @@ pub(crate) fn nominal_score_expectation_for_chart(
             calc.clone(),
             rush_percent,
             probability.clone(),
-            play.frames.len(),
+            play,
+            probe_phase_bound,
             setup.fevers.len(),
             true,
             false,

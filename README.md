@@ -209,16 +209,21 @@ ournotes-deck chart-stats --data deck-data.json [--seeds 8] [--charts ID,...] [-
 单技能适性由文件级 `gekisouAptitude` 的 `plainKind`、`host`、`law`、`shapes` 与每张谱面的 `factors`、`variants` 给出。
 形状按来源、任务与效果参数去重；成员技能取最高等级，小卡支援技能取最高突破的等级。
 仅差乐队目标的支援技能共享形状，保留各技能的成员目标和乐队，并分别测匹配、不匹配两种情况。
-支援技能使用同任务的合成空成员技能作为宿主。每次只带一个形状，增量由「有技能期望 − 无技能期望」得到。
+支援技能使用同任务的合成空成员技能作为宿主。每次只带一个形状，按单人第 1 名测量，增量由「有技能期望 − 无技能期望」得到。
 
 变体包含 `score`、`scorePerfect`、`tail`、`tailPerfect`、`converted`、各区间增量、普通 kind 的交叉权重和期望校验。
 全部数值用 `[中心, 区间半宽]` 表示；证明独立的计数半宽为 0。
 `tail = Δscore − Σ(ΔrangeScore + ΔrankBonus)` 包含技能延续到区间外的收益，Perfect 端使用对应 Perfect 字段。
 `factors.lotteries` 表示基线消耗的抽签次数期望。交叉权重测普通技能因子与该形状的相互作用。
+`rangeWeights` 适用于区间线性、且形状的触发、条件、释放、重置和累计判定都独立于确定名次（7012）的情况，其他情况为 null。
+读取确定名次的形状保留第 1 名的得分增量和普通技能交叉权重，`check` 按各段第 1 名校验，测量值适用于该名次场景。
+在线性名次域内，`check` 使用给定的固定名次与完整期望对照。
 
 多个形状的增量不能相加来估计完整编成，连击封顶、幸运槽、Rush 与 Just 触发会互相影响。
 普通技能的交叉权重只测最佳打法；低于 100% Just 时仅能插值无普通技能的 Just / Perfect 端点。
 Just 率插值和 Great 比例缩放是统计摘要的近似使用方式，完整逐音符结果通过共享 `replay` API 按帧和种子计算。
+得分证明区间要求效果状态标识互不冲突。持续的直接得分效果在正数音乐长度之后，需要逐原始帧证明尾部保持未激活、
+原生执行阶段顺序一致且录制时钟完整。超出这些支持域或完整顺序枚举容量的输入会返回错误。
 
 库调用使用 `chart_stats_with` / `document_with` 与 `Options { replay_seeds, aptitude }`。
 `aptitude: false` 关闭适性；无谱面的输入也可生成形状表，或调用 `aptitude_header(master, kinds)`。

@@ -164,7 +164,7 @@ impl Replay {
     pub(crate) fn new(frames: usize, rows: &[ProbeRow]) -> Self {
         let mut rows = rows.to_vec();
         rows.sort_by_key(|row| row.owner);
-        let row_steps = vec![steps(&[], &rows, true)];
+        let row_steps = vec![steps(&[], &rows)];
         Self {
             frames: vec![Frame::default(); frames],
             notes: Vec::new(),
@@ -368,10 +368,10 @@ impl Replay {
                 (_, Some(t)) => {
                     let end = ops[op..].partition_point(|o| o.time == t);
                     let group = &ops[op..op + end];
-                    let variants = if group.is_empty() { None } else { Some(variants(group, &self.rows)) };
+                    let variants = if group.is_empty() { None } else { Some(variants(group, &self.rows)?) };
                     let variants = variants.as_deref().unwrap_or(&self.row_steps);
                     let stay: Vec<Step> = group.iter().map(|op| Step::Command(op.deltas)).collect();
-                    let mut next = Vec::with_capacity(paths.len() * (1 + variants.len()));
+                    let mut next = Vec::with_capacity(paired_capacity(paths.len(), variants.len())?);
                     for path in &paths {
                         let mut kept = *path;
                         kept.apply(&stay, 1.0);
@@ -442,10 +442,10 @@ impl Replay {
                 (_, Some(t)) => {
                     let end = ops[op..].partition_point(|o| o.time == t);
                     let group = &ops[op..op + end];
-                    let variants = if group.is_empty() { None } else { Some(variants(group, &self.rows)) };
+                    let variants = if group.is_empty() { None } else { Some(variants(group, &self.rows)?) };
                     let variants = variants.as_deref().unwrap_or(&self.row_steps);
                     let stay: Vec<Step> = group.iter().map(|op| Step::Command(op.deltas)).collect();
-                    let mut next = Vec::with_capacity(paths.len() * (1 + variants.len()));
+                    let mut next = Vec::with_capacity(paired_capacity(paths.len(), variants.len())?);
                     for path in &paths {
                         let mut kept = *path;
                         kept.apply(&stay, 1.0);
@@ -525,7 +525,7 @@ impl Replay {
                     if probe_time == Some(t) {
                         let end = ops[op..].partition_point(|o| o.time == t);
                         let group = &ops[op..op + end];
-                        let variants = if group.is_empty() { None } else { Some(variants(group, &self.rows)) };
+                        let variants = if group.is_empty() { None } else { Some(variants(group, &self.rows)?) };
                         let variants = variants.as_deref().unwrap_or(&self.row_steps);
                         state = transition(state, group, variants)?;
                         for row in &mut sums {
@@ -679,23 +679,108 @@ fn transition(state: Classes, group: &[Op], variants: &[Vec<Step>]) -> Result<Cl
     Ok(out)
 }
 
-/// The orders of a probe time's commands. An ordinary command and a row of the same owner have no recorded filing
-/// order, so both orders are kept.
-fn variants(group: &[Op], rows: &[ProbeRow]) -> Vec<Vec<Step>> {
-    let tied = group.iter().any(|op| rows.iter().any(|row| row.owner == op.owner));
-    let mut out = vec![steps(group, rows, true)];
-    if tied {
-        out.push(steps(group, rows, false));
-    }
-    out
+const MAX_SHUFFLE_VARIANTS: usize = 4096;
+const MAX_SHUFFLE_STORAGE: usize = 131_072;
+const MAX_PAIRED_PATHS: usize = 4096;
+
+fn shuffle_capacity() -> Error {
+    Error::Capacity("native score probe-order enclosure exceeds its complete-work budget".into())
 }
 
-fn steps(group: &[Op], rows: &[ProbeRow], rows_first: bool) -> Vec<Step> {
+fn shuffle_product(a: usize, b: usize) -> Result<usize, Error> {
+    a.checked_mul(b).ok_or_else(shuffle_capacity)
+}
+
+fn shuffle_choose(a: usize, b: usize) -> Result<usize, Error> {
+    let total = a.checked_add(b).ok_or_else(shuffle_capacity)?;
+    let k = a.min(b);
+    let mut count = 1;
+    for i in 1..=k {
+        count = shuffle_product(count, total - k + i)? / i;
+        if count > MAX_SHUFFLE_VARIANTS {
+            return Err(shuffle_capacity());
+        }
+    }
+    Ok(count)
+}
+
+fn paired_capacity(paths: usize, alternatives: usize) -> Result<usize, Error> {
+    let count = paths.checked_add(shuffle_product(paths, alternatives)?).ok_or_else(shuffle_capacity)?;
+    if count > MAX_PAIRED_PATHS {
+        return Err(shuffle_capacity());
+    }
+    Ok(count)
+}
+
+/// Every owner-local merge that preserves ordinary filing order and probe-row order. Owners remain in native
+/// score order; their independent interleavings form a Cartesian product. A finite work limit refuses inputs
+/// whose complete enclosure cannot be represented, without selecting only a subset of their orders.
+fn variants(group: &[Op], rows: &[ProbeRow]) -> Result<Vec<Vec<Step>>, Error> {
+    let length = group.len().checked_add(rows.len()).ok_or_else(shuffle_capacity)?;
+    let (mut g, mut r, mut count) = (0, 0, 1);
+    while g < group.len() || r < rows.len() {
+        let owner = match (group.get(g), rows.get(r)) {
+            (Some(op), Some(row)) => op.owner.min(row.owner),
+            (Some(op), None) => op.owner,
+            (None, Some(row)) => row.owner,
+            (None, None) => unreachable!("a group item remains"),
+        };
+        let ordinary = group[g..].partition_point(|op| op.owner == owner);
+        let probes = rows[r..].partition_point(|row| row.owner == owner);
+        count = shuffle_product(count, shuffle_choose(ordinary, probes)?)?;
+        if count > MAX_SHUFFLE_VARIANTS {
+            return Err(shuffle_capacity());
+        }
+        g += ordinary;
+        r += probes;
+    }
+    if count == 1 {
+        return Ok(vec![steps(group, rows)]);
+    }
+    if shuffle_product(count, length)? > MAX_SHUFFLE_STORAGE {
+        return Err(shuffle_capacity());
+    }
+    let mut out = Vec::new();
+    out.try_reserve_exact(count).map_err(|_| shuffle_capacity())?;
+    let mut pending = Vec::new();
+    pending.try_reserve_exact(count).map_err(|_| shuffle_capacity())?;
+    pending.push((0usize, 0usize, Vec::new()));
+    while let Some((g, r, mut path)) = pending.pop() {
+        match (group.get(g), rows.get(r)) {
+            (None, None) => out.push(path),
+            (Some(op), Some(row)) if op.owner == row.owner => {
+                let mut with_probe = Vec::new();
+                with_probe.try_reserve_exact(length).map_err(|_| shuffle_capacity())?;
+                with_probe.extend_from_slice(&path);
+                with_probe.push(Step::Probe(row.value));
+                pending.push((g, r + 1, with_probe));
+                path.try_reserve(1).map_err(|_| shuffle_capacity())?;
+                path.push(Step::Command(op.deltas));
+                pending.push((g + 1, r, path));
+            }
+            (Some(op), row) if row.is_none_or(|row| op.owner < row.owner) => {
+                path.try_reserve(1).map_err(|_| shuffle_capacity())?;
+                path.push(Step::Command(op.deltas));
+                pending.push((g + 1, r, path));
+            }
+            (_, Some(row)) => {
+                path.try_reserve(1).map_err(|_| shuffle_capacity())?;
+                path.push(Step::Probe(row.value));
+                pending.push((g, r + 1, path));
+            }
+            (Some(_), None) => unreachable!("ordinary-only case"),
+        }
+    }
+    debug_assert_eq!(out.len(), count);
+    Ok(out)
+}
+
+fn steps(group: &[Op], rows: &[ProbeRow]) -> Vec<Step> {
     let mut out = Vec::with_capacity(group.len() + rows.len());
     let (mut g, mut r) = (0, 0);
     while g < group.len() || r < rows.len() {
         let take_row = match (group.get(g), rows.get(r)) {
-            (Some(op), Some(row)) => row.owner < op.owner || (row.owner == op.owner && rows_first),
+            (Some(op), Some(row)) => row.owner <= op.owner,
             (None, Some(_)) => true,
             _ => false,
         };
@@ -772,6 +857,210 @@ mod tests {
             judgement_score_factor_percent: [(1, 100), (2, 90), (3, 70), (4, 50)].into(),
         };
         IncrementalCalculator::new(LiveScoreCalculator::new(100_000, 20, 64, &settings, 1.0, 1.0, None), MUSIC_MS)
+    }
+
+    fn owner_order_op(owner: i32, delta: f32) -> Op {
+        let mut deltas = [0.0; FIELDS];
+        deltas[1] = delta;
+        Op { time: 13, owner, deltas }
+    }
+
+    fn owner_order_words(steps: &[super::Step]) -> Vec<u32> {
+        steps
+            .iter()
+            .map(|step| match step {
+                super::Step::Command(values) => values[1].to_bits(),
+                super::Step::Probe(value) => value.to_bits(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn owner_orders_preserve_both_filing_sequences_and_combine_independent_owners() {
+        let group = [owner_order_op(1, 0.3), owner_order_op(2, 0.1), owner_order_op(2, 0.2)];
+        let rows = [
+            ProbeRow { owner: 1, value: 0.0001 },
+            ProbeRow { owner: 1, value: 0.0002 },
+            ProbeRow { owner: 2, value: 0.8 },
+        ];
+        let actual: std::collections::BTreeSet<_> =
+            variants(&group, &rows).unwrap().iter().map(|steps| owner_order_words(steps)).collect();
+        let mut expected = std::collections::BTreeSet::new();
+        for first in [[0.3f32, 0.0001, 0.0002], [0.0001, 0.3, 0.0002], [0.0001, 0.0002, 0.3]] {
+            for second in [[0.1f32, 0.2, 0.8], [0.1, 0.8, 0.2], [0.8, 0.1, 0.2]] {
+                expected.insert(first.into_iter().chain(second).map(f32::to_bits).collect::<Vec<_>>());
+            }
+        }
+        assert_eq!(actual, expected);
+        assert_eq!(actual.len(), 9);
+    }
+
+    #[test]
+    fn a_same_owner_command_between_probe_rows_is_enclosed() {
+        for full in [false, true] {
+            let mut native = calculator();
+            let mut replay = Replay::new(
+                native.executed_states().0,
+                &[ProbeRow { owner: 1, value: 0.1 }, ProbeRow { owner: 1, value: -0.1 }],
+            );
+            replay.full_paired_undo = full;
+            let ordinary = FactorCommand { time_ms: 0, owner_id: 1, note_mill: 30_000, ..Default::default() };
+            replay.file_command(0, &ordinary).unwrap();
+            replay.probe(0, 0).unwrap();
+            for command in [
+                FactorCommand { time_ms: 0, owner_id: 1, note_mill: 10_000, ..Default::default() },
+                ordinary,
+                FactorCommand { time_ms: 0, owner_id: 1, note_mill: -10_000, ..Default::default() },
+            ] {
+                native.add_factor(command);
+            }
+            native.add_note(NoteCommand::new(0, 1000, 1, 1, 2));
+            let index = replay.file_note(0, 0, 1).unwrap();
+            native.calculate(0, &ComboCounter::new(64), None).unwrap();
+            replay.query(0).unwrap();
+            let actual = native.executed_states().1.into_iter().find(|(id, _)| *id == 1).unwrap().1[1];
+            let enclosure = replay.notes[index].executed[1].unwrap()[1];
+            assert!(enclosure.contains(actual), "native={actual:?}, enclosure={enclosure:?}");
+        }
+    }
+
+    fn native_fields(native: &IncrementalCalculator) -> [f32; FIELDS] {
+        let state = native.calc.state;
+        [state.combo_score_up, state.note_score_up, state.just, state.perfect, state.great, state.good]
+    }
+
+    fn assert_fields_enclosed(fields: Fields, actual: [f32; FIELDS]) {
+        for (field, (enclosure, value)) in fields.into_iter().zip(actual).enumerate() {
+            assert!(enclosure.contains(value), "field={field} native={value:?}, enclosure={enclosure:?}");
+        }
+    }
+
+    #[test]
+    fn signed_owner_interleavings_enclose_native_execution_undo_and_reexecution() {
+        let combo = ComboCounter::new(64);
+        let mut checked = 0;
+        for full in [false, true] {
+            for other_fields in [false, true] {
+                for probe_mill in [-10, 10] {
+                    for ordinary_mill in [-30_000, 30_000] {
+                        for undo_probe in [false, true] {
+                            let rows = [ProbeRow { owner: 101, value: mill(probe_mill) }; 2];
+                            let ordinary = FactorCommand {
+                                time_ms: 13,
+                                owner_id: 101,
+                                note_mill: ordinary_mill,
+                                combo_mill: if other_fields { 12_345 } else { 0 },
+                                judgement: 3,
+                                judge_mill: if other_fields { -7_777 } else { 0 },
+                                ..Default::default()
+                            };
+                            let group = [Op { time: 13, owner: 101, deltas: command_deltas(&ordinary) }];
+                            let programs = variants(&group, &rows).unwrap();
+                            assert_eq!(programs.len(), 3);
+                            let mut replay = Replay::new(calculator().executed_states().0, &rows);
+                            replay.full_paired_undo = full;
+                            if undo_probe {
+                                replay.probe(0, 0).unwrap();
+                            }
+                            replay.file_command(1, &ordinary).unwrap();
+                            replay.probe(1, 13).unwrap();
+                            replay.file_note(1, 14, 0).unwrap();
+                            replay.query(1).unwrap();
+                            let end = replay.notes[0].executed[usize::from(!undo_probe)].unwrap();
+                            replay.query(0).unwrap();
+                            let undone = replay.state[usize::from(undo_probe)].unwrap();
+                            replay.query(1).unwrap();
+                            let repeated = replay.notes[0].executed[usize::from(!undo_probe)].unwrap();
+                            for program in programs {
+                                let mut native = calculator();
+                                if undo_probe {
+                                    for _ in 0..2 {
+                                        native.add_factor(FactorCommand {
+                                            time_ms: 0,
+                                            owner_id: 101,
+                                            note_mill: probe_mill,
+                                            ..Default::default()
+                                        });
+                                    }
+                                }
+                                for step in program {
+                                    native.add_factor(match step {
+                                        super::Step::Command(_) => ordinary,
+                                        super::Step::Probe(_) => FactorCommand {
+                                            time_ms: 13,
+                                            owner_id: 101,
+                                            note_mill: if undo_probe { -probe_mill } else { probe_mill },
+                                            ..Default::default()
+                                        },
+                                    });
+                                }
+                                native.add_note(NoteCommand::new(14, 1000, 0, 1, 2));
+                                native.calculate(39, &combo, None).unwrap();
+                                assert_fields_enclosed(end, native_fields(&native));
+                                native.calculate(0, &combo, None).unwrap();
+                                assert_fields_enclosed(undone, native_fields(&native));
+                                native.calculate(39, &combo, None).unwrap();
+                                assert_fields_enclosed(repeated, native_fields(&native));
+                                checked += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 96);
+    }
+
+    #[test]
+    fn owner_order_limits_refuse_a_partial_enclosure() {
+        let mut group: Vec<_> = (0..12).map(|owner| owner_order_op(owner, 0.3)).collect();
+        let mut rows: Vec<_> = (0..12).map(|owner| ProbeRow { owner, value: 0.0001 }).collect();
+        assert_eq!(variants(&group, &rows).unwrap().len(), MAX_SHUFFLE_VARIANTS);
+        for full in [false, true] {
+            let mut replay = Replay::new(3, &rows);
+            replay.full_paired_undo = full;
+            for op in &group {
+                replay
+                    .file_command(
+                        1,
+                        &FactorCommand {
+                            time_ms: op.time,
+                            owner_id: op.owner,
+                            note_mill: 30_000,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+            }
+            replay.probe(1, 13).unwrap();
+            replay.file_note(1, 14, 0).unwrap();
+            for _ in 0..2 {
+                assert!(matches!(replay.query(1), Err(Error::Capacity(_))));
+                assert!(replay.frames[1].diff.is_none() && replay.frames[1].undo.is_none());
+                assert!(replay.notes[0].executed.iter().all(Option::is_none));
+                assert_eq!(replay.prev, -1);
+            }
+        }
+        group.push(owner_order_op(12, 0.3));
+        rows.push(ProbeRow { owner: 12, value: 0.0001 });
+        assert!(matches!(variants(&group, &rows), Err(Error::Capacity(_))));
+        assert!(matches!(shuffle_choose(usize::MAX, 1), Err(Error::Capacity(_))));
+    }
+
+    #[test]
+    fn unique_owner_merges_keep_their_complete_order_without_a_length_limit() {
+        let group: Vec<_> = (0..900).map(|index| owner_order_op(index * 2 + 1, 0.3)).collect();
+        let rows: Vec<_> = (0..900).map(|index| ProbeRow { owner: index * 2, value: 0.0001 }).collect();
+        let programs = variants(&group, &rows).unwrap();
+        assert_eq!(programs.len(), 1);
+        assert_eq!(programs[0].len(), 1800);
+        assert!(
+            programs[0]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .all(|pair| { matches!(pair, [super::Step::Probe(_), super::Step::Command(_)]) })
+        );
     }
 
     fn schedule(rng: &mut Rng) -> Vec<Step> {
