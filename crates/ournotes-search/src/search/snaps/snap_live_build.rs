@@ -988,6 +988,16 @@ impl<'a> SnapLive<'a> {
         let mut executions_k = [0f64; 5];
         let mut fac_k = [0f64; 5];
         let mut frame_norm_k = [0f64; 5];
+        // Complete physical resource limits are an optional tightening for certified LUCK domains. Other
+        // domains retain the original position relaxation, as do diagnostic class-key ablations.
+        let mut factor_resources = (terminal_caps_admitted
+            && gkf.is_some()
+            && setup
+                .gk
+                .as_ref()
+                .is_some_and(|g| g.confirmations.is_none() && g.setup.missions.contains(&MISSION_LUCK)))
+        .then(|| factor_resources::FactorResources::new(t.snaps.len()))
+        .flatten();
         let forward_clamp = setup.params.music_length_ms > 0
             && setup.play.frames.iter().all(|frame| frame.time_ms <= setup.params.music_length_ms)
             && setup.events.iter().all(|&(_, time)| time <= setup.params.music_length_ms);
@@ -1000,11 +1010,16 @@ impl<'a> SnapLive<'a> {
         };
         for &m in &members {
             let mut per = Vec::with_capacity(classes[m].len());
-            for c in &classes[m] {
+            for (class, c) in classes[m].iter().enumerate() {
                 let mut arr: [Contrib; 5] = Default::default();
                 for k in 0..5 {
                     let (w, cmds, fac, ops, spans, ramps, rush, ops_plain, cmds_plain) =
                         windows(&geo, k, &member_live[m], &c.rows, &ev_by_k[k]);
+                    if let Some(resources) = &mut factor_resources
+                        && fac.iter().any(|v| !v.is_finite() || *v < 0.0)
+                    {
+                        resources.invalidate();
+                    }
                     let fac = fac.iter().copied().fold(0f64, f64::max);
                     let judge = w.iter().any(|x| x.judge.iter().any(|&j| j != 0.0));
                     cmd_k[k] = cmd_k[k].max(cmds);
@@ -1016,6 +1031,15 @@ impl<'a> SnapLive<'a> {
                         fac
                     };
                     frame_norm_k[k] = frame_norm_k[k].max(frame_norm);
+                    if let Some(resources) = &mut factor_resources {
+                        resources.observe(
+                            pool.members[m].character_id,
+                            class == 0,
+                            &c.snaps,
+                            k,
+                            [cmds, ops, fac, frame_norm],
+                        );
+                    }
                     let cb = if fine.gcombo.is_some() { combo_windows(&c.rows) } else { Vec::new() };
                     arr[k] = Contrib {
                         windows: w,
@@ -1139,6 +1163,21 @@ impl<'a> SnapLive<'a> {
         let f_tot = fac_k.iter().fold(0.0f64, |sum, &x| (sum + x).next_up());
         let frame_norm = frame_norm_k.iter().fold(0.0f64, |sum, &x| (sum + x).next_up()).min(f_tot);
         let executions = executions_k.iter().fold(0.0f64, |sum, &x| (sum + x).next_up()).min((e_max * n_cmd).next_up());
+        let position_limits = [n_cmd, executions, f_tot, frame_norm];
+        let resource_limits = factor_resources.and_then(|resources| resources.finish());
+        let (n_cmd, executions, f_tot, frame_norm) = match resource_limits {
+            Some(limits) => {
+                // Both assignments contain every legal completion. Intersect their independent universal
+                // upper bounds; no probability scales the command history or its rounding error.
+                let tighten = |i: usize, original: f64| original.min(limits.characters[i]).min(limits.snaps[i]);
+                let commands = tighten(0, n_cmd);
+                let executions = tighten(1, executions).min((e_max * commands).next_up());
+                let factors = tighten(2, f_tot);
+                let frame_norm = tighten(3, frame_norm).min(factors);
+                (commands, executions, factors, frame_norm)
+            }
+            None => (n_cmd, executions, f_tot, frame_norm),
+        };
         let drift = factor_drift(executions, n_cmd, frame_norm)
             .ok_or_else(|| Error::Domain("factor command count has no finite drift certificate".into()))?;
         // with Gekisou on, the chain also multiplies by the Gekisou combo and luck factors, each computed in binary32
@@ -1171,6 +1210,60 @@ impl<'a> SnapLive<'a> {
         let additive = judgement_max.and_then(|j| factor_error_sensitivity(&coef, j)).map(|b| (roundings, b));
         let joint_additive =
             additive.and_then(|(roundings, b)| additive_joint_envelope(a0, global, eps, roundings, b, chain_extra));
+        // Observe the existing decision after it has been made. Keep the source delta (eps), raw drift and
+        // outward feedback alpha separate: they have different roles in the certificate.
+        let feedback_alpha = (roundings * 2f64.powi(-24)).next_up();
+        let sensitivity = additive.map(|(_, b)| b);
+        let positive_factor_admitted = eps.is_finite() && (0.0..0.5).contains(&eps);
+        let feedback_admitted = float_margin::amplification(roundings, 2f64.powi(-24)).is_some();
+        let additive_refusal = {
+            use crate::search::telemetry::AdditiveEnvelopeRefusal as Refusal;
+            if joint_additive.is_some() {
+                None
+            } else if judgement_max.is_none() {
+                Some(Refusal::JudgementSettings)
+            } else if sensitivity.is_none() {
+                Some(Refusal::Sensitivity)
+            } else if [a0, global, eps, roundings, sensitivity.unwrap_or(0.0), chain_extra]
+                .iter()
+                .any(|v| !v.is_finite() || *v < 0.0)
+            {
+                Some(Refusal::InputDomain)
+            } else if !positive_factor_admitted {
+                Some(Refusal::PositiveFactor)
+            } else if !feedback_admitted {
+                Some(Refusal::RoundingFeedback)
+            } else {
+                Some(Refusal::NonfiniteOutput)
+            }
+        };
+        let factor_diagnostics = crate::search::telemetry::FactorEnvelopeDiagnostics {
+            maximum_command_executions: e_max,
+            commands_by_position: cmd_k,
+            executions_by_position: executions_k,
+            factor_norm_by_position: fac_k,
+            frame_norm_by_position: frame_norm_k,
+            position_limits,
+            character_limits: resource_limits.map(|limits| limits.characters),
+            snap_limits: resource_limits.map(|limits| limits.snaps),
+            commands: n_cmd,
+            executions,
+            factor_norm: f_tot,
+            frame_norm,
+            drift,
+            delta_with_chain: eps,
+            roundings,
+            feedback_alpha,
+            positive_factor_admitted,
+            feedback_admitted,
+            judgement_max,
+            sensitivity,
+            a0,
+            global,
+            chain_extra,
+            admitted: joint_additive.is_some(),
+            refusal: additive_refusal,
+        };
         let carrier_levels = match gkf.as_ref() {
             Some(g @ GkFactors { combo: Some(gc), .. }) if !level_terms.is_empty() => {
                 carrier_level_envelopes(
@@ -1288,6 +1381,7 @@ impl<'a> SnapLive<'a> {
             split_budget,
             eps,
             joint_additive,
+            factor_diagnostics,
             carrier_levels,
             carrier_keys,
             chain_extra,

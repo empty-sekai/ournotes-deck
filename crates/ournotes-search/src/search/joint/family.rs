@@ -10,6 +10,10 @@ impl JointBounds {
         self.family_rewards.clone()
     }
 
+    pub(crate) fn family_template_diagnostics(&self) -> Option<super::super::telemetry::FamilyTemplateSetup> {
+        self.family_template.clone()
+    }
+
     /// All five members are fixed; the first four SLOTS carry actual Snap bindings, and the last slot takes a
     /// choice from `last_choices`. Unassigned tail values in p.snaps are never read. The original pair traversal's
     /// suffix and slot rules are represented by the caller's exact last-choice list.

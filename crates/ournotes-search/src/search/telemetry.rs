@@ -252,6 +252,86 @@ pub struct BoundSetup {
     pub conversion: Option<Conversion>,
     /// The deck payoff ranking (`deckPayoff` search) of the plan, or why a played Live has none.
     pub deck_payoff: Option<DeckPayoffSetup>,
+    /// Optional Score-family reward template admission, including its complete-domain factor certificate.
+    pub family_template: Option<FamilyTemplateSetup>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FamilyTemplateRefusal {
+    AdditiveEnvelope,
+    TerminalCaps,
+    RushClass,
+    NetworkRanking,
+    CoefficientShape,
+    CoefficientDomain,
+    CapacityArithmetic,
+    Capacity,
+    Allocation,
+    TerminalOrder,
+    RankDomain,
+    WindowRange,
+    ProbeJudgement,
+    PositionShape,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AdditiveEnvelopeRefusal {
+    JudgementSettings,
+    Sensitivity,
+    InputDomain,
+    PositiveFactor,
+    RoundingFeedback,
+    NonfiniteOutput,
+}
+
+/// Values already computed when SnapLive compiles the complete-domain envelope. These diagnostics never
+/// participate in an admission decision. Independent position maxima need not occur in one legal deck.
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactorEnvelopeDiagnostics {
+    pub maximum_command_executions: f64,
+    pub commands_by_position: [f64; 5],
+    pub executions_by_position: [f64; 5],
+    pub factor_norm_by_position: [f64; 5],
+    pub frame_norm_by_position: [f64; 5],
+    /// Original position limits: commands, executions, factor norm, score-frame factor norm.
+    pub position_limits: [f64; 4],
+    /// Optional distinct-character and physical-Snap assignment limits, in the same component order.
+    pub character_limits: Option<[f64; 4]>,
+    pub snap_limits: Option<[f64; 4]>,
+    pub commands: f64,
+    pub executions: f64,
+    pub factor_norm: f64,
+    pub frame_norm: f64,
+    /// Raw factor_drift result, before snapshot and arithmetic-chain allowances.
+    pub drift: f64,
+    /// The actual delta passed to additive_joint_envelope: the legacy eps after with_chain.
+    pub delta_with_chain: f64,
+    pub roundings: f64,
+    /// Outward alpha, including next_up; finite feedback amplification requires alpha < 1.
+    pub feedback_alpha: f64,
+    /// Whether delta is strictly below the existing 0.5 positive-factor threshold.
+    pub positive_factor_admitted: bool,
+    pub feedback_admitted: bool,
+    pub judgement_max: Option<f64>,
+    pub sensitivity: Option<f64>,
+    pub a0: f64,
+    pub global: f64,
+    pub chain_extra: f64,
+    pub admitted: bool,
+    /// First unavailable prerequisite or failed gate; raw inputs retain simultaneous failures.
+    pub refusal: Option<AdditiveEnvelopeRefusal>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FamilyTemplateSetup {
+    pub admitted: bool,
+    /// First failed template gate. Admission is optional and never a candidate proof status.
+    pub refusal: Option<FamilyTemplateRefusal>,
+    pub factor_envelope: FactorEnvelopeDiagnostics,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

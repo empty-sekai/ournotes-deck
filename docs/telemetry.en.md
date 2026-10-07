@@ -57,6 +57,7 @@ reports the work so far, a recommendation result reports the whole request.
 | `bounds.choices` | Branching of every joint depth (member and Snap choice pairs) |
 | `bounds.correlated`, `bounds.resource` | Correlated and resource bounds enabled (in the last search part) |
 | `bounds.fine`, `bounds.classSearch` | Fine bounds present, class search used |
+| `bounds.familyTemplate` | Optional Score-family reward template admission, first refusal and numeric factor-envelope inputs; null when the plan does not attempt the template |
 | `bounds.ptRegime` | PT tightening after the warm start: `membersRemoved`, `fallback`, `compileMs`; null when not run |
 | `bounds.conversion` | Gekisou score split by converting Snaps: `snaps` (converting Snaps), `parts`, `fallback`, `compileMs`; null when not split |
 
@@ -280,6 +281,30 @@ checked; `tail` and `pair` count at the parent's depth (they check its children)
 | `carriers` | Gekisou score on a chart with a combo range: cheap bounds by the number of combo carriers (a member and Snap bringing Gekisou combo bonus windows; a node with `c` carriers placed and `r` slots to fill reads level `c + r`): `levels` compiled apart from the pool-wide bounds (the largest over the search parts), `nodes[n]` the bounded nodes reading level `n` (0 to 5) |
 | `luckFamily` | Controller-family preparation, refusal and cache counters, detailed below |
 | `rootOrder` | Root children visited in descending order of their depth-1 bound: `skipped` counts root children left once one was strictly inferior to the K-th (each would be pruned at depth 1), `traversalsPruned` the traversals (the whole domain, or one Gekisou conversion part with its slot rules) whose best root child already was |
+
+### Family template admission
+
+`environment.bounds.familyTemplate` records preparation of the optional Score-family reward
+template separately from the node requests in `joint.luckFamily`. This distinguishes an
+unavailable template from a template that was available but never reached by the traversal.
+`admitted` concerns only this optional bound; it is never a ranking or probability-law certificate.
+`refusal` is the first failed template prerequisite, such as `additiveEnvelope`, `terminalCaps`,
+`rushClass`, `networkRanking`, a coefficient or window domain check, or a capacity limit.
+
+`factorEnvelope` exposes the complete-domain command and execution counts, factor and frame
+norms, their independent position maxima, the resulting `drift`, and `deltaWithChain` after
+the snapshot and arithmetic-chain allowances. `roundings` counts the certified floating
+operations; `feedbackAlpha` is its outward product with binary32 unit roundoff. These are
+bounds on possible work, not observed simulation operations. Independent maxima may come
+from different physical choices. `positionLimits`, `characterLimits` and
+`snapLimits` each use the component order `[commands, executions, factorNorm, frameNorm]`;
+the resource arrays are null when the optional distinct-resource relaxation is unavailable.
+The final scalar limits include every available intersection. `positiveFactorAdmitted` and
+`feedbackAdmitted` retain the two numeric gate decisions even when both fail. The additive envelope's `refusal` identifies
+its first failed prerequisite; `admitted` reports whether it exists. The raw inputs may expose
+further failures after that first one. `judgementMax`, `sensitivity`, `a0`, `global` and
+`chainExtra` retain the other values used by the certificate. The diagnostic fields observe
+the compiled decisions and do not authorize pruning themselves.
 
 ### `joint.luckFamily`
 

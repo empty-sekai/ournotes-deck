@@ -184,6 +184,7 @@ pub(crate) struct JointBounds {
     modules: Vec<Box<dyn NodeBound>>,
     /// Reward-only coefficients for a native-certified fixed-member LUCK family.
     family_rewards: Option<std::rc::Rc<super::snaps::ProfileRewardTemplate>>,
+    family_template: Option<super::telemetry::FamilyTemplateSetup>,
     gekisou: bool,
     class_search: bool,
     class_resource_caps: bool,
@@ -397,8 +398,17 @@ impl JointBounds {
         }
         let setup = super::full_setup(pool, &request.objective)?.ok_or_else(|| unavailable("missing Live setup"))?;
         let envelope = SnapLive::new(pool, &t, &allowed, &setup)?;
-        let family_rewards =
-            matches!(metric, Metric::Score).then(|| super::snaps::ProfileRewardTemplate::compile(&envelope)).flatten();
+        let (family_rewards, family_template) = if matches!(metric, Metric::Score) {
+            let result = super::snaps::ProfileRewardTemplate::compile(&envelope);
+            let diagnostics = super::telemetry::FamilyTemplateSetup {
+                admitted: result.is_ok(),
+                refusal: result.as_ref().err().copied(),
+                factor_envelope: envelope.factor_diagnostics(),
+            };
+            (result.ok(), Some(diagnostics))
+        } else {
+            (None, None)
+        };
         let (a0, global, eps, order_gains) = envelope.joint_envelope();
         let levels = if setup.gk.is_some() { envelope.joint_carrier_levels() } else { None };
         let keys = levels.as_ref().and_then(|_| envelope.carrier_keys());
@@ -480,6 +490,7 @@ impl JointBounds {
             composition: None,
             modules: Vec::new(),
             family_rewards,
+            family_template,
             gekisou: setup.gk.is_some(),
             class_search: false,
             class_resource_caps: false,
@@ -546,6 +557,7 @@ impl JointBounds {
             composition: None,
             modules: Vec::new(),
             family_rewards: None,
+            family_template: None,
             gekisou: self.gekisou,
             class_search: false,
             class_resource_caps: false,

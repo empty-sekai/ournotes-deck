@@ -125,64 +125,86 @@ fn vector_bytes<T>(values: &Vec<T>) -> Option<usize> {
 }
 
 impl ProfileRewardTemplate {
-    pub(crate) fn compile(live: &SnapLive<'_>) -> Option<Rc<Self>> {
+    pub(crate) fn compile(live: &SnapLive<'_>) -> Result<Rc<Self>, crate::search::telemetry::FamilyTemplateRefusal> {
+        use crate::search::telemetry::FamilyTemplateRefusal as Refusal;
         // additive_joint_envelope charges delta * B using the original complete-domain command count and
         // all-Rush/rank/judgement sensitivity. Its third result is only the relative arithmetic chain. Requiring
         // this representation prevents shrinking an absolute history error by multiplying a smaller mean gain.
-        let (with_offset, global, eps) = live.joint_additive?;
-        if !live.terminal_caps_admitted || !live.fine.rush_eligible || live.fine.network_ranking {
-            return None;
+        let (with_offset, global, eps) = live.joint_additive.ok_or(Refusal::AdditiveEnvelope)?;
+        if !live.terminal_caps_admitted {
+            return Err(Refusal::TerminalCaps);
+        }
+        if !live.fine.rush_eligible {
+            return Err(Refusal::RushClass);
+        }
+        if live.fine.network_ranking {
+            return Err(Refusal::NetworkRanking);
         }
         let n = live.coef.times.len();
         if n == 0 || live.coef.family_terminal.len() != n || live.fine.rank.len() != n {
-            return None;
+            return Err(Refusal::CoefficientShape);
         }
-        let offset = point(with_offset)?.subtract(point(live.a0)?).upper();
-        finite_nonnegative(offset)?;
+        let offset = point(with_offset)
+            .ok_or(Refusal::CoefficientDomain)?
+            .subtract(point(live.a0).ok_or(Refusal::CoefficientDomain)?)
+            .upper();
+        finite_nonnegative(offset).ok_or(Refusal::CoefficientDomain)?;
         let minimum_bytes = std::mem::size_of::<Self>()
-            .checked_add(2 * std::mem::size_of::<usize>())?
-            .checked_add(n.checked_mul(std::mem::size_of::<i32>() + 9 * std::mem::size_of::<f64>())?)?;
+            .checked_add(2 * std::mem::size_of::<usize>())
+            .ok_or(Refusal::CapacityArithmetic)?
+            .checked_add(
+                n.checked_mul(std::mem::size_of::<i32>() + 9 * std::mem::size_of::<f64>())
+                    .ok_or(Refusal::CapacityArithmetic)?,
+            )
+            .ok_or(Refusal::CapacityArithmetic)?;
         if minimum_bytes > MAX_TEMPLATE_BYTES {
-            return None;
+            return Err(Refusal::Capacity);
         }
-        let mut history = reserve(n)?;
-        let mut jp = reserve(n)?;
+        let mut history = reserve(n).ok_or(Refusal::Allocation)?;
+        let mut jp = reserve(n).ok_or(Refusal::Allocation)?;
         for e in 0..n {
             let [plain, rush] = live.coef.family_terminal[e];
-            if plain > rush || live.fine.rank[e] < 1.0 {
-                return None;
+            if plain > rush {
+                return Err(Refusal::TerminalOrder);
             }
-            point(plain)?;
-            let extra = point(live.fine.rank[e])?.subtract(F64Interval::ONE);
-            history.push(finite_nonnegative(point(rush)?.multiply(extra).upper())?);
-            point(live.coef.z[e])?;
+            if live.fine.rank[e] < 1.0 {
+                return Err(Refusal::RankDomain);
+            }
+            point(plain).ok_or(Refusal::CoefficientDomain)?;
+            let extra = point(live.fine.rank[e]).ok_or(Refusal::CoefficientDomain)?.subtract(F64Interval::ONE);
+            history.push(
+                finite_nonnegative(point(rush).ok_or(Refusal::CoefficientDomain)?.multiply(extra).upper())
+                    .ok_or(Refusal::CoefficientDomain)?,
+            );
+            point(live.coef.z[e]).ok_or(Refusal::CoefficientDomain)?;
             let mut row = [live.coef.max_jp[e]; 5];
             row[1..].copy_from_slice(&live.coef.jp[e]);
             for value in row {
-                point(value)?;
+                point(value).ok_or(Refusal::CoefficientDomain)?;
             }
             jp.push(row);
         }
-        let mut pairs = reserve(live.contrib.len())?;
+        let mut pairs = reserve(live.contrib.len()).ok_or(Refusal::Allocation)?;
         let mut estimate = minimum_bytes;
         for classes in &live.contrib {
-            let mut rows = reserve(classes.len())?;
+            let mut rows = reserve(classes.len()).ok_or(Refusal::Allocation)?;
             for positions in classes {
-                let mut built = reserve(5)?;
+                let mut built = reserve(5).ok_or(Refusal::Allocation)?;
                 for contribution in positions {
                     let opaque = contribution.windows.iter().any(|w| w.ramp != 0).then_some(contribution.gain);
                     if let Some(gain) = opaque {
-                        point(gain)?;
+                        point(gain).ok_or(Refusal::CoefficientDomain)?;
                     }
-                    let mut terms = reserve(if opaque.is_some() { 0 } else { contribution.windows.len() })?;
+                    let mut terms = reserve(if opaque.is_some() { 0 } else { contribution.windows.len() })
+                        .ok_or(Refusal::Allocation)?;
                     if opaque.is_none() {
                         for w in &contribution.windows {
                             if w.lo > w.hi || w.hi as usize > n {
-                                return None;
+                                return Err(Refusal::WindowRange);
                             }
-                            point(w.note)?;
+                            point(w.note).ok_or(Refusal::CoefficientDomain)?;
                             for value in w.judge {
-                                point(value)?;
+                                point(value).ok_or(Refusal::CoefficientDomain)?;
                             }
                             let probe = w
                                 .rush
@@ -190,7 +212,7 @@ impl ProfileRewardTemplate {
                                 .and_then(|i| contribution.rush.get(i as usize))
                                 .is_some_and(|r| r.terminal_probe(Some(MISSION_LUCK)));
                             if probe && w.judge != [0.0; 4] {
-                                return None;
+                                return Err(Refusal::ProbeJudgement);
                             }
                             terms.push(Term {
                                 lo: w.lo as usize,
@@ -201,38 +223,51 @@ impl ProfileRewardTemplate {
                             });
                         }
                     }
-                    point(contribution.budget)?;
+                    point(contribution.budget).ok_or(Refusal::CoefficientDomain)?;
                     estimate = estimate
-                        .checked_add(std::mem::size_of::<Pair>())?
-                        .checked_add(terms.capacity().checked_mul(std::mem::size_of::<Term>())?)?;
+                        .checked_add(std::mem::size_of::<Pair>())
+                        .ok_or(Refusal::CapacityArithmetic)?
+                        .checked_add(
+                            terms
+                                .capacity()
+                                .checked_mul(std::mem::size_of::<Term>())
+                                .ok_or(Refusal::CapacityArithmetic)?,
+                        )
+                        .ok_or(Refusal::CapacityArithmetic)?;
                     if estimate > MAX_TEMPLATE_BYTES {
-                        return None;
+                        return Err(Refusal::Capacity);
                     }
                     built.push(Pair { terms, budget: contribution.budget, opaque });
                 }
-                rows.push(built.try_into().ok()?);
+                rows.push(built.try_into().map_err(|_| Refusal::PositionShape)?);
             }
-            estimate = estimate.checked_add(std::mem::size_of::<Vec<[Pair; 5]>>())?;
+            estimate =
+                estimate.checked_add(std::mem::size_of::<Vec<[Pair; 5]>>()).ok_or(Refusal::CapacityArithmetic)?;
             pairs.push(rows);
         }
-        let mut class_of = reserve(live.class_of.len())?;
+        let mut class_of = reserve(live.class_of.len()).ok_or(Refusal::Allocation)?;
         for classes in &live.class_of {
-            let mut row = reserve(classes.len().checked_add(1)?)?;
+            let mut row =
+                reserve(classes.len().checked_add(1).ok_or(Refusal::CapacityArithmetic)?).ok_or(Refusal::Allocation)?;
             row.push(0);
             row.extend(classes.iter().map(|&class| usize::from(class)));
             estimate = estimate
-                .checked_add(std::mem::size_of::<Vec<usize>>())?
-                .checked_add(row.capacity().checked_mul(std::mem::size_of::<usize>())?)?;
+                .checked_add(std::mem::size_of::<Vec<usize>>())
+                .ok_or(Refusal::CapacityArithmetic)?
+                .checked_add(
+                    row.capacity().checked_mul(std::mem::size_of::<usize>()).ok_or(Refusal::CapacityArithmetic)?,
+                )
+                .ok_or(Refusal::CapacityArithmetic)?;
             class_of.push(row);
         }
         if estimate > MAX_TEMPLATE_BYTES {
-            return None;
+            return Err(Refusal::Capacity);
         }
         let mut template = Self {
-            times: copy_slice(&live.coef.times)?,
-            terminal: copy_slice(&live.coef.family_terminal)?,
+            times: copy_slice(&live.coef.times).ok_or(Refusal::Allocation)?,
+            terminal: copy_slice(&live.coef.family_terminal).ok_or(Refusal::Allocation)?,
             history,
-            z: copy_slice(&live.coef.z)?,
+            z: copy_slice(&live.coef.z).ok_or(Refusal::Allocation)?,
             jp,
             class_of,
             pairs,
@@ -241,8 +276,8 @@ impl ProfileRewardTemplate {
             global,
             bytes: 0,
         };
-        template.bytes = template.allocation_bytes()?;
-        (template.bytes <= MAX_TEMPLATE_BYTES).then(|| Rc::new(template))
+        template.bytes = template.allocation_bytes().ok_or(Refusal::CapacityArithmetic)?;
+        if template.bytes <= MAX_TEMPLATE_BYTES { Ok(Rc::new(template)) } else { Err(Refusal::Capacity) }
     }
 
     fn allocation_bytes(&self) -> Option<usize> {

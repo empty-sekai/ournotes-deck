@@ -115,6 +115,7 @@ mod raw;
 mod combo_triggers;
 mod conversion;
 mod envelope_data;
+mod factor_resources;
 mod fine_view;
 mod float_margin;
 mod gk_schedule;

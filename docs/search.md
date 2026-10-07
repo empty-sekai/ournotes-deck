@@ -628,6 +628,30 @@ reconstructs the identical binary32 factor at every reachable requested value; o
 processing-frame count. Every start, end and replacement is charged, and its possible filing frames determine
 the replay multiplicity used for `E`.
 
+For a Gekisou fixed note or judgement factor (`2000/2004`) with sustained trigger type, zero activation time
+and no release condition, the native updater must observe a false trigger between two starts. A true trigger
+retains its current instance, including when a dynamic condition fails; a false frame ends that instance, and a
+later frame recycles it. Neither the condition's counter reset nor a one-shot execution limit creates a new
+sustained instance. These fixed-factor appliers do not force an end or replace a running factor.
+
+Within one factor-span component, let `s` count all possible start frames and let `lo,hi` be their minimum and
+maximum **processing-frame indices**. The lifetime-start cap is therefore
+
+    min(s, ceil((hi - lo + 1)/2)).
+
+This does not halve `s`: a `true,false,true` sequence can start in both of its two possible start frames. Counting
+closed-gate and finished frames in the enclosing interval remains conservative because they cannot add starts.
+Backdated or equal filing timestamps do not change the processing-frame indices. The projected count changes
+only fixed-factor command counts and their replay allowance; all timing windows, maximum amplitudes, conversion
+coverage and original timing-cache entries remain intact. Other effects can have applier-controlled finishes,
+so they retain their generic counts even when sharing that timing-cache entry.
+
+The [projection tests](../crates/ournotes-search/src/search/snaps/sustained_start_tests.rs) cover sparse starts,
+backdated ordering, large indices, retained pool reuse and lifecycle refusals. The
+[native lifecycle tests](../crates/ournotes-sim/src/live/full/sustained_start_tests.rs) enumerate short trigger and
+condition traces and exercise LUCK completion, gate gaps, counter resets, both update phases and a timed
+sustained counterexample.
+
 For one candidate, let `F` bound factor magnitudes meeting a native score frame and
 `S = 1 + max(F, peak active factor sum)`. With `u = 2^-24` and `W = 3*E + 2*N`, an absolute factor-error cap is
 
@@ -645,6 +669,22 @@ can also serve as a relative score-up allowance. Above the candidate level the s
 A fine cap adds `D` to its note-plus-selected-judgement factor before the independent chain allowance. For a
 linear joint envelope, `B = sum_e k_e*z_e*max_j judgement_percent(j)` bounds sensitivity to absolute factor error,
 including budgeted conversions. Thus `P*(A+D*B)` bounds the unfloored contribution before the chain allowance.
+The physical additive envelope uses `delta = with_chain(D, extra)`, conservatively including the independent
+chain allowances in its absolute offset as well. Admission requires finite outward amplification for `u*W < 1`
+and `delta < 0.5`. Since `delta >= D` and the ideal factor is at least one, the actual factor remains above 0.5;
+the normal positive chain therefore bounds `P*(A+delta*B)` with its independent relative allowance. The offset
+is unconditional, including when a smaller mean coefficient is available. Carrier levels use the pool's delta;
+keyed prefixes intersect their command, execution and factor limits with the pool's before recomputing it.
+For certified LUCK domains, the pool also keeps each member/class certificate until two independent resource
+relaxations are built. For each character and each performance position, take the componentwise maximum of
+commands, executions, total factor norm and score-frame norm over all of that character's members and classes.
+A 32-mask maximum-weight assignment places each character at most once into the five positions. A separate
+assignment groups by physical Snap, taking maxima over every member paired with it; five distinct dummy
+resources represent repeatable None choices. Different physical Snaps remain distinct even when they share a
+class. Every legal team and all original orders occur in both relaxations, so their independent componentwise
+upper bounds can be intersected with the original position maxima before computing drift. No probability
+scales those counts or norms. Invalid, nonfinite, overflowing or unavailable resource tables leave the original
+position limits in place; Free Live, lottery-free domains and class-key ablations keep that original path.
 An unavailable global certificate rejects preparation; an unavailable candidate certificate keeps the maximal
 cap; an unavailable compiled raw cap returns `None`; an inapplicable refinement retains its enclosing envelope.
 

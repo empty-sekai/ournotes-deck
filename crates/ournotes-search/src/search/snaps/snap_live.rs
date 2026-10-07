@@ -36,6 +36,8 @@ pub(crate) struct SnapLive<'a> {
     /// Optional additive factor-drift envelope for the physical joint solver.
     /// Legacy class/fine/raw bounds and their overflow guard retain `eps`.
     pub(super) joint_additive: Option<(f64, f64, f64)>,
+    /// Recorded once, after the existing additive admission; never consulted by a bound.
+    pub(super) factor_diagnostics: crate::search::telemetry::FactorEnvelopeDiagnostics,
     /// With a Gekisou combo range: the joint envelope of decks with at most `n < 5` combo carriers, in the form of
     /// `joint_additive` when that applies (None: the next level's; empty: none).
     pub(super) carrier_levels: Vec<Option<CarrierLevel>>,
@@ -155,11 +157,13 @@ pub(super) fn ub(power: i64, a: f64, eps: f64) -> i64 {
 /// is already charged in the three operations per command execution. The final
 /// binary32 addition of those two fields is still covered by the chain margin.
 ///
-/// `delta` conservatively includes the legacy chain allowances as well as drift.
+/// `delta` must include the fully amplified absolute drift from `factor_drift`;
+/// callers conservatively include the legacy chain allowances as well. For
+/// alpha = roundings*2^-24 < 1, amplification bounds feedback by 1/(1-alpha),
+/// with outward arithmetic. The delta < 0.5 gate retains a positive actual factor.
 /// We add delta*B once, where B uses ALL judgement percentages: `a0` omits
 /// budgeted conversions and cannot serve as the factor-error sensitivity.
-/// The bootstrap gate keeps the rounding amplification below the existing1.01
-/// reserve. Failure leaves the original relative envelope intact.
+/// Failure leaves the original relative envelope intact.
 pub(super) fn additive_joint_envelope(
     a0: f64,
     global: f64,
@@ -172,7 +176,7 @@ pub(super) fn additive_joint_envelope(
         // The ideal note-plus-judgement factor is at least one. Retain a
         // positive actual factor throughout the certified float chain.
         || delta >= 0.5
-        || (roundings * 2f64.powi(-24)).next_up() > 1.0 / 256.0
+        || float_margin::amplification(roundings, 2f64.powi(-24)).is_none()
     {
         return None;
     }
@@ -243,6 +247,10 @@ impl<'a> SnapLive<'a> {
             .collect();
         let (a0, global, eps) = self.joint_additive.unwrap_or((self.a0, self.global, self.eps));
         (a0, global, eps, gains)
+    }
+
+    pub(crate) fn factor_diagnostics(&self) -> crate::search::telemetry::FactorEnvelopeDiagnostics {
+        self.factor_diagnostics
     }
 
     /// `joint_envelope` for the decks with at most `n < 5` Gekisou combo carriers: per `n`, `(A0, global, gains)`
@@ -623,9 +631,21 @@ mod additive_drift_tests {
     #[test]
     fn additive_refinement_falls_back_outside_its_numeric_certificate() {
         assert_eq!(additive_joint_envelope(1.0, 2.0, 0.5, 100.0, 1.0, 0.0), None);
-        assert_eq!(additive_joint_envelope(1.0, 2.0, 0.01, 1_000_000.0, 1.0, 0.0), None);
-        assert_eq!(additive_joint_envelope(1.0, 2.0, 0.01, 100.0, f64::INFINITY, 0.0), None);
+        assert_eq!(additive_joint_envelope(1.0, 2.0, 0.01, 2f64.powi(24), 1.0, 0.0), None);
+        for invalid in [f64::NAN, f64::NEG_INFINITY, f64::INFINITY, -1.0] {
+            for field in 0..6 {
+                let mut inputs = [1.0, 2.0, 0.01, 100.0, 1.0, 0.0];
+                inputs[field] = invalid;
+                let [a0, global, delta, roundings, sensitivity, extra] = inputs;
+                assert_eq!(additive_joint_envelope(a0, global, delta, roundings, sensitivity, extra), None);
+            }
+        }
+        assert_eq!(additive_joint_envelope(f64::MAX, f64::MAX, 0.25, 100.0, f64::MAX, 0.0), None);
         let coef = Coef { k: vec![1.0], z: vec![-1.0], ..Default::default() };
         assert_eq!(factor_error_sensitivity(&coef, 1.5), None);
     }
 }
+
+#[cfg(test)]
+#[path = "additive_certificate_tests.rs"]
+mod additive_certificate_tests;

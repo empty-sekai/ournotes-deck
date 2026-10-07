@@ -40,7 +40,7 @@ pub(super) fn active_row(env: &Env, r: &Row, can_start: bool, event_bound: bool)
             .map(|x| if FILED_IN_ORDER.contains(&r.effect_type) { x.filed.clone() } else { x.win.clone() }),
         gk_starts: w.as_ref().map(|x| x.win_starts.clone()),
         gk_gate: w.as_ref().and_then(|x| combo_gate(env, r).map(|t| (t, x.parts.clone()))),
-        gk_execs: w.as_ref().map(|x| x.executions.clone()),
+        gk_execs: w.as_ref().map(|x| factor_executions(r, x)),
         gk_event_win: (r.gk && event_bound).then(|| std::array::from_fn(|k| gk_event_windows(env, r, k))),
         gk_conv: w.as_ref().map(|x| x.conv.clone()),
         budget: w.as_ref().and_then(|x| gk_budget(env, r, x)),
@@ -49,6 +49,33 @@ pub(super) fn active_row(env: &Env, r: &Row, can_start: bool, event_bound: bool)
         rush: rush::spec(env, r),
         rush_run_cap: rush::run_cap_eligible(env, r),
     })
+}
+
+/// Lifetime starts for fixed Gekisou score factors. An untimed sustained updater keeps `current` while its
+/// trigger is true, even when its condition fails. A false observed frame ends it; only a later frame can recycle
+/// and start it again. Thus starts in a component's processing-frame interval `[lo, hi]` cannot be adjacent.
+/// Closed gates and finished frames leave it held, so counting all intervening play frames is conservative.
+///
+/// Project after the timing cache: its key omits effect type, and other appliers can end an updater themselves.
+/// Fixed 2000/2004 appliers only file start/end factor commands. Preserve the full generic timing domain for
+/// other lifecycles, including cumulative factors and releases.
+fn factor_executions(r: &Row, w: &GkRowWin) -> Vec<f64> {
+    let mut executions = w.executions.clone();
+    if !r.gk || r.trigger_type != 2 || r.act != 0.0 || r.release != 0 || !matches!(r.effect_type, 2000 | 2004) {
+        return executions;
+    }
+    for (count, starts) in executions.iter_mut().zip(&w.win_starts) {
+        if !count.is_finite() || *count < 0.0 {
+            continue;
+        }
+        // These final prefix extrema are over actual start-frame indices, not filing-time order.
+        let Some((&lo, &hi)) = starts.lo.last().zip(starts.hi.last()) else { continue };
+        let Some(distance) = hi.checked_sub(lo) else { continue };
+        let frames = u64::from(distance) + 1;
+        let cap = frames.div_ceil(2);
+        *count = (*count).min((cap as f64).next_up());
+    }
+    executions
 }
 
 /// The threshold of a sustained Gekisou combo bonus (12000) whose trigger is one positive Gekisou combo count
@@ -1155,3 +1182,7 @@ mod count_hit_tests {
         assert_eq!(g.count_trigger_hits(&env, 7, MISSION_COMBO), Some(2));
     }
 }
+
+#[cfg(test)]
+#[path = "sustained_start_tests.rs"]
+mod sustained_start_tests;

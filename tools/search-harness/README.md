@@ -68,6 +68,15 @@ it beats another schedule's incumbent.
 It is useful for checking a score-search incumbent under a PT request. It performs
 no search and grants no global optimality certificate; inspect each completion.
 
+`family_template DATA ROSTER|SNAPSHOT REQUEST OUTPUT` resolves the unchanged request and
+compiles its full-domain bounds without evaluating any candidate or performance order.
+Its `ournotes-deck.family-template-diagnostics/1` report contains the resolved member and
+Snap counts, K, and `familyTemplate`: the optional Score-family reward template's admission,
+first refusal, and numeric factor-envelope inputs. A null template means that the plan did
+not attempt that template. Admission only establishes an optional bound's prerequisites;
+this tool runs no probability DP or search and returns no ranking or completion certificate.
+Use the ordinary recommendation path to measure completion and timing.
+
 Experiments can change `strategy`, `limits`, or add member/Snap exclusions. They cannot change the scorer, metric, scene, play or K. Reports keep original-domain identity even for reduced-pool trials. `Complete` from a reduced experiment certifies only its reduced domain; the harness separately checks whether its results equal the original full-domain Top-K. Heuristic/timeout results must still match fixed-evaluator values. A full-domain wrong `Complete` or incorrectly evaluated returned deck fails the run.
 
 Reports retain complete returned results with their best orders, oracle Top-K, candidate/simulation/cache/bound counters, exact Top-1 gap, input hashes, binary identity and source manifest.

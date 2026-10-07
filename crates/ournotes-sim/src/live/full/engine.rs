@@ -871,3 +871,7 @@ mod lifecycle_tests {
 #[cfg(test)]
 #[path = "idle_plan_tests.rs"]
 mod idle_tests;
+
+#[cfg(test)]
+#[path = "sustained_start_tests.rs"]
+mod sustained_start_tests;

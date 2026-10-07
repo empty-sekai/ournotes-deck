@@ -940,6 +940,7 @@ pub(crate) fn solve_physical_impl(
         env.bounds.choices = b.choices.len();
         env.bounds.fine = b.has_fine();
         env.bounds.class_search = b.uses_class_search();
+        env.bounds.family_template = b.family_template_diagnostics();
     }
     if let Some(b) = &plan.deck_payoff {
         if plan.joint.is_none() {

@@ -74,6 +74,13 @@ fn power_of(built: &BuiltProblem<'_>, p: &PhysicalDeck) -> Result<i64, Error> {
     Ok(i64::from(built.pool.deck_power(&p.as_deck(), plan.song.as_ref(), plan.event)?.power()))
 }
 
+/// Read the already-compiled Score-family reward template admission. No scorer, recorder, probability DP
+/// or search is run. None means the plan has no joint Score-template attempt, not a candidate proof status.
+pub fn family_template_diagnostics(built: &BuiltProblem<'_>) -> Option<serde_json::Value> {
+    let diagnostics = built.context.plan.joint.as_ref()?.family_template_diagnostics()?;
+    Some(serde_json::json!(diagnostics))
+}
+
 /// Explain the complete-deck relaxation at one performance order without running or changing the scorer.
 pub fn describe_bound(
     built: &BuiltProblem<'_>,
