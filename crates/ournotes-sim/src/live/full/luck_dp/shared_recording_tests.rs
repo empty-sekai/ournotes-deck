@@ -708,10 +708,20 @@ fn certified_life_power_projection_preserves_complete_native_phase_and_judgement
             assert!(matches!(luck_skills(&outside_lottery), Err(Error::Unsupported(_))));
             input.add_ranges(distance);
             if external {
-                input.ranking = Some(vec![
-                    crate::replay::RankConfirmation { frame: 8, range: 0, rank: 2, percent: 175 },
-                    crate::replay::RankConfirmation { frame: 9, range: 0, rank: 3, percent: -25 },
-                ]);
+                // One legal arrival for every actual range, after its fever ends but before its delayed
+                // completion. The controller must retain each arrival until its own COMPLETE frame.
+                input.ranking = Some(
+                    [(2, 175), (3, -25), (1, 125)]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(range, (rank, percent))| crate::replay::RankConfirmation {
+                            frame: range * distance as usize / 100 + 8,
+                            range,
+                            rank,
+                            percent,
+                        })
+                        .collect(),
+                );
             }
             let capture = |input: &RecordingInput| {
                 let mut builder = life_recording::Builder::new(1 << 20);
