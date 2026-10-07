@@ -528,12 +528,19 @@ impl Replay {
     }
 
     /// Execute `frame` from `state` (per class at its start). `all` when every path executes it.
-    fn execute(&mut self, frame: usize, mut state: Classes, all: bool) -> Result<Classes, Error> {
+    fn execute(&mut self, frame: usize, state: Classes, all: bool) -> Result<Classes, Error> {
         #[cfg(feature = "search-diagnostics")]
         {
             self.work.execute_frames += 1;
         }
         if self.frames[frame].ops.is_empty() && self.frames[frame].probes.is_empty() {
+            // The endpoint traversal chooses equal zero signs in path order. Preserve that traversal
+            // when the endpoints contain both bit patterns, even though they compare equal numerically.
+            if state.iter().flatten().flatten().any(|field| {
+                field.lower() == 0.0 && field.upper() == 0.0 && field.lower().to_bits() != field.upper().to_bits()
+            }) {
+                return self.execute_full(frame, state, all);
+            }
             #[cfg(feature = "search-diagnostics")]
             {
                 self.work.empty_frames += 1;
@@ -552,6 +559,11 @@ impl Replay {
             self.retain_frame(frame, all, sums, state);
             return Ok(state);
         }
+        self.execute_full(frame, state, all)
+    }
+
+    /// Execute the original arithmetic and preserve each observation before optional history retention.
+    fn execute_full(&mut self, frame: usize, mut state: Classes, all: bool) -> Result<Classes, Error> {
         let paired = self.paired_undo(frame, &state)?;
         let entry = &self.frames[frame];
         let (ops, probes, notes) = (&entry.ops, &entry.probes, &entry.notes);
@@ -784,6 +796,11 @@ mod tests {
     use crate::live::full::combo::ComboCounter;
     use crate::live::full::scorecalc::{IncrementalCalculator, NoteCommand};
     use crate::live::score::{LiveScoreCalculator, LiveScoreSettings, get_frame};
+
+    mod history_tests {
+        use super::*;
+        include!("replay/history_tests.rs");
+    }
 
     struct Rng(u64);
 
