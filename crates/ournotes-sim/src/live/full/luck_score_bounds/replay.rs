@@ -156,6 +156,8 @@ pub(crate) struct Replay {
     mandatory: Option<i32>,
     /// Frames that may have received a lottery-dependent filing since the previous query.
     potential: Vec<i32>,
+    #[cfg(test)]
+    full_paired_undo: bool,
 }
 
 impl Replay {
@@ -173,6 +175,8 @@ impl Replay {
             fresh: false,
             mandatory: None,
             potential: Vec::new(),
+            #[cfg(test)]
+            full_paired_undo: false,
         }
     }
 
@@ -318,6 +322,101 @@ impl Replay {
     /// execution from `start`. Every path through the frame's probe groups is followed from both endpoints of its
     /// start class with its end state and recorded sum together.
     fn paired_undo(&self, frame: usize, start: &Classes) -> Result<Classes, Error> {
+        #[cfg(test)]
+        if self.full_paired_undo {
+            return self.paired_undo_full(frame, start);
+        }
+        let entry = &self.frames[frame];
+        let (ops, probes) = (&entry.ops, &entry.probes);
+        // In a note-only frame the other fields never change: native apply skips both signs of zero,
+        // the recorded sum stays +0, and undo subtracts +0. Each original endpoint admits every probe
+        // branch, so retaining its unchanged marginal hull loses no field endpoint or class.
+        // Keep the full traversal when another field changes, or endpoint visitation could affect
+        // signed-zero bits or the original nonfinite refusal.
+        if ops.iter().any(|op| op.deltas.iter().enumerate().any(|(field, &delta)| field != 1 && delta != 0.0))
+            || start.iter().flatten().flatten().any(|field| {
+                !field.lower().is_finite()
+                    || !field.upper().is_finite()
+                    || (field.lower() == 0.0
+                        && field.upper() == 0.0
+                        && field.lower().to_bits() != field.upper().to_bits())
+            })
+        {
+            return self.paired_undo_full(frame, start);
+        }
+        let mut out = *start;
+        let mut paths = Vec::with_capacity(4);
+        for (class, fields) in start.iter().enumerate() {
+            let Some(fields) = fields else { continue };
+            for state in [fields[1].lower(), fields[1].upper()] {
+                paths.push(PairedNotePath { start: class, class, state, sum: 0.0 });
+            }
+        }
+        dedup_note_paths(&mut paths);
+        let (mut op, mut probe) = (0, 0);
+        loop {
+            let op_time = ops.get(op).map(|o| o.time);
+            let probe_time = probes.get(probe).copied();
+            match (op_time, probe_time) {
+                (None, None) => break,
+                (Some(a), b) if b.is_none_or(|b| a < b) => {
+                    for path in &mut paths {
+                        path.apply(&[Step::Command(ops[op].deltas)], 1.0);
+                    }
+                    op += 1;
+                }
+                (_, Some(t)) => {
+                    let end = ops[op..].partition_point(|o| o.time == t);
+                    let group = &ops[op..op + end];
+                    let variants = if group.is_empty() { None } else { Some(variants(group, &self.rows)) };
+                    let variants = variants.as_deref().unwrap_or(&self.row_steps);
+                    let stay: Vec<Step> = group.iter().map(|op| Step::Command(op.deltas)).collect();
+                    let mut next = Vec::with_capacity(paths.len() * (1 + variants.len()));
+                    for path in &paths {
+                        let mut kept = *path;
+                        kept.apply(&stay, 1.0);
+                        next.push(kept);
+                        for steps in variants {
+                            let mut switched = *path;
+                            switched.apply(steps, if path.class == 0 { 1.0 } else { -1.0 });
+                            switched.class = 1 - path.class;
+                            next.push(switched);
+                        }
+                    }
+                    dedup_note_paths(&mut next);
+                    paths = next;
+                    op += end;
+                    probe += 1;
+                }
+                (Some(_), None) => unreachable!("covered by the command arm"),
+            }
+        }
+        // Projection changes path visitation order. Finite nonzero extrema have unique bit patterns;
+        // if either zero sign could win a hull tie, keep the full vector order instead.
+        let mut notes = [None::<F32Interval>; 2];
+        let mut zeros = [0u8; 2];
+        for path in paths {
+            let value = path.state - path.sum;
+            if value == 0.0 {
+                zeros[path.start] |= if value.is_sign_negative() { 1 } else { 2 };
+            }
+            if !value.is_finite() || zeros[path.start] == 3 {
+                return self.paired_undo_full(frame, start);
+            }
+            let value = point(value)?;
+            notes[path.start] = Some(notes[path.start].map_or(value, |old| old.hull(value)));
+        }
+        for (class, fields) in out.iter_mut().enumerate() {
+            if let Some(fields) = fields {
+                fields[1] = notes[class].expect("every initial class retains its stay path");
+            }
+        }
+        Ok(out)
+    }
+
+    /// Full vector traversal preserves native visitation and exceptional arithmetic, and is the
+    /// retained reference for the note-only projection.
+    fn paired_undo_full(&self, frame: usize, start: &Classes) -> Result<Classes, Error> {
         let entry = &self.frames[frame];
         let (ops, probes) = (&entry.ops, &entry.probes);
         let mut paths = Vec::with_capacity(8);
@@ -471,6 +570,39 @@ impl Replay {
             _ => paired,
         });
     }
+}
+
+/// The note field of one endpoint path; every future note operation depends only on this key.
+#[derive(Clone, Copy)]
+struct PairedNotePath {
+    start: usize,
+    class: usize,
+    state: f32,
+    sum: f32,
+}
+
+impl PairedNotePath {
+    fn apply(&mut self, steps: &[Step], sign: f32) {
+        for step in steps {
+            let delta = match *step {
+                Step::Command(deltas) => deltas[1],
+                Step::Probe(value) => sign * value,
+            };
+            if delta != 0.0 {
+                self.state += delta;
+                self.sum += delta;
+            }
+        }
+    }
+
+    fn key(&self) -> (usize, usize, u32, u32) {
+        (self.start, self.class, self.state.to_bits(), self.sum.to_bits())
+    }
+}
+
+fn dedup_note_paths(paths: &mut Vec<PairedNotePath>) {
+    paths.sort_unstable_by_key(PairedNotePath::key);
+    paths.dedup_by_key(|path| path.key());
 }
 
 /// One path through a frame from a start endpoint: its start class, current class, binary32 state and the binary32
@@ -688,6 +820,265 @@ mod tests {
     fn class_bits(classes: Classes) -> [Option<[(u32, u32); FIELDS]>; 2] {
         classes
             .map(|fields| fields.map(|fields| fields.map(|value| (value.lower().to_bits(), value.upper().to_bits()))))
+    }
+
+    #[track_caller]
+    fn compare_paired_projection(replay: &Replay, start: &Classes) -> Result<Classes, Error> {
+        let actual = replay.paired_undo(0, start);
+        let expected = replay.paired_undo_full(0, start);
+        match (&actual, &expected) {
+            (Ok(actual), Ok(expected)) => assert_eq!(class_bits(*actual), class_bits(*expected)),
+            (Err(actual), Err(expected)) => assert_eq!(actual, expected),
+            _ => panic!("projected={actual:?}, full={expected:?}"),
+        }
+        actual
+    }
+
+    #[test]
+    fn note_only_paired_undo_matches_full_paths_over_finite_combinations() {
+        let tiny = f32::from_bits(1);
+        let note_bounds = [
+            (0.0, 0.0),
+            (-0.0, -0.0),
+            (tiny, f32::from_bits(2)),
+            (-1.25, 0.13),
+            (1.0, 1.0f32.next_up()),
+            (16_777_216.0, 16_777_216.0f32.next_up()),
+        ];
+        let row_sets: [&[ProbeRow]; 6] = [
+            &[],
+            &[ProbeRow { owner: 1, value: 0.0 }, ProbeRow { owner: 1, value: -0.0 }],
+            &[ProbeRow { owner: 1, value: tiny }],
+            &[ProbeRow { owner: 2, value: -0.5 }, ProbeRow { owner: 0, value: 0.5 }],
+            &[ProbeRow { owner: 1, value: 0.12345 }, ProbeRow { owner: 1, value: -0.77777 }],
+            &[ProbeRow { owner: 1, value: -0.77777 }, ProbeRow { owner: 1, value: 0.12345 }],
+        ];
+        let schedules: [&[(i32, i32, i32)]; 6] = [
+            &[],
+            &[(0, 1, 12_345)],
+            &[(1, 1, 12_345), (0, 1, -7_777), (1, 1, -12_345)],
+            &[(0, 0, i32::MAX), (1, 2, i32::MIN), (2, 1, 3_333)],
+            &[(1, 1, 0), (0, 0, 0)],
+            &[(2, 1, 50_000), (2, 1, -12_345), (2, 1, -50_000)],
+        ];
+        let mut checked = 0;
+        for rows in row_sets {
+            for schedule in schedules {
+                for reverse_filing in [false, true] {
+                    for probe_mask in 0..8 {
+                        let mut replay = Replay::new(1, rows);
+                        let mut commands: Vec<_> = schedule
+                            .iter()
+                            .map(|&(time_ms, owner_id, note_mill)| FactorCommand {
+                                time_ms,
+                                owner_id,
+                                note_mill,
+                                ..Default::default()
+                            })
+                            .collect();
+                        if reverse_filing {
+                            commands.reverse();
+                        }
+                        for command in commands {
+                            replay.file_command(0, &command).unwrap();
+                        }
+                        for time in 0..3 {
+                            if probe_mask & (1 << time) != 0 {
+                                replay.probe(0, time).unwrap();
+                            }
+                        }
+                        for mask in 0..4 {
+                            for bound in 0..note_bounds.len() {
+                                let start = std::array::from_fn(|class| {
+                                    if mask & (1 << class) == 0 {
+                                        return None;
+                                    }
+                                    // Wide unchanged fields keep distinct vector endpoints even when the
+                                    // projected note field is a point. The classes also have distinct starts.
+                                    let mut fields = std::array::from_fn(|field| {
+                                        let value = (field as f32 - 2.0) * (class as f32 + 1.0);
+                                        F32Interval::new(value - 0.25, value + 0.375).unwrap()
+                                    });
+                                    let (lower, upper) = note_bounds[(bound + class) % note_bounds.len()];
+                                    fields[1] = F32Interval::new(lower, upper).unwrap();
+                                    Some(fields)
+                                });
+                                compare_paired_projection(&replay, &start).unwrap();
+                                checked += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 13_824);
+    }
+
+    #[test]
+    fn note_only_paired_undo_keeps_zero_bits_and_full_refusal_behavior() {
+        for field in 0..FIELDS {
+            for (lower, upper) in [(-0.0, 0.0), (0.0, -0.0), (-0.0, -0.0), (0.0, 0.0)] {
+                let mut fields = initial_state();
+                fields[field] = F32Interval::new(lower, upper).unwrap();
+                for mask in 1..4 {
+                    let start = std::array::from_fn(|class| (mask & (1 << class) != 0).then_some(fields));
+                    let mut replay = Replay::new(1, &[ProbeRow { owner: 1, value: f32::from_bits(1) }]);
+                    replay.probe(0, 0).unwrap();
+                    replay.probe(0, 1).unwrap();
+                    compare_paired_projection(&replay, &start).unwrap();
+                }
+            }
+            for (lower, upper) in [
+                (f32::NEG_INFINITY, f32::NEG_INFINITY),
+                (f32::INFINITY, f32::INFINITY),
+                (f32::NEG_INFINITY, 1.0),
+                (1.0, f32::INFINITY),
+            ] {
+                let mut fields = initial_state();
+                fields[field] = F32Interval::new(lower, upper).unwrap();
+                for mask in 1..4 {
+                    let start = std::array::from_fn(|class| (mask & (1 << class) != 0).then_some(fields));
+                    let replay = Replay::new(1, &[]);
+                    compare_paired_projection(&replay, &start).unwrap_err();
+                }
+            }
+            for delta in [f32::MAX, f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+                let mut deltas = [0.0; FIELDS];
+                deltas[field] = delta;
+                let mut replay = Replay::new(1, &[ProbeRow { owner: 1, value: f32::MAX }]);
+                replay.frames[0].ops = vec![Op { time: 0, owner: 1, deltas }; 2];
+                replay.probe(0, 0).unwrap();
+                replay.probe(0, 1).unwrap();
+                for mask in 1..4 {
+                    let start = std::array::from_fn(|class| (mask & (1 << class) != 0).then_some(initial_state()));
+                    compare_paired_projection(&replay, &start).unwrap_err();
+                }
+            }
+        }
+        for value in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+            let mut replay = Replay::new(1, &[ProbeRow { owner: 1, value }]);
+            replay.probe(0, 0).unwrap();
+            compare_paired_projection(&replay, &[Some(initial_state()), None]).unwrap_err();
+        }
+    }
+
+    #[test]
+    fn paired_undo_retains_full_traversal_for_other_factor_commands() {
+        for field in 0..FIELDS {
+            for delta in [0.0, -0.0, f32::from_bits(1), -0.12345, 0.5] {
+                let mut deltas = [0.0; FIELDS];
+                deltas[1] = 0.33333;
+                deltas[field] = delta;
+                let mut replay = Replay::new(1, &[ProbeRow { owner: 1, value: 0.12345 }]);
+                replay.frames[0].ops = vec![Op { time: 0, owner: 1, deltas }];
+                replay.probe(0, 0).unwrap();
+                replay.probe(0, 1).unwrap();
+                for mask in 0..4 {
+                    let start = std::array::from_fn(|class| {
+                        (mask & (1 << class) != 0).then(|| {
+                            std::array::from_fn(|field| {
+                                let value = (field + class) as f32;
+                                F32Interval::new(value - 0.25, value + 0.375).unwrap()
+                            })
+                        })
+                    });
+                    compare_paired_projection(&replay, &start).unwrap();
+                }
+            }
+        }
+    }
+
+    #[track_caller]
+    fn compare_replay_bits(actual: &Replay, expected: &Replay) {
+        assert_eq!(class_bits(actual.state), class_bits(expected.state));
+        assert_eq!(actual.prev, expected.prev);
+        assert_eq!(actual.fresh, expected.fresh);
+        assert_eq!(actual.mandatory, expected.mandatory);
+        assert_eq!(actual.potential, expected.potential);
+        assert_eq!(actual.frames.len(), expected.frames.len());
+        for (actual, expected) in actual.frames.iter().zip(&expected.frames) {
+            assert_eq!(actual.diff.map(|rows| rows.map(class_bits)), expected.diff.map(|rows| rows.map(class_bits)));
+            assert_eq!(actual.undo.map(class_bits), expected.undo.map(class_bits));
+        }
+        assert_eq!(actual.notes.len(), expected.notes.len());
+        for (actual, expected) in actual.notes.iter().zip(&expected.notes) {
+            assert_eq!((actual.time_ms, actual.note_id), (expected.time_ms, expected.note_id));
+            assert_eq!(class_bits(actual.executed), class_bits(expected.executed));
+        }
+    }
+
+    #[test]
+    fn note_projection_matches_full_replay_through_late_filings_and_optional_rewinds() {
+        let row_sets: [&[ProbeRow]; 3] = [
+            &[],
+            &[ProbeRow { owner: 1, value: 0.12345 }],
+            &[ProbeRow { owner: 2, value: 0.5 }, ProbeRow { owner: 1, value: -0.33333 }],
+        ];
+        for rows in row_sets {
+            for value in [-0.0, 0.0, 1.0000001, 16_777_216.0] {
+                for reverse_filing in [false, true] {
+                    let mut actual = Replay::new(5, rows);
+                    let mut expected = Replay::new(5, rows);
+                    expected.full_paired_undo = true;
+                    for replay in [&mut actual, &mut expected] {
+                        replay.state[0].as_mut().unwrap()[1] = point(value).unwrap();
+                        for (frame, time, id) in [(0, 0, 1), (1, 17, 2), (2, 35, 3), (3, 50, 4), (4, 67, 5)] {
+                            replay.file_note(frame, time, id).unwrap();
+                        }
+                        let mut commands = [
+                            (0, FactorCommand { time_ms: 0, owner_id: 1, note_mill: 12_345, ..Default::default() }),
+                            (2, FactorCommand { time_ms: 32, owner_id: 2, note_mill: -7_777, ..Default::default() }),
+                            (2, FactorCommand { time_ms: 32, owner_id: 2, note_mill: 3_333, ..Default::default() }),
+                        ];
+                        if reverse_filing {
+                            commands.reverse();
+                        }
+                        for (frame, command) in commands {
+                            replay.file_command(frame, &command).unwrap();
+                        }
+                        replay.probe(1, 16).unwrap();
+                        replay.probe(2, 32).unwrap();
+                    }
+                    for to in [3, 3] {
+                        actual.query(to).unwrap();
+                        expected.query(to).unwrap();
+                        compare_replay_bits(&actual, &expected);
+                    }
+                    for replay in [&mut actual, &mut expected] {
+                        replay.file_note(1, 19, 6).unwrap();
+                        replay
+                            .file_command(
+                                1,
+                                &FactorCommand { time_ms: 18, owner_id: 1, note_mill: 33_333, ..Default::default() },
+                            )
+                            .unwrap();
+                        replay.probe(1, 18).unwrap();
+                        // The mandatory late filing rewinds every path to frame 1; this potential filing
+                        // additionally executes frame 0 on only some paths, retaining optional history.
+                        replay.potential(0);
+                    }
+                    for to in [3, 1, 1] {
+                        actual.query(to).unwrap();
+                        expected.query(to).unwrap();
+                        compare_replay_bits(&actual, &expected);
+                    }
+                    actual.potential(1);
+                    expected.potential(1);
+                    for to in [4, 0, 4, 4] {
+                        actual.query(to).unwrap();
+                        expected.query(to).unwrap();
+                        compare_replay_bits(&actual, &expected);
+                    }
+                    for all in [false, true] {
+                        let state = [Some(initial_state()), Some([point(2.0).unwrap(); FIELDS])];
+                        let result = actual.execute(2, state, all).unwrap();
+                        let reference = expected.execute(2, state, all).unwrap();
+                        assert_eq!(class_bits(result), class_bits(reference));
+                        compare_replay_bits(&actual, &expected);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
