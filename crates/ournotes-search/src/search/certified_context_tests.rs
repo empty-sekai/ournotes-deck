@@ -97,6 +97,7 @@ fn input_with_order_skills(order_skills: bool) -> (Master, LuckSkills, FiniteSee
     )
     .unwrap();
     let stream = JudgementStream::theoretical_best(&chart);
+    let judgement_types = vec![1; chart.notes.len()];
     let resolved = ContextInput {
         power_snapshot: PowerSnapshotInput { event_ids: vec![], captured_jst_ticks: None },
         result_clock: None,
@@ -107,7 +108,7 @@ fn input_with_order_skills(order_skills: bool) -> (Master, LuckSkills, FiniteSee
     let objective = Objective::LiveScore {
         score_id: 1004,
         chart,
-        play: PlayInput::Stream { stream, judgement_types: vec![1] },
+        play: PlayInput::Stream { stream, judgement_types },
         event: false,
         exclude_snap_skills: false,
         gekisou: Some(GekisouObjective { seeds: SeedSet::List(vec![0]), fevers: vec![(50, 150)] }),

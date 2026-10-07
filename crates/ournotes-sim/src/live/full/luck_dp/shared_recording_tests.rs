@@ -674,7 +674,9 @@ fn certified_life_power_projection_preserves_complete_native_phase_and_judgement
             let condition = input.master.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap();
             condition.condition_type = 2001;
             condition.condition_values = vec![700];
-            input.master.judgement_parameters[0].damage = 100;
+            // Rank is confirmed only after the range's END/DELAY lifecycle. Native recovery cannot revive
+            // zero life, so all thirty judgements must leave this fixture alive even without the recovery.
+            input.master.judgement_parameters[0].damage = 10;
             // Keep the unrelated lottery support's condition 7000 intact: admission checks every GK row,
             // including unselected skills. Only the ordinary LIFE reader owns this new rank condition.
             let mut rank_condition = input.master.skill_conditions.iter().find(|row| row.id == 7000).unwrap().clone();
@@ -753,10 +755,17 @@ fn certified_life_power_projection_preserves_complete_native_phase_and_judgement
                     let mut cached_judged = native_judged.clone();
                     let phase = native.next(&mut native_judged).unwrap();
                     assert_eq!(phase, cached.next(&mut cached_judged).unwrap());
+                    assert!(phase.into_iter().all(|life| life > 0), "rank recovery fixture must remain alive");
+                    if phase[1] > phase[0] {
+                        assert_eq!(phase[1] - phase[0], 250, "the sole native rank-triggered recovery amount");
+                    }
                     observed_rank_recovery |= phase[1] > phase[0];
                     assert_eq!(native_judged, cached_judged);
                 }
-                assert!(observed_rank_recovery, "the rank reader must cause a native phase-life change");
+                assert!(
+                    observed_rank_recovery,
+                    "the rank reader must cause a native phase-life change: distance={distance}, external={external}, power={power}"
+                );
                 let before = curves.stats().shared_recording_hits;
                 assert_eq!(curve_words(&input.fresh_session(&mut curves)), expected);
                 assert_eq!(curve_words(&input.independent()), expected);
