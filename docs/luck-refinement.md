@@ -217,8 +217,11 @@ compiled skill catalogue, chart, events, parameters, Gekisou setup, play inputs 
 The search also holds the exact compiled reward template. A compatible DP curve alone is not this authority.
 
 Context admission checks the complete causal, first-due judgement stream, unique chart-note identities,
-nonnegative clocks and bounded native frame geometry. Each note is judged once at its declared time; late,
-repeated or omitted inputs decline. Every active range must reach FINISH before a final empty frame. The
+nonnegative clocks and bounded native frame geometry. Each judgement note is judged once at its declared
+time; late, repeated or omitted required inputs decline. Structural chart nodes omitted by the theoretical
+stream remain in the full native note domain, range targets and end/score-frame checks. They need no declared
+judgement; an explicit structural-node result is outside this capability. Every active range must reach
+FINISH before a final empty frame. The
 terminal mapping records the original note-occurrence multiset and checks the Query count, a last Query
 whose prior probability-readiness covers its notes, and no pending rank. Solo ranking is required. Binding
 the reward template later requires equality of the complete sorted note-time multiset. These checks establish

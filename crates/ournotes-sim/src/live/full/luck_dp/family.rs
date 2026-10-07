@@ -7,6 +7,7 @@
 //! 120 performance orders. A family is published only after every writer-placement profile and order completed.
 
 use super::*;
+use crate::live::skip::is_judgement_note;
 use std::collections::BTreeSet;
 use std::mem::size_of;
 use std::sync::Arc;
@@ -497,6 +498,12 @@ impl<'a> LuckFamilyContext<'a> {
                     return Err(fail(LuckFamilyDecline::Context, "unknown judged note"));
                 };
                 let note = notes[index];
+                if !is_judgement_note(note.note_operate_type) {
+                    return Err(fail(
+                        LuckFamilyDecline::Context,
+                        "declared structural note judgement has no common terminal mapping",
+                    ));
+                }
                 if seen[index]
                     || note.time_ms <= previous
                     || note.time_ms > frame.time_ms
@@ -512,8 +519,11 @@ impl<'a> LuckFamilyContext<'a> {
             }
             previous = frame.time_ms;
         }
-        if seen.contains(&false) {
-            return Err(fail(LuckFamilyDecline::Context, "unjudged chart notes have no common terminal mapping"));
+        // The theoretical stream omits structural chart nodes. They remain in `notes`, including the native
+        // controller's range targets and the full-chart end/score-frame checks above. Only actual judgement
+        // notes require an input; the terminal mapping below still comes from native scored-note filings.
+        if notes.iter().zip(&seen).any(|(note, &seen)| is_judgement_note(note.note_operate_type) && !seen) {
+            return Err(fail(LuckFamilyDecline::Context, "unjudged judgement notes have no common terminal mapping"));
         }
         // In the reduced native interpreter before/after controller calls pass literal score zero. The native
         // constructor uses total_power only in calc.state.band_total_power. Every remaining field is preserved.

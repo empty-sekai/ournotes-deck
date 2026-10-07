@@ -77,6 +77,16 @@ not attempt that template. Admission only establishes an optional bound's prereq
 this tool runs no probability DP or search and returns no ranking or completion certificate.
 Use the ordinary recommendation path to measure completion and timing.
 
+`family_context DATA ROSTER|SNAPSHOT REQUEST OUTPUT` separately attempts the native
+controller-family context using the unchanged full chart, judgement stream, Gekisou
+setup and LUCK skill definitions. Its `ournotes-deck.family-context-diagnostics/1`
+report keeps `familyTemplate` as the compile-only result and adds `familyContext`:
+actual context admission, cancellation or refusal, the native reason and message, declared geometry
+counts, and setup/geometry phase times. Structural chart notes remain in the native
+setup and are counted separately from required judgement notes. Context admission
+does not check every physical member/Snap pair or compute any controller-family
+probability law; it cannot establish a candidate value or search completion.
+
 Experiments can change `strategy`, `limits`, or add member/Snap exclusions. They cannot change the scorer, metric, scene, play or K. Reports keep original-domain identity even for reduced-pool trials. `Complete` from a reduced experiment certifies only its reduced domain; the harness separately checks whether its results equal the original full-domain Top-K. Heuristic/timeout results must still match fixed-evaluator values. A full-domain wrong `Complete` or incorrectly evaluated returned deck fails the run.
 
 Reports retain complete returned results with their best orders, oracle Top-K, candidate/simulation/cache/bound counters, exact Top-1 gap, input hashes, binary identity and source manifest.

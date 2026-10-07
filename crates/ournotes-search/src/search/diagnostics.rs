@@ -81,6 +81,108 @@ pub fn family_template_diagnostics(built: &BuiltProblem<'_>) -> Option<serde_jso
     Some(serde_json::json!(diagnostics))
 }
 
+/// Attempt the native controller-family context on the unchanged full setup of this compiled problem.
+/// This runs the bounded empty-reward geometry recorder, but no physical pair admission, controller-family
+/// probability DP, candidate evaluation or search. A successful context is not a reward-template or Top-K proof.
+pub fn family_context_diagnostics(built: &BuiltProblem<'_>, cancelled: &mut impl FnMut() -> bool) -> serde_json::Value {
+    use ournotes_sim::live::full::{LuckFamilyContext, luck_skills};
+    use ournotes_sim::live::skip::is_judgement_note;
+
+    fn unavailable(stage: &str, error: impl std::fmt::Display) -> serde_json::Value {
+        serde_json::json!({
+            "status": "refused", "admitted": false, "stage": stage,
+            "reason": "context", "message": error.to_string(), "geometry": null,
+        })
+    }
+
+    fn stopped(stage: &str, geometry: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "status": "cancelled", "admitted": false, "stage": stage,
+            "reason": null, "message": null, "geometry": geometry,
+        })
+    }
+
+    if cancelled() {
+        return stopped("preflight", serde_json::Value::Null);
+    }
+
+    let setup_started = crate::clock::Instant::now();
+    let setup = match super::full_setup(&built.pool, &built.context.request.objective) {
+        Ok(Some(setup)) => setup,
+        Ok(None) => return unavailable("fullSetup", "objective has no whole-live Snap setup"),
+        Err(error) => return unavailable("fullSetup", error),
+    };
+    let setup_ms = setup_started.elapsed().as_secs_f64() * 1000.0;
+    let skills_started = crate::clock::Instant::now();
+    let skills = match luck_skills(built.pool.master) {
+        Ok(skills) => skills,
+        Err(error) => return unavailable("luckSkills", error),
+    };
+    let skills_ms = skills_started.elapsed().as_secs_f64() * 1000.0;
+    let Some(gk) = setup.gk.as_ref() else {
+        return unavailable("gekisou", "whole-live setup has no Gekisou controller");
+    };
+    if gk.confirmations.is_some() {
+        return unavailable("rankConfirmations", "controller families require the native solo rank lifecycle");
+    }
+    if cancelled() {
+        return stopped("metadata", serde_json::Value::Null);
+    }
+    let judged_ids: std::collections::BTreeSet<_> =
+        setup.play.frames.iter().flat_map(|frame| frame.judged.iter().map(|note| note.note_id)).collect();
+    let required_notes = setup.notes.iter().filter(|note| is_judgement_note(note.note_operate_type)).count();
+    let geometry = serde_json::json!({
+        "chartNotes": setup.notes.len(),
+        "requiredJudgementNotes": required_notes,
+        "structuralNotes": setup.notes.len() - required_notes,
+        "declaredJudgements": setup.play.frames.iter().map(|frame| frame.judged.len()).sum::<usize>(),
+        "distinctJudgedIds": judged_ids.len(),
+        "missingRequiredNotes": setup.notes.iter().filter(|note| {
+            is_judgement_note(note.note_operate_type) && !judged_ids.contains(&note.note_id)
+        }).count(),
+        "unjudgedStructuralNotes": setup.notes.iter().filter(|note| {
+            !is_judgement_note(note.note_operate_type) && !judged_ids.contains(&note.note_id)
+        }).count(),
+        "frames": setup.play.frames.len(),
+        "deltaTimes": gk.dt.len(),
+        "skillEvents": setup.events.len(),
+        "ranges": gk.setup.fevers.len(),
+        "luckRanges": gk.setup.missions.iter().take(gk.setup.fevers.len()).filter(|&&mission| mission == 2).count(),
+        "maximumNoteMs": setup.notes.iter().map(|note| note.time_ms).max(),
+        "lastFrameMs": setup.play.frames.last().map(|frame| frame.time_ms),
+        "lastFrameJudgements": setup.play.frames.last().map(|frame| frame.judged.len()),
+        "musicLengthMs": setup.params.music_length_ms,
+        "scoreMusicLengthMs": setup.params.score_music_length_ms,
+        "convertedNoteCount": setup.params.converted_note_count,
+    });
+    if cancelled() {
+        return stopped("nativeContext", geometry);
+    }
+    let context_started = crate::clock::Instant::now();
+    let result = LuckFamilyContext::new(
+        built.pool.master,
+        &skills,
+        &setup.notes,
+        &setup.events,
+        setup.params,
+        &gk.setup,
+        &setup.play,
+        &gk.dt,
+        cancelled,
+    );
+    let context_ms = context_started.elapsed().as_secs_f64() * 1000.0;
+    let (status, admitted, reason, message) = match result {
+        Ok(Some(_)) => ("admitted", true, None, None),
+        Ok(None) => ("cancelled", false, None, None),
+        Err(refusal) => ("refused", false, Some(refusal.reason.as_str()), Some(refusal.error.to_string())),
+    };
+    serde_json::json!({
+        "status": status, "admitted": admitted, "stage": "nativeContext",
+        "reason": reason, "message": message, "geometry": geometry,
+        "setupMs": setup_ms, "skillsMs": skills_ms, "contextMs": context_ms,
+    })
+}
+
 /// Explain the complete-deck relaxation at one performance order without running or changing the scorer.
 pub fn describe_bound(
     built: &BuiltProblem<'_>,

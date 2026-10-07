@@ -822,3 +822,6 @@ fn controller_family_requires_a_completed_empty_terminal_tail() {
 
 #[path = "family_admission_tests.rs"]
 mod admission_tests;
+
+#[path = "family_structural_note_tests.rs"]
+mod structural_note_tests;
