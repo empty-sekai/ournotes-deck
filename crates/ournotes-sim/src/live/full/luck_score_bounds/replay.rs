@@ -236,6 +236,9 @@ impl Replay {
 
     /// The native `calculate` up to score frame `to`.
     pub(crate) fn query(&mut self, to: i32) -> Result<(), Error> {
+        if to == self.prev && self.mandatory.is_none() && self.potential.is_empty() {
+            return Ok(());
+        }
         let prev = self.prev;
         let shallowest = self.mandatory.map_or(to, |frame| to.min(frame - 1));
         let mut targets: Vec<i32> =
@@ -376,7 +379,33 @@ impl Replay {
     }
 
     /// Execute `frame` from `state` (per class at its start). `all` when every path executes it.
-    fn execute(&mut self, frame: usize, mut state: Classes, all: bool) -> Result<Classes, Error> {
+    fn execute(&mut self, frame: usize, state: Classes, all: bool) -> Result<Classes, Error> {
+        if self.frames[frame].ops.is_empty() && self.frames[frame].probes.is_empty() {
+            // The full endpoint hull chooses zero signs in path order. Retain that order for intervals
+            // containing both zero bit patterns, even though their numerical endpoints are equal.
+            if state.iter().flatten().flatten().any(|field| {
+                field.lower() == 0.0 && field.upper() == 0.0 && field.lower().to_bits() != field.upper().to_bits()
+            }) {
+                return self.execute_full(frame, state, all);
+            }
+            // No float command or class switch can occur. Native execution leaves each field unchanged,
+            // records +0 in every diff field, and its immediate undo subtracts that same +0.
+            for fields in state.iter().flatten() {
+                finite(fields)?;
+            }
+            let observed = if self.rows.is_empty() { [state[0], state[0]] } else { state };
+            for &index in &self.frames[frame].notes {
+                let note = &mut self.notes[index];
+                note.executed = if all { observed } else { hull_classes(note.executed, observed) };
+            }
+            let sums = [[state[0].map(|_| zero()), None], [None, state[1].map(|_| zero())]];
+            self.retain_frame(frame, all, sums, state);
+            return Ok(state);
+        }
+        self.execute_full(frame, state, all)
+    }
+
+    fn execute_full(&mut self, frame: usize, mut state: Classes, all: bool) -> Result<Classes, Error> {
         let paired = self.paired_undo(frame, &state)?;
         let entry = &self.frames[frame];
         let (ops, probes, notes) = (&entry.ops, &entry.probes, &entry.notes);
@@ -427,6 +456,11 @@ impl Replay {
             let note = &mut self.notes[index];
             note.executed = if all { classes } else { hull_classes(note.executed, classes) };
         }
+        self.retain_frame(frame, all, sums, paired);
+        Ok(state)
+    }
+
+    fn retain_frame(&mut self, frame: usize, all: bool, sums: [Classes; 2], paired: Classes) {
         let entry = &mut self.frames[frame];
         entry.diff = Some(match (all, entry.diff) {
             (false, Some(old)) => [hull_classes(old[0], sums[0]), hull_classes(old[1], sums[1])],
@@ -436,7 +470,6 @@ impl Replay {
             (false, Some(old)) => hull_classes(old, paired),
             _ => paired,
         });
-        Ok(state)
     }
 }
 
@@ -650,6 +683,143 @@ mod tests {
 
     fn frame_of(time: i32, frames: usize) -> usize {
         (get_frame(time).max(0) as usize).min(frames - 1)
+    }
+
+    fn class_bits(classes: Classes) -> [Option<[(u32, u32); FIELDS]>; 2] {
+        classes
+            .map(|fields| fields.map(|fields| fields.map(|value| (value.lower().to_bits(), value.upper().to_bits()))))
+    }
+
+    #[test]
+    fn empty_frame_reuse_matches_full_arithmetic_for_each_class_and_field() {
+        let probe_rows = [ProbeRow { owner: 1, value: 0.125 }];
+        for rows in [&[][..], &probe_rows[..]] {
+            for mask in 0..4 {
+                for all in [false, true] {
+                    for field in 0..FIELDS {
+                        for (lower, upper) in
+                            [(-0.0, -0.0), (0.0, 0.0), (-0.0, 0.0), (0.0, -0.0), (-1.25, 2.5), (-f32::MAX, f32::MAX)]
+                        {
+                            let mut fields = initial_state();
+                            fields[field] = F32Interval::new(lower, upper).unwrap();
+                            let state = std::array::from_fn(|class| ((mask >> class) & 1 != 0).then_some(fields));
+                            let mut actual = Replay::new(3, rows);
+                            let mut expected = Replay::new(3, rows);
+                            for replay in [&mut actual, &mut expected] {
+                                replay.file_note(1, 40, 1).unwrap();
+                                replay.execute_full(1, [Some(initial_state()), None], true).unwrap();
+                            }
+                            let result = actual.execute(1, state, all).unwrap();
+                            let reference = expected.execute_full(1, state, all).unwrap();
+                            assert_eq!(class_bits(result), class_bits(reference));
+                            assert_eq!(
+                                actual.frames[1].diff.unwrap().map(class_bits),
+                                expected.frames[1].diff.unwrap().map(class_bits),
+                            );
+                            assert_eq!(
+                                class_bits(actual.frames[1].undo.unwrap()),
+                                class_bits(expected.frames[1].undo.unwrap()),
+                                "rows={} mask={mask} all={all} field={field} lower={lower:?} upper={upper:?}",
+                                rows.len(),
+                            );
+                            assert_eq!(class_bits(actual.notes[0].executed), class_bits(expected.notes[0].executed));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn empty_frames_reject_nonfinite_fields_before_recording_history() {
+        for class in 0..2 {
+            for field in 0..FIELDS {
+                for (lower, upper) in [
+                    (f32::NEG_INFINITY, f32::NEG_INFINITY),
+                    (f32::INFINITY, f32::INFINITY),
+                    (f32::NEG_INFINITY, 1.0),
+                    (1.0, f32::INFINITY),
+                ] {
+                    for all in [false, true] {
+                        let mut fields = initial_state();
+                        fields[field] = F32Interval::new(lower, upper).unwrap();
+                        let mut state = [None, None];
+                        state[class] = Some(fields);
+                        let mut actual = Replay::new(3, &[]);
+                        let mut expected = Replay::new(3, &[]);
+                        for replay in [&mut actual, &mut expected] {
+                            replay.file_note(1, 40, 1).unwrap();
+                            replay.execute_full(1, [Some(initial_state()), None], true).unwrap();
+                        }
+                        let before_diff = actual.frames[1].diff.unwrap().map(class_bits);
+                        let before_undo = class_bits(actual.frames[1].undo.unwrap());
+                        let before_note = class_bits(actual.notes[0].executed);
+                        let result = actual.execute(1, state, all).unwrap_err();
+                        let reference = expected.execute_full(1, state, all).unwrap_err();
+                        assert!(matches!(result, Error::Unsupported(_)));
+                        assert_eq!(result.to_string(), reference.to_string());
+                        for replay in [&actual, &expected] {
+                            assert_eq!(replay.frames[1].diff.unwrap().map(class_bits), before_diff);
+                            assert_eq!(class_bits(replay.frames[1].undo.unwrap()), before_undo);
+                            assert_eq!(class_bits(replay.notes[0].executed), before_note);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn empty_frames_keep_signed_zero_and_optional_note_histories() {
+        let mut replay = Replay::new(4, &[]);
+        let note = replay.file_note(1, 40, 1).unwrap();
+        let mut fields = initial_state();
+        fields[0] = point(-0.0).unwrap();
+        replay.state = [Some(fields), None];
+        replay.query(2).unwrap();
+        let before = replay.state;
+        replay.query(2).unwrap();
+        assert_eq!(replay.state, before);
+        let undone = replay.undo(2, replay.state, true).unwrap()[0].unwrap();
+        assert_eq!(undone[0].lower().to_bits(), (-0.0f32).to_bits());
+        assert_eq!(undone[0].upper().to_bits(), (-0.0f32).to_bits());
+        let mut alternate = fields;
+        alternate[1] = point(2.0).unwrap();
+        replay.execute(1, [Some(alternate), None], false).unwrap();
+        let observed = replay.notes[note].executed[0].unwrap();
+        assert_eq!((observed[1].lower(), observed[1].upper()), (1.0, 2.0));
+        let paired = replay.frames[1].undo.unwrap()[0].unwrap();
+        assert_eq!((paired[1].lower(), paired[1].upper()), (1.0, 2.0));
+        replay.execute(1, [Some(alternate), None], true).unwrap();
+        assert_eq!(replay.notes[note].executed[0].unwrap()[1], point(2.0).unwrap());
+    }
+
+    #[test]
+    fn quiet_queries_still_execute_late_commands_and_rank_rewinds() {
+        let mut native = calculator();
+        let frames = native.executed_states().0;
+        let mut replay = Replay::new(frames, &[]);
+        let note = NoteCommand::new(80, 1000, 1, 1, 2);
+        native.add_note(note);
+        let index = replay.file_note(frame_of(80, frames), 80, 1).unwrap();
+        let combo = ComboCounter::new(64);
+        for time in [120, 120] {
+            native.calculate(time, &combo, None).unwrap();
+            replay.query(frame_of(time, frames) as i32).unwrap();
+        }
+        let command = FactorCommand { time_ms: 0, owner_id: 1, note_mill: 12_345, ..Default::default() };
+        native.add_factor(command);
+        replay.file_command(0, &command).unwrap();
+        for time in [120, 40, 40, 120, 120] {
+            native.calculate(time, &combo, None).unwrap();
+            replay.query(frame_of(time, frames) as i32).unwrap();
+        }
+        let actual = native.executed_states().1.into_iter().find(|(id, _)| *id == 1).unwrap().1;
+        for (field, value) in actual.into_iter().enumerate() {
+            let enclosure = replay.notes[index].executed[0].unwrap()[field];
+            assert_eq!(enclosure.lower().to_bits(), value.to_bits());
+            assert_eq!(enclosure.upper().to_bits(), value.to_bits());
+        }
     }
 
     /// Every lottery path's native factor state at each note's last execution lies in the replay's enclosure of the
