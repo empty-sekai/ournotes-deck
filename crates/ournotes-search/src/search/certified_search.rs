@@ -157,6 +157,38 @@ fn average_exact(a: ExactExpectation) -> Option<ExactExpectation> {
 }
 
 impl OrderScoreInterval {
+    /// Intersect an independently completed factor-history enclosure of this same physical order.
+    /// Existing exact values and payoff evidence remain attached to the original nominal law.
+    pub(super) fn refine_summary(&mut self, summary: ournotes_sim::live::full::LuckScoreSummary) -> Result<(), Error> {
+        let refined = summary_order(self.order, summary)?;
+        let mut next = self.clone();
+        next.support = (self.support.0.max(refined.support.0), self.support.1.min(refined.support.1));
+        if next.support.0 > next.support.1 {
+            return Err(invalid("factor-history refinement contradicts score support"));
+        }
+        next.mean = self
+            .mean
+            .intersect(refined.mean)
+            .and_then(|mean| {
+                mean.intersect(F64Interval::new(f64::from(next.support.0), f64::from(next.support.1)).ok()?)
+            })
+            .ok_or_else(|| invalid("factor-history refinement contradicts score mean"))?;
+        if let (Some(previous), Some(refined)) = (self.exact_mean, refined.exact_mean)
+            && compare_exact(previous, refined)? != std::cmp::Ordering::Equal
+        {
+            return Err(invalid("factor-history refinement changes an exact mean"));
+        }
+        next.exact_mean = self.exact_mean.or(refined.exact_mean);
+        next.final_life = match (self.final_life, refined.final_life) {
+            (Some(a), Some(b)) => Some((a.0.max(b.0), a.1.min(b.1))),
+            (a, b) => a.or(b),
+        };
+        next.evaluated = true;
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         let mut order = self.order;
         order.sort_unstable();
@@ -982,6 +1014,73 @@ mod tests {
                 refined_payoff: None,
             })
             .collect()
+    }
+
+    fn summary(lower: f64, upper: f64, support: (i32, i32), life: i32) -> ournotes_sim::live::full::LuckScoreSummary {
+        ournotes_sim::live::full::LuckScoreSummary {
+            final_mean: F64Interval::new(lower, upper).unwrap().into(),
+            final_support: ournotes_sim::live::certified::I32Interval::new(support.0, support.1).unwrap().into(),
+            exact_constant_score: (support.0 == support.1).then_some(support.0),
+            exact_final_life: Some(life),
+            probability_peak_states: 1,
+            probability_transitions: 0,
+        }
+    }
+
+    #[test]
+    fn summary_refinement_intersects_score_and_preserves_existing_law_evidence() {
+        let mut order = laws(50.0, (0, 100)).remove(0);
+        order.mean = F64Interval::new(45.0, 55.0).unwrap();
+        order.final_life = Some((900, 1100));
+        order.refine_tail(40, TailProbability { bounds: F64Interval::ONE, exact: Some(fraction(1)) }).unwrap();
+        order
+            .refine_payoff(PayoffRefinement { map: PayoffMap::Score, bounds: order.mean, exact: Some(fraction(50)) })
+            .unwrap();
+        order.refine_summary(summary(49.5, 50.5, (48, 52), 1000)).unwrap();
+        assert_eq!(order.mean, F64Interval::new(49.5, 50.5).unwrap());
+        assert_eq!(order.support, (48, 52));
+        assert_eq!(order.final_life, Some((1000, 1000)));
+        assert_eq!(order.exact_mean, Some(fraction(50)));
+        assert_eq!(order.tails[&40].exact, Some(fraction(1)));
+        assert_eq!(order.refined_payoff.unwrap().exact, Some(fraction(50)));
+    }
+
+    #[test]
+    fn summary_refinement_rejects_contradictions_without_losing_previous_evidence() {
+        let mut order = laws(50.0, (0, 100)).remove(0);
+        order.mean = F64Interval::new(40.0, 60.0).unwrap();
+        order.final_life = Some((900, 1100));
+        let previous = format!("{order:?}");
+        for fresh in [
+            summary(30.0, 39.0, (0, 100), 1000),
+            summary(101.0, 110.0, (101, 110), 1000),
+            summary(51.0, 51.0, (51, 51), 1000),
+            summary(49.0, 51.0, (0, 100), 1200),
+        ] {
+            assert!(order.refine_summary(fresh).is_err());
+            assert_eq!(format!("{order:?}"), previous);
+        }
+    }
+
+    #[test]
+    fn summary_refinement_preserves_best_order_labels_after_a_nontrivial_basis_mapping() {
+        let basis = [4, 2, 0, 3, 1];
+        let mut orders = laws(0.0, (0, 100));
+        for order in &mut orders {
+            order.order = order.order.map(|slot| basis[slot]);
+            order.evaluated = false;
+            order.mean = F64Interval::new(0.0, 60.0).unwrap();
+            order.exact_mean = None;
+        }
+        let expected = orders[7].order;
+        orders[7].mean = F64Interval::new(0.0, 100.0).unwrap();
+        orders[7].refine_summary(summary(75.0, 76.0, (70, 80), 1000)).unwrap();
+        let result = aggregate_orders(orders, &PayoffMap::BestOrderExpectedScore).unwrap();
+        let witness = result.best_order.unwrap();
+        assert_eq!(witness.order, expected);
+        assert!(witness.optimal);
+        assert_eq!(witness.evaluated_orders, 1);
+        assert!(result.exact_score.is_none());
     }
 
     #[test]

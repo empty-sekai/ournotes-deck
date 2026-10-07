@@ -39,6 +39,8 @@ pub(super) struct Geo<'g> {
     /// Entry chart times, non-decreasing.
     pub(super) times: &'g [i32],
     pub(super) exec: &'g Exec,
+    /// A positive native finish clamp. Count-triggered conditional timers have no duration extensions.
+    pub(super) music_length_ms: i32,
     /// Last score frame when rank bonuses retain historical score snapshots.
     pub(super) snapshot_frame_limit: Option<i32>,
 }
@@ -140,8 +142,11 @@ pub(super) fn windows(
         } else if t == 2004 {
             let f = judgement_factor_mill(value as f32 / 10000f32).max(0) as f64 / 1e5;
             for &x in targets {
-                if (3..=6).contains(&x) {
-                    j[(x - 3) as usize] += f;
+                // The 2004 applier narrows each destination before filing FactorCommand. Count and
+                // conversion predicates instead compare their original i64 targets, so narrow only here.
+                let judgement = x as i32;
+                if (3..=6).contains(&judgement) {
+                    j[(judgement - 3) as usize] += f;
                 }
                 cmds += 1.0;
             }
@@ -216,7 +221,7 @@ pub(super) fn windows(
                 push(a, b, note, judge, 0, 0);
             }
         }
-        if let Some(ws) = r.gk_event_win.as_ref().map(|w| &w[position]).or(r.gk_win.as_ref()) {
+        if let Some(ws) = r.gk_event_win.as_ref().map(|w| &w[position]).or(r.gk_win.as_ref()).or(r.count_win.as_ref()) {
             let rush = match &r.rush {
                 Some(spec) => {
                     rush_rows.push(rush::RushRef {
@@ -263,7 +268,7 @@ pub(super) fn windows(
                 }
                 // Pool size bounds simultaneous factors, not lifetime starts: an
                 // updater can be returned and reused many times in this span.
-                let starts = if r.gk_event_win.is_some() {
+                let starts = if r.gk_event_win.is_some() || r.count_win.is_some() {
                     1.0
                 } else {
                     r.gk_execs.as_ref().and_then(|v| v.get(wi)).copied().unwrap_or(f64::INFINITY)
@@ -276,8 +281,16 @@ pub(super) fn windows(
                     c,
                 );
                 cmds = (cmds + count).next_up();
-                add(&mut fac, note, judge, mult);
-                let e = geo.exec.over(a, b);
+                if r.count_win.is_none() {
+                    add(&mut fac, note, judge, mult);
+                }
+                // A late conditional timer can file its end at the earlier positive music-length clamp.
+                let command_start = if r.count_win.is_some() && geo.music_length_ms > 0 {
+                    a.min(geo.music_length_ms as i64)
+                } else {
+                    a
+                };
+                let e = geo.exec.over(command_start, b);
                 let op = product_up(count, e);
                 ops = (ops + op).next_up();
                 if rush == 0 {
@@ -292,6 +305,26 @@ pub(super) fn windows(
                     row.max_runs = (row.max_runs + starts).next_up();
                 }
                 spans.push((a, b, (note + judge.iter().copied().fold(0f64, f64::max)) * mult));
+            }
+            if r.count_win.is_some() && !ws.is_empty() {
+                // Pool reuse does not bound chart-time overlap: a later judgement can backdate a new start
+                // before an earlier execution's end. Sweep the certified closed score-frame windows instead.
+                // When the music-length clamp can reverse a start/end pair, keep the lifetime sum.
+                let lifetime = (ws.len() as f64).next_up();
+                let forward = geo.music_length_ms <= 0 || geo.frames.last().is_none_or(|&t| t <= geo.music_length_ms);
+                let mult = if forward {
+                    raw::certified_frame_peak(ws, ScoreFrames { last: geo.exec.max_frame - 1 })
+                        .unwrap_or(lifetime)
+                        .min(lifetime)
+                } else {
+                    lifetime
+                };
+                for j in 0..4 {
+                    let factor = note + judge[j];
+                    if factor != 0.0 {
+                        fac[j] = (fac[j] + product_up(factor.next_up(), mult)).next_up();
+                    }
+                }
             }
         } else if r.event_bound && !r.churn {
             for &ev in events {
@@ -311,18 +344,28 @@ pub(super) fn windows(
                 spans.push((exec as i64, end, note + judge.iter().copied().fold(0f64, f64::max)));
             }
         } else {
-            // a cumulative note score up replaces its factor (two commands) in any frame while it runs
+            // The physical updater pool bounds processing-time concurrency, not chart-time overlap. A late
+            // judgement may backdate each recycled instance's start; with a release checker its timer end may
+            // also be backdated. Without a certified window, retain every lifetime positive factor command.
+            // A cumulative row can additionally replace the factors of all five running instances per frame.
             let churn = if r.churn { POOL + 1.0 } else { 1.0 };
-            let judge5 = judge.map(|x| x * POOL);
-            push(i64::MIN, i64::MAX, note * POOL, judge5, 0, 0);
-            let count = product_up(product_up(2.0 * c, geo.frames.len() as f64), churn);
+            let starts = r.start_limit.unwrap_or(f64::INFINITY).min(geo.frames.len() as f64);
+            let additions = product_up(starts, churn);
+            let note_all = product_up(note, additions);
+            let judge_all = judge.map(|x| product_up(x, additions));
+            push(i64::MIN, i64::MAX, note_all, judge_all, 0, 0);
+            let count = product_up(2.0 * c, additions);
             cmds = (cmds + count).next_up();
             cmds_plain = (cmds_plain + count).next_up();
-            add(&mut fac, note, judge, POOL);
+            for j in 0..4 {
+                if note_all != 0.0 || judge_all[j] != 0.0 {
+                    fac[j] = (fac[j] + (note_all + judge_all[j]).next_up()).next_up();
+                }
+            }
             let op = product_up(count, geo.exec.max as f64);
             ops = (ops + op).next_up();
             ops_plain = (ops_plain + op).next_up();
-            spans.push((i64::MIN, i64::MAX, (note + judge.iter().copied().fold(0f64, f64::max)) * POOL));
+            spans.push((i64::MIN, i64::MAX, (note_all + judge_all.iter().copied().fold(0f64, f64::max)).next_up()));
         }
     }
     (out, cmds, fac, ops, spans, ramps, rush_rows, ops_plain, cmds_plain)
@@ -339,6 +382,10 @@ fn command_count(starts: f64, concurrency: f64, frames: f64, churn: Option<f64>,
     let replacements = churn.map_or(0.0, |steps| product_up(starts, steps).min(product_up(concurrency, frames)));
     product_up(2.0 * fields, (starts + replacements).next_up())
 }
+
+#[cfg(test)]
+#[path = "generic_factor_overlap_tests.rs"]
+mod generic_factor_overlap_tests;
 
 #[cfg(test)]
 mod lifetime_command_tests {
@@ -452,7 +499,7 @@ mod lifetime_command_tests {
     fn snapshot_windows_include_the_end_score_frame() {
         let times = [360, 380, 390, 400, 401, 420];
         let exec = Exec { e: Vec::new(), max: 2, max_frame: 100, sparse: Vec::new() };
-        let mut geo = Geo { frames: &[], times: &times, exec: &exec, snapshot_frame_limit: None };
+        let mut geo = Geo { frames: &[], times: &times, exec: &exec, music_length_ms: 0, snapshot_frame_limit: None };
         assert_eq!(geo.range(160, 390), (0, 2));
         assert_eq!(geo.range(160, 400), (0, 3));
         geo.snapshot_frame_limit = Some(99);
@@ -712,5 +759,163 @@ mod member_target_regression {
             assert!(p.matches_skill_target(&target));
             assert!(target_matches(&target, &m).unwrap());
         }
+    }
+}
+
+#[cfg(test)]
+mod judgement_target_cast_tests {
+    use super::*;
+    use crate::search::gate_tests::common::{Rng, replace_table, synth_snaps};
+    use ournotes_sim::live::full::{JudgedNote, PlayFrame};
+    use serde_json::json;
+
+    fn master(destination: i64, copies: usize, trigger_destination: i64) -> Master {
+        let mut source = synth_snaps(&mut Rng::new(783), 5, 1, &[3]);
+        replace_table(&mut source, "MasterLiveSkillEffect", json!([]));
+        replace_table(&mut source, "MasterSupportSkill", json!([{"_id":1}]));
+        replace_table(
+            &mut source,
+            "MasterSkillTarget",
+            json!([
+                {"_id":1,"_skillTargetType":4,"_judgement":trigger_destination},
+                {"_id":2,"_skillTargetType":4,"_judgement":destination}
+            ]),
+        );
+        replace_table(
+            &mut source,
+            "MasterSkillCondition",
+            json!([
+                {"_id":1,"_conditionType":1030,"_conditionValues":[1],"_conditionTargetIDs":[1],"_isPositive":true}
+            ]),
+        );
+        replace_table(
+            &mut source,
+            "MasterSkillConditionSet",
+            json!([
+                {"_id":1,"_group":1,"_conditionIds":[1]}
+            ]),
+        );
+        replace_table(
+            &mut source,
+            "MasterSupportSkillEffect",
+            json!([{
+                "_id":1,"_supportSkillID":1,"_level":1,"_skillTriggerType":1,
+                "_skillTriggerConditionGroup":1,"_skillConditionGroup":0,"_skillReleaseConditionGroup":0,
+                "_skillTargetIDs":vec![2; copies],"_skillEffectType":2004,"_activationTimeSecond":1.0,
+                "_effectValue":5000,"_maxEffectValue":0,"_effectLimitCount":0,"_skillCumulativeConditionID":0,
+                "_effectExecuteLimitCount":0,"_effectExecuteLimitResetConditionGroup":0
+            }]),
+        );
+        source.master()
+    }
+
+    fn setup() -> FullSetup {
+        FullSetup {
+            notes: vec![LiveNote { note_id: 1, time_ms: 100, note_operate_type: 1, judgement_type: 1 }],
+            events: Vec::new(),
+            play: LivePlay {
+                frames: [0, 40, 80, 120]
+                    .into_iter()
+                    .map(|time_ms| PlayFrame {
+                        time_ms,
+                        judged: if time_ms == 120 {
+                            vec![JudgedNote { note_id: 1, judgement: 5, judgement_time_ms: 100 }]
+                        } else {
+                            Vec::new()
+                        },
+                    })
+                    .collect(),
+                base_seed: 0,
+            },
+            params: LiveParams {
+                skill_target_music_type: 0,
+                total_power: 10_000,
+                music_level: 1,
+                converted_note_count: 1,
+                music_length_ms: 1000,
+                score_music_length_ms: None,
+                assist_factor: 1.0,
+            },
+            gk: None,
+        }
+    }
+
+    /// The native parser, condition updater and 2004 applier supply this oracle, without reading search windows.
+    fn native(master: &Master, setup: &FullSetup, enabled: bool) -> (i32, f32) {
+        let mut deck = vec![Performer::default(); 5];
+        if enabled {
+            deck[0].support_skills.push((1, 1));
+        }
+        let mut model = LiveModel::new(master, &deck, &setup.notes, &setup.events, setup.params).unwrap();
+        let score = model.run(&setup.play).unwrap();
+        (score, model.factor_state().perfect)
+    }
+
+    fn bound(master: &Master, setup: &FullSetup) -> (f64, f64) {
+        let frames: Vec<_> = setup.play.frames.iter().map(|frame| frame.time_ms).collect();
+        let entries = [(3, setup.notes[0], 5)];
+        // Ordinary rows are ungated. The empty range schedule supplies only their exact frame/count geometry.
+        let schedule = Schedule { states: vec![Vec::new(); frames.len()], ranges: Vec::new() };
+        let mut env = Env {
+            master,
+            events: &setup.events,
+            sets: HashMap::new(),
+            life_lo: 0,
+            life_hi: 1000,
+            life_rigid: true,
+            raw: vec![5],
+            count_reach: std::array::from_fn(|j| 1u8 << j),
+            entry_reach: Vec::new(),
+            gk: None,
+            gkf: Some(Rc::new(GkFrames::new(&schedule, &frames, &entries))),
+            rush_cache: RefCell::new(HashMap::new()),
+            gk_cache: RefCell::new(HashMap::new()),
+            budget_cache: RefCell::new(HashMap::new()),
+            ramp_cache: RefCell::new(HashMap::new()),
+        };
+        for set in &master.skill_condition_sets {
+            env.sets.entry(set.group).or_default().push(&set.condition_ids);
+        }
+        let rows = support_rows(&env, 1, 1).unwrap();
+        assert_eq!(rows.len(), 1);
+        let active = active_row(&env, &rows[0], true, false).unwrap();
+        assert!(active.count_win.is_some(), "the fixed 1030 timing projection must actually be exercised");
+        let times = [100];
+        let exec = Exec::new(setup, &times, None, &[]);
+        let geo =
+            Geo { frames: &frames, times: &times, exec: &exec, music_length_ms: 1000, snapshot_frame_limit: None };
+        let (windows, _, norm, _, _, _, _, _, _) = windows(&geo, 0, &[], &[active], &[]);
+        let gain: f64 =
+            windows.iter().filter(|window| window.lo == 0 && window.hi > 0).map(|window| window.judge[2]).sum();
+        (gain, norm[2])
+    }
+
+    #[test]
+    fn widened_2004_destinations_match_native_perfect_and_keep_duplicate_multiplicity() {
+        let setup = setup();
+        for copies in [1, 2] {
+            let canonical = master(5, copies, 5);
+            let expected = native(&canonical, &setup, true);
+            let baseline = native(&canonical, &setup, false);
+            assert!(expected.0 > baseline.0);
+            assert_eq!(expected.1, 0.5 * copies as f32);
+            for destination in [(1i64 << 32) + 5, 5 - (1i64 << 32)] {
+                let wrapped = master(destination, copies, 5);
+                let actual = native(&wrapped, &setup, true);
+                assert_eq!(actual, expected, "the actual native destination cast decides the factor");
+                let (gain, norm) = bound(&wrapped, &setup);
+                assert!(gain >= f64::from(actual.1), "the note window must retain every native target copy");
+                assert!(norm >= f64::from(actual.1), "the closed-frame norm must cover the native factor");
+                assert_eq!((gain, norm), bound(&canonical, &setup));
+            }
+        }
+    }
+
+    #[test]
+    fn widening_a_1030_trigger_target_does_not_turn_it_into_a_matching_judgement() {
+        let setup = setup();
+        let master = master(5, 1, (1i64 << 32) + 5);
+        assert_eq!(native(&master, &setup, true), native(&master, &setup, false));
+        assert_eq!(bound(&master, &setup), (0.0, 0.0));
     }
 }

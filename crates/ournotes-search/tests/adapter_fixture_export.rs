@@ -2092,6 +2092,120 @@ fn export_luck_search_benchmarks() {
     );
 }
 
+/// A separate two-team transport witness. The substituted member changes the full performer identity while
+/// retaining the same power and native score law, so complete histories still leave a genuine frontier tie.
+fn rank_residue_transport_inputs() -> (String, String, String) {
+    let mut document = luck_benchmark_document(8, 3, 6, false, 100, true);
+    let table = &mut document["master"]["MasterMemberCard"];
+    let column = |name: &str| table["columns"].as_array().unwrap().iter().position(|value| value == name).unwrap();
+    let (id, character, power) = (column("_id"), column("_characterID"), column("_performancePowerMax"));
+    let original = table["rows"].as_array().unwrap().iter().find(|row| row[id] == 3).unwrap().clone();
+    let substitute = table["rows"].as_array_mut().unwrap().iter_mut().find(|row| row[id] == 6).unwrap();
+    substitute[power] = original[power].clone();
+    for index in 0..original.as_array().unwrap().len() {
+        if index != id && index != character {
+            assert_eq!(original[index], substitute[index]);
+        }
+    }
+    let table = &mut document["master"]["MasterLiveMusicScore"];
+    let count = table["columns"].as_array().unwrap().iter().position(|value| value == "_fullComboCount").unwrap();
+    table["rows"][0][count] = json!(12);
+    let table = &mut document["master"]["MasterLiveGekisouLuckBonusLot"];
+    let columns = table["columns"].as_array().unwrap();
+    table["rows"] = json!(
+        (0..5)
+            .flat_map(|kind| [(0, 1), (3, 2)].map(move |(result, weight)| {
+                let row = json!({"_id":100+kind*10+result,"_chanceLotType":kind,
+                    "_lotResult":result,"_weight":weight});
+                columns.iter().map(|column| row[column.as_str().unwrap()].clone()).collect::<Vec<_>>()
+            }))
+            .collect::<Vec<_>>()
+    );
+    let chart = &mut document["charts"][0];
+    for values in chart["notes"].as_object_mut().unwrap().values_mut() {
+        values.as_array_mut().unwrap().truncate(12);
+    }
+    chart["skillEvents"]["timeMs"] = json!([0, 200, 400, 600, 800]);
+    chart["fevers"] = json!({"startMs":[500],"endMs":[900]});
+    chart["asset"]["key"] = json!("synthetic-rank-residue-transport-two-team");
+    document["provenance"]["source"] = json!("adapter_fixture_export::rank_residue_transport_inputs");
+    document["provenance"]["masterVersion"] = json!("synthetic-residue-transport-1");
+    document["provenance"]["transportOnly"] = json!(true);
+    let text = document.to_string();
+    let data = DeckData::from_json(&text).unwrap();
+    let mut snapshot = snapshot_document(data.sha256.as_deref().unwrap(), 6, 0, 6);
+    snapshot["revision"] = json!("synthetic-residue-transport-two-team-v1");
+    let mut request = joint_request_json("mission", true, json!({"kind":"score"}));
+    request["constraints"] = json!({"leader":4,"includeMembers":[1,2,4,5],"noSnaps":true});
+    request["k"] = json!(1);
+    request["strategy"] = json!({"kind":"exhaustive"});
+    request["limits"] = json!({"cacheEntries":64,"maxCandidates":null,"timeLimitMs":null});
+    (text, snapshot.to_string(), request.to_string())
+}
+
+fn rank_residue_transport_answer(
+    data: &str,
+    snapshot: &str,
+    request: &str,
+) -> ournotes_search::engine::SnapshotRecommendation {
+    #[cfg(feature = "search-diagnostics")]
+    ournotes_sim::live::full::take_luck_score_profile();
+    let data = DeckData::from_json(data).unwrap();
+    let answer = ournotes_search::engine::recommend_snapshot(&data, snapshot, request, None);
+    assert_eq!(answer.status, ournotes_search::engine::SnapshotStatus::Ok, "{:?}", answer.errors);
+    let result = answer.result.as_ref().unwrap();
+    assert_eq!(result.completion, ournotes_search::search::Completion::Complete);
+    assert_eq!(result.optimality, ournotes_search::types::Optimality::Proven);
+    assert_eq!((result.telemetry.leaves.visited, result.telemetry.leaves.evaluated), (2, 2));
+    let refinement = &result.telemetry.lottery_refinement;
+    assert_eq!((refinement.summary_orders, refinement.summary_refinements, refinement.summary_declines), (240, 240, 0));
+    assert_eq!((refinement.residue_orders, refinement.residue_refinements, refinement.residue_declines), (240, 240, 0));
+    assert_eq!((refinement.completed_orders, refinement.installed_orders, refinement.declined_orders), (240, 240, 0));
+    assert!(!refinement.budget_exhausted);
+    assert_eq!(result.results.len(), 1);
+    let winner = &result.results[0];
+    assert_eq!(winner.members, [1, 2, 4, 3, 5]);
+    assert_eq!(winner.snaps, [None; 5]);
+    assert_eq!(winner.power, 205_829);
+    assert_eq!(winner.rank_certified, Some(true));
+    #[cfg(feature = "search-diagnostics")]
+    {
+        let profile = ournotes_sim::live::full::take_luck_score_profile();
+        assert!(profile.rank_residue_attempts > 0 && profile.rank_residue_windows > 0);
+        assert!(profile.rank_residue_peak_states > 1);
+        assert_eq!(profile.rank_residue_unresolved_windows, 0);
+    }
+    answer
+}
+
+#[test]
+fn public_snapshot_refines_rank_residues_before_proving_the_two_team_tie() {
+    let (data, snapshot, request) = rank_residue_transport_inputs();
+    rank_residue_transport_answer(&data, &snapshot, &request);
+}
+
+#[test]
+#[ignore = "writes a synthetic rank-residue transport witness to OURNOTES_RESIDUE_TRANSPORT_OUT"]
+fn export_rank_residue_transport_witness() {
+    let root = std::env::var_os("OURNOTES_RESIDUE_TRANSPORT_OUT").expect("OURNOTES_RESIDUE_TRANSPORT_OUT");
+    let root = Path::new(&root);
+    let (data, snapshot, request) = rank_residue_transport_inputs();
+    let answer = rank_residue_transport_answer(&data, &snapshot, &request);
+    fs::create_dir_all(root).unwrap();
+    for (name, text) in [
+        ("data.json", data),
+        ("snapshot.json", snapshot),
+        ("request.json", request),
+        ("native.json", serde_json::to_string(&answer).unwrap()),
+    ] {
+        fs::write(root.join(name), text).unwrap();
+    }
+    let manifest = json!({"purpose":"Synthetic public rank-residue transport correctness; not a performance workload.",
+        "progressIntervalMs":25,"cases":[{"name":"synthetic-rank-residue-two-team","data":"data.json",
+            "snapshot":"snapshot.json","request":"request.json","reference":"native.json"}]});
+    fs::write(root.join("manifest.json"), serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+}
+
 #[test]
 #[ignore = "export wide synthetic LUCK search domains"]
 fn export_wide_luck_search_benchmarks() {

@@ -27,10 +27,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let decks: Vec<Deck> = serde_json::from_str(&fs::read_to_string(&args[3])?)?;
     // PATH_BOUNDS_PAYOFF_ONLY=1 evaluates the decks without their bounds.
     let payoff_only = env::var_os("PATH_BOUNDS_PAYOFF_ONLY").is_some();
+    // PATH_BOUNDS_ONLY=1 inspects the compiled certificates without evaluating any score or lottery law.
+    let bounds_only = env::var_os("PATH_BOUNDS_ONLY").is_some();
     let mut values = Vec::new();
     for d in decks {
-        let value = auxiliary::evaluate_built(&built, d.members, d.snaps)?;
-        let payoff = value.results.first().and_then(|r| r.expected_payoff.as_ref()).map(|f| f.numerator.clone());
+        let payoff = if bounds_only {
+            None
+        } else {
+            let value = auxiliary::evaluate_built(&built, d.members, d.snaps)?;
+            value.results.first().and_then(|r| r.expected_payoff.as_ref()).map(|f| f.numerator.clone())
+        };
         let bounds =
             if payoff_only { serde_json::Value::Null } else { diagnostics::path_bounds(&built, d.members, d.snaps)? };
         values.push(serde_json::json!({"members":d.members,"snaps":d.snaps,"payoffNumerator":payoff,"bounds":bounds}));

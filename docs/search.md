@@ -636,14 +636,16 @@ retains its current instance, including when a dynamic condition fails; a false 
 later frame recycles it. Neither the condition's counter reset nor a one-shot execution limit creates a new
 sustained instance. These fixed-factor appliers do not force an end or replace a running factor.
 
-Within one factor-span component, let `s` count all possible start frames and let `lo,hi` be their minimum and
-maximum **processing-frame indices**. The lifetime-start cap is therefore
+Within one factor-span component, let `s` count all possible start frames. When the complete gate schedule is
+available, let `g` count the gate-open processing observations between the first and last possible start.
+The lifetime-start cap is
 
-    min(s, ceil((hi - lo + 1)/2)).
+    min(s, ceil(g/2)).
 
 This does not halve `s`: a `true,false,true` sequence can start in both of its two possible start frames. Counting
-closed-gate and finished frames in the enclosing interval remains conservative because they cannot add starts.
-Backdated or equal filing timestamps do not change the processing-frame indices. The projected count changes
+closed-gate frames as reset observations would lose the tighter bound: they preserve the updater and trigger
+cache. If the complete gate schedule is unavailable, the enclosing processing-frame interval supplies the
+previous conservative count. Backdated or equal filing timestamps do not change these observations. The projected count changes
 only fixed-factor command counts and their replay allowance; all timing windows, maximum amplitudes, conversion
 coverage and original timing-cache entries remain intact. Other effects can have applier-controlled finishes,
 so they retain their generic counts even when sharing that timing-cache entry.
@@ -1051,10 +1053,10 @@ curve. Member, character, required-member, slot and physical Snap constraints re
 
 A binding selects its profile before the uniformly random performance order. Let `a[p,o]` and `g[p,o,m,s]` be
 the admitted per-order coefficient uppers for profile `p`, original order `o`, and the actual position of member
-`m` with Snap choice `s`. The table first averages all 120 original orders separately within each profile, then
-sets `A0 = max_p mean_o a[p,o]` and `G[m,s] = max_p mean_o g[p,o,m,s]`, with outward arithmetic throughout.
-These component maxima may come from different profiles, which enlarges the bound. No profile or member
-position is substituted for the original order average.
+`m` with Snap choice `s`. The table averages all 120 original orders separately within each profile and retains
+`A0[p] = mean_o a[p,o]` and `G[p,m,s] = mean_o g[p,o,m,s]`, with outward arithmetic throughout. A complete physical
+binding selects its exact profile before those coefficients are summed. No incompatible writer profile or
+member position is substituted for the original order average.
 
 The coefficients weight only admitted terminal Rush and direct LUCK score-probe contributions by their joint
 four-bucket law. They retain the existing all-history rank contribution, conversion-budget remainder, unknown
@@ -1063,8 +1065,9 @@ also remain. This uses the bound compiler's nonnegative power domain and coeffic
 not assume native score is monotone in power or replace a physical candidate by another candidate.
 
 For the current node, the table applies the four actual Snap bindings and every allowed fifth-slot choice in
-`choices[start..]`. Existing resource and correlated assignment relaxations bound power and coefficient while
-respecting those masks. The maximum over every legal fifth-member completion bounds the whole node; one
+`choices[start..]`. There is only one unassigned slot, so each remaining binding's original power-bound terms and
+its selected profile's coefficients can be evaluated together. The maximum over every legal binding and
+fifth-member completion bounds the whole node; one
 unavailable family prevents that optional node cap. Stale data in the unassigned slot is not a binding.
 The expected-score cap is multiplied by 120 to match the search numerator. Pruning uses the same strict
 cutoff and certified lower-power tie rule as the other bounds; equal score and power keys stay with the
@@ -1104,11 +1107,12 @@ keep their original caps. Therefore `sum_i C_i` continues to bound `120 * U(team
 evaluation. The ordinary certified integer-grid cutoff, including its proved power tie rule, may exclude the
 team as soon as this sum loses. An excluded partial evaluation supplies neither an aggregate value nor a team
 score-cache entry. Nonlinear payoff targets retain their dedicated payoff evaluation.
-The complete-program score cap may be retained separately under a sorted set of physical member/Snap pairs
-and total power. In the immutable pool and request, each pair determines a complete performer and the leader
-affects only total power; all other live parameters are fixed. Equal keys therefore identify the same uniform
-120-order score program. A hit can be compared with the current certified cutoff before constructing a new
-live context or fine order caps. This cache contains no exact score or completed evaluation; it holds at most
+The complete-program score cap may be retained separately under the full canonical performer program and total
+power. In the immutable pool and request, complete performer values preserve every selected source and its order;
+physical card identifiers alone are not the cache identity. Equal keys therefore identify the same uniform
+120-order score program while all original candidate and order labels remain distinct. A hit can be compared
+with the current certified cutoff before probability recording or fine order caps. This cache contains no exact
+score or completed evaluation; it holds at most
 `min(cacheEntries, 64)` caps, and zero disables reuse.
 The leaf evaluates orders by descending retained cap, with their canonical order index breaking priority ties.
 This is only a work schedule: it contains every order exactly once, every unfinished order keeps its valid cap,

@@ -561,6 +561,12 @@ pub(super) struct ActiveRow {
     pub(super) event_bound: bool,
     /// Trigger and condition can both hold.
     pub(super) can_start: bool,
+    /// Whole-play starts of an ordinary one-shot fixed score factor, from necessary positive judgement
+    /// counters in every trigger alternative. Conditions, resets and updater availability only remove starts.
+    pub(super) start_limit: Option<f64>,
+    /// One window per hit frame of a lone ordinary judgement counter whose original-target multiplicity is
+    /// invariant across every reachable final grade. Each frame starts at most one pool instance.
+    pub(super) count_win: Option<Vec<(i64, i64, f64)>>,
     pub(super) targets: Vec<i64>,
     /// A cumulative note score up (2001) whose factor changes while it runs (`value` is its largest value), and the
     /// most changes of one execution (`None`: any frame).

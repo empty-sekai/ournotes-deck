@@ -177,6 +177,184 @@ fn sustained_start_spacing_survives_luck_completion_gate_gaps_and_finished_frame
 }
 
 #[test]
+fn sustained_start_spacing_holds_in_the_open_gate_observation_sequence() {
+    let mut controller =
+        Controller::new(vec![(-100, 1000, M_LUCK)], std::iter::empty(), &Master::default(), 100, 100, 0, 0).unwrap();
+    controller.states[0].state = S_PLAYING;
+    // Every length-five trace of: closed gate, open/false trigger, open/false condition,
+    // open/true trigger and condition, and an open gate on a finished frame.
+    let times = [-100, -60, -60, 10, 150];
+    for phase in [1, 2] {
+        for mut trace in 0..5usize.pow(times.len() as u32) {
+            let mut row = effect(phase, Checker::LuckRushPlaying(false), Some(Checker::SameMemberLiveSkill(1)));
+            row.reset = Some(Checker::Fixed(true));
+            let mut updater = ConditionSkillUpdater::new(vec![row], |_| Ok(None), Some(M_LUCK)).unwrap();
+            let mut observed = 0usize;
+            let mut starts = Vec::new();
+            for &time in &times {
+                let symbol = trace % 5;
+                trace /= 5;
+                let open = symbol != 0;
+                observed += usize::from(open);
+                controller.current_playing_index = if open { 0 } else { -1 };
+                controller.state_updates.clear();
+                controller.states[0].luck.rush_combo = i32::from(symbol != 1);
+                let events = [(1, time)];
+                let events = if symbol == 2 { &[] } else { events.as_slice() };
+                for (_, state) in step(&mut updater, time, symbol == 4, &[], events, Some(&controller)) {
+                    if state.state == EXECUTE_FRAME {
+                        assert_eq!(symbol, 3);
+                        starts.push(observed);
+                    }
+                }
+            }
+            assert!(starts.windows(2).all(|pair| pair[1] > pair[0] + 1));
+            assert!(starts.len() <= observed.div_ceil(2));
+        }
+    }
+}
+
+#[test]
+fn one_shot_factor_starts_do_not_exceed_counted_judgement_hits() {
+    let times = [i32::MIN + 40, -100, -60, -60, 0, 40, i32::MAX - 40, i32::MAX];
+    for phase in [1, 2] {
+        for targets in [vec![5], vec![5, 5], vec![5, 6], vec![6, 6, 5]] {
+            for n in [1, 2, 3, 4, 9] {
+                for consecutive in [false, true] {
+                    for mask in 0..64usize {
+                        let trigger = Checker::NoteJudgementCount {
+                            n,
+                            consecutive,
+                            targets: targets.clone(),
+                            count: 0,
+                            override_ms: None,
+                        };
+                        let mut row = effect(phase, trigger, Some(Checker::SameMemberLiveSkill(1)));
+                        row.trigger_type = ONE_SHOT;
+                        row.act = 0.05;
+                        row.reset = Some(Checker::Fixed(true));
+                        let mut updater = ConditionSkillUpdater::new(vec![row], |_| Ok(None), None).unwrap();
+                        let mut hits = 0usize;
+                        let mut starts = 0usize;
+                        for (frame, &time) in times.iter().enumerate() {
+                            // Each of six declared entries may have either of two converted judgements.
+                            // Duplicate targets count separately; consecutive resets only discard counts.
+                            let judgement = if mask & (1 << frame) == 0 { 5 } else { 6 };
+                            let judged = [(frame as i32 - 1, judgement, time.wrapping_sub(17))];
+                            let judged = if frame < 6 { judged.as_slice() } else { &[] };
+                            hits += judged
+                                .iter()
+                                .map(|&(_, j, _)| targets.iter().filter(|&&target| target == i64::from(j)).count())
+                                .sum::<usize>();
+                            let events = [(1, time)];
+                            let events = if frame % 3 == 1 { &[] } else { events.as_slice() };
+                            starts += step(&mut updater, time, frame == 7, judged, events, None)
+                                .iter()
+                                .filter(|(_, state)| state.state == EXECUTE_FRAME)
+                                .count();
+                        }
+                        assert!(starts <= hits / n as usize);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn lone_count_hit_frames_survive_conditions_limits_and_original_target_multiplicity() {
+    let times: [i32; 12] = [0, 40, 40, 80, 120, 160, 200, 240, 280, 320, 360, 400];
+    let counts = [1usize, 3, 2, 0, 1, 2, 1, 0, 2, 1, 0, 0];
+    for phase in [1, 2] {
+        for copies in [1, 2, 4] {
+            let targets: Vec<_> = (0..copies).flat_map(|_| [5, 6]).collect();
+            for n in [1, 2, 3, 5, 9, i32::MAX as i64] {
+                for grade_mask in 0..4usize {
+                    for reset in [false, true] {
+                        let trigger = Checker::NoteJudgementCount {
+                            n,
+                            consecutive: false,
+                            targets: targets.clone(),
+                            count: 0,
+                            override_ms: None,
+                        };
+                        let mut row = effect(phase, trigger, Some(Checker::SameMemberLiveSkill(1)));
+                        row.trigger_type = ONE_SHOT;
+                        row.act = 0.05;
+                        row.execute_limit = 2;
+                        row.reset = reset.then_some(Checker::Fixed(true));
+                        let mut updater = ConditionSkillUpdater::new(vec![row], |_| Ok(None), None).unwrap();
+                        let (mut entries, mut count) = (0usize, 0i64);
+                        for (frame, &time) in times.iter().enumerate() {
+                            let before = count;
+                            let mut override_time = None;
+                            let judged: Vec<_> = (0..counts[frame])
+                                .map(|_| {
+                                    let id = if entries % 3 == 0 { -1 } else { 7 };
+                                    let grade = if grade_mask & (1 << (entries % 2)) == 0 { 5 } else { 6 };
+                                    let chart_time = time.saturating_sub((entries % 4) as i32 * 17);
+                                    let old = count;
+                                    count += copies;
+                                    if old / n != count / n {
+                                        override_time = Some(if id < 0 { time } else { chart_time });
+                                    }
+                                    entries += 1;
+                                    (id, grade, chart_time)
+                                })
+                                .collect();
+                            let events = [(1, time)];
+                            let events = if frame % 3 == 1 { &[] } else { events.as_slice() };
+                            let fresh: Vec<_> = step(&mut updater, time, false, &judged, events, None)
+                                .into_iter()
+                                .filter(|(_, state)| state.state == EXECUTE_FRAME)
+                                .collect();
+                            assert!(fresh.len() <= 1);
+                            for (_, state) in fresh {
+                                assert!(before / n < count / n);
+                                assert!(!events.is_empty());
+                                assert_eq!(state.execute_ms, override_time.unwrap());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn recycled_one_shot_instances_can_overlap_beyond_the_pool_at_backdated_times() {
+    let trigger =
+        Checker::NoteJudgementCount { n: 1, consecutive: false, targets: vec![5], count: 0, override_ms: None };
+    let mut row = effect(2, trigger, None);
+    row.trigger_type = ONE_SHOT;
+    row.act = 0.05;
+    row.execute_limit = 0;
+    let mut updater = ConditionSkillUpdater::new(vec![row], |_| Ok(None), None).unwrap();
+    let mut starts = Vec::new();
+    let mut ends = Vec::new();
+    for frame in 0..65 {
+        let time = frame * 40;
+        // Twelve uses of the same chart note, each long after the previous instance has ended and recycled.
+        let judged = [(7, 5, 0)];
+        let judged = if frame < 60 && frame % 5 == 0 { judged.as_slice() } else { &[] };
+        for (u, state) in step(&mut updater, time, false, judged, &[], None) {
+            if state.state == EXECUTE_FRAME {
+                starts.push((u, state.execute_ms));
+            } else if state.state == END_FRAME {
+                ends.push(state.finish_ms);
+            }
+        }
+    }
+    assert_eq!(starts.len(), 12);
+    assert_eq!(ends.len(), 12);
+    assert!(starts.iter().all(|&(_, time)| time == 0));
+    assert!(ends.iter().all(|&time| time > 0));
+    assert!(starts.windows(2).any(|pair| pair[0].0 == pair[1].0));
+    assert!(starts.len() > POOL);
+}
+
+#[test]
 fn timed_sustained_can_start_in_adjacent_frames_and_requires_the_guard() {
     let mut row = effect(2, Checker::Fixed(true), Some(Checker::Fixed(true)));
     row.act = 1.0;

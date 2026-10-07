@@ -7,10 +7,12 @@ use crate::domain::CandidateDomain;
 use crate::search::{
     expectation::PhysicalDeck,
     joint::{JointBounds, SLOTS},
-    snaps::{FamilyRewardTable, ProfileRewardTemplate},
+    snaps::{FamilyProfileTable, ProfileRewardTemplate},
 };
 use ournotes_sim::{
-    live::full::{LuckDpCache, LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline, LuckFamilyLimits},
+    live::full::{
+        LuckDpCache, LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline, LuckFamilyDomain, LuckFamilyLimits,
+    },
     pool::Pool,
 };
 use std::{
@@ -72,7 +74,11 @@ pub(crate) struct FamilyNodeStats {
     pub(crate) family_lookups: u64,
     pub(crate) family_hits: u64,
     pub(crate) refused_hits: u64,
+    /// Member families with at least one completed 120-label profile (not necessarily every profile).
     pub(crate) prepared_families: u64,
+    pub(crate) admitted_families: u64,
+    pub(crate) profile_lookups: u64,
+    pub(crate) profile_hits: u64,
     pub(crate) preparation_refusals: u64,
     pub(crate) preparation_declines: FamilyRefusals,
     /// Actual wall time spent in native family preparation, including refused or cancelled attempts.
@@ -92,8 +98,25 @@ pub(crate) struct FamilyNodeStats {
 
 struct Entry {
     members: [usize; 5],
-    table: Option<Rc<FamilyRewardTable>>,
+    state: Option<Box<FamilyState>>,
     bytes: usize,
+}
+
+type TakenFamily = (Box<FamilyState>, Option<usize>);
+
+struct FamilyState {
+    domain: LuckFamilyDomain,
+    table: FamilyProfileTable,
+    refused: Vec<bool>,
+}
+
+impl FamilyState {
+    fn retained_bytes(&self) -> Option<usize> {
+        std::mem::size_of::<Self>()
+            .checked_add(self.domain.retained_bytes().checked_sub(std::mem::size_of::<LuckFamilyDomain>())?)?
+            .checked_add(self.table.retained_bytes()?.checked_sub(std::mem::size_of::<FamilyProfileTable>())?)?
+            .checked_add(self.refused.capacity().checked_mul(std::mem::size_of::<bool>())?)
+    }
 }
 
 /// The context is immutably borrowed for the entire cache lifetime. The exact compiled reward template is held
@@ -121,7 +144,7 @@ impl<'a> FamilyNodeCache<'a> {
             context,
             limit: entries.min(64),
             byte_limit: bytes,
-            profile_limit: profile_budget.min(6),
+            profile_limit: profile_budget.min(31),
             ..Self::default()
         }
     }
@@ -166,9 +189,13 @@ impl<'a> FamilyNodeCache<'a> {
         true
     }
 
-    fn remember(&mut self, members: [usize; 5], table: Option<Rc<FamilyRewardTable>>) {
-        let bytes = match table.as_ref().map(|t| t.retained_bytes()) {
-            Some(Some(bytes)) => bytes.saturating_add(2 * std::mem::size_of::<usize>()),
+    fn remember(&mut self, members: [usize; 5], state: Option<Box<FamilyState>>) {
+        self.remember_at(members, state, None);
+    }
+
+    fn remember_at(&mut self, members: [usize; 5], state: Option<Box<FamilyState>>, position: Option<usize>) {
+        let bytes = match state.as_ref().map(|t| t.retained_bytes()) {
+            Some(Some(bytes)) => bytes,
             Some(None) => return,
             None => 0,
         };
@@ -177,7 +204,12 @@ impl<'a> FamilyNodeCache<'a> {
             return;
         }
         self.payload_bytes = self.payload_bytes.saturating_add(bytes);
-        self.entries.push_back(Entry { members, table, bytes });
+        let entry = Entry { members, state, bytes };
+        if let Some(position) = position {
+            self.entries.insert(position.min(self.entries.len()), entry);
+        } else {
+            self.entries.push_back(entry);
+        }
         while self.entries.len() > self.limit || self.bytes() > self.byte_limit {
             let Some(old) = self.entries.pop_front() else { break };
             self.payload_bytes -= old.bytes;
@@ -195,23 +227,24 @@ impl<'a> FamilyNodeCache<'a> {
         pool: &Pool<'_>,
         domain: &CandidateDomain,
         members: [usize; 5],
-        curves: &mut LuckDpCache,
         cancelled: &mut impl FnMut() -> bool,
-    ) -> Result<Option<Rc<FamilyRewardTable>>, ()> {
+    ) -> Result<Option<TakenFamily>, ()> {
         if cancelled() {
             return Err(());
         }
         self.stats.family_lookups += 1;
-        if let Some(entry) = self.entries.iter().find(|entry| entry.members == members) {
+        if let Some(index) = self.entries.iter().position(|entry| entry.members == members) {
             if cancelled() {
                 return Err(());
             }
-            if entry.table.is_some() {
-                self.stats.family_hits += 1;
-            } else {
+            if self.entries[index].state.is_none() {
                 self.stats.refused_hits += 1;
+                return Ok(None);
             }
-            return Ok(entry.table.clone());
+            self.stats.family_hits += 1;
+            let entry = self.entries.remove(index).expect("matched family entry");
+            self.payload_bytes -= entry.bytes;
+            return Ok(entry.state.map(|state| (state, Some(index))));
         }
         let Some(context) = self.context else { return Ok(None) };
         let mut choices: [Vec<LuckFamilyChoice>; 5] = std::array::from_fn(|_| Vec::new());
@@ -248,7 +281,7 @@ impl<'a> FamilyNodeCache<'a> {
             max_retained_bytes: 32 * 1024 * 1024,
         };
         let started = crate::clock::Instant::now();
-        let prepared = context.prepare(&choices, Some(curves), limits, &mut *cancelled);
+        let prepared = context.admit_domain(&choices, limits, &mut *cancelled);
         self.stats.preparation_ms += started.elapsed().as_secs_f64() * 1000.0;
         let family = match prepared {
             Ok(Some(family)) => family,
@@ -263,23 +296,86 @@ impl<'a> FamilyNodeCache<'a> {
                 return Ok(None);
             }
         };
-        self.stats.order_laws += family.orders().len() as u64;
-        self.stats.profiles += family.profile_count() as u64;
-        let started = crate::clock::Instant::now();
-        let table = self.scope.as_ref().and_then(|scope| scope.bind(members, &family, cancelled));
-        self.stats.envelope_ms += started.elapsed().as_secs_f64() * 1000.0;
-        if cancelled() {
-            return Err(());
-        }
-        let Some(table) = table else {
+        let Some(table) = self.scope.as_ref().and_then(|scope| scope.start_profiles(members, &family)) else {
             self.stats.envelope_refusals += 1;
             self.remember(members, None);
             return Ok(None);
         };
-        self.stats.prepared_families += 1;
-        let table = Rc::new(table);
-        self.remember(members, Some(Rc::clone(&table)));
-        Ok(Some(table))
+        let mut refused = Vec::new();
+        if refused.try_reserve_exact(family.profile_count()).is_err() {
+            self.stats.capacity_declines += 1;
+            return Ok(None);
+        }
+        refused.resize(family.profile_count(), false);
+        if cancelled() {
+            return Err(());
+        }
+        self.stats.admitted_families += 1;
+        Ok(Some((Box::new(FamilyState { domain: family, table, refused }), None)))
+    }
+
+    fn complete_required(
+        &mut self,
+        state: &mut FamilyState,
+        required: &[usize],
+        curves: &mut LuckDpCache,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<bool, ()> {
+        let Some(context) = self.context else { return Ok(false) };
+        for &profile in required {
+            if cancelled() {
+                return Err(());
+            }
+            self.stats.profile_lookups += 1;
+            if state.table.profiles.get(profile).is_some_and(Option::is_some) {
+                self.stats.profile_hits += 1;
+                continue;
+            }
+            if state.refused.get(profile).copied() != Some(false) {
+                return Ok(false);
+            }
+            let started = crate::clock::Instant::now();
+            let prepared = context.prepare_profile(&state.domain, profile, Some(curves), &mut *cancelled);
+            self.stats.preparation_ms += started.elapsed().as_secs_f64() * 1000.0;
+            let law = match prepared {
+                Ok(Some(law)) => law,
+                Ok(None) => return Err(()),
+                Err(refusal) => {
+                    if cancelled() {
+                        return Err(());
+                    }
+                    self.stats.preparation_refusals += 1;
+                    self.stats.preparation_declines.record(refusal.reason);
+                    state.refused[profile] = true;
+                    return Ok(false);
+                }
+            };
+            let started = crate::clock::Instant::now();
+            let reward = self
+                .scope
+                .as_ref()
+                .and_then(|scope| scope.bind_profile(state.table.members, &state.domain, &law, cancelled));
+            self.stats.envelope_ms += started.elapsed().as_secs_f64() * 1000.0;
+            if cancelled() {
+                return Err(());
+            }
+            let Some(reward) = reward else {
+                self.stats.envelope_refusals += 1;
+                state.refused[profile] = true;
+                return Ok(false);
+            };
+            // Publish only the complete 120-label reward. Unrequested and stopped profiles remain unknown.
+            if state.table.profiles.iter().all(Option::is_none) {
+                self.stats.prepared_families += 1;
+            }
+            self.stats.order_laws += law.orders().len() as u64;
+            self.stats.profiles += 1;
+            state.table.profiles[profile] = Some(reward);
+        }
+        if cancelled() {
+            return Err(());
+        }
+        Ok(true)
     }
 
     /// A complete upper for the joint depth-four subtree. One missing/refused member family prevents this
@@ -359,17 +455,30 @@ impl<'a> FamilyNodeCache<'a> {
             for (slot, member) in [0, 1, 3, 4].into_iter().zip(others) {
                 members[slot] = member;
             }
-            let table = match self.family(pool, domain, members, curves, cancelled) {
-                Ok(Some(table)) => table,
+            let (mut state, cache_position) = match self.family(pool, domain, members, cancelled) {
+                Ok(Some(state)) => state,
                 Ok(None) => return FamilyNodeOutcome::Unavailable,
                 Err(()) => {
                     self.stats.stopped += 1;
                     return FamilyNodeOutcome::Stopped;
                 }
             };
-            let Some(cap) = bounds.family_mask_upper(domain, &complete, &table, &choices) else {
-                return FamilyNodeOutcome::Unavailable;
+            let required = bounds.required_family_profiles(domain, &complete, &state.table, &choices);
+            let result = match required {
+                Some(required) => self.complete_required(&mut state, &required, curves, cancelled),
+                None => Ok(false),
             };
+            let cap = if matches!(result, Ok(true)) {
+                bounds.family_profiles_upper(domain, &complete, &state.table, &choices)
+            } else {
+                None
+            };
+            self.remember_at(members, Some(state), cache_position);
+            if result.is_err() {
+                self.stats.stopped += 1;
+                return FamilyNodeOutcome::Stopped;
+            }
+            let Some(cap) = cap else { return FamilyNodeOutcome::Unavailable };
             upper = upper.max(cap);
         }
         if cancelled() {

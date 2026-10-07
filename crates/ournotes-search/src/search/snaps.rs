@@ -136,7 +136,9 @@ use gk_schedule::*;
 pub(crate) use gk_schedule::{CarrierKeys, KeyedEnvelope};
 use gk_windows::*;
 use leaf_search::*;
-pub(crate) use profile_mean::{FamilyRewardTable, ProfileRewardTemplate};
+#[cfg(test)]
+pub(crate) use profile_mean::FamilyRewardTable;
+pub(crate) use profile_mean::{FamilyProfileReward, FamilyProfileTable, ProfileRewardTemplate};
 use rows::*;
 pub(crate) use rush::RushMasks;
 use score_windows::*;

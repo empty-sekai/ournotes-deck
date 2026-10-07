@@ -17,6 +17,7 @@ mod prepass;
 #[cfg(feature = "search-diagnostics")]
 mod profile;
 mod program;
+mod rank_residues;
 mod rank_trace;
 mod terminal_kernel;
 mod terminal_prefix;
@@ -957,6 +958,46 @@ impl<'a> LuckScoreSession<'a> {
             probability_transitions: bounds.probability_transitions,
         }))
     }
+
+    /// Complete factor-history bounds with an optional bounded residue refinement of the actual native rank
+    /// snapshots. Histories with unresolved integer rewards retain their full truncation-correction range.
+    /// The residue calculation preserves the original integer support and LIFE certificate.
+    pub fn rank_summary(
+        &mut self,
+        deck: &[Performer],
+        curves: Option<&mut LuckDpCache>,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<LuckScoreSummary>, Error> {
+        self.summaries.limit(curves.as_ref().map_or(0, |curves| curves.summary_capacity()));
+        let bounds = luck_score_bounds_internal_policy(
+            self.master,
+            self.skills,
+            deck,
+            self.notes,
+            self.events,
+            self.params,
+            self.setup,
+            self.play,
+            self.delta_times,
+            self.ranking,
+            false,
+            true,
+            curves,
+            Some(&mut self.recordings),
+            Some(&mut self.summaries),
+            None,
+            &mut cancelled,
+        )?;
+        Ok(bounds.map(|bounds| LuckScoreSummary {
+            final_mean: bounds.final_mean,
+            final_support: bounds.final_support,
+            exact_constant_score: (bounds.final_support.lower == bounds.final_support.upper)
+                .then_some(bounds.final_support.lower),
+            exact_final_life: bounds.exact_final_life,
+            probability_peak_states: bounds.probability_peak_states,
+            probability_transitions: bounds.probability_transitions,
+        }))
+    }
 }
 
 /// Prepares a Gekisou live without a LUCK range for a run that draws no random value. A deck that reads no lottery
@@ -991,6 +1032,47 @@ fn luck_score_bounds_internal(
     delta_times: &[f32],
     ranking: Option<&[crate::replay::RankConfirmation]>,
     details: bool,
+    curves: Option<&mut LuckDpCache>,
+    recordings: Option<&mut luck_dp::RecordingCache>,
+    summaries: Option<&mut SummaryCache>,
+    program_scope: Option<&std::sync::Arc<program::Scope>>,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<LuckScoreBounds>, Error> {
+    luck_score_bounds_internal_policy(
+        master,
+        skills,
+        deck,
+        notes,
+        events,
+        params,
+        setup,
+        play,
+        delta_times,
+        ranking,
+        details,
+        false,
+        curves,
+        recordings,
+        summaries,
+        program_scope,
+        cancelled,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn luck_score_bounds_internal_policy(
+    master: &Master,
+    skills: &LuckSkills,
+    deck: &[Performer],
+    notes: &[LiveNote],
+    events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+    details: bool,
+    refine_residues: bool,
     mut curves: Option<&mut LuckDpCache>,
     recordings: Option<&mut luck_dp::RecordingCache>,
     mut summaries: Option<&mut SummaryCache>,
@@ -1013,7 +1095,8 @@ fn luck_score_bounds_internal(
     let identity = summaries
         .as_ref()
         .filter(|cache| cache.capacity > 0 && !details)
-        .and_then(|_| super::luck_exact::initialized_identity(&mut model));
+        .and_then(|_| super::luck_exact::initialized_identity(&mut model))
+        .map(|identity| if refine_residues { format!("rank-residues/1/{identity}") } else { identity });
     if cancelled() {
         return Ok(None);
     }
@@ -1102,8 +1185,11 @@ fn luck_score_bounds_internal(
     if 100i32.checked_add(rush_percent).is_none() {
         return Err(refuse("Rush factor may wrap"));
     }
-    let program_capacity =
-        if !details && has_luck { curves.as_ref().map_or(0, |cache| cache.program_capacity()) } else { 0 };
+    let program_capacity = if !details && !refine_residues && has_luck {
+        curves.as_ref().map_or(0, |cache| cache.program_capacity())
+    } else {
+        0
+    };
     #[cfg(feature = "search-diagnostics")]
     let key_start = std::time::Instant::now();
     let program_identity = program_scope
@@ -1116,7 +1202,7 @@ fn luck_score_bounds_internal(
     }
     #[cfg(feature = "search-diagnostics")]
     let lookup_start = std::time::Instant::now();
-    let cached_program = curves.as_deref_mut().and_then(|cache| {
+    let cached_program = curves.as_deref_mut().filter(|_| !refine_residues).and_then(|cache| {
         cache.programs.limit(program_capacity);
         program_identity.as_ref().and_then(|identity| cache.programs.get(identity, &probability))
     });
@@ -1272,6 +1358,7 @@ fn luck_score_bounds_internal(
     let mut query_means = Vec::<F64Interval>::new();
     let mut query_supports = Vec::<I32Interval>::new();
     let mut query_parts = Vec::<QueryParts>::new();
+    let mut residue_notes = FxHashMap::<usize, Vec<(i32, LuckNoteBounds)>>::default();
     let mut ranges = Vec::new();
     // Pending fixed scores add immediately even outside the score-frame array. Later undo/execute only
     // changes their in-prefix contribution; the filing offset is permanent.
@@ -1370,6 +1457,7 @@ fn luck_score_bounds_internal(
                 let mut factor_width = [0.0; FIELDS];
                 let mut measured = Vec::new();
                 let retain_notes = details && detailed_queries.contains(&query_means.len());
+                let retain_residues = refine_residues && detailed_queries.contains(&query_means.len());
                 let mut note_count = 0;
                 let (mut lo, mut hi) = (0i64, 0i64);
                 let mut mean = F64Interval::ZERO;
@@ -1436,6 +1524,9 @@ fn luck_score_bounds_internal(
                     hi += i64::from(support.upper());
                     if let Some(notes) = &mut rank_notes {
                         notes.push((frame as i32, support, note_mean));
+                    }
+                    if retain_residues {
+                        residue_notes.entry(query_means.len()).or_default().push((frame as i32, bounds.clone()));
                     }
                     note_count += 1;
                     if retain_notes {
@@ -1544,6 +1635,23 @@ fn luck_score_bounds_internal(
     for &(frame, offset, bonus, _) in &fixed {
         let coefficient = i128::from(offset) + i128::from(frame <= prev);
         final_rank_mean = final_rank_mean.add(bonus.scale_integer(coefficient));
+    }
+    if refine_residues && has_luck {
+        let context =
+            rank_residues::Context { master, skills, deck, notes, events, params, setup, play, delta_times, ranking };
+        let Some(refined) = rank_residues::refine(
+            context,
+            &trace,
+            &query_parts,
+            &residue_notes,
+            &mut ranges,
+            final_rank_mean,
+            cancelled,
+        )?
+        else {
+            return Ok(None);
+        };
+        final_rank_mean = refined;
     }
     final_mean = final_mean.add(final_rank_mean);
     let final_support =

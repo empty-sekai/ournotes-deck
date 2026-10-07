@@ -514,9 +514,99 @@ pub fn rank_mean_with_residues(
     Ok(mean.scale_integer(i128::from(percent)).divide(F64Interval::integer(100))?.subtract(correction))
 }
 
+/// Refine a native rank bonus when only part of its residue distribution is known. The signed residue bins and
+/// `unresolved` must partition the same actual range score used by `mean`. Unresolved histories contribute their
+/// probability mass times the full possible truncation correction; an interval reward is never split into
+/// invented probability branches. With no unresolved mass this is [`rank_mean_with_residues`].
+pub fn rank_mean_with_partial_residues(
+    mean: F64Interval,
+    support: I32Interval,
+    percent: i64,
+    residues: &[RankResidueMass],
+    unresolved: ProbabilityMass,
+) -> Result<F64Interval, Error> {
+    if unresolved == ProbabilityMass::ZERO {
+        return rank_mean_with_residues(mean, support, percent, residues);
+    }
+    let mean = rank_inputs(mean, support, percent)?;
+    let remainder = RankRemainder::new(percent);
+    let gap = ProbabilityMass::from_ratio(u64::from(remainder.modulus() - 1), u64::from(remainder.modulus()))?
+        .interval()
+        .upper();
+    let a = i128::from(support.lower()) * i128::from(percent);
+    let b = i128::from(support.upper()) * i128::from(percent);
+    let possible =
+        F64Interval { lower: if a.min(b) < 0 { -gap } else { 0.0 }, upper: if a.max(b) > 0 { gap } else { 0.0 } };
+    let mut mass = unresolved.interval();
+    let mut correction = mass.multiply(possible);
+    for bin in residues {
+        mass = mass.add(bin.mass.interval());
+        correction =
+            correction.add(bin.mass.interval().multiply(remainder.correction(bin.negative_score, bin.residue)?));
+    }
+    if !mass.contains(1.0) {
+        return Err(invalid("partial rank residue masses do not enclose total mass one"));
+    }
+    if percent == 0 {
+        return Ok(F64Interval::ZERO);
+    }
+    Ok(mean.scale_integer(i128::from(percent)).divide(F64Interval::integer(100))?.subtract(correction))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn partial_rank_residues_enclose_every_unresolved_subset_of_signed_integer_laws() {
+        let scores = [-32i32, -12, 0, 7, 13, 29];
+        let weights = [1u64, 2, 3, 4, 5, 6];
+        let total: u64 = weights.iter().sum();
+        let numerator: i128 =
+            scores.iter().zip(weights).map(|(&score, weight)| i128::from(score) * i128::from(weight)).sum();
+        let mean = F64Interval::integer(numerator).divide(F64Interval::integer(i128::from(total))).unwrap();
+        let support = I32Interval::new(-32, 29).unwrap();
+        for percent in [-250, -25, 0, 10, 25, 333] {
+            let remainder = RankRemainder::new(percent);
+            let exact: i128 = scores
+                .iter()
+                .zip(weights)
+                .map(|(&score, weight)| (i128::from(score) * i128::from(percent) / 100) * i128::from(weight))
+                .sum();
+            for known in 0..1u8 << scores.len() {
+                let mut bins = Vec::new();
+                let mut unresolved = 0;
+                for (index, (&score, weight)) in scores.iter().zip(weights).enumerate() {
+                    if known & (1 << index) == 0 {
+                        unresolved += weight;
+                    } else {
+                        let (negative_score, residue) = remainder.residue(score);
+                        bins.push(RankResidueMass {
+                            negative_score,
+                            residue,
+                            mass: ProbabilityMass::from_ratio(weight, total).unwrap(),
+                        });
+                    }
+                }
+                let result = rank_mean_with_partial_residues(
+                    mean,
+                    support,
+                    percent,
+                    &bins,
+                    ProbabilityMass::from_ratio(unresolved, total).unwrap(),
+                )
+                .unwrap();
+                contains_fraction(result, exact, i128::from(total));
+                if unresolved == 0 {
+                    assert_eq!(result, rank_mean_with_residues(mean, support, percent, &bins).unwrap());
+                }
+            }
+        }
+        assert!(
+            rank_mean_with_partial_residues(mean, support, 10, &[], ProbabilityMass::from_ratio(1, 2).unwrap(),)
+                .is_err()
+        );
+    }
 
     // Exact dyadic conversion for the modest finite values in the rational tests. Comparisons are integer-only.
     fn fraction(value: f64) -> (i128, i128) {

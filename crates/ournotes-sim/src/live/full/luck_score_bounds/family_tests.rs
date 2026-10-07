@@ -474,8 +474,8 @@ fn family_choices(fixture: &FamilyFixture) -> [Vec<LuckFamilyChoice>; 5] {
 fn family_limits() -> LuckFamilyLimits {
     LuckFamilyLimits {
         max_pair_models: 64,
-        max_profiles: 16,
-        max_order_evaluations: 1920,
+        max_profiles: 31,
+        max_order_evaluations: 3720,
         max_frame_work: 1_000_000,
         max_retained_bytes: 8 * 1024 * 1024,
     }
@@ -638,17 +638,17 @@ fn controller_family_virtual_probe_agrees_with_an_independent_native_holder() {
 }
 
 #[test]
-fn controller_family_rejects_a_life_reader_and_cross_category_conversion_in_any_choice() {
+fn controller_family_rejects_life_feedback_cross_category_conversion_and_a_third_writer() {
     for kind in 0..3 {
         let mut fixture = FamilyFixture::new();
         match kind {
             0 => fixture.life_reading_writer(),
             1 => fixture.conversion(4, 5),
             2 => {
-                // Distinct physical resources may carry the same source row. Resource identity must not be
-                // collapsed merely because the written effect ID and probability happen to be equal.
+                // Resource identity remains distinct even when all three select the same source row.
                 for choices in &mut fixture.choices {
                     choices[2].1.gekisou_support_skills.push((FAMILY_GUARANTEE, 1));
+                    choices.push((Some(2), choices[1].1.clone()));
                 }
             }
             _ => unreachable!(),
@@ -825,3 +825,12 @@ mod admission_tests;
 
 #[path = "family_structural_note_tests.rs"]
 mod structural_note_tests;
+
+#[path = "two_writer_family_tests.rs"]
+mod two_writer_tests;
+
+#[path = "family_input_reuse_tests.rs"]
+mod input_reuse_tests;
+
+#[path = "family_lazy_profile_tests.rs"]
+mod lazy_profile_tests;

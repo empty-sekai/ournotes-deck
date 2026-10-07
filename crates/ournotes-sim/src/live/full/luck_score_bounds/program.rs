@@ -4,6 +4,7 @@
 //! note arithmetic; it cannot change a command, judgement, life value, query, nominal curve or rank arrival.
 //! Every new power reevaluates the original binary32 operations, integer floors and signed rank differences.
 //! No score scaling, power monotonicity or relationship between different performer programs is assumed.
+//! Completed terminal certificates share this bounded storage, with the original power restored in their key.
 
 use super::*;
 use crate::num::FxHasher;
@@ -89,6 +90,15 @@ pub(super) struct Identity {
     rush_percent: i32,
 }
 
+impl Identity {
+    fn same(&self, other: &Self) -> bool {
+        self.hash == other.hash
+            && self.model == other.model
+            && self.scope.bytes == other.scope.bytes
+            && self.rush_percent == other.rush_percent
+    }
+}
+
 pub(super) fn identity(model: &mut LiveModel, scope: &Arc<Scope>, rush_percent: i32) -> Option<Identity> {
     let power = std::mem::replace(&mut model.score.calc.state.band_total_power, 0);
     // Construction copies these exact chart inputs, already retained in the shared scope. The remaining
@@ -106,7 +116,44 @@ pub(super) fn identity(model: &mut LiveModel, scope: &Arc<Scope>, rush_percent: 
 struct Entry {
     identity: Option<Identity>,
     recorded: Option<RecordedIdentity>,
-    program: Arc<Program>,
+    value: Value,
+}
+
+enum Value {
+    Program(Arc<Program>),
+    // A completed terminal certificate cannot be rescaled. The initialized identity normalizes power only
+    // for replay programs, so terminal entries restore that exact input alongside the same complete key.
+    Terminal {
+        power: i32,
+        value: Arc<LuckTerminalRush>,
+    },
+    /// The completed recording/factor recipe deliberately contains no power-specific integer score results.
+    TerminalRecipe {
+        recipe: Arc<prepass::TerminalRecipe>,
+        power: i32,
+        value: Arc<LuckTerminalRush>,
+    },
+}
+
+impl Value {
+    fn curve(&self) -> &Arc<LuckDpCertifiedResult> {
+        match self {
+            Self::Program(program) => &program.curve,
+            Self::Terminal { value, .. } => value.cache_curve(),
+            Self::TerminalRecipe { recipe, .. } => recipe.curve(),
+        }
+    }
+
+    fn allocated_bytes(&self) -> usize {
+        ARC_HEADER_BYTES
+            + match self {
+                Self::Program(program) => program.allocated_bytes(),
+                Self::Terminal { value, .. } => value.cache_allocation_bytes(),
+                Self::TerminalRecipe { recipe, value, .. } => {
+                    recipe.allocated_bytes() + ARC_HEADER_BYTES + value.cache_allocation_bytes()
+                }
+            }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -118,6 +165,12 @@ pub(in super::super) struct CacheStats {
     pub recorded_key_declines: u64,
     pub recorded_peak_key_bytes: usize,
     pub compilations: u64,
+    pub terminal_lookups: u64,
+    pub terminal_hits: u64,
+    pub terminal_builds: u64,
+    pub terminal_recipe_lookups: u64,
+    pub terminal_recipe_hits: u64,
+    pub terminal_recipe_builds: u64,
     pub evictions: u64,
     pub peak_entries: usize,
     pub peak_bytes: usize,
@@ -147,16 +200,38 @@ impl ProgramCache {
 
     pub(super) fn get(&mut self, identity: &Identity, curve: &Arc<LuckDpCertifiedResult>) -> Option<Arc<Program>> {
         self.stats.lookups += 1;
-        let found = self.entries.iter().find(|entry| {
-            entry.identity.as_ref().is_some_and(|old| {
-                old.hash == identity.hash
-                    && old.model == identity.model
-                    && old.scope.bytes == identity.scope.bytes
-                    && old.rush_percent == identity.rush_percent
-            }) && Arc::ptr_eq(&entry.program.curve, curve)
+        let found = self.entries.iter().find_map(|entry| {
+            let Value::Program(program) = &entry.value else { return None };
+            (entry.identity.as_ref().is_some_and(|old| old.same(identity)) && Arc::ptr_eq(&program.curve, curve))
+                .then_some(program)
         });
         self.stats.hits += u64::from(found.is_some());
-        found.map(|entry| Arc::clone(&entry.program))
+        found.map(Arc::clone)
+    }
+
+    /// Equal complete initialized state, exact power and immutable scope determine both the recorder and
+    /// the lottery law. This lookup therefore precedes their execution; a raw or partial curve is no key.
+    pub(super) fn get_terminal(&mut self, identity: &Identity, power: i32) -> Option<Arc<LuckTerminalRush>> {
+        self.stats.terminal_lookups += 1;
+        let found = self.entries.iter().find_map(|entry| {
+            let (old_power, value) = match &entry.value {
+                Value::Terminal { power, value } | Value::TerminalRecipe { power, value, .. } => (power, value),
+                Value::Program(_) => return None,
+            };
+            (*old_power == power && entry.identity.as_ref().is_some_and(|old| old.same(identity))).then_some(value)
+        });
+        self.stats.terminal_hits += u64::from(found.is_some());
+        found.map(Arc::clone)
+    }
+
+    pub(super) fn get_terminal_recipe(&mut self, identity: &Identity) -> Option<Arc<prepass::TerminalRecipe>> {
+        self.stats.terminal_recipe_lookups += 1;
+        let found = self.entries.iter().find_map(|entry| {
+            let Value::TerminalRecipe { recipe, .. } = &entry.value else { return None };
+            entry.identity.as_ref().is_some_and(|old| old.same(identity)).then_some(recipe)
+        });
+        self.stats.terminal_recipe_hits += u64::from(found.is_some());
+        found.map(Arc::clone)
     }
 
     pub(super) fn get_recorded(
@@ -166,24 +241,120 @@ impl ProgramCache {
     ) -> Option<Arc<Program>> {
         self.stats.recorded_lookups += 1;
         self.stats.recorded_peak_key_bytes = self.stats.recorded_peak_key_bytes.max(identity.encoded_len());
-        let found = self.entries.iter().find(|entry| {
-            entry.recorded.as_ref().is_some_and(|old| old.same(identity)) && Arc::ptr_eq(&entry.program.curve, curve)
+        let found = self.entries.iter().find_map(|entry| {
+            let Value::Program(program) = &entry.value else { return None };
+            (entry.recorded.as_ref().is_some_and(|old| old.same(identity)) && Arc::ptr_eq(&program.curve, curve))
+                .then_some(program)
         });
         self.stats.recorded_hits += u64::from(found.is_some());
-        found.map(|entry| Arc::clone(&entry.program))
+        found.map(Arc::clone)
     }
 
     pub(super) fn decline_recorded_key(&mut self) {
         self.stats.recorded_key_declines += 1;
     }
 
-    pub(super) fn insert(
-        &mut self,
-        mut identity: Option<Identity>,
-        mut recorded: Option<RecordedIdentity>,
-        program: Program,
-    ) {
+    pub(super) fn insert(&mut self, identity: Option<Identity>, recorded: Option<RecordedIdentity>, program: Program) {
         self.stats.compilations += 1;
+        self.insert_entry(identity, recorded, Value::Program(Arc::new(program)));
+    }
+
+    /// Store only the caller's completed capability. Price the optional copy before making it, and check
+    /// cancellation again before committing. Replay programs and terminal capabilities share one FIFO,
+    /// entry limit and byte allowance, including their distinct curve, scope and trace allocations.
+    pub(super) fn insert_terminal(
+        &mut self,
+        identity: Identity,
+        power: i32,
+        terminal: &LuckTerminalRush,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Option<()> {
+        let previous = self.entries.iter().position(|entry| {
+            entry.identity.as_ref().is_some_and(|old| old.same(&identity))
+                && match &entry.value {
+                    Value::Terminal { power: old, .. } => *old == power,
+                    Value::TerminalRecipe { .. } => true,
+                    Value::Program(_) => false,
+                }
+        });
+        let recipe = previous.and_then(|index| match &self.entries[index].value {
+            Value::TerminalRecipe { recipe, .. } => Some(Arc::clone(recipe)),
+            _ => None,
+        });
+        let bytes = self
+            .terminal_entry_bytes(&identity, terminal)
+            .saturating_add(recipe.as_ref().map_or(0, |recipe| ARC_HEADER_BYTES + recipe.allocated_bytes()));
+        if bytes > self.capacity || self.capacity == 0 {
+            return Some(());
+        }
+        let value = Arc::new(terminal.cache_clone());
+        if cancelled() {
+            return None;
+        }
+        let value = match recipe {
+            Some(recipe) => Value::TerminalRecipe { recipe, power, value },
+            None => Value::Terminal { power, value },
+        };
+        // One admitted history retains only its most recent complete exact-power result. A newer numeric
+        // refusal has native_notes=None and replaces the old result just like a successful kernel does.
+        if let Some(index) = previous {
+            self.entries.remove(index);
+        }
+        self.insert_entry(Some(identity), None, value);
+        Some(())
+    }
+
+    fn terminal_entry_bytes(&self, identity: &Identity, terminal: &LuckTerminalRush) -> usize {
+        size_of::<Entry>()
+            + identity.model.capacity()
+            + size_of::<Scope>()
+            + identity.scope.bytes.capacity()
+            + ARC_HEADER_BYTES
+            + terminal.cache_allocation_bytes()
+            + ARC_HEADER_BYTES
+            + curve_bytes(terminal.cache_curve())
+    }
+
+    /// A recipe and its most recent exact-power result occupy one entry in the existing FIFO. Both share
+    /// the same immutable curve; every recipe/terminal vector is charged. Oversized optional recipes fall
+    /// back to the original exact-power payload, and never suppress the completed caller result.
+    pub(super) fn insert_terminal_recipe(
+        &mut self,
+        identity: Identity,
+        power: i32,
+        terminal: &LuckTerminalRush,
+        recipe: prepass::TerminalRecipe,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Option<()> {
+        let exact_bytes = self.terminal_entry_bytes(&identity, terminal);
+        let combined_bytes = exact_bytes.saturating_add(ARC_HEADER_BYTES + recipe.allocated_bytes());
+        let value = if self.capacity > 0 && exact_bytes <= self.capacity {
+            let value = Arc::new(terminal.cache_clone());
+            Some(if combined_bytes <= self.capacity {
+                Value::TerminalRecipe { recipe: Arc::new(recipe), power, value }
+            } else {
+                Value::Terminal { power, value }
+            })
+        } else {
+            None
+        };
+        if cancelled() {
+            return None;
+        }
+        self.stats.terminal_recipe_builds += 1;
+        if let Some(value) = value {
+            // Defensive replacement prevents duplicate recipes even if a caller deliberately rebuilds an
+            // already-complete identity. Different replay-program payloads remain separate capabilities.
+            self.entries.retain(|entry| {
+                !entry.identity.as_ref().is_some_and(|old| old.same(&identity))
+                    || matches!(&entry.value, Value::Program(_))
+            });
+            self.insert_entry(Some(identity), None, value);
+        }
+        Some(())
+    }
+
+    fn insert_entry(&mut self, mut identity: Option<Identity>, mut recorded: Option<RecordedIdentity>, value: Value) {
         if let Some(identity) = &mut identity
             && let Some(old) = self
                 .entries
@@ -202,19 +373,17 @@ impl ProgramCache {
         {
             recorded.shared = Arc::clone(&old.shared);
         }
-        let program = Arc::new(program);
         let own = size_of::<Entry>()
             + identity.as_ref().map_or(0, |identity| identity.model.capacity())
             + recorded.as_ref().map_or(0, |recorded| recorded.local.capacity())
-            + program.allocated_bytes()
-            + ARC_HEADER_BYTES;
+            + value.allocated_bytes();
         let shared = identity
             .as_ref()
             .map_or(0, |identity| identity.scope.bytes.capacity() + size_of::<Scope>() + ARC_HEADER_BYTES)
             + recorded.as_ref().map_or(0, |recorded| {
                 recorded.shared.bytes.capacity() + size_of::<recorded::SharedTrace>() + ARC_HEADER_BYTES
             })
-            + curve_bytes(&program.curve);
+            + curve_bytes(value.curve());
         if own.saturating_add(shared) > self.capacity || self.capacity == 0 {
             return;
         }
@@ -222,7 +391,7 @@ impl ProgramCache {
             self.entries.pop_front();
             self.stats.evictions += 1;
         }
-        self.entries.push_back(Entry { identity, recorded, program });
+        self.entries.push_back(Entry { identity, recorded, value });
         while self.allocated_bytes() > self.capacity {
             self.entries.pop_front();
             self.stats.evictions += 1;
@@ -239,9 +408,9 @@ impl ProgramCache {
         let mut scopes = FxHashSet::default();
         let mut traces = FxHashSet::default();
         self.entries.iter().fold(self.entries.capacity() * size_of::<Entry>(), |mut bytes, entry| {
-            bytes += entry.program.allocated_bytes() + ARC_HEADER_BYTES;
-            if curves.insert(Arc::as_ptr(&entry.program.curve)) {
-                bytes += curve_bytes(&entry.program.curve);
+            bytes += entry.value.allocated_bytes();
+            if curves.insert(Arc::as_ptr(entry.value.curve())) {
+                bytes += curve_bytes(entry.value.curve());
             }
             if let Some(identity) = &entry.identity {
                 bytes += identity.model.capacity();

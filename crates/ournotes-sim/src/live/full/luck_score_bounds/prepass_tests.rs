@@ -13,6 +13,12 @@ mod family_tests;
 #[path = "terminal_expectation_tests.rs"]
 mod terminal_expectation_tests;
 
+#[path = "rank_residue_tests.rs"]
+mod rank_residue_tests;
+
+#[path = "terminal_cache_tests.rs"]
+mod terminal_cache_tests;
+
 #[derive(Clone)]
 struct RushCase {
     master: Master,

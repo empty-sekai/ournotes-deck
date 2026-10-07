@@ -215,6 +215,15 @@ entry. Cancellation is checked after preparation and immediately around lookup, 
 or returned. Interrupted or refused recording/propagation creates no entry. Scope, key and capacity
 refusals keep independent evaluation available; cancellation remains cancellation.
 
+## Identity judgement projection
+
+The reduced lottery recorder may omit its auxiliary life/judgement interpreter when a complete dependency
+check proves that no retained controller action reads life and every possible conversion preserves each
+declared judgement. The check uses the full conversion closure, including raw-row target aliases and the
+native destination casts. A condition that happened to be false in one recording is not such a proof.
+Unknown judgements, conflicting aliases and possible judgement changes retain the interpreter. The full
+score recorder and its life/admission checks remain responsible for the candidate score and final life.
+
 ## Certified summary reuse
 
 `LuckScoreSession` fixes the master and classified skills, chart, parameters,
@@ -305,8 +314,10 @@ observer refusals.
 
 ## Complete controller families
 
-`LuckFamilyContext` and `LuckControllerFamily` provide optional expected-score node bounds with a complete
-controller law for a declared family of physical bindings. The context borrows the exact master tables,
+`LuckFamilyContext` admits a declared family of physical bindings for optional expected-score node bounds.
+`LuckControllerFamily` contains its complete controller laws. The separate `LuckFamilyDomain` capability
+contains full-domain admission, while each `LuckFamilyProfile` contains one complete writer-owner profile.
+The context borrows the exact master tables,
 compiled skill catalogue, chart, events, parameters, Gekisou setup, play inputs and delta clock for its lifetime.
 The search also holds the exact compiled reward template. A compatible DP curve alone is not this authority.
 
@@ -330,8 +341,10 @@ reduced controller program must also pass admission for its retained native phas
 releases, resets and probability values. Its law uses the declared independent nominal draws, including the
 [skill-probability model](#nominal-skill-probabilities).
 
-The admitted family can contain at most one physical Snap resource that writes the LUCK controller. Its
-profiles are absence of that resource and each allowed owner of it; fixed member writers remain present.
+The admitted family can contain at most two physical Snap resources that write the LUCK controller. Each
+resource is absent or belongs to one allowed owner, and two resources cannot occupy the same member slot.
+These exact resource-to-owner vectors give at most 31 profiles; fixed member writers remain present.
+Distinct physical resources retain distinct profiles even when their selected source rows are identical.
 Each retained writer must have the LUCK mission gate of its actual selected native updater. A support
 writer therefore keeps the selected member's mission and support-activation metadata; its effect type alone
 does not establish the gate. Writer triggers, conditions, resets and releases must not read life, ordinary
@@ -347,32 +360,62 @@ the same target vector across the entire pair domain. An unreachable conversion 
 the separately checked late range-playing condition; short unextended windows or one observed execution do
 not establish that condition. Unknown identity, conversion or life dependencies decline the family.
 
-Each profile is evaluated in all 120 original member orders, with complete initialized performers and the
+Every completed profile is evaluated in all 120 original member orders, with complete initialized performers and the
 original source order at each performance position. A coverage bitmap checks every profile/order pair;
 duplicates cannot stand in for missing pairs. The returned four buckets are the joint virtual direct-LUCK
 score-probe bit and native Rush bit at a note's chart time. The virtual probe bit is meaningful even when no
 member holds a probe, because complete program admission establishes its controller meaning. Projecting
 reward rows preserves the complete member fields and their native mission/support-selection metadata.
 
-For each profile the reward template averages coefficients over all 120 original orders, using each member's
-actual position in each order. Only after these complete averages does it take a component maximum across
-profiles. A fixed physical binding chooses one profile before the order draw, so linearity and these maxima
-bound that binding's expectation. Existing all-history rank, conversion, additive drift and unclassified-window
+After complete pair-domain admission, an optional input identity can reuse a finished curve before rebuilding
+the projected native model. A closed source/checker dependency proof must show that character identity is
+unread before that one field is normalized. The ordered performers retain every other field and source;
+unknown, cumulative or conversion programs keep the original construction path. These complete input keys
+share the existing per-family recorder-key storage, its 128-entry/1 MiB limits and the configured curve
+allowance. A hit still registers the original physical profile and labelled order independently.
+
+The complete-family preparation API still computes every profile. Search instead admits the entire physical
+pair domain first and prepares complete profiles as actual depth-four nodes require them. The full-domain
+capability retains every allowed physical choice and writer-owner mapping; its immutable identity prevents a
+profile from another context or another admitted domain from being substituted. A profile is published only
+after its own 120 original labels complete. Unrequested profiles remain explicitly unknown.
+
+For each completed profile the reward template averages coefficients over all 120 original orders, using each member's
+actual position in each order. It retains every completed profile's base and member/Snap gains together with
+immutable physical-binding metadata. A depth-four node fixes four bindings and enumerates every legal choice
+for its final slot. Each resulting complete binding selects its unique certified profile and its own original
+power-bound terms; their product bounds that binding's expectation. The maximum of these complete binding caps
+bounds the node. Coefficients from incompatible writer owners are never combined. This selection happens only
+after every profile needed by that node has completed all 120 orders. Required-profile discovery and the final
+upper use the same complete physical-binding enumeration. If any legal last choice lacks its profile, the
+entire optional node bound is unavailable. For two physical writers, a fixed depth-four prefix needs at most
+three profiles for each possible final member. Existing all-history rank, conversion, additive drift and unclassified-window
 allowances remain unweighted. The result is an upper only for Score; it supplies neither per-path support nor
 the expectation of a nonlinear payoff.
 
-The search's preparation limits are 4,096 pair models, at most six profiles and 720 order/profile evaluations,
-16,000,000 units of declared frame work, and 32 MiB of accounted family storage. The frame-work check includes
-the terminal mapping and every required order/profile. The retained coefficient-table cache separately uses
-at most 64 entries and 8 MiB, further limited by `cacheEntries`. Container capacities, retained mappings and
+Within one reward-template binding, labels that reference the very same immutable joint-probability object
+can reuse its reward arithmetic. A bounded temporary table retains that curve's base coefficient and every
+member/Snap choice at all five positions. It uses object identity, never approximate equality of probabilities;
+the template, members and terminal query mapping are fixed for its entire lifetime. Every original label still
+adds its own coefficients in the original outward summation order. The table has at most 128 entries and
+1 MiB of accounted capacity; zero or insufficient capacity uses direct arithmetic. It supplies no new program
+equivalence or candidate-ranking certificate.
+
+The search's preparation limits are 4,096 pair models, at most 31 profiles and 3,720 order/profile evaluations,
+16,000,000 units of declared frame work, and 32 MiB of accounted family storage. Admission retains the complete
+family's work check even when search initially requests only one profile: the frame-work check includes the
+terminal mapping and every order/profile in the full family. The retained domain and coefficient cache separately uses
+at most 64 entries and 8 MiB, further limited by `cacheEntries`. Container capacities, complete input choices and
+performer vectors, retained mappings and
 referenced probability payloads are accounted by their respective owners; these budgets are not process RSS
 or the combined memory of every cache.
 
-A successful family requires complete coverage within every limit. Capacity failure, unsupported input or a
+A successful complete-family capability requires complete coverage within every limit. Capacity failure, unsupported input or a
 local work budget produces an unavailable optional bound; cancellation produces a stopped preparation.
 Neither supplies a partial family or an optimistic maximum over only the completed profiles. Completed
-individual probability curves may be reused through their existing exact recording keys, but the family cache
-stores only complete coefficient tables or refusals in its immutable scope. Search completion and canonical
+individual probability curves may be reused through their existing exact recording keys. The search cache
+stores full-domain admission with independently completed profile coefficients or explicit unknown/refused
+entries in its immutable scope. Cached admission alone cannot prune a node. Search completion and canonical
 Top-K still require the ordinary whole-domain proof.
 
 The [synthetic family oracle](../crates/ournotes-sim/src/live/full/luck_score_bounds/family_tests.rs) enumerates
@@ -474,6 +517,31 @@ evaluation. In contrast, 120 complete terminal summaries can supply the full uni
 without factor-history replay. Overlapping candidate intervals can still require refinement; neither complete
 summaries nor the `leaves.lotteryUpper` preparation counters alone establish the full-domain ranking or
 `Complete`. Nonlinear payoff objectives continue to use the complete scorer and refinement provider below.
+
+Completed terminal preparations can also be reused before another lottery recording or prefix-kernel build.
+The key contains the lossless full initialized model, exact native initial power and immutable request scope.
+Every caller first passes the full recorder and native arithmetic admission. Both a successful optional
+terminal kernel and its conservative refusal are retained as part of a completed preparation; an unfinished
+preparation is never published. Cancellation is checked around lookup and return as well as construction.
+
+Terminal preparations share the factor-history program cache's FIFO and its existing limits of 128 entries
+and 32 MiB. Accounting includes the full scope, identities, terminal vectors and distinct retained probability
+curves. A zero allowance disables this reuse. These entries supply the same capabilities as their original
+preparation; an upper-only hit does not become a candidate evaluation.
+
+A completed terminal recording and factor preparation can also form a power-independent recipe. Its key
+retains the same complete initialized model and immutable scope, with only initial total power normalized
+after the recorder dependency proof. The recipe contains the full recording, terminal factor ingredients,
+probability readiness and deterministic final LIFE. It contains no old native-note scores, whole-score
+enclosure, rank bonuses, integer-support conclusion or power-specific arithmetic refusal.
+
+Every recipe lookup constructs and admits the current native model. A hit then rebuilds the terminal numeric
+kernel with the current calculator and exact requested power, repeating the original binary32 operations,
+integer floors, historical rank operations and all magnitude and support checks. A refusal at one power does
+not refuse another power. Cancellation cannot publish an unfinished recipe or return a completed score.
+Recipes share the same FIFO, 128-entry limit and total byte allowance with replay programs and exact-power
+terminal certificates; complete trace, prefix, probability and container capacities are included. Zero
+capacity leaves the independent recording path available.
 
 ## Reusing factor histories at another power
 
@@ -579,7 +647,41 @@ The synthetic `long_stream_refinement_materializes_the_boundary_candidate` test 
 the public recommendation entry point. The storage-policy unit test distinguishes eager storage from backend
 admission and checks that the ordinary long-chart domain remains eligible for bounded refinement.
 
+## Rank expectation from score residues
+
+`LuckScoreSession::rank_summary` first completes the factor-history score replay, then optionally refines the
+integer rank bonuses. For a rank percentage `p`, native truncation of `p*S/100` depends on the score's sign and
+its residue modulo `100/gcd(abs(p),100)`. The current score adapter admits nonnegative range sums and obtains
+their rewards from the actual historical end Query, with the same unchanged-prefix proof and prior probability
+readiness required by the score replay. Terminal note rewards cannot substitute for this earlier snapshot.
+
+Each native note bucket with singleton integer support contributes its residue. Coincident notes contribute
+one summed reward at their shared controller observation. A non-singleton bucket moves its path into an
+absorbing unresolved class; it neither chooses an interval endpoint nor invents a probability distribution.
+The native lottery transition graph propagates the resulting joint residue law, preserving controller state,
+both note-observation phases and delayed probes. It observes every requested chart-time group before marginal
+curve coalescing, including groups whose marginal curve did not change. Windows run sequentially under the
+existing state and cancellation limits. A saved law is taken at its last required observation, while the
+remaining transcript still completes its ordinary admission checks.
+
+The refined bonus uses the existing score mean and the known residue masses to enclose the truncation
+correction. Only the unresolved mass receives the full possible remainder interval. Known and unresolved
+masses must together enclose one. This retains correlation across notes without enumerating the complete
+terminal score law. The final rank contribution is rebuilt from the original bonus identities and their
+proved terminal coefficients, then intersected with its previous certificate. Integer support and final life
+are unchanged; missing rewards, unsupported snapshots or local capacity refusal keep the previous enclosure.
+Residue and ordinary summaries have distinct cache identities.
+
 ## Refinement scheduling
+
+After the physical domain closes, expected-score and best-order expected-score searches first attempt complete
+factor-history summaries for every currently ambiguous boundary candidate. A second pass attempts the admitted
+rank-residue summaries. Only after those passes does the existing complete-law tree receive the remaining
+ambiguities. With retained detailed rows, each completed order immediately intersects the frontier and those
+installed narrowings survive cancellation. Missing detailed rows are reconstructed from the immutable request;
+this reconstruction installs a new aggregate only after all 120 orders complete. An interrupted reconstruction
+keeps the prior frontier certificate. Both paths preserve the actual domain-completion state. Other terminal
+objectives retain their own probability-law refinement.
 
 Ambiguous candidates with smaller current certified payoff upper bounds receive refinement first, with
 candidate identifiers breaking ties. Their upper bounds are closer to exclusion by a competitor's proved

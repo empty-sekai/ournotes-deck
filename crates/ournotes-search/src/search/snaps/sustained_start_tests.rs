@@ -34,6 +34,61 @@ fn timing(groups: &[Vec<(i64, usize)>]) -> GkRowWin {
     }
 }
 
+fn frames(open: &[bool]) -> GkFrames {
+    GkFrames {
+        times: (0..open.len()).map(|f| f as i32 * 10).collect(),
+        gate: [vec![false; open.len()], open.to_vec(), vec![false; open.len()]],
+        current: vec![None; open.len()],
+        start: Vec::new(),
+        complete: vec![false; open.len()],
+        ranges: Vec::new(),
+        states: vec![Vec::new(); open.len()],
+        wlo: vec![0; open.len()],
+        next_complete: vec![None; open.len() + 1],
+        ent: Vec::new(),
+        combo_triggers: None,
+    }
+}
+
+#[test]
+fn sustained_start_cap_counts_observed_gate_frames_across_distant_ranges() {
+    let mut open = vec![false; 10_001];
+    for f in [0, 1, 2, 9998, 9999, 10_000] {
+        open[f] = true;
+    }
+    let g = frames(&open);
+    // This timing component contains six possible start frames. Closed-gate gaps cannot end and recycle
+    // the current updater, so at most three of these starts execute.
+    let w = timing(&[vec![(0, 0), (10, 1), (20, 2), (99_980, 9998), (99_990, 9999), (100_000, 10_000)]]);
+    assert_eq!(factor_executions(&row(), &w, None), w.executions);
+    assert_eq!(factor_executions(&row(), &w, Some(&g)), [3.0f64.next_up()]);
+    // A separate mission's state updates are not observations of this row's gate.
+    let mut other_gate = g;
+    other_gate.gate[0].fill(true);
+    other_gate.gate[2].fill(true);
+    assert_eq!(factor_executions(&row(), &w, Some(&other_gate)), [3.0f64.next_up()]);
+}
+
+#[test]
+fn sustained_start_cap_keeps_open_false_frames_between_sparse_possible_starts() {
+    let g = frames(&[true, false, true, true, false, true, true]);
+    // Open observations occur at 0, 2, 3, 5, 6. Starts at 0, 3, 6 are all possible when 2 and 5 observe false.
+    let w = timing(&[vec![(0, 0), (30, 3), (60, 6)]]);
+    assert_eq!(factor_executions(&row(), &w, Some(&g)), w.executions);
+    let mut r = row();
+    r.gate = MISSION_ALL;
+    assert_eq!(factor_executions(&r, &w, Some(&g)), factor_executions(&r, &w, None));
+    // Incomplete optional gate geometry retains the processing-frame certificate.
+    assert_eq!(factor_executions(&row(), &w, Some(&frames(&[true; 3]))), factor_executions(&row(), &w, None));
+}
+
+#[test]
+fn sustained_start_cap_counts_each_window_in_its_original_processing_interval() {
+    let g = frames(&[true, false, true, true, false, true, true, true, false, true]);
+    let w = timing(&[vec![(-20, 0), (-10, 2), (-30, 3)], vec![(40, 5), (40, 6), (30, 7), (20, 9)]]);
+    assert_eq!(factor_executions(&row(), &w, Some(&g)), [2.0f64.next_up(), 2.0f64.next_up()]);
+}
+
 #[test]
 fn sustained_start_cap_uses_processing_frames_and_preserves_sparse_starts() {
     let groups = [
@@ -44,9 +99,12 @@ fn sustained_start_cap_uses_processing_frames_and_preserves_sparse_starts() {
         vec![(0, u32::MAX as usize - 2), (0, u32::MAX as usize - 1), (0, u32::MAX as usize)],
     ];
     let w = timing(&groups);
-    assert_eq!(factor_executions(&row(), &w), [4.0f64.next_up(), 3.0f64.next_up(), 2.0f64.next_up(), 2.0f64.next_up()]);
+    assert_eq!(
+        factor_executions(&row(), &w, None),
+        [4.0f64.next_up(), 3.0f64.next_up(), 2.0f64.next_up(), 2.0f64.next_up()]
+    );
     // In T/F/T/F/T, all three possible start frames can execute. Halving their count would be unsafe.
-    assert_eq!(factor_executions(&row(), &w)[1], w.executions[1]);
+    assert_eq!(factor_executions(&row(), &w, None)[1], w.executions[1]);
 }
 
 #[test]
@@ -61,12 +119,12 @@ fn sustained_start_cap_keeps_lifetime_counts_and_cached_domains_separate() {
     r.condition = 7;
     r.reset = 8;
     r.execute_limit = 1;
-    assert_eq!(factor_executions(&r, &w), [13.0f64.next_up()]);
-    assert!(factor_executions(&r, &w)[0] > POOL);
+    assert_eq!(factor_executions(&r, &w, None), [13.0f64.next_up()]);
+    assert!(factor_executions(&r, &w, None)[0] > POOL);
     assert_eq!(original, (w.win.clone(), w.filed.clone(), w.executions.clone(), w.conv.clone(), w.parts.clone()));
     // A timing-cache entry can also be shared by an effect with an applier-controlled finish.
     r.effect_type = 11005;
-    assert_eq!(factor_executions(&r, &w), w.executions);
+    assert_eq!(factor_executions(&r, &w, None), w.executions);
 }
 
 #[test]
@@ -75,7 +133,7 @@ fn sustained_start_cap_retains_the_uncertified_lifecycles() {
     for act in [f32::NAN, f32::INFINITY, -1.0, 0.001, 2147483647f32] {
         let mut r = row();
         r.act = act;
-        assert_eq!(factor_executions(&r, &w), w.executions);
+        assert_eq!(factor_executions(&r, &w, None), w.executions);
     }
     let mut alternatives = Vec::new();
     for effect_type in [2001, 4004, 11005, 12004, 12006, 13005] {
@@ -93,7 +151,7 @@ fn sustained_start_cap_retains_the_uncertified_lifecycles() {
     r.gk = false;
     alternatives.push(r);
     for r in alternatives {
-        assert_eq!(factor_executions(&r, &w), w.executions);
+        assert_eq!(factor_executions(&r, &w, None), w.executions);
     }
 }
 
@@ -101,12 +159,12 @@ fn sustained_start_cap_retains_the_uncertified_lifecycles() {
 fn sustained_start_cap_does_not_invent_missing_frame_evidence() {
     let mut w = timing(&[(0..6).map(|f| (f as i64, f)).collect()]);
     w.win_starts = vec![Rc::default()];
-    assert_eq!(factor_executions(&row(), &w), w.executions);
+    assert_eq!(factor_executions(&row(), &w, None), w.executions);
     w.win_starts = vec![Rc::new(RampStarts { at: vec![0], lo: vec![9], hi: vec![2] })];
-    assert_eq!(factor_executions(&row(), &w), w.executions);
+    assert_eq!(factor_executions(&row(), &w, None), w.executions);
     w.win_starts.clear();
-    assert_eq!(factor_executions(&row(), &w), w.executions);
+    assert_eq!(factor_executions(&row(), &w, None), w.executions);
     w.executions = vec![f64::INFINITY];
     w.win_starts = vec![Rc::new(RampStarts::new(vec![(0, 0), (1, 1)]))];
-    assert_eq!(factor_executions(&row(), &w), [f64::INFINITY]);
+    assert_eq!(factor_executions(&row(), &w, None), [f64::INFINITY]);
 }

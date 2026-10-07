@@ -271,6 +271,12 @@ whole-score certificate is usable, independently of the search's time and candid
 terminal enclosure may still need refinement when candidate intervals overlap. No profile field changes
 `Complete`.
 
+The optional rank-residue summary also reports `rankResidueAttempts`, completed `rankResidueWindows`, and
+`rankResidueUnresolvedWindows` whose resulting law still carries unresolved reward mass. `rankResiduePeakStates`
+is a maximum; `rankResidueTransitions` adds work from completed residue batches. `rankResidueMs` includes refused
+and cancelled attempts and is already included in bound replay time. These fields describe an expectation
+certificate, not a complete score law or a ranking result.
+
 ## `joint`
 
 Per-depth counters of the joint (Gekisou) search, arrays indexed by depth. Node bounds count at the depth of the node
@@ -320,22 +326,25 @@ the compiled decisions and do not authorize pruning themselves.
 ### `joint.luckFamily`
 
 Preparation and cache counters for the optional certified-LUCK Score bound at joint depth four. Its native
-family covers fixed members with the complete allowed Snap domain before a node applies its actual prefix
-bindings and remaining choices. These counters are independent of leaf evaluations and candidate ranking.
+domain admits fixed members with every allowed Snap pair. Search completes only the writer profiles required
+by actual prefix bindings and remaining choices; every completed profile retains all 120 order labels.
+These counters are independent of leaf evaluations and candidate ranking.
 
 | Field | Meaning |
 |---|---|
 | `contextChecks`, `contextRefusals`, `contextStopped`, `contextMs` | Context-admission attempts, refusal counts by reason, stopped attempts and elapsed preparation time |
 | `checks`, `boundedNodes` | Node requests that reached the admitted family path, and requests that returned a complete numeric upper (including zero for an empty suffix) |
-| `familyLookups`, `familyHits`, `refusedHits` | Member-family lookups, complete coefficient-table hits and separately cached refusal hits |
-| `preparedFamilies` | Successfully prepared complete numeric coefficient tables; not evaluated candidates |
+| `familyLookups`, `familyHits`, `refusedHits` | Member-family lookups, admitted family-state hits and separately cached domain-refusal hits; a state hit can still need more profiles |
+| `admittedFamilies` | Successful complete pair-domain admissions; no completed profile or candidate is implied |
+| `preparedFamilies` | Families receiving their first complete profile during one cache lifetime; eviction and reconstruction may count the same physical family again |
+| `profileLookups`, `profileHits` | Required-profile lookups for actual nodes and hits on complete cached coefficients |
 | `preparationRefusals`, `preparationDeclines` | Unavailable native families or pair construction, with reason counts; excludes cancellation |
 | `preparationMs` | Native family preparation time, including refused and stopped attempts |
 | `envelopeMs`, `envelopeRefusals` | Coefficient-table construction time and unavailable numerical envelopes; time includes stopped attempts, refusal counts exclude cancellation |
 | `capacityDeclines` | Search-side allocation or reward-template-scope failures; native family capacity failures are separately included in `preparationDeclines.capacity` |
 | `stopped` | Interrupted node-bound requests; no partial upper is returned |
-| `orderLaws`, `profiles` | Complete native profile/order certificates materialized before numerical-envelope construction; they can increase when that later construction declines, and do not count actual DP propagations or scored orders |
-| `evictions`, `peakEntries`, `peakBytes` | Cache evictions and recorded high-water entries/bytes for cache containers, the retained reward template and complete coefficient tables; excludes transient family laws, other caches and process RSS |
+| `orderLaws`, `profiles` | Original order labels and complete profiles successfully installed after numerical-envelope construction; each profile has 120 labels, and these are not DP-propagation or scored-order counts |
+| `evictions`, `peakEntries`, `peakBytes` | Cache evictions and recorded high-water entries/bytes for containers, the reward template, complete admitted inputs and retained profile coefficients; excludes transient probability laws, other caches and process RSS |
 
 Both refusal objects use the same reason keys: `context`, `terminalMapping`, `pairDomain`, `recorderAdmission`,
 `lifeFeedback`, `judgementFeedback`, `writerProfiles`, `probabilityDomain`, `budget`, `capacity` and
@@ -371,6 +380,8 @@ Counters accumulate within the request; exhausting an allowance or declining ref
 
 | Field | Meaning |
 |---|---|
+| `summaryOrders`, `summaryRefinements`, `summaryDeclines` | Completed factor-history order enclosures, installed intersections and optional refusals before complete-law refinement |
+| `residueOrders`, `residueRefinements`, `residueDeclines` | Completed rank-residue order enclosures, installed intersections and optional refusals; these are not complete-law or exact-value counts |
 | `attemptedOrders` | Orders for which construction of a complete nominal law was attempted |
 | `completedOrders` | Orders with a complete mass-one law, including laws reused for an equal initialized model |
 | `installedOrders` | Complete laws successfully used to narrow the ranking frontier |
@@ -380,8 +391,9 @@ Counters accumulate within the request; exhausting an allowance or declining ref
 | `arithmeticDeclines` | Complete laws not installed because search-side exact payoff arithmetic could not represent the result |
 | `replayRuns`, `frames`, `terminalPaths` | Replay segments started, frames executed and terminal paths completed across all refinement attempts; reused complete laws add zero playback work |
 
-Refinement time is charged to `time.simulationMs`; its runs are separate from the coarse 120-order evaluations
-counted by `leaves.simulations`. Refinement can stop once the ranking is certified, so `Complete` does not require
+Refinement time is charged to `time.simulationMs`. Complete-law replay segments are separate from
+`leaves.simulations`; completed factor-history and residue order enclosures also increment that simulation count.
+Refinement can stop once the ranking is certified, so `Complete` does not require
 every order to have an exact law or every returned expectation to have an exact rational value.
 
 The [nominal LUCK refinement method](luck-refinement.md) describes the frame checkpoints,
@@ -402,6 +414,9 @@ latter includes the shared byte dictionary, complete raw or delta payloads and e
 the shared probability objects and temporary encoding allocations. The recorder-key cache retains at most
 128 entries and one MiB, further limited by the supplied curve-cache allowance; immutable dictionary bytes and
 actual entry-buffer capacity count toward that same limit. Full reconstructed key equality decides every hit.
+`familyInputLookups` and `familyInputHits` count complete admitted family-input reuse before model construction.
+Those input keys share the same recorder-key storage and its entry/byte limits; they do not add a separate cache
+allowance. Physical writer profiles and original order labels remain separately covered after a hit.
 `sharedRecordingLookups` and `sharedRecordingHits` count a separate request-level table for complete reduced
 recordings. Reuse requires both the complete compiled recording key and the complete owned context, including
 initialized model state and exact chart, play, setup and ranking inputs. A deterministic life interpreter retains
@@ -442,6 +457,17 @@ Each hit reevaluates the original note arithmetic and signed rank operations at 
 its shared chart/run context, recorded identities and retained probability curves. Both lookups refer to the
 same retained program; a recorded hit creates no initialized-model alias. This cache is separate from the
 deterministic native `ScoreProgram` cache. Reuse adds no factor-history replay work.
+`terminalLookups`, `terminalHits` and `terminalBuilds` count reuse and complete construction of terminal
+preparations under their full initialized-model, exact-power and immutable-scope identity. Terminal entries
+share the program cache's FIFO, entry limit and byte allowance; its `programEvictions` and peak fields therefore
+include replay programs, terminal certificates and terminal recipes. A terminal hit retains the original optional-kernel admission and can supply only
+the capabilities that preparation established.
+`terminalRecipeLookups`, `terminalRecipeHits` and `terminalRecipeBuilds` count lookups, hits and complete builds
+of admitted power-independent terminal recordings and factor preparations. A build is counted even when the
+cache cannot retain it. A recipe hit reruns the current power's original note arithmetic, native integer floors,
+rank operations and support checks; it does not increment `terminalBuilds` or reuse a former arithmetic refusal.
+The fresh model still passes full recorder admission. Recipe allocations share the same bounded cache, including
+the complete trace, factor commands, probability-readiness observations, scope and distinct retained curves.
 `leaves.simulations` counts completed order enclosures, including those in a candidate subsequently excluded by
 remaining-order caps; summary hits still supply complete order enclosures without playback.
 `luckScoreCaps` counts reuse of certified whole-program score upper bounds retained after partial-order

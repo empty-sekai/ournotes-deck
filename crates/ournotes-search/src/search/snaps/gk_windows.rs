@@ -32,6 +32,8 @@ pub(super) fn active_row(env: &Env, r: &Row, can_start: bool, event_bound: bool)
         act: r.act,
         event_bound,
         can_start,
+        start_limit: factor_start_limit(env, r),
+        count_win: factor_count_windows(env, r),
         targets: r.targets.clone(),
         churn: r.effect_type == 2001,
         churn_max: churn_max(env, r),
@@ -40,7 +42,7 @@ pub(super) fn active_row(env: &Env, r: &Row, can_start: bool, event_bound: bool)
             .map(|x| if FILED_IN_ORDER.contains(&r.effect_type) { x.filed.clone() } else { x.win.clone() }),
         gk_starts: w.as_ref().map(|x| x.win_starts.clone()),
         gk_gate: w.as_ref().and_then(|x| combo_gate(env, r).map(|t| (t, x.parts.clone()))),
-        gk_execs: w.as_ref().map(|x| factor_executions(r, x)),
+        gk_execs: w.as_ref().map(|x| factor_executions(r, x, env.gkf.as_deref())),
         gk_event_win: (r.gk && event_bound).then(|| std::array::from_fn(|k| gk_event_windows(env, r, k))),
         gk_conv: w.as_ref().map(|x| x.conv.clone()),
         budget: w.as_ref().and_then(|x| gk_budget(env, r, x)),
@@ -51,15 +53,102 @@ pub(super) fn active_row(env: &Env, r: &Row, can_start: bool, event_bound: bool)
     })
 }
 
+/// A one-shot fixed factor starts at most once for each true trigger frame. Every alternative must contain a
+/// positive judgement counter; its original target multiplicities and the complete conversion reach bound
+/// the number of hits. Duration, condition failure, resets, execution limits and a full pool cannot add hits.
+/// Sustained and cumulative lifecycles retain their independent command-count certificates.
+fn factor_start_limit(env: &Env, r: &Row) -> Option<f64> {
+    if r.gk || r.trigger_type != 1 || !matches!(r.effect_type, 2000 | 2004) {
+        return None;
+    }
+    let hits = env.gkf.as_ref()?.count_trigger_hits(env, r.trigger, MISSION_ALL)?;
+    (hits >= 0).then(|| (hits as f64).next_up())
+}
+
+/// Necessary start windows for an ordinary one-shot fixed factor with one positive 1030 trigger. With the same
+/// target multiplicity under every reachable final judgement, this checker has a deterministic counter residue
+/// and hit frames. It is checked before row conditions and pool/execute limits; the reset group resets only the
+/// execution limit. None of those can move a hit to another frame. Composite and consecutive checkers retain the
+/// generic envelope because short-circuiting and counter resets can move their hits.
+///
+/// Keep one window per hit frame, including when one frame has several hits or there are more hits than pool
+/// instances. The lone checker's timestamp can be backdated to a counted note: `wlo` includes every such time,
+/// while the current processing time bounds its latest end. The score-proof domain has nonnegative, ordered
+/// clocks and no note judged before its chart time, so elapsed subtraction cannot wrap. Ordinary 15000 extensions
+/// affect only the member's live-skill pool, not these conditional updaters.
+fn factor_count_windows(env: &Env, r: &Row) -> Option<Vec<(i64, i64, f64)>> {
+    if r.gk || r.trigger_type != 1 || r.trigger == 0 || r.release != 0 || !matches!(r.effect_type, 2000 | 2004) {
+        return None;
+    }
+    let mut condition = None;
+    for set in env.sets.get(&r.trigger)? {
+        for &id in set.iter() {
+            let c = env.master.skill_condition(id)?;
+            if c.condition_type != 0 && condition.replace(c).is_some() {
+                return None;
+            }
+        }
+    }
+    let c = condition?;
+    let n = *c.condition_values.first()?;
+    if !c.is_positive || c.condition_type != 1030 || !(1..=i32::MAX as i64).contains(&n) {
+        return None;
+    }
+    let targets: Vec<_> = c
+        .condition_target_ids
+        .iter()
+        .map(|&id| env.master.skill_target(id).map(|t| t.judgement))
+        .collect::<Option<Vec<_>>>()?;
+    let g = env.gkf.as_ref()?;
+    if g.wlo.len() != g.times.len() || g.times.iter().any(|&t| t < 0) || !g.times.is_sorted() {
+        return None;
+    }
+    let (mut count, mut previous) = (0u128, 0usize);
+    let mut starts = Vec::new();
+    for (i, &(frame, raw)) in g.ent.iter().enumerate() {
+        if frame >= g.times.len() || frame < previous || !(0..8).contains(&raw) {
+            return None;
+        }
+        previous = frame;
+        let reach = env.reach_of(i, raw);
+        let mut multiplicity = None;
+        for j in 0..8 {
+            if reach & (1u8 << j) == 0 {
+                continue;
+            }
+            let m = targets.iter().filter(|&&target| target == j).count();
+            if multiplicity.is_some_and(|old| old != m) {
+                return None;
+            }
+            multiplicity = Some(m);
+        }
+        // With n <= i32::MAX the native counter resets before its signed increment can wrap. Duplicates may
+        // produce several hits in one entry, but the updater starts only once for the frame's true result.
+        let total = count + multiplicity? as u128;
+        count = total % n as u128;
+        if total >= n as u128 && starts.last().copied() != Some(frame) {
+            starts.push(frame);
+        }
+    }
+    starts
+        .into_iter()
+        .map(|frame| {
+            let start = g.wlo[frame];
+            (start <= g.times[frame] as i64).then(|| (start, frame_end(&g.times, g.times[frame], frame, r.act), 1.0))
+        })
+        .collect()
+}
+
 /// Lifetime starts for fixed Gekisou score factors. An untimed sustained updater keeps `current` while its
 /// trigger is true, even when its condition fails. A false observed frame ends it; only a later frame can recycle
-/// and start it again. Thus starts in a component's processing-frame interval `[lo, hi]` cannot be adjacent.
-/// Closed gates and finished frames leave it held, so counting all intervening play frames is conservative.
+/// and start it again. Thus starts in a component's processing-frame interval `[lo, hi]` cannot be adjacent
+/// among the frames where its mission gate is open. Closed gates leave the sustained updater and its trigger
+/// cache untouched. Counting finished open-gate frames is conservative because they cannot start an effect.
 ///
 /// Project after the timing cache: its key omits effect type, and other appliers can end an updater themselves.
 /// Fixed 2000/2004 appliers only file start/end factor commands. Preserve the full generic timing domain for
 /// other lifecycles, including cumulative factors and releases.
-fn factor_executions(r: &Row, w: &GkRowWin) -> Vec<f64> {
+fn factor_executions(r: &Row, w: &GkRowWin, frames: Option<&GkFrames>) -> Vec<f64> {
     let mut executions = w.executions.clone();
     if !r.gk || r.trigger_type != 2 || r.act != 0.0 || r.release != 0 || !matches!(r.effect_type, 2000 | 2004) {
         return executions;
@@ -71,8 +160,12 @@ fn factor_executions(r: &Row, w: &GkRowWin) -> Vec<f64> {
         // These final prefix extrema are over actual start-frame indices, not filing-time order.
         let Some((&lo, &hi)) = starts.lo.last().zip(starts.hi.last()) else { continue };
         let Some(distance) = hi.checked_sub(lo) else { continue };
-        let frames = u64::from(distance) + 1;
-        let cap = frames.div_ceil(2);
+        let processing_frames = u64::from(distance) + 1;
+        let observed_frames = frames
+            .filter(|_| (1..=3).contains(&r.gate))
+            .and_then(|frames| frames.gate[(r.gate - 1) as usize].get(lo as usize..=hi as usize))
+            .map_or(processing_frames, |gate| gate.iter().filter(|&&open| open).count() as u64);
+        let cap = observed_frames.div_ceil(2);
         *count = (*count).min((cap as f64).next_up());
     }
     executions
@@ -1021,10 +1114,44 @@ mod cumulative_churn_tests {
 mod count_hit_tests {
     use super::*;
 
+    fn ordinary_factor(trigger: i64) -> Row {
+        Row {
+            identity: RowIdentity { source: RowSource::Support, index: 0, id: 1 },
+            trigger_type: 1,
+            trigger,
+            condition: 0,
+            release: 0,
+            reset: 0,
+            cumulative: 0,
+            effect_type: 2000,
+            value: 5000,
+            act: 1.0,
+            limit: 0,
+            execute_limit: 0,
+            targets: Vec::new(),
+            max_value: 0,
+            gk: false,
+            gate: MISSION_ALL,
+        }
+    }
+
+    fn count_frames() -> GkFrames {
+        let frames: Vec<_> = (0..1000).map(|f| f * 40).collect();
+        let entries: Vec<_> = (0..12)
+            .map(|i| {
+                let note = LiveNote { note_id: i, time_ms: i * 1000, note_operate_type: 1, judgement_type: 1 };
+                (i as usize * 25, note, if i % 2 == 0 { 5 } else { 4 })
+            })
+            .collect();
+        GkFrames::new(&Schedule { states: vec![Vec::new(); frames.len()], ranges: Vec::new() }, &frames, &entries)
+    }
+
     fn master() -> Master {
         Master::from_json_tables(|name| match name {
             "MasterSkillTarget" => Some(
                 r#"{"_allData":[{"_id":41,"_skillTargetType":4,"_judgement":5},
+                {"_id":42,"_skillTargetType":4,"_judgement":4},
+                {"_id":43,"_skillTargetType":4,"_judgement":-1},
                 {"_id":57,"_skillTargetType":5,"_gekisouMissionType":1}]}"#,
             ),
             "MasterSkillCondition" => Some(
@@ -1034,7 +1161,16 @@ mod count_hit_tests {
                 {"_id":3,"_conditionType":5000,"_isPositive":true},
                 {"_id":4,"_conditionType":1030,"_conditionValues":[2],"_isPositive":false,"_conditionTargetIDs":[41]},
                 {"_id":5,"_conditionType":7020,"_isPositive":true,"_conditionTargetIDs":[57]},
-                {"_id":6,"_conditionType":0,"_isPositive":true}]}"#,
+                {"_id":6,"_conditionType":0,"_isPositive":true},
+                {"_id":7,"_conditionType":1030,"_conditionValues":[3],"_isPositive":true,"_conditionTargetIDs":[41,41]},
+                {"_id":8,"_conditionType":1030,"_conditionValues":[3],"_isPositive":true,"_conditionTargetIDs":[41,42]},
+                {"_id":9,"_conditionType":1030,"_conditionValues":[3],"_isPositive":true,"_conditionTargetIDs":[41,41,42,42]},
+                {"_id":10,"_conditionType":1040,"_conditionValues":[2],"_isPositive":true,"_conditionTargetIDs":[41]},
+                {"_id":11,"_conditionType":1030,"_conditionValues":[0],"_isPositive":true,"_conditionTargetIDs":[41]},
+                {"_id":12,"_conditionType":1030,"_conditionValues":[2147483648],"_isPositive":true,"_conditionTargetIDs":[41]},
+                {"_id":13,"_conditionType":1030,"_conditionValues":[2147483647],"_isPositive":true,"_conditionTargetIDs":[41]},
+                {"_id":14,"_conditionType":1030,"_conditionValues":[1],"_isPositive":true,"_conditionTargetIDs":[41]},
+                {"_id":15,"_conditionType":1030,"_conditionValues":[3],"_isPositive":true,"_conditionTargetIDs":[41,43,42]}]}"#,
             ),
             "MasterSkillConditionSet" => Some(
                 r#"{"_allData":[
@@ -1047,7 +1183,16 @@ mod count_hit_tests {
                 {"_id":7,"_group":6,"_conditionIds":[5,1]},
                 {"_id":8,"_group":7,"_conditionIds":[1,5]},
                 {"_id":9,"_group":8,"_conditionIds":[6,1]},
-                {"_id":10,"_group":8,"_conditionIds":[6]}]}"#,
+                {"_id":10,"_group":8,"_conditionIds":[6]},
+                {"_id":11,"_group":10,"_conditionIds":[7]},
+                {"_id":12,"_group":11,"_conditionIds":[8]},
+                {"_id":13,"_group":12,"_conditionIds":[9]},
+                {"_id":14,"_group":13,"_conditionIds":[10]},
+                {"_id":15,"_group":14,"_conditionIds":[11]},
+                {"_id":16,"_group":15,"_conditionIds":[12]},
+                {"_id":17,"_group":16,"_conditionIds":[13]},
+                {"_id":18,"_group":17,"_conditionIds":[14]},
+                {"_id":19,"_group":18,"_conditionIds":[15]}]}"#,
             ),
             _ => None,
         })
@@ -1104,6 +1249,274 @@ mod count_hit_tests {
         // a judgement that can be converted to a target counts
         env.count_reach[4] |= 1 << 5;
         assert_eq!(g.count_trigger_hits(&env, 1, MISSION_ALL), Some(3));
+    }
+
+    #[test]
+    fn ordinary_fixed_factor_starts_keep_counter_alternatives_and_conversion_reach() {
+        let master = master();
+        let mut env = env(&master);
+        env.gkf = Some(Rc::new(count_frames()));
+        assert_eq!(factor_start_limit(&env, &ordinary_factor(1)), Some(3.0f64.next_up()));
+        // OR alternatives add their hit budgets, retaining duplicate targets in the second counter.
+        assert_eq!(factor_start_limit(&env, &ordinary_factor(2)), Some(7.0f64.next_up()));
+        assert_eq!(factor_start_limit(&env, &ordinary_factor(3)), Some(3.0f64.next_up()));
+        for trigger in [4, 5, 9] {
+            assert_eq!(factor_start_limit(&env, &ordinary_factor(trigger)), None);
+        }
+        env.entry_reach = vec![(1 << 4) | (1 << 5); 12];
+        assert_eq!(factor_start_limit(&env, &ordinary_factor(1)), Some(6.0f64.next_up()));
+        assert_eq!(factor_start_limit(&env, &ordinary_factor(2)), Some(14.0f64.next_up()));
+        // The final judgement cannot become a counted target when no admitted conversion reaches it.
+        env.entry_reach = vec![1 << 4; 12];
+        assert!(factor_start_limit(&env, &ordinary_factor(1)).unwrap() < 1.0);
+    }
+
+    #[test]
+    fn ordinary_counter_caps_bound_commands_without_changing_factor_windows() {
+        let master = master();
+        let mut env = env(&master);
+        env.gkf = Some(Rc::new(count_frames()));
+        let row = ordinary_factor(1);
+        let active = active_row(&env, &row, true, false).unwrap();
+        assert_eq!(active.start_limit, Some(3.0f64.next_up()));
+        let params = LiveParams {
+            skill_target_music_type: 0,
+            total_power: 1000,
+            music_level: 1,
+            converted_note_count: 1,
+            music_length_ms: 40_000,
+            score_music_length_ms: None,
+            assist_factor: 1.0,
+        };
+        let frames = &env.gkf.as_ref().unwrap().times;
+        let play = LivePlay {
+            frames: frames
+                .iter()
+                .map(|&time_ms| ournotes_sim::live::full::PlayFrame { time_ms, judged: Vec::new() })
+                .collect(),
+            base_seed: 0,
+        };
+        let setup = FullSetup { notes: Vec::new(), events: Vec::new(), play, params, gk: None };
+        let exec = Exec::new(&setup, &[40], None, &[]);
+        let geo = Geo { frames, times: &[40], exec: &exec, music_length_ms: 40_000, snapshot_frame_limit: None };
+        let mut uncapped = active.clone();
+        uncapped.start_limit = None;
+        let (w, commands, norm, executions, spans, _, _, _, _) = windows(&geo, 0, &[], &[active], &[]);
+        let (old_w, old_commands, old_norm, old_executions, old_spans, _, _, _, _) =
+            windows(&geo, 0, &[], &[uncapped], &[]);
+        assert!((6.0..7.0).contains(&commands));
+        assert!(old_commands >= 2000.0);
+        assert!(executions < old_executions);
+        assert_eq!(norm, old_norm);
+        assert_eq!(spans, old_spans);
+        assert_eq!(w.len(), old_w.len());
+        for (a, b) in w.iter().zip(&old_w) {
+            assert_eq!((a.lo, a.hi, a.note, a.judge), (b.lo, b.hi, b.note, b.judge));
+        }
+        let mut row = row;
+        row.effect_type = 2004;
+        row.targets = vec![5, 5, 6];
+        let active = active_row(&env, &row, true, false).unwrap();
+        let (_, commands, _, _, _, _, _, _, _) = windows(&geo, 0, &[], &[active], &[]);
+        assert!((18.0..19.0).contains(&commands));
+    }
+
+    #[test]
+    fn ordinary_counter_caps_require_one_shot_fixed_factors_and_complete_frame_inputs() {
+        let master = master();
+        let mut env = env(&master);
+        let mut row = ordinary_factor(1);
+        assert_eq!(factor_start_limit(&env, &row), None);
+        env.gkf = Some(Rc::new(count_frames()));
+        for effect_type in [2001, 3001, 12006, 15000] {
+            row.effect_type = effect_type;
+            assert_eq!(factor_start_limit(&env, &row), None);
+        }
+        row.effect_type = 2004;
+        row.targets = vec![6, 6, 5];
+        row.release = 4;
+        row.reset = 5;
+        row.execute_limit = 1;
+        assert_eq!(factor_start_limit(&env, &row), Some(3.0f64.next_up()));
+        row.trigger_type = 2;
+        assert_eq!(factor_start_limit(&env, &row), None);
+        row.trigger_type = 1;
+        row.gk = true;
+        assert_eq!(factor_start_limit(&env, &row), None);
+    }
+
+    #[test]
+    fn ordinary_count_windows_keep_lone_checker_semantics_and_all_reachable_grades() {
+        let master = master();
+        let mut env = env(&master);
+        env.gkf = Some(Rc::new(count_frames()));
+        // Type-0 checkers and the sets they empty do not wrap the native lone counter.
+        assert_eq!(
+            factor_count_windows(&env, &ordinary_factor(8)).unwrap(),
+            [(1920, 3000, 1.0), (5920, 7000, 1.0), (9920, 11000, 1.0)]
+        );
+        let starts = |windows: Vec<(i64, i64, f64)>| windows.into_iter().map(|w| w.0).collect::<Vec<_>>();
+        // Two target occurrences preserve the residue across entries; they do not mean two updater starts.
+        assert_eq!(starts(factor_count_windows(&env, &ordinary_factor(10)).unwrap()), [1920, 3920, 7920, 9920]);
+        let both = factor_count_windows(&env, &ordinary_factor(11)).unwrap();
+        assert_eq!(starts(both.clone()), [1920, 4920, 7920, 10920]);
+        env.entry_reach = vec![(1 << 4) | (1 << 5); 12];
+        assert_eq!(factor_count_windows(&env, &ordinary_factor(11)), Some(both.clone()));
+        assert_eq!(factor_count_windows(&env, &ordinary_factor(18)), Some(both));
+        assert_eq!(
+            starts(factor_count_windows(&env, &ordinary_factor(12)).unwrap()),
+            [920, 1920, 3920, 4920, 6920, 7920, 9920, 10920]
+        );
+        // A legal conversion that changes target multiplicity can move the hit frames, so the refinement declines.
+        assert_eq!(factor_count_windows(&env, &ordinary_factor(8)), None);
+        env.entry_reach.clear();
+        env.count_reach[4] |= 1 << 5;
+        assert_eq!(factor_count_windows(&env, &ordinary_factor(8)), None);
+        env.entry_reach = vec![0; 12];
+        assert_eq!(factor_count_windows(&env, &ordinary_factor(11)), None);
+    }
+
+    #[test]
+    fn ordinary_count_windows_decline_composites_consecutive_counters_and_incomplete_geometry() {
+        let master = master();
+        let mut env = env(&master);
+        let mut row = ordinary_factor(8);
+        assert_eq!(factor_count_windows(&env, &row), None);
+        env.gkf = Some(Rc::new(count_frames()));
+        for trigger in [0, 1, 2, 3, 4, 5, 9, 13, 14, 15] {
+            assert_eq!(factor_count_windows(&env, &ordinary_factor(trigger)), None, "trigger {trigger}");
+        }
+        assert_eq!(factor_count_windows(&env, &ordinary_factor(16)), Some(Vec::new()));
+        row.condition = 4;
+        row.reset = 2;
+        row.execute_limit = 1;
+        assert!(factor_count_windows(&env, &row).is_some());
+        row.release = 4;
+        assert_eq!(factor_count_windows(&env, &row), None);
+        row.release = 0;
+        row.trigger_type = 2;
+        assert_eq!(factor_count_windows(&env, &row), None);
+        row.trigger_type = 1;
+        row.gk = true;
+        assert_eq!(factor_count_windows(&env, &row), None);
+        row.gk = false;
+        for effect_type in [2001, 3001, 12006, 15000] {
+            row.effect_type = effect_type;
+            assert_eq!(factor_count_windows(&env, &row), None);
+        }
+        row.effect_type = 2004;
+        assert!(factor_count_windows(&env, &row).is_some());
+        for bad in 0..5 {
+            let mut g = count_frames();
+            match bad {
+                0 => {
+                    g.times[0] = -1;
+                }
+                1 => {
+                    g.times[5] = 0;
+                }
+                2 => {
+                    g.wlo.pop();
+                }
+                3 => {
+                    g.ent[0].0 = g.times.len();
+                }
+                _ => {
+                    g.ent[1].1 = 8;
+                }
+            }
+            env.gkf = Some(Rc::new(g));
+            assert_eq!(factor_count_windows(&env, &row), None);
+        }
+    }
+
+    #[test]
+    fn ordinary_count_windows_keep_all_lifetime_starts_and_bound_chart_time_overlap() {
+        let master = master();
+        let mut env = env(&master);
+        let frames: Vec<i32> = (0..220).map(|f| f * 40).collect();
+        let entries: Vec<_> = (0..40)
+            .map(|i| {
+                (i as usize * 5, LiveNote { note_id: i, time_ms: i * 200, note_operate_type: 1, judgement_type: 1 }, 5)
+            })
+            .collect();
+        let schedule = Schedule { states: vec![Vec::new(); frames.len()], ranges: Vec::new() };
+        env.gkf = Some(Rc::new(GkFrames::new(&schedule, &frames, &entries)));
+        let mut row = ordinary_factor(17);
+        row.act = 0.3;
+        let active = active_row(&env, &row, true, false).unwrap();
+        assert_eq!(active.count_win.as_ref().unwrap().len(), 40);
+        let params = LiveParams {
+            skill_target_music_type: 0,
+            total_power: 1000,
+            music_level: 1,
+            converted_note_count: 40,
+            music_length_ms: 10_000,
+            score_music_length_ms: None,
+            assist_factor: 1.0,
+        };
+        let play = LivePlay {
+            frames: frames
+                .iter()
+                .map(|&time_ms| ournotes_sim::live::full::PlayFrame { time_ms, judged: Vec::new() })
+                .collect(),
+            base_seed: 0,
+        };
+        let setup =
+            FullSetup { notes: entries.iter().map(|e| e.1).collect(), events: Vec::new(), play, params, gk: None };
+        let times: Vec<_> = entries.iter().map(|e| e.1.time_ms).collect();
+        let exec = Exec::new(&setup, &times, None, &[]);
+        let mut geo =
+            Geo { frames: &frames, times: &times, exec: &exec, music_length_ms: 10_000, snapshot_frame_limit: None };
+        let (ws, commands, norm, _, spans, _, _, _, _) = windows(&geo, 0, &[], &[active.clone()], &[]);
+        assert_eq!(spans.len(), 40);
+        assert!((80.0..81.0).contains(&commands));
+        // The closed native frame of a 300 ms end also contains the next 320 ms start: three
+        // conservative windows meet there, although at most two contain an actual entry below.
+        assert!(norm.iter().all(|n| (1.5..1.501).contains(n)));
+        for i in 0..times.len() as u32 {
+            let factor: f64 = ws.iter().filter(|w| w.lo <= i && i < w.hi).map(|w| w.note).sum();
+            assert!(factor <= 1.0);
+        }
+        // A possible finish clamp before a late start retains the lifetime norm.
+        geo.music_length_ms = 4000;
+        let (_, _, norm, _, _, _, _, _, _) = windows(&geo, 0, &[], &[active], &[]);
+        assert!(norm.iter().all(|n| (20.0..20.001).contains(n)));
+
+        // Repeated late judgements can backdate more chart-time factors than the five physical updaters.
+        let entries: Vec<_> = entries
+            .into_iter()
+            .map(|(f, mut note, j)| {
+                note.time_ms = 0;
+                (f, note, j)
+            })
+            .collect();
+        env.gkf = Some(Rc::new(GkFrames::new(&schedule, &frames, &entries)));
+        let active = active_row(&env, &row, true, false).unwrap();
+        geo.music_length_ms = 10_000;
+        let (_, _, norm, _, _, _, _, _, _) = windows(&geo, 0, &[], &[active], &[]);
+        assert!(norm.iter().all(|n| (20.0..20.001).contains(n)));
+    }
+
+    #[test]
+    fn ordinary_count_windows_merge_same_frame_hits_and_keep_backdating() {
+        let master = master();
+        let mut env = env(&master);
+        let frames = [0, 40, 40, 80, 120, 2000];
+        let note = |id, time_ms| LiveNote { note_id: id, time_ms, note_operate_type: 1, judgement_type: 1 };
+        let entries =
+            [(1, note(7, 1), 5), (1, note(-1, 0), 5), (1, note(7, 1), 5), (2, note(-2, 0), 5), (3, note(7, 1), 5)];
+        env.gkf = Some(Rc::new(GkFrames::new(
+            &Schedule { states: vec![Vec::new(); frames.len()], ranges: Vec::new() },
+            &frames,
+            &entries,
+        )));
+        let mut row = ordinary_factor(17);
+        row.act = 0.0;
+        assert_eq!(factor_count_windows(&env, &row).unwrap(), [(i64::MIN, 40, 1.0), (0, 80, 1.0), (1, 120, 1.0),]);
+        env.entry_reach = vec![1 << 4; entries.len()];
+        let active = active_row(&env, &row, true, false).unwrap();
+        assert_eq!(active.count_win, Some(Vec::new()));
     }
 
     #[test]

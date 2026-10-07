@@ -1020,7 +1020,7 @@ pub(crate) fn solve_physical_impl(
         }
     })();
     let mut family =
-        family_nodes::FamilyNodeCache::new(family_context.as_ref(), limits.cache_entries, 8 * 1024 * 1024, 6);
+        family_nodes::FamilyNodeCache::new(family_context.as_ref(), limits.cache_entries, 8 * 1024 * 1024, 31);
     if let Some(started) = family_started {
         family.record_context_attempt(family_refusal, family_stopped, started.elapsed().as_secs_f64() * 1000.0);
     }

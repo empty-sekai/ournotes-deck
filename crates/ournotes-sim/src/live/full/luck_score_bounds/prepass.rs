@@ -6,6 +6,7 @@
 //! support and every historical rank contribution before it supplies a completed score summary.
 
 use super::*;
+use std::mem::size_of;
 use std::sync::Arc;
 
 /// Outcome of preparing a cheap terminal-note bound. A declined preparation leaves the full scorer available.
@@ -50,7 +51,131 @@ pub struct LuckTerminalRush {
     exact_final_life: Option<i32>,
 }
 
+/// Completed power-independent recording and factor preparation. Construction requires the structural
+/// recorder's no-score-feedback admission and a complete prefix proof that rejects every power command.
+/// The retained base has no native integer caps or score expectation: those are rebuilt at the caller's P.
+pub(super) struct TerminalRecipe {
+    trace: BoundsTrace,
+    ingredients: terminal_prefix::TerminalIngredients,
+    linked: bool,
+    base: LuckTerminalRush,
+}
+
+impl TerminalRecipe {
+    pub(super) fn curve(&self) -> &Arc<LuckDpCertifiedResult> {
+        &self.base.probability
+    }
+
+    pub(super) fn allocated_bytes(&self) -> usize {
+        // ComboObserver is recording-only scratch and is reset before publication. Every retained event,
+        // probe, terminal vector and historical prefix allocation is charged; the curve is shared separately.
+        size_of::<Self>()
+            + self.trace.events.capacity() * size_of::<BoundsEvent>()
+            + self.trace.probes.capacity() * size_of::<ProbeRow>()
+            + self.ingredients.allocated_bytes()
+            - size_of::<terminal_prefix::TerminalIngredients>()
+            + self.base.cache_allocation_bytes()
+            - size_of::<LuckTerminalRush>()
+    }
+
+    fn evaluate(
+        &self,
+        calc: &LiveScoreCalculator,
+        power: i32,
+        rush: i32,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Option<LuckTerminalRush> {
+        if cancelled() {
+            return None;
+        }
+        let mut terminal = self.base.cache_clone();
+        if !apply_kernel(calc, power, rush, &self.trace, &self.ingredients, self.linked, &mut terminal, cancelled) {
+            return None;
+        }
+        (!cancelled()).then_some(terminal)
+    }
+}
+
+/// Power enters only the original native note arithmetic and rank/support checks. In particular a failure
+/// at one power is not a cached failure at another; every recipe evaluation repeats this entire kernel.
+#[allow(clippy::too_many_arguments)]
+fn apply_kernel(
+    calc: &LiveScoreCalculator,
+    power: i32,
+    rush: i32,
+    trace: &BoundsTrace,
+    ingredients: &terminal_prefix::TerminalIngredients,
+    linked: bool,
+    terminal: &mut LuckTerminalRush,
+    cancelled: &mut impl FnMut() -> bool,
+) -> bool {
+    match terminal_kernel::build(
+        calc,
+        power,
+        rush,
+        trace,
+        ingredients,
+        linked,
+        &terminal.note_times,
+        &terminal.probability,
+        &mut *cancelled,
+    ) {
+        Ok(native) => terminal.native_notes = Some(native),
+        Err(trace_drift::Decline::Cancelled) => return false,
+        Err(error) => {
+            #[cfg(feature = "search-diagnostics")]
+            profile::record(LuckScoreProfile {
+                terminal_kernel_refusals: 1,
+                terminal_capacity_refusals: u64::from(error == trace_drift::Decline::Capacity),
+                ..Default::default()
+            });
+            #[cfg(not(feature = "search-diagnostics"))]
+            let _ = error;
+        }
+    }
+    !cancelled()
+}
+
 impl LuckTerminalRush {
+    pub(super) fn cache_curve(&self) -> &Arc<LuckDpCertifiedResult> {
+        &self.probability
+    }
+
+    /// Owned result storage only; the cache separately charges each distinct shared probability curve.
+    pub(super) fn cache_allocation_bytes(&self) -> usize {
+        size_of::<Self>()
+            + self.note_times.capacity() * size_of::<i32>()
+            + self.note_factors.as_ref().map_or(0, |factors| factors.capacity() * size_of::<[f64; 2]>())
+            + self.native_notes.as_ref().map_or(0, |native| native.caps.capacity() * size_of::<[i32; 4]>())
+    }
+
+    pub(super) fn cache_clone(&self) -> Self {
+        Self {
+            note_times: self.note_times.clone(),
+            probability: Arc::clone(&self.probability),
+            probe_gate: self.probe_gate,
+            note_factors: self.note_factors.clone(),
+            native_notes: self.native_notes.as_ref().map(|native| terminal_kernel::Prepared {
+                power: native.power,
+                caps: native.caps.clone(),
+                mean_upper: native.mean_upper,
+                expectation: native.expectation,
+            }),
+            exact_final_life: self.exact_final_life,
+        }
+    }
+
+    fn recipe_base(&self) -> Self {
+        Self {
+            note_times: self.note_times.clone(),
+            probability: Arc::clone(&self.probability),
+            probe_gate: self.probe_gate,
+            note_factors: self.note_factors.clone(),
+            native_notes: None,
+            exact_final_life: self.exact_final_life,
+        }
+    }
+
     /// A complete two-sided expectation for this exact power, together with an independent native integer
     /// support and deterministic terminal life. Every terminal note and historical rank snapshot is enclosed.
     /// A nonsingleton interval remains subject to comparison/refinement; it is neither an exact rational mean
@@ -190,6 +315,8 @@ impl LuckScoreSession<'_> {
     ///
     /// Unsupported shapes and unproved terminal mappings return `Unavailable`; cancellation returns `Stopped`.
     /// Neither is a completed score evaluation. Curves enter the existing cache only after complete propagation.
+    /// A completed capability can reuse the bounded program cache under its full initialized state and exact
+    /// power; an equal result then needs no new probability recording, native history or terminal kernel.
     pub fn rush_cap_preparation(
         &mut self,
         deck: &[Performer],
@@ -360,10 +487,60 @@ fn prepare(
     if cancelled() {
         return Ok(None);
     }
-    #[cfg(feature = "search-diagnostics")]
-    timing.next(Phase::Curve);
     let mut empty = LuckDpCache::new(0);
     let curves = curves.unwrap_or(&mut empty);
+    let capacity = curves.program_capacity();
+    curves.programs.limit(capacity);
+    if !session.program_scope_ready && capacity > 0 {
+        session.program_scope =
+            program::scope(session.skills, session.notes, session.events, session.play, session.delta_times);
+        session.program_scope_ready = true;
+    }
+    let identity = session
+        .program_scope
+        .as_ref()
+        .filter(|_| capacity > 0)
+        .and_then(|scope| program::identity(&mut model, scope, rush));
+    // The identity above describes the fresh native model. Every request, including recipe hits, repeats
+    // ordinary/full-model admission and the private no-score-feedback gate before skipping any recording.
+    model.set_luck_weights(session.skills, Vec::new()).map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
+    model.score.begin_bounds(probes, true);
+    model.score.certify_bounds_filings(probe_gate);
+    let record_only = model.try_enable_bounds_record_only();
+    if session.delta_times.len() != session.play.frames.len() {
+        return Err((LuckRushDecline::RecorderAdmission, Error::Input("one delta time per frame".into())));
+    }
+    if cancelled() {
+        return Ok(None);
+    }
+    let cached = identity.as_ref().and_then(|identity| curves.programs.get_terminal(identity, native_power));
+    if cancelled() {
+        return Ok(None);
+    }
+    if let Some(cached) = cached {
+        let terminal = cached.cache_clone();
+        return Ok((!cancelled()).then_some(terminal));
+    }
+    let recipe =
+        identity.as_ref().filter(|_| record_only).and_then(|identity| curves.programs.get_terminal_recipe(identity));
+    if cancelled() {
+        return Ok(None);
+    }
+    if let Some(recipe) = recipe {
+        #[cfg(feature = "search-diagnostics")]
+        timing.next(Phase::Kernel);
+        let Some(terminal) = recipe.evaluate(&model.score.calc, native_power, rush, cancelled) else {
+            return Ok(None);
+        };
+        if let Some(identity) = identity
+            && curves.programs.insert_terminal(identity, native_power, &terminal, cancelled).is_none()
+        {
+            return Ok(None);
+        }
+        return Ok(Some(terminal));
+    }
+    #[cfg(feature = "search-diagnostics")]
+    timing.next(Phase::Curve);
     let Some(probability) = curves
         .certified_cancellable(
             session.master,
@@ -386,13 +563,6 @@ fn prepare(
     };
     #[cfg(feature = "search-diagnostics")]
     timing.next(Phase::Recorder);
-    model.set_luck_weights(session.skills, Vec::new()).map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
-    model.score.begin_bounds(probes, true);
-    model.score.certify_bounds_filings(probe_gate);
-    model.try_enable_bounds_record_only();
-    if session.delta_times.len() != session.play.frames.len() {
-        return Err((LuckRushDecline::RecorderAdmission, Error::Input("one delta time per frame".into())));
-    }
     model.random.set_seed(session.play.base_seed);
     for (index, (frame, &delta)) in session.play.frames.iter().zip(session.delta_times).enumerate() {
         if index.is_multiple_of(64) && cancelled() {
@@ -428,6 +598,7 @@ fn prepare(
     terminal.exact_final_life = Some(model.current_life());
     #[cfg(feature = "search-diagnostics")]
     timing.next(Phase::Factors);
+    let mut recipe_prefix = None;
     match terminal_prefix::from_trace(&trace, initial_fields, &terminal.note_times, terminal.probe_gate, cancelled) {
         Ok(mut prepared) => {
             if prepared.linked
@@ -443,31 +614,24 @@ fn prepare(
             profile::record(prepared.profile);
             #[cfg(feature = "search-diagnostics")]
             timing.next(Phase::Kernel);
-            match terminal_kernel::build(
+            if !apply_kernel(
                 &model.score.calc,
                 native_power,
                 rush,
                 &trace,
                 &prepared.ingredients,
                 prepared.linked,
-                &terminal.note_times,
-                &probability,
+                &mut terminal,
                 &mut *cancelled,
             ) {
-                Ok(native) => terminal.native_notes = Some(native),
-                Err(trace_drift::Decline::Cancelled) => return Ok(None),
-                Err(error) => {
-                    #[cfg(feature = "search-diagnostics")]
-                    profile::record(LuckScoreProfile {
-                        terminal_kernel_refusals: 1,
-                        terminal_capacity_refusals: u64::from(error == trace_drift::Decline::Capacity),
-                        ..Default::default()
-                    });
-                    #[cfg(not(feature = "search-diagnostics"))]
-                    let _ = error;
-                }
+                return Ok(None);
             }
             terminal.note_factors = Some(prepared.factors);
+            // from_trace checked every original Factor command, including zero-valued ones, and refuses
+            // band_total_power writes. The structural gate proves the remaining history cannot read P.
+            if record_only && identity.is_some() {
+                recipe_prefix = Some((prepared.ingredients, prepared.linked));
+            }
         }
         Err(trace_drift::Decline::Cancelled) => return Ok(None),
         Err(error) => {
@@ -481,6 +645,25 @@ fn prepare(
             let _ = error;
         }
     }
+    if cancelled() {
+        return Ok(None);
+    }
+    if let Some(identity) = identity {
+        let retained = if let Some((ingredients, linked)) = recipe_prefix {
+            // No terminal consumer reads the recorder's ComboObserver scratch; Combo events already retain
+            // the complete observation history. Drop that scratch instead of silently omitting its charge.
+            let mut trace = trace;
+            trace.combo = ComboObserver::default();
+            let recipe = TerminalRecipe { trace, ingredients, linked, base: terminal.recipe_base() };
+            curves.programs.insert_terminal_recipe(identity, native_power, &terminal, recipe, cancelled)
+        } else {
+            curves.programs.insert_terminal(identity, native_power, &terminal, cancelled)
+        };
+        if retained.is_none() {
+            return Ok(None);
+        }
+    }
+    curves.programs.stats.terminal_builds += 1;
     Ok(Some(terminal))
 }
 

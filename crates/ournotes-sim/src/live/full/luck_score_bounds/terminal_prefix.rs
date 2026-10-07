@@ -116,6 +116,13 @@ pub(crate) struct TerminalIngredients {
 }
 
 impl TerminalIngredients {
+    /// Owned recipe storage, including the exact historical commands needed by earlier rank queries.
+    pub(super) fn allocated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.notes.len() * std::mem::size_of::<TerminalNote>()
+            + self.ordinary.len() * std::mem::size_of::<OrdinaryCommand>()
+    }
+
     /// The admitted recorder may establish which positive direct rows necessarily follow its common gate.
     /// Arithmetic projection alone leaves this zero. The upper still includes every possibly held row.
     pub(super) fn certify_linked_probe_lower(&mut self, lower: f64) -> Result<(), Decline> {

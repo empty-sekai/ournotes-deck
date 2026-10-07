@@ -34,6 +34,8 @@ mod classes;
 mod composition;
 mod cutoff;
 mod family;
+#[cfg(test)]
+pub(crate) use family::tests::{family_choices as reward_family_choices, fixture as reward_family_fixture};
 mod lambda;
 mod point_route;
 mod prefix_character;

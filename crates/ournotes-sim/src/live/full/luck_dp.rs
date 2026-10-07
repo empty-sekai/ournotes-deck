@@ -18,8 +18,8 @@ use crate::num::{FxHashMap, floor_to_i32};
 
 mod family;
 pub use family::{
-    LuckControllerFamily, LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline, LuckFamilyError, LuckFamilyLimits,
-    LuckFamilyOrderLaw,
+    LuckControllerFamily, LuckFamilyBindings, LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline, LuckFamilyDomain,
+    LuckFamilyError, LuckFamilyLimits, LuckFamilyOrderLaw, LuckFamilyProfile,
 };
 
 mod life_recording;
@@ -106,12 +106,14 @@ struct State {
     query_rush: bool,
     score: bool,
     score_before: bool,
+    /// Optional additive reward history. The ordinary curve keeps zero; no controller transition reads it.
+    residue: u8,
 }
 
 impl std::hash::Hash for State {
     fn hash<H: std::hash::Hasher>(&self, hasher: &mut H) {
-        // Preserve every Eq field but feed the hasher three words instead of separately hashing each
-        // byte-sized flag. The signed fields keep all their original bits; this imposes no gauge or lot cap.
+        // Pack the ordinary controller fields into three words instead of separately hashing each byte-sized
+        // flag. Signed fields keep their original bits; this imposes no gauge or lot cap.
         hasher.write_i64(self.chain.maximum);
         hasher.write_u64(u64::from(self.chain.gauge as u32) | (u64::from(self.chain.lots as u32) << 32));
         hasher.write_u32(
@@ -127,6 +129,10 @@ impl std::hash::Hash for State {
                 | ((self.score as u32) << 30)
                 | ((self.score_before as u32) << 31),
         );
+        // Zero retains the ordinary curve's exact hash words and deterministic accumulation order.
+        if self.residue != 0 {
+            hasher.write_u8(self.residue);
+        }
     }
 }
 
@@ -457,6 +463,39 @@ pub fn luck_has_judgement_conversion(master: &Master, deck: &[Performer]) -> boo
                     .any(|r| r.skill_id == id && r.level == lv && converts(r.skill_effect_type))
             }))
     })
+}
+
+/// A converter reads each declared grade independently and returns at the first grade change. If none of
+/// the held converters can change any input grade, every converted result is therefore the original grade,
+/// regardless of activation order, duration, conversion limits or note judgement type. A Just exclusion can
+/// only remove a conversion, so ignoring those exclusions is conservative. No condition is assumed inactive.
+///
+/// The native converter caches target vectors by raw effect-row ID across all source kinds. Equal targets
+/// for every alias make its first registration irrelevant; an unknown or inconsistent vector keeps the full
+/// interpreter. The complete life model has already admitted every retained deterministic dependency.
+fn unchanged_judgements(model: &LiveModel, play: &LivePlay) -> bool {
+    let mut targets_by_id = FxHashMap::default();
+    let mut may_change = 0u8;
+    for row in model.rows.iter().filter(|row| matches!(row.effect_type, 12006 | 13005)) {
+        let Ok(targets) = row.targets() else { return false };
+        if targets_by_id.insert(row.id, targets).is_some_and(|previous| previous != targets) {
+            return false;
+        }
+        // This is the native applier's signed cast, including large i64 values that wrap into 1..=6.
+        let to = if row.effect_type == 13005 { 6 } else { row.effect_value as i32 };
+        if !(1..=6).contains(&to) {
+            continue;
+        }
+        for &from in targets {
+            if (0..=7).contains(&from) && from != i64::from(to) {
+                may_change |= 1 << from;
+            }
+        }
+    }
+    play.frames
+        .iter()
+        .flat_map(|frame| &frame.judged)
+        .all(|note| (0..=7).contains(&note.judgement) && may_change & (1 << note.judgement) == 0)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1312,7 +1351,7 @@ pub struct LuckRecordProfile {
     pub calls: u64,
     /// Prepared reduced models without any condition skill.
     pub without_skills: u64,
-    /// Preparations that construct an optional life/judgement model; a cache hit can skip its frame loop.
+    /// Preparations that retain an optional life/judgement model; a cache hit can skip its frame loop.
     pub with_life: u64,
     pub total_ms: f64,
     pub life_setup_ms: f64,
@@ -1511,14 +1550,21 @@ fn prepare_recording<M: Mass>(
     if model.cond.is_empty() {
         count(|p| &mut p.without_skills);
     }
-    let life = if plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life))
-        || luck_has_judgement_conversion(master, deck)
-    {
-        count(|p| &mut p.with_life);
-        Some(timed(
+    let reads_life = plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life));
+    let life = if reads_life || luck_has_judgement_conversion(master, deck) {
+        let life = timed(
             |p| &mut p.life_setup_ms,
             || life_recorder(master, deck, notes, skill_events, params, setup, ranking),
-        )?)
+        )?;
+        if !reads_life
+            && super::luck_score_bounds::check_recorder(&life, skills).is_ok()
+            && unchanged_judgements(&life, play)
+        {
+            None
+        } else {
+            count(|p| &mut p.with_life);
+            Some(life)
+        }
     } else {
         None
     };
@@ -1767,6 +1813,34 @@ fn propagate_cancellable<M: Mass>(
     cancelled: &mut impl FnMut() -> bool,
     work: Option<&mut LuckDpCacheStats>,
 ) -> Result<Option<DpResult<M::Weights>>, Error> {
+    propagate_observed_cancellable(transcript, cancelled, work, &mut ())
+}
+
+/// Observe every actual chart-time group before marginal coalescing. The default is statically empty;
+/// private additive-history consumers use the same scalar probability graph and may omit its unused curve.
+trait NoteObserver<M: Mass> {
+    const COLLECT_CURVE: bool = true;
+
+    /// False reports cancellation, never a completed result or an optional arithmetic refusal.
+    fn observe(
+        &mut self,
+        _time: i32,
+        _at_frame: bool,
+        _dp: &mut Dp<'_, M>,
+        _cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<bool, Error> {
+        Ok(true)
+    }
+}
+
+impl<M: Mass> NoteObserver<M> for () {}
+
+fn propagate_observed_cancellable<M: Mass, O: NoteObserver<M>>(
+    transcript: &Transcript<M>,
+    cancelled: &mut impl FnMut() -> bool,
+    work: Option<&mut LuckDpCacheStats>,
+    observer: &mut O,
+) -> Result<Option<DpResult<M::Weights>>, Error> {
     let t = transcript;
     let mut dp = Dp::<M>::new(t.templates.clone(), &t.machine);
     dp.work = work;
@@ -1855,9 +1929,14 @@ fn propagate_cancellable<M: Mass>(
                     hit = note.hits;
                 }
                 if time < frame.time_ms {
-                    let values = dp.weights(&t.probes, false);
-                    if steps.last().is_none_or(|last| last.1 != values) {
-                        steps.push((time, values));
+                    if !observer.observe(time, false, &mut dp, cancelled)? {
+                        return Ok(None);
+                    }
+                    if O::COLLECT_CURVE {
+                        let values = dp.weights(&t.probes, false);
+                        if steps.last().is_none_or(|last| last.1 != values) {
+                            steps.push((time, values));
+                        }
                     }
                 }
                 i = end;
@@ -1866,9 +1945,14 @@ fn propagate_cancellable<M: Mass>(
                 dp.pending(range, buff)?;
             }
             if notes.last().is_some_and(|note| note.time_ms == frame.time_ms) {
-                let values = dp.weights(&t.probes, true);
-                if steps.last().is_none_or(|last| last.1 != values) {
-                    steps.push((frame.time_ms, values));
+                if !observer.observe(frame.time_ms, true, &mut dp, cancelled)? {
+                    return Ok(None);
+                }
+                if O::COLLECT_CURVE {
+                    let values = dp.weights(&t.probes, true);
+                    if steps.last().is_none_or(|last| last.1 != values) {
+                        steps.push((frame.time_ms, values));
+                    }
                 }
             }
             previous_lot = dp.dist.keys().any(|state| state.frame_lot);
@@ -1899,6 +1983,8 @@ fn propagate_cancellable<M: Mass>(
     Ok(Some(DpResult { steps, probes: t.probes.clone(), peak_states: dp.peak, transitions: dp.transitions }))
 }
 
+pub(super) mod rank_residues;
+
 /// Certified curves reused within one request, across performance orders and decks.
 ///
 /// A curve is keyed by the complete transcript its propagation reads: the reduced native recording (range
@@ -1928,6 +2014,9 @@ pub struct LuckDpCacheStats {
     /// Compiled recorder states considered and reused by score sessions.
     pub recording_lookups: u64,
     pub recording_hits: u64,
+    /// Complete admitted family inputs checked before native model construction.
+    pub family_input_lookups: u64,
+    pub family_input_hits: u64,
     /// Retained complete recorder identities, including their dictionary and entry-buffer storage.
     pub recording_peak_entries: usize,
     pub recording_peak_bytes: usize,
@@ -1965,7 +2054,17 @@ pub struct LuckDpCacheStats {
     pub program_recorded_key_declines: u64,
     pub program_recorded_peak_key_bytes: usize,
     pub program_compilations: u64,
+    /// Complete terminal capabilities considered and reused before any probability or native recording.
+    pub terminal_lookups: u64,
+    pub terminal_hits: u64,
+    /// Completed uncached terminal preparations; a cache hit performs no native recording or kernel build.
+    pub terminal_builds: u64,
+    /// Completed power-independent terminal histories, with arithmetic rebuilt for the current exact power.
+    pub terminal_recipe_lookups: u64,
+    pub terminal_recipe_hits: u64,
+    pub terminal_recipe_builds: u64,
     pub program_evictions: u64,
+    /// Replay programs and terminal capabilities share this entry and byte allowance.
     pub program_peak_entries: usize,
     pub program_peak_bytes: usize,
     /// Completed uncached propagations; cache reuse adds no propagation work.
@@ -2014,6 +2113,12 @@ impl LuckDpCache {
         stats.program_recorded_key_declines = programs.recorded_key_declines;
         stats.program_recorded_peak_key_bytes = programs.recorded_peak_key_bytes;
         stats.program_compilations = programs.compilations;
+        stats.terminal_lookups = programs.terminal_lookups;
+        stats.terminal_hits = programs.terminal_hits;
+        stats.terminal_builds = programs.terminal_builds;
+        stats.terminal_recipe_lookups = programs.terminal_recipe_lookups;
+        stats.terminal_recipe_hits = programs.terminal_recipe_hits;
+        stats.terminal_recipe_builds = programs.terminal_recipe_builds;
         stats.program_evictions = programs.evictions;
         stats.program_peak_entries = programs.peak_entries;
         stats.program_peak_bytes = programs.peak_bytes;
@@ -2869,6 +2974,14 @@ mod tests {
 
     mod shared_recording_tests {
         include!("luck_dp/shared_recording_tests.rs");
+    }
+
+    mod judgement_identity_tests {
+        include!("luck_dp/judgement_identity_tests.rs");
+    }
+
+    mod rank_residue_tests {
+        include!("luck_dp/rank_residue_tests.rs");
     }
 
     mod effect_identity_tests {

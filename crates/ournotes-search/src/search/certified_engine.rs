@@ -8,6 +8,7 @@ use crate::search::{
     interval_topk::{CandidateInterval, CanonicalTie, IntervalTopK, RankingProof, RemainingDomain},
 };
 use ournotes_sim::live::certified::F64Interval;
+use std::collections::BTreeSet;
 
 /// How a played Gekisou request treats the lottery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,20 +93,56 @@ struct RetainedRefinement {
     program: Vec<u8>,
 }
 
-/// The same paired cards at the same total power determine the same uniform-order score program.
-/// Physical leader placement is already accounted for in power; every other live parameter is request-fixed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+/// Complete canonical Performer programs at the same power determine the same all-order score objective.
+/// Each Performer retains its paired support; other live inputs and the metric are fixed by the owning Engine.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ScoreCapKey {
-    pairs: [(usize, Option<usize>); 5],
+    program: Vec<u8>,
     power: i32,
 }
 
 impl ScoreCapKey {
-    fn new(physical: &PhysicalDeck, power: i32) -> Self {
-        let PhysicalDeck { members, snaps } = physical;
-        let mut pairs = std::array::from_fn(|slot| (members[slot], snaps[slot]));
-        pairs.sort_unstable();
-        Self { pairs, power }
+    fn new(program: Vec<u8>, power: i32) -> Self {
+        Self { program, power }
+    }
+}
+
+#[derive(Default)]
+struct ScoreCapCache {
+    rows: BTreeMap<ScoreCapKey, i128>,
+}
+
+impl ScoreCapCache {
+    fn get(&self, program: &[u8], power: i32, telemetry: &mut telemetry::CacheUse) -> Option<i128> {
+        telemetry.lookups += 1;
+        let cap = self.rows.get(&ScoreCapKey::new(program.to_vec(), power)).copied();
+        telemetry.hits += u64::from(cap.is_some());
+        cap
+    }
+
+    fn insert(
+        &mut self,
+        program: Vec<u8>,
+        power: i32,
+        cap: i128,
+        capacity: usize,
+        telemetry: &mut telemetry::CacheUse,
+    ) {
+        let capacity = capacity.min(64);
+        if capacity == 0 {
+            return;
+        }
+        let key = ScoreCapKey::new(program, power);
+        if let Some(old) = self.rows.get_mut(&key) {
+            *old = (*old).min(cap);
+            return;
+        }
+        if self.rows.len() >= capacity {
+            self.rows.pop_first();
+            telemetry.evictions += 1;
+        }
+        self.rows.insert(key, cap);
+        telemetry.peak_entries = telemetry.peak_entries.max(self.rows.len());
     }
 }
 
@@ -121,7 +158,7 @@ pub(super) struct CertifiedState {
     cutoff: Option<(i128, i32)>,
     score_cache: BTreeMap<(Vec<u8>, i32), CertifiedEvaluation>,
     /// Whole-program mean-score caps remain useful when a losing team stops before all order evaluations.
-    score_caps: BTreeMap<ScoreCapKey, i128>,
+    score_caps: ScoreCapCache,
     /// Refinement can hit its deadline after the physical traversal already closed the domain.
     domain_exhausted: bool,
     /// Small charts retain order state eagerly; other charts materialize one boundary candidate at a time.
@@ -142,7 +179,7 @@ impl CertifiedState {
             entries: BTreeMap::new(),
             cutoff: None,
             score_cache: BTreeMap::new(),
-            score_caps: BTreeMap::new(),
+            score_caps: ScoreCapCache::default(),
             domain_exhausted: false,
             retain_refinement: None,
             luck_skills: None,
@@ -165,6 +202,27 @@ impl CertifiedState {
             RemainingDomain::Open { upper }
         })
     }
+
+    /// Keep equality-class restrictions when a fresh per-order certificate narrows this candidate.
+    fn install_refinement(&mut self, id: u64, evaluation: CertifiedEvaluation) -> Result<(), Error> {
+        let current = self.frontier.get(id).expect("live boundary candidate");
+        let score = current
+            .score
+            .intersect(evaluation.score)
+            .ok_or_else(|| Error::Domain("conflicting refined score certificates".into()))?;
+        let payoff = current
+            .payoff
+            .intersect(evaluation.payoff)
+            .ok_or_else(|| Error::Domain("conflicting refined payoff certificates".into()))?;
+        self.frontier.refine(id, current.revision, score, payoff, evaluation.exact_score, evaluation.exact_payoff)?;
+        if let Some(entry) = self.entries.get_mut(&id) {
+            entry.best_order = evaluation.best_order.clone();
+            entry.refinement.as_mut().expect("retained boundary candidate").evaluation = evaluation;
+        }
+        self.entries.retain(|id, _| self.frontier.get(*id).is_some());
+        self.cutoff = self.frontier.grid_cutoff(ORDERS as u128);
+        Ok(())
+    }
 }
 
 /// Storage policy for eagerly retained order rows. Other charts use boundary materialization.
@@ -175,6 +233,52 @@ fn retain_order_state(notes: usize, frames: usize) -> bool {
 /// A completed certificate starts no further work and therefore does not open a new stop reason.
 fn pending_refinement(proof: RankingProof, stopped: impl FnOnce() -> bool) -> Option<RankingProof> {
     if proof.complete || stopped() { None } else { Some(proof) }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SummaryStage {
+    FactorHistory,
+    RankResidue,
+}
+
+impl SummaryStage {
+    fn record_order(self, telemetry: &mut telemetry::LotteryRefinement) {
+        match self {
+            Self::FactorHistory => telemetry.summary_orders += 1,
+            Self::RankResidue => telemetry.residue_orders += 1,
+        }
+    }
+
+    fn record_refinement(self, telemetry: &mut telemetry::LotteryRefinement) {
+        match self {
+            Self::FactorHistory => telemetry.summary_refinements += 1,
+            Self::RankResidue => telemetry.residue_refinements += 1,
+        }
+    }
+
+    fn record_decline(self, telemetry: &mut telemetry::LotteryRefinement) {
+        match self {
+            Self::FactorHistory => telemetry.summary_declines += 1,
+            Self::RankResidue => telemetry.residue_declines += 1,
+        }
+    }
+}
+
+/// Every currently overlapping candidate gets the cheaper history pass before any residue pass.
+fn next_summary_refinement(
+    candidates: &[u64],
+    summarized: &BTreeSet<u64>,
+    residue_attempted: &BTreeSet<u64>,
+) -> Option<(u64, SummaryStage)> {
+    candidates.iter().copied().find(|id| !summarized.contains(id)).map(|id| (id, SummaryStage::FactorHistory)).or_else(
+        || {
+            candidates
+                .iter()
+                .copied()
+                .find(|id| !residue_attempted.contains(id))
+                .map(|id| (id, SummaryStage::RankResidue))
+        },
+    )
 }
 
 impl Engine<'_, '_> {
@@ -210,30 +314,18 @@ impl Engine<'_, '_> {
         cache.insert((key, power), value.clone());
     }
 
-    pub(super) fn cached_certified_score_cap(&mut self, physical: &PhysicalDeck, power: i32) -> Option<i128> {
-        self.tel.caches.luck_score_caps.lookups += 1;
-        let cap = self.certified.as_ref()?.score_caps.get(&ScoreCapKey::new(physical, power)).copied();
-        self.tel.caches.luck_score_caps.hits += u64::from(cap.is_some());
-        cap
+    pub(super) fn cached_certified_score_cap(&mut self, program: &[u8], power: i32) -> Option<i128> {
+        self.certified.as_ref()?.score_caps.get(program, power, &mut self.tel.caches.luck_score_caps)
     }
 
-    pub(super) fn cache_certified_score_cap(&mut self, physical: &PhysicalDeck, power: i32, cap: i128) {
-        let capacity = self.limits.cache_entries.min(64);
-        if capacity == 0 {
-            return;
-        }
-        let cache = &mut self.certified.as_mut().expect("certified request").score_caps;
-        let key = ScoreCapKey::new(physical, power);
-        if let Some(old) = cache.get_mut(&key) {
-            *old = (*old).min(cap);
-            return;
-        }
-        if cache.len() >= capacity {
-            cache.pop_first();
-            self.tel.caches.luck_score_caps.evictions += 1;
-        }
-        cache.insert(key, cap);
-        self.tel.caches.luck_score_caps.peak_entries = self.tel.caches.luck_score_caps.peak_entries.max(cache.len());
+    pub(super) fn cache_certified_score_cap(&mut self, program: Vec<u8>, power: i32, cap: i128) {
+        self.certified.as_mut().expect("certified request").score_caps.insert(
+            program,
+            power,
+            cap,
+            self.limits.cache_entries,
+            &mut self.tel.caches.luck_score_caps,
+        );
     }
     /// Integer node threshold over 120 orders. On the certified frontier an equal node upper is closed only below
     /// the returned power (i32::MIN when no K candidates prove that tie); public-ID ties are not used.
@@ -309,7 +401,7 @@ impl Engine<'_, '_> {
     }
 
     /// Once the physical domain is exhausted, spend bounded work only on candidates whose ordering still
-    /// overlaps. Every installed order is a complete nominal law; declined/partial trees keep their old bounds.
+    /// overlaps. Complete score enclosures precede native path expansion; partial trees keep the proved bounds.
     pub(super) fn refine_certified_frontier(&mut self) -> Result<(), Error> {
         let (_, resume) = self.rec.clock.lap(slot::INTERVAL_FRONTIER);
         let result = self.refine_certified_frontier_inner();
@@ -324,6 +416,8 @@ impl Engine<'_, '_> {
         let mut work = LuckExactBudget::default();
         let mut attempted = std::collections::BTreeSet::<(u64, usize)>::new();
         let mut materialized = std::collections::BTreeSet::new();
+        let mut summarized = std::collections::BTreeSet::new();
+        let mut residue_attempted = std::collections::BTreeSet::new();
         loop {
             let state = self.certified.as_ref().expect("certified request");
             let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
@@ -344,6 +438,33 @@ impl Engine<'_, '_> {
                     .total_cmp(&state.frontier.get(*b).expect("live candidate").payoff.upper())
                     .then(a.cmp(b))
             });
+            // Finish factor histories across the overlapping score frontier, then refine their native
+            // rank residues before any candidate can consume the shared native path budget.
+            if matches!(self.metric, Metric::Score | Metric::BestOrderExpectedScore)
+                && let Some((id, stage)) = next_summary_refinement(&candidates, &summarized, &residue_attempted)
+            {
+                match stage {
+                    SummaryStage::FactorHistory => summarized.insert(id),
+                    SummaryStage::RankResidue => residue_attempted.insert(id),
+                };
+                let retained = state.entries[&id].refinement.is_some();
+                let complete = if retained {
+                    self.refine_certified_summary(id, stage)?
+                } else {
+                    for entry in self.certified.as_mut().expect("certified request").entries.values_mut() {
+                        entry.refinement = None;
+                    }
+                    let fresh_summary = stage == SummaryStage::FactorHistory;
+                    if !self.materialize_certified_refinement(id, fresh_summary)? {
+                        return Ok(());
+                    }
+                    fresh_summary || self.refine_certified_summary(id, stage)?
+                };
+                if !complete {
+                    return Ok(());
+                }
+                continue;
+            }
             let selected = candidates.iter().find_map(|&id| {
                 let entry = &state.entries[&id];
                 let retained = entry.refinement.as_ref()?;
@@ -390,7 +511,7 @@ impl Engine<'_, '_> {
                 for entry in state.entries.values_mut() {
                     entry.refinement = None;
                 }
-                if !self.materialize_certified_refinement(id)? {
+                if !self.materialize_certified_refinement(id, false)? {
                     return Ok(());
                 }
                 continue;
@@ -502,39 +623,129 @@ impl Engine<'_, '_> {
                     continue;
                 }
                 let evaluation = aggregate_orders(retained.evaluation.orders.clone(), &map)?;
-                // Another member of the same proven program class can already have narrowed the
-                // frontier. Retain that restriction too, never reinstall a wider cached enclosure.
-                let current = state.frontier.get(id).expect("live candidate selected above");
-                let score = current
-                    .score
-                    .intersect(evaluation.score)
-                    .ok_or_else(|| Error::Domain("conflicting refined score certificates".into()))?;
-                let payoff = current
-                    .payoff
-                    .intersect(evaluation.payoff)
-                    .ok_or_else(|| Error::Domain("conflicting refined payoff certificates".into()))?;
-                state.frontier.refine(
-                    id,
-                    current.revision,
-                    score,
-                    payoff,
-                    evaluation.exact_score,
-                    evaluation.exact_payoff,
-                )?;
-                if let Some(entry) = state.entries.get_mut(&id) {
-                    entry.best_order = evaluation.best_order.clone();
-                    entry.refinement.as_mut().expect("admitted candidate").evaluation = evaluation;
-                }
-                state.entries.retain(|id, _| state.frontier.get(*id).is_some());
-                state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
+                state.install_refinement(id, evaluation)?;
                 self.tel.lottery_refinement.installed_orders += 1;
                 self.report_progress();
             }
         }
     }
 
+    /// Existing order rows allow each completed summary to survive a later cancellation.
+    fn refine_certified_summary(&mut self, id: u64, stage: SummaryStage) -> Result<bool, Error> {
+        let entry = &self.certified.as_ref().expect("certified request").entries[&id];
+        let retained = entry.refinement.as_ref().expect("retained boundary candidate");
+        let (physical, program, map) = (entry.physical, retained.program.clone(), retained.map.clone());
+        let mut indices: Vec<_> = retained
+            .evaluation
+            .orders
+            .iter()
+            .enumerate()
+            .filter_map(|(index, order)| order.exact_mean.is_none().then_some(index))
+            .collect();
+        indices.sort_by(|&a, &b| {
+            let priority = |index: usize| {
+                let order = &retained.evaluation.orders[index];
+                if matches!(map, PayoffMap::BestOrderExpectedScore) {
+                    order.mean.upper()
+                } else {
+                    order.mean.upper() - order.mean.lower()
+                }
+            };
+            priority(b).total_cmp(&priority(a)).then(a.cmp(&b))
+        });
+        let mut input = expectation::context(self.pool, &physical, &self.request.objective)?;
+        if let Some(value) = self.simulation.music_length_ms {
+            input.params.music_length_ms = value;
+        }
+        if let Some(value) = self.simulation.score_music_length_ms {
+            input.params.score_music_length_ms = Some(value);
+        }
+        let physical_performers = input.performers.clone();
+        if canonicalize_performers(&mut input) != program {
+            return Err(Error::Domain("certified summary changed the performer order basis".into()));
+        }
+        let setup = input.gekisou.as_ref().ok_or_else(|| Error::Domain("LUCK refinement requires Gekisou".into()))?;
+        let skills = self.certified_luck_skills()?;
+        let master = self.pool.master;
+        let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
+        let result = (|| {
+            let mut session = ournotes_sim::live::full::LuckScoreSession::new(
+                master,
+                &skills,
+                &input.notes,
+                &input.events,
+                input.params,
+                setup,
+                &input.play,
+                &input.delta_times,
+                input.rank_confirmations.as_deref(),
+            );
+            for index in indices {
+                let state = self.certified.as_ref().expect("certified request");
+                let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
+                if proof.complete || !proof.ambiguous.contains(&id) {
+                    return Ok(true);
+                }
+                if self.expired() {
+                    return Ok(false);
+                }
+                let state = self.certified.as_ref().expect("certified request");
+                let retained = state.entries[&id].refinement.as_ref().expect("retained boundary candidate");
+                let order = &retained.evaluation.orders[index];
+                if matches!(map, PayoffMap::BestOrderExpectedScore)
+                    && order.mean.upper() < retained.evaluation.score.lower()
+                {
+                    continue;
+                }
+                let performers = order.order.map(|slot| {
+                    if matches!(map, PayoffMap::BestOrderExpectedScore) {
+                        physical_performers[slot].clone()
+                    } else {
+                        input.performers[slot].clone()
+                    }
+                });
+                let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+                let summary = match stage {
+                    SummaryStage::FactorHistory => session.summary(&performers, Some(&mut curves), || self.expired()),
+                    SummaryStage::RankResidue => {
+                        session.rank_summary(&performers, Some(&mut curves), || self.expired())
+                    }
+                };
+                self.rec.clock.lap(resume);
+                let summary = match summary {
+                    Ok(Some(summary)) => summary,
+                    Ok(None) => return Ok(false),
+                    Err(Error::Unsupported(_) | Error::Capacity(_)) => {
+                        stage.record_decline(&mut self.tel.lottery_refinement);
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
+                self.tel.leaves.simulations += 1;
+                stage.record_order(&mut self.tel.lottery_refinement);
+                let state = self.certified.as_mut().expect("certified request");
+                let retained = state
+                    .entries
+                    .get_mut(&id)
+                    .expect("live boundary candidate")
+                    .refinement
+                    .as_mut()
+                    .expect("retained boundary candidate");
+                retained.evaluation.orders[index].refine_summary(summary)?;
+                let evaluation = aggregate_orders(retained.evaluation.orders.clone(), &map)?;
+                state.install_refinement(id, evaluation)?;
+                stage.record_refinement(&mut self.tel.lottery_refinement);
+                self.report_progress();
+            }
+            Ok(true)
+        })();
+        self.tel.caches.luck_curves.record(curves.stats());
+        self.certified.as_mut().expect("certified request").luck_curves = curves;
+        result
+    }
+
     /// Reconstruct the fixed candidate's complete order enclosures from immutable request data.
-    fn materialize_certified_refinement(&mut self, id: u64) -> Result<bool, Error> {
+    fn materialize_certified_refinement(&mut self, id: u64, fresh_summary: bool) -> Result<bool, Error> {
         let entry = &self.certified.as_ref().expect("certified request").entries[&id];
         let (physical, power) = (entry.physical, entry.power);
         let mut input = expectation::context(self.pool, &physical, &self.request.objective)?;
@@ -548,12 +759,14 @@ impl Engine<'_, '_> {
             return Ok(false);
         }
         let (program, basis) = canonicalize_performers_with_basis(&mut input);
-        let score = if let Some(cached) = self.cached_certified_score(&program, power) {
+        let cached = (!fresh_summary).then(|| self.cached_certified_score(&program, power)).flatten();
+        let score = if let Some(cached) = cached {
             cached
         } else {
             let skills = self.certified_luck_skills()?;
             let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
             let master = self.pool.master;
+            let mut completed_orders = 0;
             let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
             let result = crate::search::certified_search::evaluate_luck_context_bounded_policy(
                 master,
@@ -561,15 +774,30 @@ impl Engine<'_, '_> {
                 &input,
                 &PayoffMap::Score,
                 Some(&mut curves),
-                matches!(self.metric, Metric::Score | Metric::BestOrderExpectedScore),
-                (&(0..ORDERS).collect::<Vec<_>>(), false, |_| true),
+                !fresh_summary && matches!(self.metric, Metric::Score | Metric::BestOrderExpectedScore),
+                (&(0..ORDERS).collect::<Vec<_>>(), false, |event| {
+                    if matches!(event, crate::search::certified_search::LuckContextEvent::Scored { .. }) {
+                        completed_orders += 1;
+                    }
+                    true
+                }),
                 || self.expired(),
             );
             self.rec.clock.lap(resume);
             self.tel.caches.luck_curves.record(curves.stats());
             self.certified.as_mut().expect("certified request").luck_curves = curves;
+            self.tel.leaves.simulations += completed_orders;
+            if fresh_summary {
+                self.tel.lottery_refinement.summary_orders += completed_orders;
+                if matches!(&result, Err(Error::Unsupported(_) | Error::Capacity(_))) {
+                    self.tel.lottery_refinement.summary_declines += 1;
+                    return self.materialize_certified_refinement(id, false);
+                }
+            }
             let crate::search::certified_search::LuckContextOutcome::Full(score) = result? else { return Ok(false) };
-            self.tel.leaves.simulations += ORDERS as u64;
+            if fresh_summary {
+                self.cache_certified_score(program.clone(), power, &score);
+            }
             score
         };
         let support = (
@@ -596,10 +824,15 @@ impl Engine<'_, '_> {
             })
             .collect();
         let evaluation = aggregate_orders(orders, &map)?;
-        let entry =
-            self.certified.as_mut().expect("certified request").entries.get_mut(&id).expect("boundary candidate");
+        let state = self.certified.as_mut().expect("certified request");
+        let entry = state.entries.get_mut(&id).expect("boundary candidate");
         entry.best_order = evaluation.best_order.clone();
-        entry.refinement = RetainedRefinement::new(true, evaluation, map, program);
+        entry.refinement = RetainedRefinement::new(true, evaluation.clone(), map, program);
+        if fresh_summary {
+            state.install_refinement(id, evaluation)?;
+            self.tel.lottery_refinement.summary_refinements += 1;
+            self.report_progress();
+        }
         Ok(true)
     }
 
@@ -663,23 +896,294 @@ mod refinement_tests {
     use super::*;
 
     #[test]
-    fn score_cap_identity_keeps_snap_pairs_and_power_across_leader_layouts() {
-        let physical = PhysicalDeck { members: [0, 1, 2, 3, 4], snaps: [Some(1), None, Some(2), None, Some(3)] };
-        let identity = ScoreCapKey::new(&physical, 100);
-        for order in uniform::all_orders() {
-            let rearranged = PhysicalDeck {
-                members: order.map(|slot| physical.members[slot]),
-                snaps: order.map(|slot| physical.snaps[slot]),
+    fn summary_stages_cover_the_current_frontier_before_allowing_path_expansion() {
+        let (mut summarized, mut residue_attempted) = (BTreeSet::new(), BTreeSet::new());
+        for (id, stage) in [
+            (3, SummaryStage::FactorHistory),
+            (2, SummaryStage::FactorHistory),
+            (1, SummaryStage::FactorHistory),
+            (3, SummaryStage::RankResidue),
+        ] {
+            assert_eq!(next_summary_refinement(&[3, 2, 1], &summarized, &residue_attempted), Some((id, stage)));
+            match stage {
+                SummaryStage::FactorHistory => summarized.insert(id),
+                SummaryStage::RankResidue => residue_attempted.insert(id),
             };
-            assert_eq!(ScoreCapKey::new(&rearranged, 100), identity);
         }
-        let mut reattached = physical;
-        reattached.snaps.swap(0, 1);
-        assert_ne!(ScoreCapKey::new(&reattached, 100), identity);
-        assert_ne!(ScoreCapKey::new(&physical, 101), identity);
-        let mut changed_member = physical;
-        changed_member.members[0] = 5;
-        assert_ne!(ScoreCapKey::new(&changed_member, 100), identity);
+        // Candidates outside the current overlap need no further work. A newly overlapping candidate
+        // gets its history pass before an existing candidate's pending residue pass.
+        assert_eq!(
+            next_summary_refinement(&[2, 4], &summarized, &residue_attempted),
+            Some((4, SummaryStage::FactorHistory))
+        );
+        summarized.insert(4);
+        assert_eq!(
+            next_summary_refinement(&[2, 4], &summarized, &residue_attempted),
+            Some((2, SummaryStage::RankResidue))
+        );
+        // An optional refusal counts as an attempt and must not prevent the next candidate's pass.
+        residue_attempted.insert(2);
+        assert_eq!(
+            next_summary_refinement(&[2, 4], &summarized, &residue_attempted),
+            Some((4, SummaryStage::RankResidue))
+        );
+        residue_attempted.insert(4);
+        assert_eq!(next_summary_refinement(&[2, 4], &summarized, &residue_attempted), None);
+        assert_eq!(next_summary_refinement(&[], &summarized, &residue_attempted), None);
+    }
+
+    #[test]
+    fn residue_telemetry_is_separate_from_history_and_exact_law_work() {
+        let mut telemetry = telemetry::LotteryRefinement::default();
+        SummaryStage::FactorHistory.record_order(&mut telemetry);
+        SummaryStage::FactorHistory.record_refinement(&mut telemetry);
+        SummaryStage::FactorHistory.record_decline(&mut telemetry);
+        for _ in 0..2 {
+            SummaryStage::RankResidue.record_order(&mut telemetry);
+            SummaryStage::RankResidue.record_refinement(&mut telemetry);
+            SummaryStage::RankResidue.record_decline(&mut telemetry);
+        }
+        let values = serde_json::to_value(telemetry).unwrap();
+        for field in ["summaryOrders", "summaryRefinements", "summaryDeclines"] {
+            assert_eq!(values[field], 1);
+        }
+        for field in ["residueOrders", "residueRefinements", "residueDeclines"] {
+            assert_eq!(values[field], 2);
+        }
+        for field in [
+            "attemptedOrders",
+            "completedOrders",
+            "installedOrders",
+            "declinedOrders",
+            "arithmeticDeclines",
+            "replayRuns",
+            "terminalPaths",
+            "frames",
+        ] {
+            assert_eq!(values[field], 0);
+        }
+        assert_eq!(values["budgetExhausted"], false);
+    }
+
+    fn score_rows(lower: f64, upper: f64) -> CertifiedEvaluation {
+        use crate::search::certified_search::OrderScoreInterval;
+        aggregate_orders(
+            uniform::all_orders()
+                .into_iter()
+                .map(|order| OrderScoreInterval {
+                    order,
+                    evaluated: true,
+                    mean: F64Interval::new(lower, upper).unwrap(),
+                    support: (0, 100),
+                    exact_mean: None,
+                    final_life: None,
+                    tails: BTreeMap::new(),
+                    refined_payoff: None,
+                })
+                .collect(),
+            &PayoffMap::Score,
+        )
+        .unwrap()
+    }
+
+    fn retain(state: &mut CertifiedState, id: u64, evaluation: CertifiedEvaluation) {
+        state.entries.insert(
+            id,
+            CertifiedEntry {
+                physical: PhysicalDeck { members: [0, 1, 2, 3, 4], snaps: [None; 5] },
+                members: [1, 2, 3, 4, 5],
+                snaps: [None; 5],
+                power: 100,
+                best_order: None,
+                refinement: RetainedRefinement::new(true, evaluation, PayoffMap::Score, vec![1]),
+            },
+        );
+    }
+
+    #[test]
+    fn summary_refinement_can_finish_ranking_without_an_exact_score_law() {
+        let mut state = frontier(2);
+        state.domain_exhausted = true;
+        retain(&mut state, 2, score_rows(3.0, 5.0));
+        assert!(!state.proof(false, None).unwrap().complete);
+        state.install_refinement(2, score_rows(3.0, 3.25)).unwrap();
+        let proof = state.proof(false, None).unwrap();
+        assert!(proof.complete);
+        assert_eq!(proof.ordered_prefix, [1, 3]);
+        assert!(state.frontier.get(2).is_none());
+        assert!(state.frontier.get(1).unwrap().exact_score.is_none());
+        assert!(pending_refinement(proof, || panic!("a proved rank needs no path expansion")).is_none());
+    }
+
+    #[test]
+    fn summary_refinement_keeps_a_tighter_equality_class_certificate() {
+        let mut state = CertifiedState::new(2, 0).unwrap();
+        let equality = state.frontier.certify_equal_program(vec![1], 100, vec![0]);
+        for (id, lower, upper) in [(1, 30.0, 50.0), (2, 40.0, 41.0)] {
+            let value = F64Interval::new(lower, upper).unwrap();
+            state
+                .frontier
+                .insert(CandidateInterval {
+                    id,
+                    tie: CanonicalTie { power: 100, key: vec![id as i64] },
+                    score: value,
+                    payoff: value,
+                    exact_score: None,
+                    exact_payoff: None,
+                    equality: Some(equality.clone()),
+                    revision: 0,
+                })
+                .unwrap();
+        }
+        retain(&mut state, 1, score_rows(30.0, 50.0));
+        let tight = state.frontier.get(1).unwrap().score;
+        state.install_refinement(1, score_rows(35.0, 45.0)).unwrap();
+        assert_eq!(state.frontier.get(1).unwrap().score, tight);
+        assert_eq!(state.frontier.get(2).unwrap().score, tight);
+    }
+
+    #[test]
+    fn a_cancelled_summary_stage_keeps_completed_orders_and_exhausted_domain() {
+        use ournotes_sim::live::certified::I32Interval;
+        let mut state = frontier(2);
+        state.domain_exhausted = true;
+        retain(&mut state, 2, score_rows(3.0, 5.0));
+        let retained = state.entries.get_mut(&2).unwrap().refinement.as_mut().unwrap();
+        retained.evaluation.orders[0]
+            .refine_summary(ournotes_sim::live::full::LuckScoreSummary {
+                final_mean: F64Interval::integer(4).into(),
+                final_support: I32Interval::point(4).into(),
+                exact_constant_score: Some(4),
+                exact_final_life: Some(1000),
+                probability_peak_states: 1,
+                probability_transitions: 0,
+            })
+            .unwrap();
+        let evaluation = aggregate_orders(retained.evaluation.orders.clone(), &PayoffMap::Score).unwrap();
+        state.install_refinement(2, evaluation).unwrap();
+        let proof = state.proof(false, None).unwrap();
+        assert_eq!(proof.ordered_prefix, [1]);
+        assert!(!proof.complete);
+        assert!(pending_refinement(proof, || true).is_none());
+        let retained = state.entries[&2].refinement.as_ref().unwrap();
+        assert_eq!(retained.evaluation.orders[0].support, (4, 4));
+        assert!(retained.evaluation.orders[0].exact_mean.is_some());
+        assert!(retained.evaluation.orders[1..].iter().all(|order| order.exact_mean.is_none()));
+        let score = state.frontier.get(2).unwrap().score;
+        assert!(score.lower() > 3.0 && score.upper() < 5.0);
+        assert!(state.domain_exhausted);
+    }
+
+    fn cap_contexts() -> [FiniteSeedContext; 2] {
+        use crate::search::PlayInput;
+        use crate::search::gate_tests::common::{Rng, roster, set_column, synth_snaps};
+        use ournotes_sim::live::model::JudgementStream;
+        use ournotes_sim::live::score::LiveScoreSettings;
+        use ournotes_sim::live::skip::{Chart, ChartNote};
+        use serde_json::json;
+
+        let mut source = synth_snaps(&mut Rng::new(381), 6, 1, &[2000]);
+        let mut first = None;
+        set_column(&mut source, "MasterMemberCard", &mut |row| {
+            let id = row["_id"].clone();
+            row["_characterID"] = id.clone();
+            if id == 1 {
+                first = Some(row.clone());
+            } else if id == 6 {
+                *row = first.clone().expect("first card");
+                row["_id"] = json!(6);
+            }
+        });
+        let master = source.master();
+        let mut owned = roster(&mut Rng::new(382), &master);
+        let mut alias = owned.members.iter().find(|member| member.id == 1).unwrap().clone();
+        alias.id = 6;
+        *owned.members.iter_mut().find(|member| member.id == 6).unwrap() = alias;
+        let pool = Pool::new(&master, &owned).unwrap();
+        assert_ne!(pool.members[0].id, pool.members[5].id);
+        let chart = Chart::from_notes(
+            vec![ChartNote { id: 1, time_ms: 100, note_type: 1 }],
+            vec![],
+            &LiveScoreSettings::from_master(&master).unwrap(),
+        )
+        .unwrap();
+        let objective = Objective::LiveScore {
+            score_id: 1004,
+            play: PlayInput::Stream { stream: JudgementStream::theoretical_best(&chart), judgement_types: vec![1] },
+            chart,
+            event: false,
+            exclude_snap_skills: false,
+            gekisou: None,
+        };
+        let original = PhysicalDeck { members: [0, 1, 2, 3, 4], snaps: [Some(0), None, None, None, None] };
+        let alias = PhysicalDeck { members: [5, 1, 2, 3, 4], snaps: original.snaps };
+        let contexts = [original, alias].map(|deck| expectation::context(&pool, &deck, &objective).unwrap());
+        assert_ne!(contexts[0].physical(), contexts[1].physical());
+        assert_eq!(contexts[0].performers, contexts[1].performers);
+        assert_eq!(contexts[0].params.total_power, contexts[1].params.total_power);
+        // Verify this physical-card substitution against native execution before deriving the cache keys.
+        for order in uniform::all_orders() {
+            let scores =
+                contexts.each_ref().map(|input| input.simulate_performance_order(&master, order).unwrap().final_score);
+            assert_eq!(scores[0], scores[1]);
+        }
+        contexts
+    }
+
+    #[test]
+    fn score_cap_cache_reuses_complete_performers_across_distinct_card_ids_and_layouts() {
+        let [mut original, mut alias] = cap_contexts();
+        let power = original.params.total_power;
+        let program = canonicalize_performers(&mut original);
+        let alias_program = canonicalize_performers(&mut alias);
+        let mut cache = ScoreCapCache::default();
+        let mut telemetry = telemetry::CacheUse::default();
+        cache.insert(program.clone(), power, 12_345, 64, &mut telemetry);
+        assert_eq!(cache.get(&alias_program, power, &mut telemetry), Some(12_345));
+        for order in uniform::all_orders() {
+            let mut rearranged = alias.clone();
+            rearranged.performers = order.map(|slot| alias.performers[slot].clone());
+            let key = canonicalize_performers(&mut rearranged);
+            assert_eq!(cache.get(&key, power, &mut telemetry), Some(12_345));
+        }
+        assert_eq!(telemetry.hits, 121);
+        assert_eq!(cache.get(&program, power + 1, &mut telemetry), None);
+
+        let mut changed = original.clone();
+        changed.performers[0].live_skill = Some((999, 1));
+        assert_eq!(cache.get(&canonicalize_performers(&mut changed), power, &mut telemetry), None);
+        let mut changed = original.clone();
+        changed.performers[0].gekisou_support_skills.push((998, 2));
+        assert_eq!(cache.get(&canonicalize_performers(&mut changed), power, &mut telemetry), None);
+        let mut changed = original.clone();
+        changed.performers[0].tag_ids.push(997);
+        assert_eq!(cache.get(&canonicalize_performers(&mut changed), power, &mut telemetry), None);
+        let mut reattached = original.clone();
+        let carrier = reattached.performers.iter().position(|performer| !performer.support_skills.is_empty()).unwrap();
+        let support = std::mem::take(&mut reattached.performers[carrier].support_skills);
+        reattached.performers[(carrier + 1) % 5].support_skills = support;
+        assert_eq!(cache.get(&canonicalize_performers(&mut reattached), power, &mut telemetry), None);
+    }
+
+    #[test]
+    fn score_cap_cache_keeps_tight_caps_and_request_local_capacity() {
+        let mut cache = ScoreCapCache::default();
+        let mut telemetry = telemetry::CacheUse::default();
+        cache.insert(vec![1, 2, 3], 100, 900, 0, &mut telemetry);
+        assert_eq!(cache.get(&[1, 2, 3], 100, &mut telemetry), None);
+        assert_eq!(telemetry.hits, 0);
+        assert_eq!(telemetry.peak_entries, 0);
+        cache.insert(vec![1, 2, 3], 100, 900, 1, &mut telemetry);
+        cache.insert(vec![1, 2, 3], 100, 800, 1, &mut telemetry);
+        cache.insert(vec![1, 2, 3], 100, 850, 1, &mut telemetry);
+        assert_eq!(cache.get(&[1, 2, 3], 100, &mut telemetry), Some(800));
+        let other_request = ScoreCapCache::default();
+        assert_eq!(other_request.get(&[1, 2, 3], 100, &mut telemetry), None);
+        cache.insert(vec![4, 5, 6], 100, 700, 1, &mut telemetry);
+        assert_eq!(cache.get(&[1, 2, 3], 100, &mut telemetry), None);
+        assert_eq!(cache.get(&[4, 5, 6], 100, &mut telemetry), Some(700));
+        assert_eq!(telemetry.evictions, 1);
+        assert_eq!(telemetry.peak_entries, 1);
     }
 
     fn frontier(k: usize) -> CertifiedState {

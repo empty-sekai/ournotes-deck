@@ -17,7 +17,7 @@ use ournotes_sim::scenario::{ContextInput, PowerSnapshotInput, Scenario};
 use serde_json::json;
 use std::collections::BTreeMap;
 
-fn fixture() -> (Master, Roster, SearchRequest) {
+pub(crate) fn fixture() -> (Master, Roster, SearchRequest) {
     let mut source = synth_snaps(&mut Rng::new(961), 6, 2, &[3]);
     set_column(&mut source, "MasterMemberCard", &mut |row| {
         let id = row["_id"].as_i64().unwrap();
@@ -349,7 +349,7 @@ fn native_candidates(pool: &Pool, request: &SearchRequest, domain: &CandidateDom
         .collect()
 }
 
-fn family_choices(pool: &Pool, domain: &CandidateDomain, members: [usize; 5]) -> [Vec<LuckFamilyChoice>; 5] {
+pub(crate) fn family_choices(pool: &Pool, domain: &CandidateDomain, members: [usize; 5]) -> [Vec<LuckFamilyChoice>; 5] {
     std::array::from_fn(|slot| {
         std::iter::once(None)
             .chain(domain.snaps().iter().copied().map(Some))
@@ -520,6 +520,12 @@ fn family_node_masks_and_real_depth_four_suffix_bound_every_native_descendant() 
             .unwrap()
             .unwrap();
         let table = template.bind(members, &family, &mut || false).unwrap();
+        let empty = PhysicalDeck { members, snaps: [None; 5] };
+        assert!(bounds.family_mask_upper(&domain, &empty, &table, &[0]).is_some());
+        assert!(
+            bounds.family_mask_upper(&domain, &empty, &table, &[0, usize::MAX]).is_none(),
+            "a malformed final choice must refuse the whole mask, not silently leave only its valid prefix"
+        );
         for physical in prefixes.values() {
             let mut physical = *physical;
             physical.members[4] = last;
@@ -538,6 +544,17 @@ fn family_node_masks_and_real_depth_four_suffix_bound_every_native_descendant() 
                     continue;
                 }
                 let cap = cap.expect("complete family and a nonempty feasible mask");
+                let singleton_max = allowed
+                    .iter()
+                    .filter_map(|choice| {
+                        bounds.family_mask_upper(&domain, &physical, &table, std::slice::from_ref(choice))
+                    })
+                    .max();
+                assert_eq!(
+                    Some(cap),
+                    singleton_max,
+                    "a mask must preserve each feasible binding's common profile, power and reward coefficients"
+                );
                 for oracle in descendants {
                     assert!(
                         oracle.sum_of_order_means.at_most_integer(cap),
@@ -842,3 +859,6 @@ fn one_refused_member_family_prevents_a_partial_depth_four_cap() {
 
 #[path = "family_node_e2e_tests.rs"]
 mod end_to_end;
+
+#[path = "lazy_profile_node_tests.rs"]
+mod lazy_profile_tests;

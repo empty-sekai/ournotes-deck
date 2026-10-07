@@ -226,6 +226,10 @@ Combo 与结构校验；DP 和后续因子回放保持各自的阶段。
 不能再加到该父级总计上。操作次数不依赖概率质量；较小的次数表示全路径工作量上界更紧，
 不表示减少候选域或删除抽签分支。
 
+可选的排名余数摘要另记录 `rankResidueAttempts`、已完成的 `rankResidueWindows`，以及仍带有未决收益概率质量的
+`rankResidueUnresolvedWindows`。`rankResiduePeakStates` 取峰值，`rankResidueTransitions` 累计已完成余数批次的状态转移。
+`rankResidueMs` 包含拒绝和取消前的耗时，已计入因子回放时间。这些字段描述期望包围证书，不代表完整得分概率律或排名结果。
+
 ## `joint`
 
 联合搜索（撃奏）每层的计数，数组按深度下标。节点上界记在被检查节点的深度；`tail`、`pair` 记在父节点的深度
@@ -249,22 +253,25 @@ Combo 与结构校验；DP 和后续因子回放保持各自的阶段。
 
 ### `joint.luckFamily`
 
-联合搜索深度四的可选 LUCK 期望分上界之准备及缓存计数。原生 family 固定成员、覆盖全部允许的 Snap 域，
-节点再应用实际前缀绑定与剩余选择。这些计数独立于叶候选评价和规范排名。
+联合搜索深度四的可选 LUCK 期望分上界之准备及缓存计数。原生 domain 固定成员，对全部允许的 Snap 配对做准入，
+搜索按实际前缀绑定与剩余选择准备所需的 writer profile；每个完成的 profile 都保留全部 120 种顺序标签。
+这些计数独立于叶候选评价和规范排名。
 
 | 字段 | 含义 |
 |---|---|
 | `contextChecks`、`contextRefusals`、`contextStopped`、`contextMs` | 上下文能力检查次数、按原因记录的拒绝数、中断次数及准备耗时 |
 | `checks`、`boundedNodes` | 进入已准入 family 路径的节点请求数，以及返回完整数值上界的请求数；后者包含空后缀的零上界 |
-| `familyLookups`、`familyHits`、`refusedHits` | 成员 family 查询数、完整系数表命中数及单独缓存的拒绝命中数 |
-| `preparedFamilies` | 成功准备的完整数值系数表数，不是候选评价数 |
+| `familyLookups`、`familyHits`、`refusedHits` | 成员 family 查询数、已准入 family 状态命中数及单独缓存的域拒绝命中数；状态命中后仍可能需要准备新的 profile |
+| `admittedFamilies` | 全部配对域准入成功次数，不代表任何 profile 或候选已完成 |
+| `preparedFamilies` | 在一次缓存存活期间首次获得完整 profile 的 family 次数；淘汰重建后同一物理 family 可以再次计数 |
+| `profileLookups`、`profileHits` | 实际节点所需 profile 的查询次数及完整系数命中次数 |
 | `preparationRefusals`、`preparationDeclines` | 原生 family 或成员/Snap 构造不可用的次数及原因分类，不含取消 |
 | `preparationMs` | 原生 family 准备耗时，包含被拒绝或中断的尝试 |
 | `envelopeMs`、`envelopeRefusals` | 系数表构造耗时及数值包络不可用次数；耗时包含中断，拒绝次数不含取消 |
 | `capacityDeclines` | 搜索侧的分配或收益模板作用域失败；原生 family 容量失败另记在 `preparationDeclines.capacity` |
 | `stopped` | 被中断的节点上界请求数；不会返回部分上界 |
-| `orderLaws`、`profiles` | 在数值包络构造前已经完整生成的原生 profile/顺序证书数；后续包络拒绝时也可能增加，不等于实际 DP 传播次数或已评分顺序数 |
-| `evictions`、`peakEntries`、`peakBytes` | 缓存淘汰数与已记录的条目/字节高水位；字节含缓存容器、保留的收益模板和完整系数表，不含临时 family 概率律、其他缓存或进程 RSS |
+| `orderLaws`、`profiles` | 数值包络成功后实际安装的原始顺序标签数和完整 profile 数；每个 profile 有 120 个标签，不等于 DP 传播次数或已评分顺序数 |
+| `evictions`、`peakEntries`、`peakBytes` | 缓存淘汰数与已记录的条目/字节高水位；字节含容器、收益模板、完整准入输入和保留的 profile 系数，不含临时概率律、其他缓存或进程 RSS |
 
 两个拒绝对象使用相同的原因键：`context`、`terminalMapping`、`pairDomain`、`recorderAdmission`、
 `lifeFeedback`、`judgementFeedback`、`writerProfiles`、`probabilityDomain`、`budget`、`capacity` 和
@@ -296,6 +303,8 @@ Combo 与结构校验；DP 和后续因子回放保持各自的阶段。
 
 | 字段 | 含义 |
 |---|---|
+| `summaryOrders`、`summaryRefinements`、`summaryDeclines` | 完整概率律精修前，已完成的因子历史顺序包围区间、已安装交集和可选拒绝次数 |
+| `residueOrders`、`residueRefinements`、`residueDeclines` | 已完成的排名余数顺序包围区间、已安装交集和可选拒绝次数；不代表完整概率律或精确期望值 |
 | `attemptedOrders` | 尝试构造完整 nominal law 的顺序数 |
 | `completedOrders` | 取得完整且总质量精确等于 1 的概率律的顺序数，包括初始模型相等时复用的完整概率律 |
 | `installedOrders` | 完整 law 成功用于收紧排序前沿的顺序数 |
@@ -305,7 +314,8 @@ Combo 与结构校验；DP 和后续因子回放保持各自的阶段。
 | `arithmeticDeclines` | law 已完整，但搜索侧精确收益算术无法表示，因此未安装的顺序数 |
 | `replayRuns`、`frames`、`terminalPaths` | 所有细化尝试中已启动的重放段数、已执行帧数、已完成终止路径数；复用完整概率律不增加重放工作量 |
 
-细化运行计入 `time.simulationMs`，与原有 `leaves.simulations` 的每队 120 顺序粗求值分别计数。排名得到认证时可以停止，
+细化运行计入 `time.simulationMs`。完整概率律的重放段与 `leaves.simulations` 分开计数；已完成的因子历史和余数顺序包围区间也会增加
+`leaves.simulations`。排名得到认证时可以停止，
 因此 `Complete` 不要求每个顺序都完成精确细化，也不保证结果中已有精确的有理数期望值。
 
 [nominal LUCK 精化方法](luck-refinement.md)说明了帧检查点、工作量计数和保留的排名证书。
@@ -321,6 +331,8 @@ Combo 与结构校验；DP 和后续因子回放保持各自的阶段。
 `recordingLookups`、`recordingHits` 记录已编译 recorder 的查询与复用次数。`recordingPeakEntries`、`recordingPeakBytes`
 记录 session 中保留的完整身份数及键存储字节数峰值；后者包含共享字节字典、完整原始键或差异编码及条目容器容量，
 不包含共享概率对象或编码期间的临时分配。每次命中仍比较完整键的所有字节。
+`familyInputLookups`、`familyInputHits` 记录在模型构造前，对已完整接纳的 family 输入进行的查询与复用。
+这些输入键与已编译 recorder 键共用原有存储及条目、字节上限，不增加独立缓存配额；命中后仍分别登记每个物理写入归属及原始顺序的完整覆盖。
 `sharedRecordingLookups`、`sharedRecordingHits` 记录完整录制的独立请求级缓存查询与命中。
 复用同时要求完整编译录制键及完整拥有的上下文相等，后者包括初始模型、谱面、判定、设置与排名输入。
 通过确定性检查的生命值解释器保留初始状态；仅当现有评分 recorder 的完整依赖检查证明生命值、判定转换及技能生命周期
@@ -348,6 +360,13 @@ Combo 与结构校验；DP 和后续因子回放保持各自的阶段。
 程序，也包括随后因容量不足未被保留的程序；`programEvictions` 统计移除的条目。`programPeakEntries`、`programPeakBytes`
 记录保留条目数及其内存占用上界的峰值，包含容器容量、两类键、核与引用，并对共享运行上下文、录制事件流和概率曲线各计一次。
 程序命中会重新计算该合力下原有的浮点运算、整数取整、概率连接和排名奖金；它不会再次回放因子历史，也不直接提供精确值或排名完成证明。
+`terminalLookups`、`terminalHits`、`terminalBuilds` 统计终端准备按完整初始模型、精确合力及不可变请求上下文的查询、命中和完整构建。
+终端条目与程序共用 FIFO、条目上限和字节额度，因此 `programEvictions` 及峰值字段包含回放程序、终端证书和终端准备配方。命中保留原准备中的可选核准入结果，
+只能提供该完整准备已证明的能力。
+`terminalRecipeLookups`、`terminalRecipeHits`、`terminalRecipeBuilds` 记录与初始合力无关的完整录制历史及因子准备结果的查询、命中与构建数；
+完整构建即使随后因容量不足未被保留，仍计入构建数。配方命中重新执行当前合力的原始音符运算、原生整数取整、排名运算和支撑域检查，
+不增加 `terminalBuilds`，也不沿用旧合力下的算术拒绝。当前模型仍须通过完整录制器准入。完整轨迹、因子命令、概率就绪观察、上下文
+和分别保留的概率曲线均计入同一有界缓存。
 请求缓存容量为 0 时禁用这些缓存。
 
 LUCK 路径上的 `leaves.simulations` 统计已完成的顺序得分包围区间，也包括该候选随后被剩余顺序上界排除的情况；摘要缓存命中同样提供完整的

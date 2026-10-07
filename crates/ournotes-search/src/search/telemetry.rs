@@ -72,6 +72,18 @@ impl Default for Telemetry {
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LotteryRefinement {
+    /// Complete factor-history order enclosures obtained before native path expansion.
+    pub summary_orders: u64,
+    /// Frontier updates that installed a complete factor-history enclosure or all-order aggregate.
+    pub summary_refinements: u64,
+    /// Optional factor-history refinements that declined and kept the previous certificates.
+    pub summary_declines: u64,
+    /// Complete order enclosures obtained from the optional native rank-residue stage.
+    pub residue_orders: u64,
+    /// Frontier updates that installed a complete rank-residue enclosure.
+    pub residue_refinements: u64,
+    /// Optional rank-residue refinements that declined and kept the previous certificates.
+    pub residue_declines: u64,
     pub attempted_orders: u64,
     /// Orders for which the provider completed every positive-mass nominal path.
     pub completed_orders: u64,
@@ -855,6 +867,8 @@ pub struct LuckCurves {
     /// Compiled recorder states considered and reused within score sessions.
     pub recording_lookups: u64,
     pub recording_hits: u64,
+    pub family_input_lookups: u64,
+    pub family_input_hits: u64,
     pub recording_peak_entries: usize,
     pub recording_peak_bytes: usize,
     /// Complete reduced recordings reused across sessions after full compiled-state and context equality.
@@ -882,6 +896,13 @@ pub struct LuckCurves {
     pub summary_hits: u64,
     pub summary_peak_entries: usize,
     pub summary_peak_bytes: usize,
+    /// Completed terminal preparations reused under full initialized-state, context and power equality.
+    pub terminal_lookups: u64,
+    pub terminal_hits: u64,
+    pub terminal_builds: u64,
+    pub terminal_recipe_lookups: u64,
+    pub terminal_recipe_hits: u64,
+    pub terminal_recipe_builds: u64,
     pub program_lookups: u64,
     pub program_hits: u64,
     pub program_compilations: u64,
@@ -912,6 +933,8 @@ impl LuckCurves {
             peak_key_bytes: stats.peak_key_bytes,
             recording_lookups: stats.recording_lookups,
             recording_hits: stats.recording_hits,
+            family_input_lookups: stats.family_input_lookups,
+            family_input_hits: stats.family_input_hits,
             recording_peak_entries: stats.recording_peak_entries,
             recording_peak_bytes: stats.recording_peak_bytes,
             shared_recording_lookups: stats.shared_recording_lookups,
@@ -933,6 +956,12 @@ impl LuckCurves {
             summary_hits: stats.summary_hits,
             summary_peak_entries: stats.summary_peak_entries,
             summary_peak_bytes: stats.summary_peak_bytes,
+            terminal_lookups: stats.terminal_lookups,
+            terminal_hits: stats.terminal_hits,
+            terminal_builds: stats.terminal_builds,
+            terminal_recipe_lookups: stats.terminal_recipe_lookups,
+            terminal_recipe_hits: stats.terminal_recipe_hits,
+            terminal_recipe_builds: stats.terminal_recipe_builds,
             program_lookups: stats.program_lookups,
             program_hits: stats.program_hits,
             program_compilations: stats.program_compilations,

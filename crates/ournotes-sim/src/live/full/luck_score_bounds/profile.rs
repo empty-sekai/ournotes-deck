@@ -20,6 +20,13 @@ pub struct LuckScoreProfile {
     pub combo_history_ms: f64,
     pub note_bounds_ms: f64,
     pub rank_bounds_ms: f64,
+    pub rank_residue_attempts: u64,
+    pub rank_residue_windows: u64,
+    pub rank_residue_unresolved_windows: u64,
+    pub rank_residue_peak_states: usize,
+    /// Transitions in completed residue batches, including their controller admission suffixes.
+    pub rank_residue_transitions: u64,
+    pub rank_residue_ms: f64,
     pub program_key_ms: f64,
     pub program_lookup_ms: f64,
     pub program_recorded_key_ms: f64,
@@ -79,6 +86,12 @@ pub(super) fn record(value: LuckScoreProfile) {
         total.combo_history_ms += value.combo_history_ms;
         total.note_bounds_ms += value.note_bounds_ms;
         total.rank_bounds_ms += value.rank_bounds_ms;
+        total.rank_residue_attempts += value.rank_residue_attempts;
+        total.rank_residue_windows += value.rank_residue_windows;
+        total.rank_residue_unresolved_windows += value.rank_residue_unresolved_windows;
+        total.rank_residue_peak_states = total.rank_residue_peak_states.max(value.rank_residue_peak_states);
+        total.rank_residue_transitions += value.rank_residue_transitions;
+        total.rank_residue_ms += value.rank_residue_ms;
         total.program_key_ms += value.program_key_ms;
         total.program_lookup_ms += value.program_lookup_ms;
         total.program_recorded_key_ms += value.program_recorded_key_ms;

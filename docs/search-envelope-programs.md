@@ -73,6 +73,33 @@ quantities and must not be conflated.
 
 ## Cumulative score ramps
 
+### Positive judgement-count starts
+
+An ordinary one-shot fixed score factor can use a command-start cap from its complete positive judgement-count
+trigger, including OR alternatives and the native multiplicity of duplicate targets. The count is taken over
+the whole reachable judgement closure, so a conversion cannot create an uncounted start.
+
+For a lone positive `1030` trigger, zero release group and a finite positive count threshold, a stronger timing
+certificate is available when target multiplicity is invariant across every reachable judgement of each entry.
+It follows the native counter residue through the processing frames and emits at most one possible start per
+frame. The start remains at the earliest allowed backdated filing time, and the end uses the actual processing
+time and activation duration. Other shapes retain their enclosing windows. These possible starts bound factor
+history, so they are not limited to the five currently reusable native updater instances.
+
+The magnitude sweep projects each start/end to the scorer's closed frame interval. A start and end sharing a
+score frame both contribute to that frame's transient bound. A music-length clamp that could reverse their
+ordering retains the sum of all window magnitudes. The command count, peak factor and replay drift bounds use
+the same complete window set.
+
+For a generic ordinary factor whose precise timing is unavailable, processing-time pool capacity does not
+bound historical score overlap. Recycled instances can backdate later starts into an earlier score interval.
+The fallback therefore retains every possible lifetime positive factor addition, including cumulative
+replacements, in its gain, norm and frame-span bounds. The independently counted command and replay allowances
+remain in force. Judgement-factor destinations use the native `i64`-to-`i32` cast before selecting a factor
+field; judgement-count trigger targets retain their original `i64` comparisons.
+
+### Cumulative replacement values
+
 Without a ramp, effect 2001 uses its maximum cumulative factor throughout every
 possible execution window. For one-shot Gekisou rows whose cumulative condition
 counts judgements (types 1000–1002), a tighter bound follows the processing clock.

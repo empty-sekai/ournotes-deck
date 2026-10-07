@@ -14,10 +14,17 @@ use std::sync::Arc;
 
 const SLOTS: usize = 5;
 const ORDERS: usize = 120;
+const MAX_WRITERS: usize = 2;
+const MAX_PROFILES: usize = 1 + 2 * SLOTS + SLOTS * (SLOTS - 1);
 // The optional context recorder is bounded separately from per-family work. Larger contexts retain the full
 // scorer; these limits never remove candidates or return a partial controller family.
 const MAX_CONTEXT_ITEMS: usize = 1_000_000;
 const MAX_CONTEXT_FRAMES: usize = 100_000;
+
+mod input_reuse;
+mod profiles;
+use profiles::AdmittedFamilyInputs;
+pub use profiles::{LuckFamilyDomain, LuckFamilyProfile};
 
 /// One legal physical Snap choice for a fixed member. `None` has no support skill sources and consumes no
 /// resource. A resource number denotes the same complete ordered Snap sources in every member's choice list.
@@ -41,8 +48,8 @@ impl Default for LuckFamilyLimits {
     fn default() -> Self {
         Self {
             max_pair_models: 256,
-            max_profiles: 6,
-            max_order_evaluations: 720,
+            max_profiles: MAX_PROFILES,
+            max_order_evaluations: MAX_PROFILES * ORDERS,
             max_frame_work: 20_000_000,
             max_retained_bytes: 32 * 1024 * 1024,
         }
@@ -154,6 +161,13 @@ pub struct LuckFamilyOrderLaw {
 }
 
 impl LuckFamilyOrderLaw {
+    /// Whether both labels retain the very same immutable joint-curve allocation. This authorizes reuse
+    /// of arithmetic which reads only `joint_at`; it proves no equality of controller programs, path laws,
+    /// physical resources or performance-order labels.
+    pub fn shares_joint_curve(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.probability, &other.probability)
+    }
+
     /// Directly accumulated joint masses [neither, virtual direct-7021 probe, Rush, both] at chart time.
     /// These are under the declared independent nominal probability model, not the finite PRNG seed space.
     pub fn joint_at(&self, time_ms: i32) -> [ProbabilityMass; 4] {
@@ -173,10 +187,58 @@ impl LuckFamilyOrderLaw {
 pub struct LuckControllerFamily {
     mapping: Arc<DomainTerminalMapping>,
     allowed: [Vec<Option<usize>>; SLOTS],
-    writer: Option<usize>,
-    profiles: Vec<Option<usize>>,
+    writers: Vec<usize>,
+    /// Exact physical writer resources by original member slot; absence remains a distinct profile.
+    profiles: Vec<[Option<usize>; SLOTS]>,
     orders: Vec<LuckFamilyOrderLaw>,
     bytes: usize,
+}
+
+/// Immutable physical-binding authority from a completed family, without retaining probability curves.
+/// Only exact allowed resources and writer-owner vectors select a profile; numeric curve similarity does not.
+#[derive(Clone, Debug)]
+pub struct LuckFamilyBindings {
+    allowed: [Vec<Option<usize>>; SLOTS],
+    writers: Vec<usize>,
+    profiles: Vec<[Option<usize>; SLOTS]>,
+}
+
+impl LuckFamilyBindings {
+    pub fn profile_for(&self, resources: &[Option<usize>; SLOTS]) -> Option<usize> {
+        binding_profile(&self.allowed, &self.writers, &self.profiles, resources)
+    }
+
+    pub fn profile_count(&self) -> usize {
+        self.profiles.len()
+    }
+
+    /// Container and owned-vector capacities, without caller-owned input tables or probability curves.
+    pub fn retained_bytes(&self) -> usize {
+        self.allowed.iter().fold(
+            size_of::<Self>()
+                .saturating_add(self.writers.capacity().saturating_mul(size_of::<usize>()))
+                .saturating_add(self.profiles.capacity().saturating_mul(size_of::<[Option<usize>; SLOTS]>())),
+            |bytes, row| bytes.saturating_add(row.capacity().saturating_mul(size_of::<Option<usize>>())),
+        )
+    }
+}
+
+fn binding_profile(
+    allowed: &[Vec<Option<usize>>; SLOTS],
+    writers: &[usize],
+    profiles: &[[Option<usize>; SLOTS]],
+    resources: &[Option<usize>; SLOTS],
+) -> Option<usize> {
+    let mut profile = [None; SLOTS];
+    for (slot, &resource) in resources.iter().enumerate() {
+        if !allowed[slot].contains(&resource) || resource.is_some() && resources[..slot].contains(&resource) {
+            return None;
+        }
+        if resource.is_some_and(|resource| writers.contains(&resource)) {
+            profile[slot] = resource;
+        }
+    }
+    profiles.iter().position(|candidate| *candidate == profile)
 }
 
 impl LuckControllerFamily {
@@ -208,22 +270,23 @@ impl LuckControllerFamily {
     /// The certified profile for this exact legal physical resource assignment. This validates every slot and
     /// the no-duplicate-Snap rule; callers must not select a profile by searching for a similar numeric curve.
     pub fn profile_for(&self, resources: &[Option<usize>; SLOTS]) -> Option<usize> {
-        let mut seen = BTreeSet::new();
-        let mut writer_owner = None;
-        for (slot, &resource) in resources.iter().enumerate() {
-            if !self.allowed[slot].contains(&resource) {
-                return None;
-            }
-            if let Some(resource) = resource {
-                if !seen.insert(resource) {
-                    return None;
-                }
-                if Some(resource) == self.writer {
-                    writer_owner = Some(slot);
-                }
-            }
+        binding_profile(&self.allowed, &self.writers, &self.profiles, resources)
+    }
+
+    /// Fallibly copy only the completed family's physical profile map for a reward envelope to retain.
+    pub fn bindings(&self) -> Option<LuckFamilyBindings> {
+        fn copy<T: Copy>(source: &[T]) -> Option<Vec<T>> {
+            let mut values = Vec::new();
+            values.try_reserve_exact(source.len()).ok()?;
+            values.extend_from_slice(source);
+            Some(values)
         }
-        self.profiles.iter().position(|&owner| owner == writer_owner)
+        let mut allowed = std::array::from_fn(|_| Vec::new());
+        for (target, source) in allowed.iter_mut().zip(&self.allowed) {
+            *target = copy(source)?;
+        }
+        let bindings = LuckFamilyBindings { allowed, writers: copy(&self.writers)?, profiles: copy(&self.profiles)? };
+        (bindings.retained_bytes() != usize::MAX).then_some(bindings)
     }
 }
 
@@ -266,6 +329,32 @@ fn next_order(order: &mut [usize; SLOTS]) -> bool {
     order.swap(left, right);
     order[left + 1..].reverse();
     true
+}
+
+/// Each physical writer is absent or belongs to one allowed owner, and two writers cannot occupy the same
+/// physical slot. Resource identity stays explicit even when two resources select identical source rows.
+fn writer_profiles(
+    writers: &[usize],
+    allowed: &[Vec<Option<usize>>; SLOTS],
+) -> Result<Vec<[Option<usize>; SLOTS]>, LuckFamilyError> {
+    if writers.len() > MAX_WRITERS {
+        return Err(fail(LuckFamilyDecline::WriterProfiles, "more than two physical writer resources"));
+    }
+    let mut profiles = reserve(MAX_PROFILES)?;
+    profiles.push([None; SLOTS]);
+    for &writer in writers {
+        let previous = profiles.len();
+        for index in 0..previous {
+            for slot in 0..SLOTS {
+                if profiles[index][slot].is_none() && allowed[slot].contains(&Some(writer)) {
+                    let mut profile = profiles[index];
+                    profile[slot] = Some(writer);
+                    profiles.push(profile);
+                }
+            }
+        }
+    }
+    Ok(profiles)
 }
 
 fn member(performer: &Performer) -> Performer {
@@ -632,18 +721,12 @@ impl<'a> LuckFamilyContext<'a> {
         }))
     }
 
-    /// Check the full allowed pair domain and complete all original order/profile computations. The only
-    /// variable controller resource admitted here is one physical Snap whose selected GK sources contain a
-    /// writer. Its absent/owner partitions cover every legal binding; multiple writers retain the original path.
-    /// No life-reading writer is admitted. Ordinary 15000 changes only ordinary live-pool durations, while the
-    /// accepted GK writers have their own range/lot trigger and lifetime and read neither live activity nor score.
-    pub fn prepare(
+    fn admit_inputs(
         &self,
         choices: &[Vec<LuckFamilyChoice>; SLOTS],
-        curves: Option<&mut LuckDpCache>,
         limits: LuckFamilyLimits,
-        mut cancelled: impl FnMut() -> bool,
-    ) -> Result<Option<LuckControllerFamily>, LuckFamilyError> {
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<Option<AdmittedFamilyInputs>, LuckFamilyError> {
         if cancelled() {
             return Ok(None);
         }
@@ -657,7 +740,7 @@ impl<'a> LuckFamilyContext<'a> {
         let mut base: [Performer; SLOTS] = std::array::from_fn(|_| Performer::default());
         let mut allowed: [Vec<Option<usize>>; SLOTS] = std::array::from_fn(|_| Vec::new());
         let mut resources: Vec<(usize, &Performer)> = reserve(pair_count)?;
-        let mut writer = None;
+        let mut writers = reserve(MAX_WRITERS)?;
         for slot in 0..SLOTS {
             let Some(empty) = choices[slot].iter().find(|choice| choice.resource.is_none()) else {
                 return Err(fail(LuckFamilyDecline::PairDomain, "each slot must include the empty Snap choice"));
@@ -694,14 +777,37 @@ impl<'a> LuckFamilyContext<'a> {
                             .iter()
                             .any(|row| row.skill_id == id && row.level == level && is_luck_chain(row.skill_effect_type))
                     });
-                    if writes && writer.is_some_and(|writer| writer != resource) {
-                        return Err(fail(LuckFamilyDecline::WriterProfiles, "multiple physical writer resources"));
-                    }
-                    if writes {
-                        writer = Some(resource);
+                    if writes && !writers.contains(&resource) {
+                        if writers.len() == MAX_WRITERS {
+                            return Err(fail(
+                                LuckFamilyDecline::WriterProfiles,
+                                "more than two physical writer resources",
+                            ));
+                        }
+                        writers.push(resource);
                     }
                 }
             }
+        }
+        if cancelled() {
+            return Ok(None);
+        }
+        // The complete physical profile count and immutable frame schedule already determine this work
+        // refusal. An over-budget family needs no native pair-model construction and supplies no authority.
+        let profiles = writer_profiles(&writers, &allowed)?;
+        let required = profiles
+            .len()
+            .checked_mul(ORDERS)
+            .ok_or_else(|| fail(LuckFamilyDecline::Capacity, "order/profile count overflow"))?;
+        let frame_work = (required as u64)
+            .checked_add(1)
+            .and_then(|count| count.checked_mul(self.mapping.frame_work))
+            .ok_or_else(|| fail(LuckFamilyDecline::Capacity, "frame-work overflow"))?;
+        if profiles.len() > limits.max_profiles
+            || required > limits.max_order_evaluations
+            || frame_work > limits.max_frame_work
+        {
+            return Err(fail(LuckFamilyDecline::Budget, "complete order/profile cover exceeds its work budget"));
         }
         let mut edges = [[false; 7]; 7];
         let mut all_edges = [[false; 7]; 7];
@@ -776,29 +882,33 @@ impl<'a> LuckFamilyContext<'a> {
                 return Err(fail(LuckFamilyDecline::JudgementFeedback, "conversion changes a LUCK controller class"));
             }
         }
-        let mut profiles = reserve(SLOTS + 1)?;
-        profiles.push(None);
-        if let Some(writer) = writer {
-            profiles.extend((0..SLOTS).filter(|&slot| allowed[slot].contains(&Some(writer))).map(Some));
+        if cancelled() {
+            return Ok(None);
         }
-        let required = profiles
-            .len()
-            .checked_mul(ORDERS)
-            .ok_or_else(|| fail(LuckFamilyDecline::Capacity, "order/profile count overflow"))?;
-        let frame_work = (required as u64)
-            .checked_add(1)
-            .and_then(|count| count.checked_mul(self.mapping.frame_work))
-            .ok_or_else(|| fail(LuckFamilyDecline::Capacity, "frame-work overflow"))?;
-        if profiles.len() > limits.max_profiles
-            || required > limits.max_order_evaluations
-            || frame_work > limits.max_frame_work
-        {
-            return Err(fail(LuckFamilyDecline::Budget, "complete order/profile cover exceeds its work budget"));
-        }
+        Ok(Some(AdmittedFamilyInputs { base, bindings: LuckFamilyBindings { allowed, writers, profiles } }))
+    }
+
+    /// Check the full allowed pair domain and complete all original order/profile computations. At most two
+    /// physical Snaps may select GK writer sources. Their absent/owner vectors cover every legal binding,
+    /// retaining resource identity and excluding two Snaps on one member.
+    /// No life-reading writer is admitted. Ordinary 15000 changes only ordinary live-pool durations, while the
+    /// accepted GK writers have their own range/lot trigger and lifetime and read neither live activity nor score.
+    pub fn prepare(
+        &self,
+        choices: &[Vec<LuckFamilyChoice>; SLOTS],
+        curves: Option<&mut LuckDpCache>,
+        limits: LuckFamilyLimits,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<LuckControllerFamily>, LuckFamilyError> {
+        let Some(admitted) = self.admit_inputs(choices, limits, &mut cancelled)? else {
+            return Ok(None);
+        };
+        let AdmittedFamilyInputs { base, bindings: LuckFamilyBindings { allowed, writers, profiles } } = admitted;
+        let required = profiles.len() * ORDERS;
         let mut family = LuckControllerFamily {
             mapping: Arc::clone(&self.mapping),
             allowed,
-            writer,
+            writers,
             profiles,
             orders: reserve(required)?,
             bytes: 0,
@@ -810,47 +920,74 @@ impl<'a> LuckFamilyContext<'a> {
         let mut coverage = FamilyCoverage::new(family.profiles.len())?;
         let mut temporary = LuckDpCache::new(0);
         let curves = curves.unwrap_or(&mut temporary);
-        // Retain the existing exact recording/curve caches. Capacity zero remains zero; no family cache is
-        // introduced here. An interrupted family can leave only already completed individual curves in them.
+        // Input and compiled recording keys share this existing bounded storage. No whole-family result is
+        // cached here; cancellation can leave only already completed individual curves in the outer cache.
         let mut recordings = RecordingCache::default();
+        let recording_capacity = curves.recording_capacity();
+        recordings.limit(recording_capacity);
         for profile in 0..family.profiles.len() {
             let mut physical = base.clone();
-            if let Some(owner) = family.profiles[profile] {
-                let resource = family.writer.expect("owner profile has a writer resource");
-                physical[owner] = choices[owner]
-                    .iter()
-                    .find(|choice| choice.resource == Some(resource))
-                    .expect("profile was built from allowed resources")
-                    .performer
-                    .clone();
+            for (owner, resource) in family.profiles[profile].iter().copied().enumerate() {
+                if let Some(resource) = resource {
+                    physical[owner] = choices[owner]
+                        .iter()
+                        .find(|choice| choice.resource == Some(resource))
+                        .expect("profile was built from allowed resources")
+                        .performer
+                        .clone();
+                }
             }
             let physical = physical.map(|performer| projected(self.master, &performer));
+            // Whole-pair admission, conversion closure and all labelled-cover budgets have already passed.
+            // This optional proof concerns only repeated construction of the projected input below.
+            let input_keys =
+                (recording_capacity > 0).then(|| input_reuse::InputKeys::new(self.master, &physical)).flatten();
             let mut order = [0, 1, 2, 3, 4];
             for ordinal in 0..ORDERS {
                 if cancelled() {
                     return Ok(None);
                 }
-                let deck = order.map(|slot| physical[slot].clone());
-                let curve = curves
-                    .certified_cancellable(
-                        self.master,
-                        &self.writer_skills,
-                        self.notes,
-                        self.events,
-                        self.params,
-                        self.setup,
-                        self.play,
-                        self.deltas,
-                        &deck,
-                        None,
-                        None,
-                        Some(&mut recordings),
-                        &mut cancelled,
-                    )
-                    .map_err(|e| source_error(LuckFamilyDecline::ProbabilityDomain, e))?;
+                let input_key = input_keys.as_ref().and_then(|keys| keys.key(&order, recording_capacity));
+                let cached = input_key.as_deref().and_then(|key| {
+                    curves.stats.family_input_lookups += 1;
+                    recordings.get(key).cloned()
+                });
+                if cancelled() {
+                    return Ok(None);
+                }
+                let curve = if let Some(probability) = cached {
+                    curves.stats.family_input_hits += 1;
+                    Some(probability)
+                } else {
+                    let deck = order.map(|slot| physical[slot].clone());
+                    curves
+                        .certified_cancellable(
+                            self.master,
+                            &self.writer_skills,
+                            self.notes,
+                            self.events,
+                            self.params,
+                            self.setup,
+                            self.play,
+                            self.deltas,
+                            &deck,
+                            None,
+                            None,
+                            Some(&mut recordings),
+                            &mut cancelled,
+                        )
+                        .map_err(|e| source_error(LuckFamilyDecline::ProbabilityDomain, e))?
+                };
                 let Some(probability) = curve else {
                     return Ok(None);
                 };
+                if cancelled() {
+                    return Ok(None);
+                }
+                if let Some(key) = input_key {
+                    recordings.insert(key, probability.clone(), recording_capacity);
+                    recordings.report(&mut curves.stats);
+                }
                 let mut positions = [0; SLOTS];
                 for (position, &slot) in order.iter().enumerate() {
                     positions[slot] = position;
@@ -1047,7 +1184,11 @@ impl LuckControllerFamily {
             .ok_or_else(overflow)?
             .checked_add(self.mapping.inputs.capacity().checked_mul(size_of::<InputNote>()).ok_or_else(overflow)?)
             .ok_or_else(overflow)?
-            .checked_add(self.profiles.capacity().checked_mul(size_of::<Option<usize>>()).ok_or_else(overflow)?)
+            .checked_add(self.writers.capacity().checked_mul(size_of::<usize>()).ok_or_else(overflow)?)
+            .ok_or_else(overflow)?
+            .checked_add(
+                self.profiles.capacity().checked_mul(size_of::<[Option<usize>; SLOTS]>()).ok_or_else(overflow)?,
+            )
             .ok_or_else(overflow)?
             .checked_add(self.orders.capacity().checked_mul(size_of::<LuckFamilyOrderLaw>()).ok_or_else(overflow)?)
             .ok_or_else(overflow)?;

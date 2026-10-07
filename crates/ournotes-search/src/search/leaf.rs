@@ -87,15 +87,6 @@ impl Engine<'_, '_> {
         }
         if self.certified.is_some() {
             let mut score_cutoff = None;
-            if matches!(self.metric, crate::types::Metric::Score)
-                && let Some((threshold, kth_power)) = self.safe_cutoff()
-                && self
-                    .cached_certified_score_cap(physical, power)
-                    .is_some_and(|cap| cap < threshold || (cap == threshold && power < kth_power))
-            {
-                self.tel.leaves.order_bound_pruned += 1;
-                return Ok(Leaf::Pruned);
-            }
             // The caps prove a team below the K-th whether or not its scores are cached.
             if let (Some((bounds, domain)), Some((threshold, kth_power))) = (cut, self.safe_cutoff()) {
                 let below = |total: i128| total < threshold || (total == threshold && power < kth_power);
@@ -135,6 +126,15 @@ impl Engine<'_, '_> {
             }
             self.admit_certified_refinement(input.notes.len(), input.play.frames.len());
             let (program, basis) = crate::search::certified_search::canonicalize_performers_with_basis(&mut input);
+            if matches!(self.metric, crate::types::Metric::Score)
+                && let Some((threshold, kth_power)) = self.safe_cutoff()
+                && self
+                    .cached_certified_score_cap(&program, power)
+                    .is_some_and(|cap| cap < threshold || (cap == threshold && power < kth_power))
+            {
+                self.tel.leaves.order_bound_pruned += 1;
+                return Ok(Leaf::Pruned);
+            }
             let master = self.pool.master;
             let score = if let Some(score) = self.cached_certified_score(&program, power) {
                 score
@@ -229,7 +229,7 @@ impl Engine<'_, '_> {
                     LuckContextOutcome::Full(score) => score,
                     LuckContextOutcome::UpperOnly => {
                         self.cache_certified_score_cap(
-                            physical,
+                            program,
                             power,
                             cap_sum(&order_cutoff.as_ref().expect("certified exclusion").caps),
                         );
@@ -569,10 +569,6 @@ impl Engine<'_, '_> {
         let below = |cap: i128| {
             cutoff.is_some_and(|(threshold, kth_power)| cap < threshold || (cap == threshold && power < kth_power))
         };
-        if self.cached_certified_score_cap(physical, power).is_some_and(below) {
-            self.tel.leaves.order_bound_pruned += 1;
-            return Ok(Leaf::Pruned);
-        }
         let max_grid = |caps: &[i128]| caps.iter().copied().max().unwrap_or(i128::MAX).saturating_mul(ORDERS as i128);
         let mut caps = match cut {
             Some((bounds, domain)) => bounds.order_cheap_caps(domain, physical, i64::from(power), &self.positions),
@@ -613,6 +609,10 @@ impl Engine<'_, '_> {
         input.lottery_free = self.lottery_free.clone();
         self.admit_certified_refinement(input.notes.len(), input.play.frames.len());
         let (program, basis) = canonicalize_performers_with_basis(&mut input);
+        if self.cached_certified_score_cap(&program, power).is_some_and(below) {
+            self.tel.leaves.order_bound_pruned += 1;
+            return Ok(Leaf::Pruned);
+        }
         let map = PayoffMap::BestOrderExpectedScore;
         let evaluation = if let Some(cached) = self.cached_certified_score(&program, power) {
             let orders = cached
@@ -666,7 +666,7 @@ impl Engine<'_, '_> {
             evaluation
         };
         let cap = (evaluation.score.upper().ceil() as i128).saturating_mul(ORDERS as i128);
-        self.cache_certified_score_cap(physical, power, cap);
+        self.cache_certified_score_cap(program.clone(), power, cap);
         if below(cap) {
             self.tel.leaves.order_bound_pruned += 1;
             return Ok(Leaf::Pruned);
