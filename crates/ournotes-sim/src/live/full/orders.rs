@@ -67,6 +67,30 @@ pub enum OrdersOutcome {
     Interrupted(OrderSharing),
 }
 
+/// Completion of a maximum search over orders and an optional previously attained payoff.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaximumOrdersOutcome {
+    /// Every requested order was evaluated, so its complete score/life vector is available.
+    AllOrders(OrderSharing),
+    /// The maximum is proved. Omitted orders have a strict upper bound below an attained payoff;
+    /// their individual outcomes remain unknown. Equal-payoff orders are always evaluated.
+    MaximumProven { sharing: OrderSharing, omitted_orders: usize },
+    /// The maximum is proved below the supplied threshold.
+    BelowThreshold(OrderSharing),
+    /// Evaluation was interrupted; completed orders supply witnesses but no maximum proof.
+    Interrupted(OrderSharing),
+}
+
+impl From<OrdersOutcome> for MaximumOrdersOutcome {
+    fn from(value: OrdersOutcome) -> Self {
+        match value {
+            OrdersOutcome::Complete(sharing) => Self::AllOrders(sharing),
+            OrdersOutcome::Stopped(sharing) => Self::BelowThreshold(sharing),
+            OrdersOutcome::Interrupted(sharing) => Self::Interrupted(sharing),
+        }
+    }
+}
+
 /// One completed order's power-parameterized native program and power-independent terminal life.
 #[derive(Clone, Debug)]
 pub struct RecordedOrder {
@@ -94,7 +118,13 @@ struct Bounds<'u> {
     stop_below: i128,
     check_every: usize,
     reduction: Reduction,
+    pruning: Option<&'u mut MaximumPruning>,
     upper: &'u mut UpperFn<'u>,
+}
+
+struct MaximumPruning {
+    attained: Option<i128>,
+    omitted_orders: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -130,6 +160,7 @@ impl Reduction {
 enum Halt {
     Stopped,
     Interrupted,
+    Dominated,
 }
 
 /// What the play knows of the aggregate payoff of one node on the path to the node being played.
@@ -150,7 +181,7 @@ struct Driver<'a, 'u, 'v> {
     future: Vec<i32>,
     bounds: Option<Bounds<'u>>,
     visit: &'v mut (dyn FnMut(usize, &LiveModel) -> Result<i128, Error> + 'v),
-    /// Entries of the orders not visited yet.
+    /// Entries whose outcomes are neither evaluated nor excluded by a strict maximum bound.
     left: usize,
     levels: Vec<Level>,
     stats: OrderSharing,
@@ -242,7 +273,7 @@ impl OrderedLive {
         mut upper: impl FnMut(&[usize], &LiveModel, Settled) -> Result<ControlFlow<(), i128>, Error>,
         mut visit: impl FnMut(usize, &LiveModel) -> Result<i128, Error>,
     ) -> Result<OrdersOutcome, Error> {
-        let bounds = Bounds { stop_below, check_every, reduction: Reduction::Sum, upper: &mut upper };
+        let bounds = Bounds { stop_below, check_every, reduction: Reduction::Sum, pruning: None, upper: &mut upper };
         self.play_orders(master, orders, random, false, Some(bounds), &mut visit)
     }
 
@@ -320,7 +351,7 @@ impl OrderedLive {
             collector.visit(index, model)?;
             Ok(payoff)
         };
-        let bounds = Bounds { stop_below, check_every, reduction: Reduction::Sum, upper: &mut upper };
+        let bounds = Bounds { stop_below, check_every, reduction: Reduction::Sum, pruning: None, upper: &mut upper };
         let outcome = self.play_orders(master, orders, random, record, Some(bounds), &mut visitor)?;
         Ok((outcome, collector.finish_partial()))
     }
@@ -347,8 +378,61 @@ impl OrderedLive {
             collector.visit(index, model)?;
             Ok(payoff)
         };
-        let bounds = Bounds { stop_below, check_every, reduction: Reduction::Maximum, upper: &mut upper };
+        let bounds =
+            Bounds { stop_below, check_every, reduction: Reduction::Maximum, pruning: None, upper: &mut upper };
         let outcome = self.play_orders(master, orders, random, record, Some(bounds), &mut visitor)?;
+        Ok((outcome, collector.finish_partial()))
+    }
+
+    /// Proves the maximum while omitting subtrees strictly below an attained payoff. Bounds apply to the
+    /// maximum of the supplied order indices, just as in the full maximum evaluation method. `attained`
+    /// must be the exact payoff of a previously completed order in this same immutable live; it participates
+    /// in the final maximum even when its order is absent from `orders`. `stop_below` may reject the supplied
+    /// orders only when that prior witness also falls below the threshold.
+    ///
+    /// A maximum proof can omit individual outcomes; only independently completed orders yield programs.
+    /// Bound callbacks continue to poll cancellation before a subtree is omitted and at frame checkpoints.
+    #[allow(clippy::too_many_arguments)]
+    pub fn maximize_orders_bounded_recorded_partial(
+        &self,
+        master: &Master,
+        orders: &[Vec<usize>],
+        random: LiveRandom,
+        program_bytes: usize,
+        stop_below: i128,
+        check_every: usize,
+        attained: Option<i128>,
+        mut upper: impl FnMut(&[usize], &LiveModel, Settled) -> Result<ControlFlow<(), i128>, Error>,
+        mut visit: impl FnMut(usize, &LiveModel) -> Result<i128, Error>,
+    ) -> Result<(MaximumOrdersOutcome, Option<Vec<RecordedOrder>>), Error> {
+        let mut collector = ProgramCollector::new(program_bytes, orders.len());
+        let record = collector.rows.is_some();
+        let mut visitor = |index: usize, model: &LiveModel| {
+            let payoff = visit(index, model)?;
+            collector.visit(index, model)?;
+            Ok(payoff)
+        };
+        let mut pruning = MaximumPruning { attained, omitted_orders: 0 };
+        let stop_below = if attained.is_some_and(|payoff| payoff >= stop_below) { i128::MIN } else { stop_below };
+        let bounds = Bounds {
+            stop_below,
+            check_every,
+            reduction: Reduction::Maximum,
+            pruning: Some(&mut pruning),
+            upper: &mut upper,
+        };
+        let outcome = self.play_orders(master, orders, random, record, Some(bounds), &mut visitor)?;
+        let outcome = match outcome {
+            OrdersOutcome::Complete(mut sharing) => {
+                sharing.bound = pruning.attained.or(sharing.bound);
+                if pruning.omitted_orders == 0 {
+                    MaximumOrdersOutcome::AllOrders(sharing)
+                } else {
+                    MaximumOrdersOutcome::MaximumProven { sharing, omitted_orders: pruning.omitted_orders }
+                }
+            }
+            other => other.into(),
+        };
         Ok((outcome, collector.finish_partial()))
     }
 
@@ -400,6 +484,7 @@ impl OrderedLive {
             }
             ControlFlow::Break(Halt::Stopped) => OrdersOutcome::Stopped(driver.stats),
             ControlFlow::Break(Halt::Interrupted) => OrdersOutcome::Interrupted(driver.stats),
+            ControlFlow::Break(Halt::Dominated) => unreachable!("dominated nodes return an omitted subtree"),
         })
     }
 
@@ -483,6 +568,20 @@ impl Driver<'_, '_, '_> {
         self.bounds.as_ref().map_or(Reduction::Sum, |bounds| bounds.reduction)
     }
 
+    fn dominated(&self, cap: i128) -> bool {
+        self.bounds
+            .as_ref()
+            .and_then(|bounds| bounds.pruning.as_ref())
+            .and_then(|pruning| pruning.attained)
+            .is_some_and(|attained| cap < attained)
+    }
+
+    fn omit(&mut self, orders: usize) {
+        self.left -= orders;
+        self.bounds.as_mut().and_then(|bounds| bounds.pruning.as_mut()).expect("maximum pruning").omitted_orders +=
+            orders;
+    }
+
     /// The caller's bound on the aggregate payoff of the orders `ids`, which `model` plays.
     fn bound_of(&mut self, ids: &[usize], model: &mut LiveModel) -> Result<ControlFlow<(), i128>, Error> {
         let Some(bounds) = &mut self.bounds else { return Ok(ControlFlow::Continue(i128::MAX)) };
@@ -515,7 +614,11 @@ impl Driver<'_, '_, '_> {
 
     fn visit_order(&mut self, i: usize, model: &LiveModel) -> Result<i128, Error> {
         self.left -= 1;
-        (self.visit)(i, model)
+        let payoff = (self.visit)(i, model)?;
+        if let Some(pruning) = self.bounds.as_mut().and_then(|bounds| bounds.pruning.as_mut()) {
+            pruning.attained = Some(pruning.attained.map_or(payoff, |attained| attained.max(payoff)));
+        }
+        Ok(payoff)
     }
 
     /// Takes a new bound on the node being played, which `model` plays.
@@ -525,13 +628,24 @@ impl Driver<'_, '_, '_> {
             ControlFlow::Continue(c) => {
                 let level = self.levels.last_mut().expect("level of the node");
                 level.cap = level.cap.min(c);
-                Ok(self.check())
+                let cap = level.cap;
+                Ok(self.check().or_else(|| self.dominated(cap).then_some(Halt::Dominated)))
             }
         }
     }
 
     /// Plays a node whose aggregate payoff is at most `cap`; returns its exact aggregate.
-    fn run_bounded(&mut self, node: Node, cap: i128) -> Result<ControlFlow<Halt, i128>, Error> {
+    fn run_bounded(&mut self, mut node: Node, cap: i128) -> Result<ControlFlow<Halt, i128>, Error> {
+        let count = node.orders.len();
+        if self.dominated(cap) {
+            // The bound may have been computed before a sibling finished. Poll the callback again before
+            // using it to omit work, preserving cancellation even when every remaining subtree is dominated.
+            if let ControlFlow::Break(()) = self.bound_of(&node.orders, &mut node.model)? {
+                return Ok(ControlFlow::Break(Halt::Interrupted));
+            }
+            self.omit(count);
+            return Ok(ControlFlow::Continue(i128::MIN));
+        }
         self.levels.push(Level { cap, split: false, done: self.reduction().identity(), rest: Vec::new() });
         let flow = match self.check() {
             Some(halt) => ControlFlow::Break(halt),
@@ -539,6 +653,10 @@ impl Driver<'_, '_, '_> {
         };
         let level = self.levels.pop().expect("level of the node");
         match flow {
+            ControlFlow::Break(Halt::Dominated) => {
+                self.omit(count);
+                Ok(ControlFlow::Continue(i128::MIN))
+            }
             ControlFlow::Continue(sum) if sum > level.cap => {
                 Err(Error::Input(format!("orders whose aggregate payoff is {sum} were bounded by {}", level.cap)))
             }

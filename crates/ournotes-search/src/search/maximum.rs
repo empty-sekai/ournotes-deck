@@ -1,16 +1,59 @@
 //! Maximum reachable terminal payoff, with canonical team identity and per-order score bounds.
 use super::*;
 use crate::domain::CandidateDomain;
+use crate::search::certified_search::PayoffMap;
 use crate::search::expectation::ExactExpectation;
 use crate::search::joint::{JointBounds, SLOTS};
 use ournotes_sim::live::full::{
-    LiveModel, LuckExactBudget, LuckExactDecline, LuckExactSession, LuckScoreSession, OrdersOutcome, Settled,
+    LiveModel, LuckExactBudget, LuckExactDecline, LuckExactSession, LuckScoreSession, LuckScoreSummary,
+    MaximumOrdersOutcome, Settled,
 };
 use ournotes_sim::live::random::LiveRandom;
 use std::cell::Cell;
 use std::ops::ControlFlow;
 
 const CUTOFF_EVERY: usize = 30;
+
+#[cfg(test)]
+#[path = "maximum/payoff_tests.rs"]
+mod payoff_tests;
+
+/// A score-maximum witness also settles a monotone score payoff and its highest-score tie. A life
+/// predicate needs either a successful maximum-score witness or a proof that all outcomes fail it.
+fn primitive_witness_suffices(metric: &Metric, maximum: i32, lives: &[i32], exact_life: Option<i32>) -> Option<bool> {
+    match *metric {
+        Metric::Score | Metric::ScoreAtLeast { .. } | Metric::CappedScore { .. } | Metric::Power => Some(true),
+        Metric::ScoreAndLifeAtLeast { threshold, min_final_life } => {
+            Some(maximum < threshold || lives.iter().any(|&life| life >= min_final_life) || exact_life.is_some())
+        }
+        _ => None,
+    }
+}
+
+/// The exact native payoff at the maximum score must dominate every step over the enclosing support.
+/// This admits constant and monotone tables as well as nonmonotone tables whose final step is maximal.
+fn native_witness_suffices(map: &PayoffMap, lower: i32, maximum: i32) -> bool {
+    let PayoffMap::NativeSteps(steps) = map else { return false };
+    if lower > maximum {
+        return false;
+    }
+    let mut next = i64::from(lower);
+    let mut greatest = i128::MIN;
+    for step in steps {
+        if step.upper < lower {
+            continue;
+        }
+        if i64::from(step.lower) > next || i64::from(step.upper) < next {
+            return false;
+        }
+        greatest = greatest.max(step.value);
+        if step.upper >= maximum {
+            return step.value == greatest;
+        }
+        next = i64::from(step.upper) + 1;
+    }
+    false
+}
 
 fn aggregate_maximum(outcomes: Vec<SeedOutcome>) -> Result<FiniteEvaluation, Error> {
     let best = outcomes.iter().map(|outcome| outcome.terminal_payoff).max();
@@ -20,6 +63,44 @@ fn aggregate_maximum(outcomes: Vec<SeedOutcome>) -> Result<FiniteEvaluation, Err
 }
 
 impl Engine<'_, '_> {
+    fn score_witness_settles_payoff(
+        &self,
+        physical: &PhysicalDeck,
+        power: i32,
+        witnesses: &[(i32, i32)],
+        summary: Option<&LuckScoreSummary>,
+    ) -> bool {
+        if matches!(
+            self.metric,
+            Metric::Score | Metric::ScoreAtLeast { .. } | Metric::CappedScore { .. } | Metric::Power
+        ) {
+            return true;
+        }
+        let Some(maximum) = witnesses.iter().map(|&(score, _)| score).max() else { return false };
+        let lives: Vec<_> = witnesses.iter().filter_map(|&(score, life)| (score == maximum).then_some(life)).collect();
+        if let Some(settled) = primitive_witness_suffices(
+            self.metric,
+            maximum,
+            &lives,
+            summary.and_then(|summary| summary.exact_final_life),
+        ) {
+            return settled;
+        }
+        let Some(summary) = summary else { return false };
+        // The native adapter verifies every rank cell, including cells whose endpoints have equal
+        // rewards. Failure of this optional enclosure proof falls back to reachable outcomes.
+        crate::search::certified_payoff::payoff_map(
+            self.pool,
+            self.request,
+            self.metric,
+            self.event_input,
+            physical,
+            power,
+            (summary.final_support.lower, maximum),
+        )
+        .is_ok_and(|map| native_witness_suffices(&map, summary.final_support.lower, maximum))
+    }
+
     pub(super) fn evaluate_maximum(
         &mut self,
         physical: &PhysicalDeck,
@@ -111,18 +192,29 @@ impl Engine<'_, '_> {
             let performers = order.map(|slot| input.performers[slot].clone());
             let mut ceiling =
                 if score_metric { caps.as_ref().and_then(|caps| i32::try_from(caps[index]).ok()) } else { None };
-            if score_metric && let Some(bounds) = &mut score_bounds {
+            let mut score_summary = None;
+            if let Some(bounds) = &mut score_bounds {
                 // Optional bounds are used only to close the search when a simulated path attains them.
                 if let Ok(Some(summary)) = bounds.summary(&performers, None, || self.expired()) {
                     ceiling = Some(ceiling.map_or(summary.final_support.upper, |c| c.min(summary.final_support.upper)));
+                    score_summary = Some(summary);
                 }
                 if self.expired() {
                     self.rec.clock.lap(resume);
                     return Ok(Leaf::Stopped);
                 }
             }
-            let result = exact.support(&performers, &mut budget, ceiling, || self.expired())?;
+            let mut result = exact.support(&performers, &mut budget, ceiling, || self.expired())?;
             self.tel.leaves.simulations += result.stats.replay_runs;
+            if result.decline.is_none()
+                && result.attained_ceiling
+                && !self.score_witness_settles_payoff(physical, power, &result.outcomes, score_summary.as_ref())
+            {
+                // A score maximum alone does not settle an arbitrary payoff or its life predicate.
+                // The complete support also preserves a separately reported maximum score.
+                result = exact.support(&performers, &mut budget, None, || self.expired())?;
+                self.tel.leaves.simulations += result.stats.replay_runs;
+            }
             if let Some(reason) = result.decline {
                 if reason != LuckExactDecline::Cancelled || self.stop.is_none() {
                     self.stop = Some(ExitReason::RefinementRequired);
@@ -301,16 +393,31 @@ impl Engine<'_, '_> {
             self.rec.clock.lap(resume);
             Ok(ControlFlow::Continue(maximum))
         };
-        let result = live.simulate_orders_maximum_bounded_recorded_partial(
-            master,
-            &orders,
-            LiveRandom::new(0),
-            capture_budget,
-            stop_below,
-            CUTOFF_EVERY,
-            upper,
-            &mut visit,
-        );
+        let result = if matches!(metric, Metric::Score) {
+            live.maximize_orders_bounded_recorded_partial(
+                master,
+                &orders,
+                LiveRandom::new(0),
+                capture_budget,
+                stop_below,
+                CUTOFF_EVERY,
+                (cached_count > 0).then_some(cached_best),
+                upper,
+                &mut visit,
+            )
+        } else {
+            live.simulate_orders_maximum_bounded_recorded_partial(
+                master,
+                &orders,
+                LiveRandom::new(0),
+                capture_budget,
+                stop_below,
+                CUTOFF_EVERY,
+                upper,
+                &mut visit,
+            )
+            .map(|(outcome, programs)| (MaximumOrdersOutcome::from(outcome), programs))
+        };
         self.rec.clock.lap(resume);
         if let Some(started) = recording_started {
             self.tel.caches.program_recording_ms += started.elapsed().as_secs_f64() * 1000.0;
@@ -331,18 +438,25 @@ impl Engine<'_, '_> {
             (self.tel.caches.program_recorded_nodes, self.tel.caches.program_recorded_bytes) =
                 self.programs.recorded_work();
         }
-        let (OrdersOutcome::Complete(shared) | OrdersOutcome::Stopped(shared) | OrdersOutcome::Interrupted(shared)) =
-            outcome;
+        let (MaximumOrdersOutcome::AllOrders(shared)
+        | MaximumOrdersOutcome::MaximumProven { sharing: shared, .. }
+        | MaximumOrdersOutcome::BelowThreshold(shared)
+        | MaximumOrdersOutcome::Interrupted(shared)) = outcome;
         self.tel.leaves.order_tree.add(&shared);
         self.tel.leaves.simulations += (outcomes.iter().flatten().count() - cached_count) as u64;
         Ok(Some(match outcome {
-            OrdersOutcome::Complete(_) => {
+            MaximumOrdersOutcome::AllOrders(_) => {
                 let evaluation =
                     aggregate_maximum(outcomes.into_iter().map(|outcome| outcome.expect("completed order")).collect())?;
                 self.team_scores.insert(physical, power, &evaluation, &final_lives, &mut self.tel.caches.team_scores);
                 Leaf::Evaluated(evaluation)
             }
-            OrdersOutcome::Stopped(shared) => {
+            MaximumOrdersOutcome::MaximumProven { .. } => {
+                // Strict score bounds omit only orders below an already completed score witness. Their
+                // individual score/life outcomes stay absent from complete-vector caches.
+                Leaf::Evaluated(aggregate_maximum(outcomes.into_iter().flatten().collect())?)
+            }
+            MaximumOrdersOutcome::BelowThreshold(shared) => {
                 telemetry::record_stop(
                     &mut self.tel.leaves.cutoff,
                     shared.frames as usize,
@@ -351,7 +465,7 @@ impl Engine<'_, '_> {
                 self.tel.leaves.order_bound_pruned += 1;
                 Leaf::Pruned
             }
-            OrdersOutcome::Interrupted(_) => Leaf::Stopped,
+            MaximumOrdersOutcome::Interrupted(_) => Leaf::Stopped,
         }))
     }
 }

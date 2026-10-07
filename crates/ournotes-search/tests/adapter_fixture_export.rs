@@ -2683,5 +2683,9 @@ fn composition_power_frontier_keeps_canonical_ties_in_heuristic_layout() {
 #[path = "fixtures/correctness_matrix.rs"]
 mod correctness_matrix;
 
+#[path = "fixtures/maximum_deck_payoff.rs"]
+mod maximum_deck_payoff;
+#[path = "fixtures/maximum_luck_payoff.rs"]
+mod maximum_luck_payoff;
 #[path = "fixtures/maximum_matrix.rs"]
 mod maximum_matrix;

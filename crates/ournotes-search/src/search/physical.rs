@@ -1081,11 +1081,25 @@ pub(crate) fn solve_physical_impl(
         }
         match strategy {
             Strategy::Exhaustive | Strategy::BranchAndBound if live && plan.aggregation == Aggregation::Maximum => {
-                engine.tel.environment.traversal =
-                    if plan.joint.is_some() { Traversal::Joint } else { Traversal::Exhaustive };
-                engine.rec.begin(&mut engine.tel, "search", None);
-                maximum::search(&mut engine, &plan.domain, plan.joint.as_ref())?;
-                engine.rec.end(&mut engine.tel);
+                let ranked = if let Some(bounds) = plan.deck_payoff.as_ref().filter(|bounds| !bounds.bounded_only()) {
+                    // A deck-determined payoff ranks the same physical teams under either aggregation.
+                    // Each retained team still passes through maximum evaluation to materialize its score and order.
+                    engine.tel.environment.traversal = Traversal::Joint;
+                    engine.rec.begin(&mut engine.tel, "search", Some("deckPayoff".into()));
+                    let closed = deck_payoff_search::solve(&plan.domain, bounds, &mut engine, false)?;
+                    engine.rec.end(&mut engine.tel);
+                    closed
+                } else {
+                    false
+                };
+                if !ranked {
+                    engine.rec.frontier.clear();
+                    engine.tel.environment.traversal =
+                        if plan.joint.is_some() { Traversal::Joint } else { Traversal::Exhaustive };
+                    engine.rec.begin(&mut engine.tel, "search", None);
+                    maximum::search(&mut engine, &plan.domain, plan.joint.as_ref())?;
+                    engine.rec.end(&mut engine.tel);
+                }
             }
             Strategy::Exhaustive | Strategy::BranchAndBound => {
                 let mut physical = PhysicalDeck { members: [0; 5], snaps: [None; 5] };

@@ -42,7 +42,7 @@ pub(super) fn solve(
     e: &mut Engine<'_, '_>,
     joint_follows: bool,
 ) -> Result<bool, Error> {
-    let scale = if e.live { ORDERS as i128 } else { 1 };
+    let scale = if e.live && e.aggregation == Aggregation::Expected { ORDERS as i128 } else { 1 };
     let mut p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
     let root = bounds.upper(e.pool, domain, &p, 0)?.map(|(payoff, _)| payoff * scale);
     e.rec.frontier.clear();
@@ -94,8 +94,8 @@ pub(super) fn solve(
             {
                 return Err(Error::Domain(format!("score {score} above the score cap {cap} of {:?}", row.key)));
             }
-            // Mean payoff numerator/denominator (in lowest terms) against the bound numerator over `scale`, and the
-            // payoff numerator over `scale` when it is one.
+            // The evaluated payoff fraction against the bound numerator over the aggregation's scale,
+            // and its exact numerator on that same scale when representable.
             let paid = offered.payoff.and_then(|(numerator, denominator)| {
                 let denominator = i128::try_from(denominator).ok()?;
                 let scaled = numerator.checked_mul(scale)?;

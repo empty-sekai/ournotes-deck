@@ -6,8 +6,8 @@ use std::ops::ControlFlow;
 
 use ournotes_sim::error::Error;
 use ournotes_sim::live::full::{
-    GekisouRange, GekisouSetup, JudgedNote, LiveModel, LiveNote, LiveParams, LivePlay, OrderSharing, OrderedLive,
-    OrdersOutcome, Performer, PlayFrame,
+    GekisouRange, GekisouSetup, JudgedNote, LiveModel, LiveNote, LiveParams, LivePlay, MaximumOrdersOutcome,
+    OrderSharing, OrderedLive, OrdersOutcome, Performer, PlayFrame,
 };
 use ournotes_sim::live::random::LiveRandom;
 use ournotes_sim::master::Master;
@@ -947,6 +947,130 @@ fn maximum_order_tree_checks_cancellation_before_the_first_order_finishes() {
     assert_eq!(checks, 3);
     assert_eq!(completed, 0);
     assert_eq!(sharing(&result).frames, 2);
+    assert!(records.is_none());
+}
+
+#[test]
+fn maximum_proof_omits_strictly_lower_orders_and_retains_every_tied_witness() {
+    let master = master_from(&tables());
+    let live = live(false);
+    let mut orders = all_orders(5);
+    let (_, scores) = alone(&live, &master, &orders, 5);
+    let best_index = scores.iter().enumerate().max_by_key(|&(_, score)| score).unwrap().0;
+    orders.push(orders[best_index].clone());
+    let (separate, scores) = alone(&live, &master, &orders, 5);
+    let best = *scores.iter().max().unwrap();
+    assert!(scores.iter().any(|&score| score < best));
+    for offset in [0, best + 1] {
+        let mut visited: Vec<Option<Outcome>> = (0..orders.len()).map(|_| None).collect();
+        let (result, records) = live
+            .maximize_orders_bounded_recorded_partial(
+                &master,
+                &orders,
+                LiveRandom::new(5),
+                64 * 1024 * 1024,
+                i128::MIN,
+                37,
+                None,
+                |ids, _, _| Ok(ControlFlow::Continue(ids.iter().map(|&index| scores[index] - offset).max().unwrap())),
+                |index, model| {
+                    assert!(visited[index].replace(outcome(model)).is_none());
+                    Ok(i128::from(model.score()) - offset)
+                },
+            )
+            .unwrap();
+        let MaximumOrdersOutcome::MaximumProven { sharing, omitted_orders } = result else {
+            panic!("strictly lower orders must be excluded");
+        };
+        assert_eq!(sharing.bound, Some(best - offset));
+        let completed = check_visited(&visited, &separate, &orders);
+        assert_eq!(completed + omitted_orders, orders.len());
+        assert!(completed < orders.len());
+        for (index, score) in scores.iter().enumerate() {
+            if *score == best {
+                assert!(visited[index].is_some(), "every equal maximum preserves its original order");
+            }
+        }
+        let records = records.unwrap();
+        assert_eq!(records.len(), completed);
+        for record in records {
+            assert!(visited[record.index].is_some());
+            assert_eq!(record.program.evaluate(live.params.total_power), separate[record.index].score);
+        }
+    }
+}
+
+#[test]
+fn maximum_proof_uses_prior_completed_witness_and_polls_before_omission() {
+    let master = master_from(&tables());
+    let live = live(false);
+    let all = all_orders(5);
+    let (_, scores) = alone(&live, &master, &all, 5);
+    let best = *scores.iter().max().unwrap();
+    let below: Vec<_> = all.iter().zip(&scores).filter(|&(_, score)| *score < best).collect();
+    let orders: Vec<_> = below.iter().map(|(order, _)| (*order).clone()).collect();
+    let caps: Vec<_> = below.iter().map(|(_, score)| **score).collect();
+    assert!(!orders.is_empty());
+    for cancel in [false, true] {
+        let mut checks = 0;
+        let (result, records) = live
+            .maximize_orders_bounded_recorded_partial(
+                &master,
+                &orders,
+                LiveRandom::new(5),
+                64 * 1024 * 1024,
+                i128::MIN,
+                1,
+                Some(best),
+                |ids, _, _| {
+                    checks += 1;
+                    Ok(if cancel && checks == 2 {
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(ids.iter().map(|&index| caps[index]).max().unwrap())
+                    })
+                },
+                |_, _| panic!("the prior witness strictly dominates every supplied order"),
+            )
+            .unwrap();
+        assert_eq!(checks, 2);
+        assert!(records.is_none());
+        if cancel {
+            assert!(matches!(result, MaximumOrdersOutcome::Interrupted(_)));
+        } else {
+            let MaximumOrdersOutcome::MaximumProven { sharing, omitted_orders } = result else {
+                panic!("a prior witness must prove the maximum");
+            };
+            assert_eq!(sharing.bound, Some(best));
+            assert_eq!(sharing.frames, 0);
+            assert_eq!(omitted_orders, orders.len());
+        }
+    }
+    let (result, records) = live
+        .maximize_orders_bounded_recorded_partial(
+            &master,
+            &orders,
+            LiveRandom::new(5),
+            0,
+            i128::MIN,
+            2,
+            Some(best),
+            |ids, model, _| {
+                Ok(ControlFlow::Continue(if model.frames_played() < 2 {
+                    i128::MAX
+                } else {
+                    ids.iter().map(|&index| caps[index]).max().unwrap()
+                }))
+            },
+            |_, _| panic!("refined strict bounds omit the live before its terminal frame"),
+        )
+        .unwrap();
+    let MaximumOrdersOutcome::MaximumProven { sharing, omitted_orders } = result else {
+        panic!("the refined bound must preserve the attained maximum");
+    };
+    assert_eq!(sharing.bound, Some(best));
+    assert_eq!(sharing.frames, 2);
+    assert_eq!(omitted_orders, orders.len());
     assert!(records.is_none());
 }
 
