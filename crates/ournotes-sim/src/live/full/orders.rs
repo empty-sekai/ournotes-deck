@@ -50,8 +50,8 @@ pub struct OrderSharing {
     pub clones: u64,
     /// Calls of the bound.
     pub bounds: u64,
-    /// The last bound on the payoff sum of all orders the play worked out: the exact sum when it played every order.
-    /// `None` without bounds.
+    /// The last bound on the aggregate payoff of all orders: their sum for sum evaluation, or their maximum
+    /// for maximum evaluation. Exact when every order completed; `None` without bounds.
     pub bound: Option<i128>,
 }
 
@@ -60,10 +60,10 @@ pub struct OrderSharing {
 pub enum OrdersOutcome {
     /// Every order was visited.
     Complete(OrderSharing),
-    /// The payoff sum of all orders is below the threshold; the orders not visited were given up.
+    /// The aggregate payoff of all orders is below the threshold; the remaining orders were given up.
     Stopped(OrderSharing),
-    /// The bound asked to stop; the orders not visited were given up, and the payoff sum is not known to lie below the
-    /// threshold.
+    /// The bound asked to stop; the remaining orders were given up, and the aggregate payoff is not known to lie
+    /// below the threshold.
     Interrupted(OrderSharing),
 }
 
@@ -87,13 +87,43 @@ struct Node {
     orders: Vec<usize>,
 }
 
-/// The caller's bound on payoff sums, see [`OrderedLive::simulate_orders_bounded`].
+/// The caller's bound on the selected payoff reduction.
 type UpperFn<'u> = dyn FnMut(&[usize], &LiveModel, Settled) -> Result<ControlFlow<(), i128>, Error> + 'u;
 
 struct Bounds<'u> {
     stop_below: i128,
     check_every: usize,
+    reduction: Reduction,
     upper: &'u mut UpperFn<'u>,
+}
+
+#[derive(Clone, Copy)]
+enum Reduction {
+    Sum,
+    Maximum,
+}
+
+impl Reduction {
+    fn identity(self) -> i128 {
+        match self {
+            Self::Sum => 0,
+            Self::Maximum => i128::MIN,
+        }
+    }
+
+    fn combine(self, left: i128, right: i128) -> i128 {
+        match self {
+            Self::Sum => left + right,
+            Self::Maximum => left.max(right),
+        }
+    }
+
+    fn bound(self, left: i128, right: i128) -> i128 {
+        match self {
+            Self::Sum => left.saturating_add(right),
+            Self::Maximum => left.max(right),
+        }
+    }
 }
 
 /// Why a bounded play returned early.
@@ -102,7 +132,7 @@ enum Halt {
     Interrupted,
 }
 
-/// What the play knows of the payoff sum of one node on the path from the root to the node being played.
+/// What the play knows of the aggregate payoff of one node on the path to the node being played.
 struct Level {
     /// The least bound given for the node.
     cap: i128,
@@ -212,7 +242,7 @@ impl OrderedLive {
         mut upper: impl FnMut(&[usize], &LiveModel, Settled) -> Result<ControlFlow<(), i128>, Error>,
         mut visit: impl FnMut(usize, &LiveModel) -> Result<i128, Error>,
     ) -> Result<OrdersOutcome, Error> {
-        let bounds = Bounds { stop_below, check_every, upper: &mut upper };
+        let bounds = Bounds { stop_below, check_every, reduction: Reduction::Sum, upper: &mut upper };
         self.play_orders(master, orders, random, false, Some(bounds), &mut visit)
     }
 
@@ -290,7 +320,34 @@ impl OrderedLive {
             collector.visit(index, model)?;
             Ok(payoff)
         };
-        let bounds = Bounds { stop_below, check_every, upper: &mut upper };
+        let bounds = Bounds { stop_below, check_every, reduction: Reduction::Sum, upper: &mut upper };
+        let outcome = self.play_orders(master, orders, random, record, Some(bounds), &mut visitor)?;
+        Ok((outcome, collector.finish_partial()))
+    }
+
+    /// Bounded prefix-sharing evaluation of the maximum terminal payoff. `upper` bounds the maximum payoff
+    /// among its order indices, and `visit` returns each completed order's exact payoff. Node bounds combine
+    /// by maximum. Independently completed order programs remain available after a stop or interruption.
+    #[allow(clippy::too_many_arguments)]
+    pub fn simulate_orders_maximum_bounded_recorded_partial(
+        &self,
+        master: &Master,
+        orders: &[Vec<usize>],
+        random: LiveRandom,
+        program_bytes: usize,
+        stop_below: i128,
+        check_every: usize,
+        mut upper: impl FnMut(&[usize], &LiveModel, Settled) -> Result<ControlFlow<(), i128>, Error>,
+        mut visit: impl FnMut(usize, &LiveModel) -> Result<i128, Error>,
+    ) -> Result<(OrdersOutcome, Option<Vec<RecordedOrder>>), Error> {
+        let mut collector = ProgramCollector::new(program_bytes, orders.len());
+        let record = collector.rows.is_some();
+        let mut visitor = |index: usize, model: &LiveModel| {
+            let payoff = visit(index, model)?;
+            collector.visit(index, model)?;
+            Ok(payoff)
+        };
+        let bounds = Bounds { stop_below, check_every, reduction: Reduction::Maximum, upper: &mut upper };
         let outcome = self.play_orders(master, orders, random, record, Some(bounds), &mut visitor)?;
         Ok((outcome, collector.finish_partial()))
     }
@@ -422,7 +479,11 @@ impl ProgramCollector {
 }
 
 impl Driver<'_, '_, '_> {
-    /// The caller's bound on the payoff sum of the orders `ids`, which `model` plays.
+    fn reduction(&self) -> Reduction {
+        self.bounds.as_ref().map_or(Reduction::Sum, |bounds| bounds.reduction)
+    }
+
+    /// The caller's bound on the aggregate payoff of the orders `ids`, which `model` plays.
     fn bound_of(&mut self, ids: &[usize], model: &mut LiveModel) -> Result<ControlFlow<(), i128>, Error> {
         let Some(bounds) = &mut self.bounds else { return Ok(ControlFlow::Continue(i128::MAX)) };
         let played = model.frames_played();
@@ -431,19 +492,20 @@ impl Driver<'_, '_, '_> {
         (bounds.upper)(ids, &*model, settled)
     }
 
-    /// The bound on the payoff sum of all orders.
+    /// The bound on the aggregate payoff of all orders.
     fn total_bound(&self) -> i128 {
-        self.levels.iter().rev().fold(0, |below, l| {
+        let reduction = self.reduction();
+        self.levels.iter().rev().fold(reduction.identity(), |below, l| {
             if l.split {
-                let rest = l.rest.iter().fold(0i128, |s, &c| s.saturating_add(c));
-                l.cap.min(l.done.saturating_add(rest).saturating_add(below))
+                let rest = l.rest.iter().fold(reduction.identity(), |s, &c| reduction.bound(s, c));
+                l.cap.min(reduction.bound(reduction.bound(l.done, rest), below))
             } else {
                 l.cap
             }
         })
     }
 
-    /// Stops once the bound on the payoff sum of all orders is below the threshold and some order is left to give up.
+    /// Stops once the aggregate bound is below the threshold and some order remains.
     fn check(&mut self) -> Option<Halt> {
         let stop_below = self.bounds.as_ref()?.stop_below;
         let bound = self.total_bound();
@@ -468,9 +530,9 @@ impl Driver<'_, '_, '_> {
         }
     }
 
-    /// Plays a node whose orders' payoffs sum to at most `cap`; returns their exact sum.
+    /// Plays a node whose aggregate payoff is at most `cap`; returns its exact aggregate.
     fn run_bounded(&mut self, node: Node, cap: i128) -> Result<ControlFlow<Halt, i128>, Error> {
-        self.levels.push(Level { cap, split: false, done: 0, rest: Vec::new() });
+        self.levels.push(Level { cap, split: false, done: self.reduction().identity(), rest: Vec::new() });
         let flow = match self.check() {
             Some(halt) => ControlFlow::Break(halt),
             None => self.run_node(node)?,
@@ -478,7 +540,7 @@ impl Driver<'_, '_, '_> {
         let level = self.levels.pop().expect("level of the node");
         match flow {
             ControlFlow::Continue(sum) if sum > level.cap => {
-                Err(Error::Input(format!("orders whose payoffs sum to {sum} were bounded by {}", level.cap)))
+                Err(Error::Input(format!("orders whose aggregate payoff is {sum} were bounded by {}", level.cap)))
             }
             flow => Ok(flow),
         }
@@ -487,6 +549,7 @@ impl Driver<'_, '_, '_> {
     fn run_node(&mut self, node: Node) -> Result<ControlFlow<Halt, i128>, Error> {
         let Node { mut model, mut assign, fixed, orders: ids } = node;
         let (live, orders) = (self.live, self.orders);
+        let reduction = self.reduction();
         let end = live.play.frames.len();
         let start = model.frames_played();
         let every = self.bounds.as_ref().map_or(0, |b| b.check_every);
@@ -505,9 +568,9 @@ impl Driver<'_, '_, '_> {
                     return Ok(ControlFlow::Break(halt));
                 }
             }
-            let mut sum = 0i128;
+            let mut sum = reduction.identity();
             for &i in &ids {
-                sum += self.visit_order(i, &model)?;
+                sum = reduction.combine(sum, self.visit_order(i, &model)?);
             }
             return Ok(ControlFlow::Continue(sum));
         }
@@ -545,10 +608,10 @@ impl Driver<'_, '_, '_> {
         }
         let Some((frame, announced)) = acted else {
             // Nobody in an open position ever acted: the orders differ only in where idle members stand.
-            let mut sum = 0i128;
+            let mut sum = reduction.identity();
             for &i in &ids {
                 probe.move_to(&mut assign, &orders[i])?;
-                sum += self.visit_order(i, &probe)?;
+                sum = reduction.combine(sum, self.visit_order(i, &probe)?);
             }
             return Ok(ControlFlow::Continue(sum));
         };
@@ -614,14 +677,15 @@ impl Driver<'_, '_, '_> {
         if let Some(halt) = self.check() {
             return Ok(ControlFlow::Break(halt));
         }
-        let mut sum = 0i128;
+        let mut sum = reduction.identity();
         for (cap, child) in children {
             self.levels.last_mut().expect("level of the node").rest.pop();
             match self.run_bounded(child, cap)? {
                 ControlFlow::Break(halt) => return Ok(ControlFlow::Break(halt)),
                 ControlFlow::Continue(payoffs) => {
-                    sum += payoffs;
-                    self.levels.last_mut().expect("level of the node").done += payoffs;
+                    sum = reduction.combine(sum, payoffs);
+                    let level = self.levels.last_mut().expect("level of the node");
+                    level.done = reduction.combine(level.done, payoffs);
                     if let Some(halt) = self.check() {
                         return Ok(ControlFlow::Break(halt));
                     }

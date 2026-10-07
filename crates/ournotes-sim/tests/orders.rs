@@ -829,6 +829,128 @@ fn bounded_play_counts_repeated_orders_once_per_entry() {
 }
 
 #[test]
+fn maximum_order_tree_matches_independent_terminal_payoffs_and_keeps_ties() {
+    let master = master_from(&tables());
+    let live = live(false);
+    let mut orders = all_orders(5);
+    orders.push(orders[0].clone());
+    let (separate, scores) = alone(&live, &master, &orders, 5);
+    for offset in [0, scores.iter().max().unwrap() + 1] {
+        let exact: Vec<_> = scores.iter().map(|score| score - offset).collect();
+        let best = *exact.iter().max().unwrap();
+        for threshold in [i128::MIN, best, best + 1] {
+            let mut visited: Vec<Option<Outcome>> = (0..orders.len()).map(|_| None).collect();
+            let (result, records) = live
+                .simulate_orders_maximum_bounded_recorded_partial(
+                    &master,
+                    &orders,
+                    LiveRandom::new(5),
+                    64 * 1024 * 1024,
+                    threshold,
+                    37,
+                    |ids, _, _| Ok(ControlFlow::Continue(ids.iter().map(|&index| exact[index]).max().unwrap())),
+                    |index, model| {
+                        assert!(visited[index].replace(outcome(model)).is_none());
+                        Ok(i128::from(model.score()) - offset)
+                    },
+                )
+                .unwrap();
+            if threshold <= best {
+                assert!(matches!(result, OrdersOutcome::Complete(_)));
+                assert_eq!(sharing(&result).bound, Some(best));
+                assert_eq!(check_visited(&visited, &separate, &orders), orders.len());
+                let records = records.unwrap();
+                assert_eq!(records.len(), orders.len());
+                for record in records {
+                    assert_eq!(record.program.evaluate(live.params.total_power), separate[record.index].score);
+                }
+            } else {
+                assert!(matches!(result, OrdersOutcome::Stopped(_)));
+                assert_eq!(check_visited(&visited, &separate, &orders), 0);
+                assert!(records.is_none());
+            }
+        }
+        let invalid = live.simulate_orders_maximum_bounded_recorded_partial(
+            &master,
+            &orders,
+            LiveRandom::new(5),
+            0,
+            i128::MIN,
+            0,
+            |ids, _, _| Ok(ControlFlow::Continue(ids.iter().map(|&index| exact[index]).max().unwrap() - 1)),
+            |_, model| Ok(i128::from(model.score()) - offset),
+        );
+        assert!(invalid.is_err());
+    }
+}
+
+#[test]
+fn interrupted_maximum_order_tree_records_only_completed_orders() {
+    let master = master_from(&tables());
+    let live = live(false);
+    let orders = all_orders(5);
+    let finished = std::cell::Cell::new(0);
+    let (result, records) = live
+        .simulate_orders_maximum_bounded_recorded_partial(
+            &master,
+            &orders,
+            LiveRandom::new(5),
+            64 * 1024 * 1024,
+            i128::MIN,
+            1,
+            |_, _, _| Ok(if finished.get() == 0 { ControlFlow::Continue(i128::MAX) } else { ControlFlow::Break(()) }),
+            |_, model| {
+                finished.set(finished.get() + 1);
+                Ok(i128::from(model.score()))
+            },
+        )
+        .unwrap();
+    assert!(matches!(result, OrdersOutcome::Interrupted(_)));
+    let records = records.unwrap();
+    assert_eq!(records.len(), finished.get());
+    assert!(records.len() < orders.len());
+    for record in records {
+        let model = live.simulate(&master, &orders[record.index], LiveRandom::new(5)).unwrap();
+        assert_eq!(record.program.evaluate(live.params.total_power), model.score());
+        assert_eq!(record.final_life, model.current_life());
+    }
+}
+
+#[test]
+fn maximum_order_tree_checks_cancellation_before_the_first_order_finishes() {
+    let master = master_from(&tables());
+    let mut live = live(false);
+    live.performers = vec![Performer::default(); 5];
+    live.events.clear();
+    let orders = all_orders(5);
+    let mut checks = 0;
+    let mut completed = 0;
+    let (result, records) = live
+        .simulate_orders_maximum_bounded_recorded_partial(
+            &master,
+            &orders,
+            LiveRandom::new(0),
+            0,
+            i128::MIN,
+            1,
+            |_, _, _| {
+                checks += 1;
+                Ok(if checks < 3 { ControlFlow::Continue(i128::MAX) } else { ControlFlow::Break(()) })
+            },
+            |_, model| {
+                completed += 1;
+                Ok(i128::from(model.score()))
+            },
+        )
+        .unwrap();
+    assert!(matches!(result, OrdersOutcome::Interrupted(_)));
+    assert_eq!(checks, 3);
+    assert_eq!(completed, 0);
+    assert_eq!(sharing(&result).frames, 2);
+    assert!(records.is_none());
+}
+
+#[test]
 fn recorded_prefix_orders_keep_exact_scores_at_new_powers() {
     let master = master_from(&tables());
     let mut live = live(false);

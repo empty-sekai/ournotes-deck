@@ -134,13 +134,16 @@ pub struct LuckExactAttempt {
     pub decline: Option<LuckExactDecline>,
 }
 
-/// Exact reachable terminal score/life pairs. Every pair has positive nominal probability.
+/// Reachable terminal score/life pairs. Every pair has positive nominal probability.
+/// When `attained_ceiling` is false and `decline` is absent, these are the complete support. A maximum
+/// certificate may return only its witnesses and does not establish all life values at that score.
 #[derive(Clone, Debug)]
 pub struct LuckExactSupport {
     pub outcomes: Vec<(i32, i32)>,
     pub stats: LuckExactStats,
     pub decline: Option<LuckExactDecline>,
-    /// A reachable score attained the supplied certified ceiling.
+    /// A reachable score is a certified maximum, by attaining a supplied ceiling in this call or an
+    /// earlier call with the same initialized model. This does not certify the complete support.
     pub attained_ceiling: bool,
 }
 
@@ -312,6 +315,14 @@ impl<'a> LuckExactSession<'a> {
         score_ceiling: Option<i32>,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<LuckExactSupport, Error> {
+        if cancelled() {
+            return Ok(LuckExactSupport {
+                outcomes: Vec::new(),
+                stats: LuckExactStats::default(),
+                decline: Some(LuckExactDecline::Cancelled),
+                attained_ceiling: false,
+            });
+        }
         let mut model = if let Some(ranking) = self.ranking {
             let mut model = LiveModel::new_gekisou_external(
                 self.master,
@@ -329,13 +340,23 @@ impl<'a> LuckExactSession<'a> {
             LiveModel::new(self.master, deck, self.notes, self.events, self.params)?
         };
         let identity = (self.capacity != 0).then(|| initialized_identity(&mut model)).flatten();
-        if !cancelled()
-            && let Some(identity) = &identity
+        if cancelled() {
+            return Ok(LuckExactSupport {
+                outcomes: Vec::new(),
+                stats: LuckExactStats::default(),
+                decline: Some(LuckExactDecline::Cancelled),
+                attained_ceiling: false,
+            });
+        }
+        if let Some(identity) = &identity
             && let Some(cached) = self
                 .supports
                 .iter()
                 .find(|cached| &cached.identity == identity && (!cached.attained_ceiling || score_ceiling.is_some()))
         {
+            if score_ceiling.is_some_and(|ceiling| cached.outcomes.iter().any(|&(score, _)| score > ceiling)) {
+                return Err(Error::Domain("reachable score exceeds its certified ceiling".into()));
+            }
             return Ok(LuckExactSupport {
                 outcomes: cached.outcomes.clone(),
                 stats: LuckExactStats::default(),
@@ -379,6 +400,49 @@ fn enumerate_support(
         |stats, why| LuckExactSupport { outcomes: Vec::new(), stats, decline: Some(why), attained_ceiling: false };
     if fresh.draws() != 0 {
         return Ok(declined(stats, LuckExactDecline::UnhandledRandom));
+    }
+    if let Some(ceiling) = score_ceiling {
+        if cancelled() {
+            return Ok(declined(stats, LuckExactDecline::Cancelled));
+        }
+        if budget.exhausted() || play.frames.len() as u128 > budget.remaining_frames as u128 {
+            return Ok(declined(stats, LuckExactDecline::WorkBudget));
+        }
+        let mut witness = fresh.clone();
+        witness.set_random(LiveRandom::with_support_witness());
+        budget.remaining_runs -= 1;
+        stats.replay_runs += 1;
+        for (frame, &dt) in play.frames.iter().zip(delta_times) {
+            if cancelled() {
+                return Ok(declined(stats, LuckExactDecline::Cancelled));
+            }
+            budget.remaining_frames -= 1;
+            stats.frames += 1;
+            if let Err(error) = witness.frame_timed(frame.time_ms, &frame.judged, dt) {
+                return match error {
+                    Error::Unsupported(_) | Error::Capacity(_) => Ok(declined(stats, LuckExactDecline::Unsupported)),
+                    error => Err(error),
+                };
+            }
+        }
+        if !witness.random.nominal_covers_draws() {
+            return Ok(declined(stats, LuckExactDecline::UnhandledRandom));
+        }
+        if cancelled() {
+            return Ok(declined(stats, LuckExactDecline::Cancelled));
+        }
+        stats.terminal_paths += 1;
+        if witness.score() > ceiling {
+            return Err(Error::Domain("reachable score exceeds its certified ceiling".into()));
+        }
+        if witness.score() == ceiling {
+            return Ok(LuckExactSupport {
+                outcomes: vec![(witness.score(), witness.current_life())],
+                stats,
+                decline: None,
+                attained_ceiling: true,
+            });
+        }
     }
     fresh.set_random(LiveRandom::with_support_prefix(Vec::new()));
     let mut pending = vec![(Vec::<usize>::new(), 0usize, Rc::new(fresh))];
@@ -647,12 +711,16 @@ fn enumerate_law(
 }
 
 #[cfg(test)]
+#[path = "luck_exact/support_tests.rs"]
+mod support_tests;
+
+#[cfg(test)]
 mod tests {
     use super::super::{JudgedNote, PlayFrame};
     use super::*;
     use serde_json::json;
 
-    fn fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
+    pub(super) fn fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
         let lots: Vec<_> = (0..5)
             .flat_map(|kind| {
                 [0, 3].map(
@@ -833,7 +901,9 @@ mod tests {
         assert_eq!(result.decline, None);
         assert!(result.attained_ceiling);
         assert_eq!(result.outcomes.iter().map(|&(score, _)| score).max(), Some(upper));
-        assert!(result.stats.terminal_paths < 100);
+        assert_eq!(result.stats.terminal_paths, 1);
+        assert_eq!(result.stats.replay_runs, 1);
+        assert_eq!(result.stats.frames, play.frames.len() as u64);
     }
 
     #[test]

@@ -147,6 +147,7 @@ pub(crate) struct NominalOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NominalScript {
     support_only: bool,
+    greatest_witness: bool,
     prefix: Vec<usize>,
     cursor: usize,
     handled_draws: u64,
@@ -178,13 +179,28 @@ impl LiveRandom {
 
     pub(crate) fn with_nominal_prefix(prefix: Vec<usize>) -> Self {
         let mut random = Self::new(0);
-        random.nominal = Some(NominalScript { support_only: false, prefix, cursor: 0, handled_draws: 0, branch: None });
+        random.nominal = Some(NominalScript {
+            support_only: false,
+            greatest_witness: false,
+            prefix,
+            cursor: 0,
+            handled_draws: 0,
+            branch: None,
+        });
         random
     }
 
     pub(crate) fn with_support_prefix(prefix: Vec<usize>) -> Self {
         let mut random = Self::with_nominal_prefix(prefix);
         random.nominal.as_mut().expect("nominal script").support_only = true;
+        random
+    }
+
+    /// One reachable path, choosing the greatest positive-mass result at each semantic draw. This
+    /// strategy makes no optimality claim: callers must compare its terminal score with a proved bound.
+    pub(crate) fn with_support_witness() -> Self {
+        let mut random = Self::with_support_prefix(Vec::new());
+        random.nominal.as_mut().expect("nominal script").greatest_witness = true;
         random
     }
 
@@ -264,6 +280,9 @@ impl LiveRandom {
         if outcomes.len() == 1 {
             return Ok(outcomes[0].value);
         }
+        if script.greatest_witness {
+            return Ok(outcomes.iter().max_by_key(|outcome| outcome.value).expect("positive outcomes").value);
+        }
         let Some(&choice) = script.prefix.get(script.cursor) else {
             script.branch = Some(outcomes);
             return Err(invalid("another outcome branch is required"));
@@ -300,6 +319,21 @@ impl LiveRandom {
 #[cfg(test)]
 mod nominal_tests {
     use super::*;
+
+    #[test]
+    fn support_witness_uses_only_positive_mass_results_without_branch_storage() {
+        let mut witness = LiveRandom::with_support_witness();
+        for _ in 0..8192 {
+            assert_eq!(witness.nominal_lottery(vec![(0, 5, 100), (3, 5, -7), (2, 5, -2)]).unwrap(), -2);
+        }
+        assert_eq!(witness.support_probability(0.0).unwrap(), Some(false));
+        assert_eq!(witness.support_probability(f32::from_bits(1)).unwrap(), Some(true));
+        assert_eq!(witness.draws(), 8194);
+        assert!(witness.nominal_prefix_consumed() && witness.nominal_covers_draws());
+        assert!(witness.nominal_branch().is_none());
+        witness.value(SKILL);
+        assert!(!witness.nominal_covers_draws());
+    }
 
     #[test]
     fn support_skill_probabilities_keep_only_positive_probability_outcomes() {

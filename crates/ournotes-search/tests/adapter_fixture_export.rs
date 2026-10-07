@@ -2682,3 +2682,6 @@ fn composition_power_frontier_keeps_canonical_ties_in_heuristic_layout() {
 
 #[path = "fixtures/correctness_matrix.rs"]
 mod correctness_matrix;
+
+#[path = "fixtures/maximum_matrix.rs"]
+mod maximum_matrix;
