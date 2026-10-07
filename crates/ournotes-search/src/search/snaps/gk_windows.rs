@@ -1468,7 +1468,7 @@ mod count_hit_tests {
         let exec = Exec::new(&setup, &times, None, &[]);
         let mut geo =
             Geo { frames: &frames, times: &times, exec: &exec, music_length_ms: 10_000, snapshot_frame_limit: None };
-        let (ws, commands, norm, _, spans, _, _, _, _) = windows(&geo, 0, &[], &[active.clone()], &[]);
+        let (ws, commands, norm, _, spans, _, _, _, _) = windows(&geo, 0, &[], std::slice::from_ref(&active), &[]);
         assert_eq!(spans.len(), 40);
         assert!((80.0..81.0).contains(&commands));
         // The closed native frame of a 300 ms end also contains the next 320 ms start: three

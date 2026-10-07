@@ -193,7 +193,7 @@ fn certified_seed_budget_preserves_the_complete_canonical_ranking() {
 }
 
 #[test]
-fn certified_score_caps_reuse_exclusion_proofs_across_equivalent_leaders() {
+fn certified_score_caps_reuse_leaf_exclusion_proofs_across_equivalent_leaders() {
     let (mut data, roster, mut request) = inputs(610_000, 3, 64);
     for effect in &mut data.master.leader_skill_effects {
         effect.effect_value = 0;
@@ -211,14 +211,50 @@ fn certified_score_caps_reuse_exclusion_proofs_across_equivalent_leaders() {
     };
     let family = paired(&reference.results[0]);
     assert!(reference.results.iter().all(|deck| paired(deck) == family));
-    let leaders: std::collections::HashSet<_> = reference.results.iter().map(|deck| deck.members[2]).collect();
+    let leaders: std::collections::BTreeSet<_> = reference.results.iter().map(|deck| deck.members[2]).collect();
     assert_eq!(leaders.len(), 3, "equal programs must retain distinct canonical leader identities");
 
+    // Supply real incumbents, then every legal Snap binding for these three leaders through the public
+    // initial-deck path. It applies the same leaf bounds before the whole-domain traversal, so an earlier
+    // family-node proof cannot conceal the complete score-cap cache this test is meant to exercise.
+    // The other two leaders remain in the searched domain; no candidate or time budget is changed.
+    request.initial_decks = reference
+        .results
+        .iter()
+        .map(|deck| ournotes_search::types::DeckInput { members: deck.members, snaps: deck.snaps })
+        .collect();
+    for leader in leaders {
+        let others: Vec<_> = (1..=5).filter(|&member| member != leader).collect();
+        let members = [others[0], others[1], leader, others[2], others[3]];
+        let mut bindings = 0;
+        for first in 0..=5 {
+            for second in 0..=5 {
+                // Slot 5 means the resource is absent. A present physical Snap has exactly one owner.
+                if first < 5 && first == second {
+                    continue;
+                }
+                let mut snaps = [None; 5];
+                if first < 5 {
+                    snaps[first] = Some(1);
+                }
+                if second < 5 {
+                    snaps[second] = Some(2);
+                }
+                request.initial_decks.push(ournotes_search::types::DeckInput { members, snaps });
+                bindings += 1;
+            }
+        }
+        assert_eq!(bindings, 31);
+    }
+    assert_eq!(request.initial_decks.len(), 96);
+    assert!(request.initial_decks.len() <= ournotes_search::types::MAX_INITIAL_DECKS);
     request.strategy = Strategy::BranchAndBound;
+    let mut uncached = None;
     for cache_entries in [0, 64] {
         request.limits.cache_entries = cache_entries;
         let result = engine::recommend(&data, &roster, &request).unwrap();
         assert_eq!(result.completion, Completion::Complete);
+        assert_eq!(result.optimality, ournotes_search::types::Optimality::Proven);
         assert_eq!(result.results.len(), reference.results.len());
         for (actual, expected) in result.results.iter().zip(&reference.results) {
             assert_eq!(
@@ -234,11 +270,17 @@ fn certified_score_caps_reuse_exclusion_proofs_across_equivalent_leaders() {
         if cache_entries == 0 {
             assert_eq!(caps.hits, 0);
             assert_eq!(caps.peak_entries, 0);
+            uncached = Some(result.results.clone());
         } else {
             assert!(caps.hits > 0, "equivalent leaders must reuse completed upper-bound proofs: {caps:?}");
             assert!(caps.peak_entries > 0);
-            assert_eq!(result.telemetry.incumbents.warm_start.evaluations, 3);
+            assert!(caps.lookups > caps.hits, "a completed exclusion must be built before reuse");
+            assert_eq!(
+                result.results,
+                *uncached.as_ref().unwrap(),
+                "cache on/off preserves complete canonical results"
+            );
         }
-        assert!(result.telemetry.leaves.order_bound_pruned > 0);
+        assert!(result.telemetry.leaves.order_bound_pruned > caps.hits, "at least one fresh exclusion must finish");
     }
 }
