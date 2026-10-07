@@ -81,7 +81,7 @@ fn finite(value: F64Interval) -> bool {
 }
 
 /// Exact comparison against a binary64 endpoint, using binary long division without a cross product.
-fn compare_exact_real(value: ExactExpectation, endpoint: f64) -> Result<Ordering, Error> {
+pub(super) fn compare_exact_real(value: ExactExpectation, endpoint: f64) -> Result<Ordering, Error> {
     if value.denominator == 0 || !endpoint.is_finite() {
         return Err(invalid("invalid exact comparison"));
     }

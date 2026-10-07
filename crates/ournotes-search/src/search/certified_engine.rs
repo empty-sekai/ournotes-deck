@@ -2,8 +2,8 @@
 use super::*;
 use crate::search::{
     certified_search::{
-        CertifiedEvaluation, PayoffMap, aggregate_orders, canonicalize_performers, refine_order_with_exact_law,
-        refinement_uncertainty,
+        BestOrderWitness, CertifiedEvaluation, PayoffMap, aggregate_orders, canonicalize_performers,
+        canonicalize_performers_with_basis, refine_order_with_exact_law, refinement_uncertainty,
     },
     interval_topk::{CandidateInterval, CanonicalTie, IntervalTopK, RankingProof, RemainingDomain},
 };
@@ -82,6 +82,7 @@ pub(super) struct CertifiedEntry {
     snaps: [Option<i64>; 5],
     power: i32,
     refinement: Option<Box<RetainedRefinement>>,
+    best_order: Option<Box<BestOrderWitness>>,
 }
 
 struct RetainedRefinement {
@@ -272,6 +273,8 @@ impl Engine<'_, '_> {
             });
         }
         let id = self.tel.leaves.visited;
+        let best_order = evaluation.best_order.clone();
+        let partial = best_order.as_ref().is_some_and(|best| best.evaluated_orders < ORDERS && !best.optimal);
         let retained_program = (state.retain_refinement == Some(true)).then(|| program_identity.clone());
         let equality = state.frontier.certify_equal_program(program_identity, power, payoff_identity);
         state.frontier.insert(CandidateInterval {
@@ -293,11 +296,12 @@ impl Engine<'_, '_> {
             map,
             retained_program.unwrap_or_default(),
         );
-        state.entries.insert(id, CertifiedEntry { physical, members, snaps, power, refinement });
+        state.entries.insert(id, CertifiedEntry { physical, members, snaps, power, refinement, best_order });
         state.entries.retain(|id, _| state.frontier.get(*id).is_some());
         state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
         self.tel.leaves.peak_retained = self.tel.leaves.peak_retained.max(state.entries.len());
-        self.tel.leaves.evaluated += 1;
+        self.tel.leaves.evaluated += u64::from(!partial);
+        self.tel.leaves.partial += u64::from(partial);
         self.remember(physical);
         self.rec.clock.lap(resume);
         self.report_progress();
@@ -343,26 +347,31 @@ impl Engine<'_, '_> {
             let selected = candidates.iter().find_map(|&id| {
                 let entry = &state.entries[&id];
                 let retained = entry.refinement.as_ref()?;
-                let mut indices: Vec<_> = if matches!(retained.map, PayoffMap::Score) {
-                    retained
-                        .evaluation
-                        .orders
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(index, order)| {
-                            (order.exact_mean.is_none() && !attempted.contains(&(id, index))).then_some(index)
-                        })
-                        .collect()
-                } else {
-                    retained
-                        .evaluation
-                        .refinements
-                        .iter()
-                        .filter_map(|refinement| {
-                            (!attempted.contains(&(id, refinement.order_index))).then_some(refinement.order_index)
-                        })
-                        .collect()
-                };
+                let mut indices: Vec<_> =
+                    if matches!(retained.map, PayoffMap::Score | PayoffMap::BestOrderExpectedScore) {
+                        retained
+                            .evaluation
+                            .orders
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, order)| {
+                                (order.exact_mean.is_none()
+                                    && !attempted.contains(&(id, index))
+                                    && (!matches!(retained.map, PayoffMap::BestOrderExpectedScore)
+                                        || order.mean.upper() >= retained.evaluation.score.lower()))
+                                .then_some(index)
+                            })
+                            .collect()
+                    } else {
+                        retained
+                            .evaluation
+                            .refinements
+                            .iter()
+                            .filter_map(|refinement| {
+                                (!attempted.contains(&(id, refinement.order_index))).then_some(refinement.order_index)
+                            })
+                            .collect()
+                    };
                 indices.sort_unstable();
                 indices.dedup();
                 (!indices.is_empty())
@@ -393,6 +402,7 @@ impl Engine<'_, '_> {
             if let Some(value) = self.simulation.score_music_length_ms {
                 input.params.score_music_length_ms = Some(value);
             }
+            let physical_performers = input.performers.clone();
             if canonicalize_performers(&mut input) != program {
                 return Err(Error::Domain("certified refinement changed the performer order basis".into()));
             }
@@ -406,9 +416,17 @@ impl Engine<'_, '_> {
                 .orders;
             let mut priorities = indices
                 .into_iter()
-                .map(|index| Ok((index, refinement_uncertainty(&orders[index], &map)?)))
+                .map(|index| {
+                    let priority = if matches!(map, PayoffMap::BestOrderExpectedScore) {
+                        orders[index].mean.upper()
+                    } else {
+                        refinement_uncertainty(&orders[index], &map)?
+                    };
+                    Ok((index, priority))
+                })
                 .collect::<Result<Vec<_>, Error>>()?;
-            // Uniform-order averaging gives every enclosure width the same aggregate weight.
+            // Uniform averaging gives every enclosure width the same aggregate weight. A maximum only
+            // needs contenders above its proved floor, prioritized by their remaining upper bounds.
             // This schedules exact work; only the interval frontier certifies the ranking.
             priorities.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
             let mut session = LuckExactSession::new(
@@ -438,7 +456,13 @@ impl Engine<'_, '_> {
                 let order =
                     state.entries[&id].refinement.as_ref().expect("admitted candidate").evaluation.orders[index].order;
                 attempted.insert((id, index));
-                let performers = order.map(|slot| input.performers[slot].clone());
+                let performers = order.map(|slot| {
+                    if matches!(map, PayoffMap::BestOrderExpectedScore) {
+                        physical_performers[slot].clone()
+                    } else {
+                        input.performers[slot].clone()
+                    }
+                });
                 self.tel.lottery_refinement.attempted_orders += 1;
                 let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
                 let result = session.law(&performers, &mut work, || self.expired());
@@ -498,6 +522,7 @@ impl Engine<'_, '_> {
                     evaluation.exact_payoff,
                 )?;
                 if let Some(entry) = state.entries.get_mut(&id) {
+                    entry.best_order = evaluation.best_order.clone();
                     entry.refinement.as_mut().expect("admitted candidate").evaluation = evaluation;
                 }
                 state.entries.retain(|id, _| state.frontier.get(*id).is_some());
@@ -522,7 +547,7 @@ impl Engine<'_, '_> {
         if !ournotes_sim::live::full::LuckExactBudget::admits_chart(input.notes.len(), input.play.frames.len()) {
             return Ok(false);
         }
-        let program = canonicalize_performers(&mut input);
+        let (program, basis) = canonicalize_performers_with_basis(&mut input);
         let score = if let Some(cached) = self.cached_certified_score(&program, power) {
             cached
         } else {
@@ -530,18 +555,20 @@ impl Engine<'_, '_> {
             let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
             let master = self.pool.master;
             let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
-            let result = crate::search::certified_search::evaluate_luck_context(
+            let result = crate::search::certified_search::evaluate_luck_context_bounded_policy(
                 master,
                 &skills,
                 &input,
                 &PayoffMap::Score,
                 Some(&mut curves),
+                matches!(self.metric, Metric::Score | Metric::BestOrderExpectedScore),
+                (&(0..ORDERS).collect::<Vec<_>>(), false, |_| true),
                 || self.expired(),
             );
             self.rec.clock.lap(resume);
             self.tel.caches.luck_curves.record(curves.stats());
             self.certified.as_mut().expect("certified request").luck_curves = curves;
-            let Some(score) = result? else { return Ok(false) };
+            let crate::search::certified_search::LuckContextOutcome::Full(score) = result? else { return Ok(false) };
             self.tel.leaves.simulations += ORDERS as u64;
             score
         };
@@ -558,14 +585,21 @@ impl Engine<'_, '_> {
             power,
             support,
         )?;
-        let evaluation = aggregate_orders(score.orders, &map)?;
-        self.certified
-            .as_mut()
-            .expect("certified request")
-            .entries
-            .get_mut(&id)
-            .expect("boundary candidate")
-            .refinement = RetainedRefinement::new(true, evaluation, map, program);
+        let orders = score
+            .orders
+            .into_iter()
+            .map(|mut order| {
+                if matches!(map, PayoffMap::BestOrderExpectedScore) {
+                    order.order = order.order.map(|slot| basis[slot]);
+                }
+                order
+            })
+            .collect();
+        let evaluation = aggregate_orders(orders, &map)?;
+        let entry =
+            self.certified.as_mut().expect("certified request").entries.get_mut(&id).expect("boundary candidate");
+        entry.best_order = evaluation.best_order.clone();
+        entry.refinement = RetainedRefinement::new(true, evaluation, map, program);
         Ok(true)
     }
 
@@ -602,6 +636,20 @@ impl Engine<'_, '_> {
                     rank_certified: Some(ranked),
                     score_summary: None,
                     best_order: None,
+                    best_expected_order: entry
+                        .best_order
+                        .as_ref()
+                        .map(|order| {
+                            Ok::<_, Error>(ExpectedOrderResult {
+                                performance_order: order.order,
+                                members: order.order.map(|slot| entry.members[slot]),
+                                expected_score: order.exact_mean.map(Into::into),
+                                score_interval: FractionInterval::from_f64(order.mean.lower(), order.mean.upper())?,
+                                optimality: if order.optimal { Optimality::Proven } else { Optimality::Unproven },
+                                evaluated_orders: order.evaluated_orders,
+                            })
+                        })
+                        .transpose()?,
                     order_outcomes: Vec::new(),
                 })
             })
@@ -664,6 +712,7 @@ mod refinement_tests {
                 .into_iter()
                 .map(|order| OrderScoreInterval {
                     order,
+                    evaluated: true,
                     mean: F64Interval::ONE,
                     support: (1, 1),
                     exact_mean: None,
@@ -678,6 +727,7 @@ mod refinement_tests {
                 members: [1, 2, 3, 4, 5],
                 snaps: [None; 5],
                 power: 1,
+                best_order: None,
                 refinement: RetainedRefinement::new(
                     retain_order_state(notes, frames),
                     evaluation,

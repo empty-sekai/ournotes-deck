@@ -214,8 +214,8 @@ impl DataIdentity {
     }
 }
 
-/// The value of a deck: the mean of its payoff over `orders` performance orders (120 for played lives, 1 for power
-/// and skip).
+/// The complete performance-order domain and the integer scale used by branch bounds (120 for played lives,
+/// 1 for power and skip). The declared metric determines uniform averaging or best conditional expectation.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Target {
@@ -857,7 +857,7 @@ pub struct LuckCurves {
     pub recording_hits: u64,
     pub recording_peak_entries: usize,
     pub recording_peak_bytes: usize,
-    /// Complete reduced recordings reused across sessions after full no-life context equality.
+    /// Complete reduced recordings reused across sessions after full compiled-state and context equality.
     pub shared_recording_lookups: u64,
     pub shared_recording_hits: u64,
     pub shared_recording_scope_builds: u64,
@@ -871,6 +871,13 @@ pub struct LuckCurves {
     /// Owned scope, exact keys, entry capacity and distinct retained probability allocations.
     /// This independent allowance excludes the session-local table and is not process RSS.
     pub shared_recording_peak_bytes: usize,
+    /// Complete deterministic life/judgement transcripts reused across distinct reduced lottery rows.
+    pub life_recording_lookups: u64,
+    pub life_recording_hits: u64,
+    pub life_recording_declines: u64,
+    pub life_recording_peak_entries: usize,
+    /// Independent scope, exact identity storage, entry capacity and retained transcript allocations.
+    pub life_recording_peak_bytes: usize,
     pub summary_lookups: u64,
     pub summary_hits: u64,
     pub summary_peak_entries: usize,
@@ -917,6 +924,11 @@ impl LuckCurves {
             shared_recording_capacity_declines: stats.shared_recording_capacity_declines,
             shared_recording_peak_entries: stats.shared_recording_peak_entries,
             shared_recording_peak_bytes: stats.shared_recording_peak_bytes,
+            life_recording_lookups: stats.life_recording_lookups,
+            life_recording_hits: stats.life_recording_hits,
+            life_recording_declines: stats.life_recording_declines,
+            life_recording_peak_entries: stats.life_recording_peak_entries,
+            life_recording_peak_bytes: stats.life_recording_peak_bytes,
             summary_lookups: stats.summary_lookups,
             summary_hits: stats.summary_hits,
             summary_peak_entries: stats.summary_peak_entries,

@@ -14,6 +14,10 @@ use serde_json::json;
 use std::cell::Cell;
 
 fn input() -> (Master, LuckSkills, FiniteSeedContext) {
+    input_with_order_skills(false)
+}
+
+fn input_with_order_skills(order_skills: bool) -> (Master, LuckSkills, FiniteSeedContext) {
     let mut source = synth_snaps(&mut Rng::new(141), 5, 0, &[]);
     set_column(&mut source, "MasterMemberCard", &mut |row| row["_characterID"] = row["_id"].clone());
     set_column(&mut source, "MasterLiveMusic", &mut |row| {
@@ -21,13 +25,26 @@ fn input() -> (Master, LuckSkills, FiniteSeedContext) {
         row["_gekisouMission2"] = json!(3);
         row["_gekisouMission3"] = json!(1);
     });
-    replace_table(&mut source, "MasterLiveSkillEffect", json!([]));
+    let live_effects = if order_skills {
+        set_column(&mut source, "MasterMemberCard", &mut |row| {
+            let id = row["_id"].as_i64().unwrap();
+            row["_liveSkillID"] = json!(if id <= 2 { 9100 + id } else { 0 });
+            row["_gekisouSkillID"] = json!(0);
+        });
+        json!([
+            {"_id":9101,"_liveSkillID":9101,"_level":1,"_skillEffectType":2000,"_effectValue":3500,"_activationTimeSecond":0.24},
+            {"_id":9102,"_liveSkillID":9102,"_level":1,"_skillEffectType":2000,"_effectValue":9000,"_activationTimeSecond":0.24}
+        ])
+    } else {
+        json!([])
+    };
+    replace_table(&mut source, "MasterLiveSkillEffect", live_effects);
     extend_table(
         &mut source,
         "MasterLiveSettings",
         vec![
-            json!({"_id":30,"_key":"gekisou_luck_gauge_max","_value":"40"}),
-            json!({"_id":31,"_key":"gekisou_luck_gauge_max_rush","_value":"20"}),
+            json!({"_id":30,"_key":"gekisou_luck_gauge_max","_value":if order_skills {"10"} else {"40"}}),
+            json!({"_id":31,"_key":"gekisou_luck_gauge_max_rush","_value":if order_skills {"10"} else {"20"}}),
             json!({"_id":32,"_key":"gekisou_luck_rush_score_bonus_percent","_value":"10"}),
         ],
     );
@@ -59,11 +76,23 @@ fn input() -> (Master, LuckSkills, FiniteSeedContext) {
         ),
     );
     let master = source.master();
-    let owned = roster(&mut Rng::new(142), &master);
+    let mut owned = roster(&mut Rng::new(142), &master);
+    if order_skills {
+        for member in &mut owned.members {
+            member.live_skill_level = 1;
+        }
+    }
     let pool = Pool::new(&master, &owned).unwrap();
+    // The stochastic order fixture uses two notes that each fill its short LUCK gauge. The first native
+    // Critical/Miss result can affect the second note while the ordinary first-position skill remains active.
+    let note_times = if order_skills { vec![100, 130] } else { vec![100] };
     let chart = Chart::from_notes(
-        vec![ChartNote { id: 1, time_ms: 100, note_type: 1 }],
-        vec![],
+        note_times
+            .into_iter()
+            .enumerate()
+            .map(|(id, time_ms)| ChartNote { id: id as i32 + 1, time_ms, note_type: 1 })
+            .collect(),
+        if order_skills { vec![ournotes_sim::live::skip::SkillEvent { index: 0, time_ms: 60 }] } else { vec![] },
         &LiveScoreSettings::from_master(&master).unwrap(),
     )
     .unwrap();
@@ -88,6 +117,164 @@ fn input() -> (Master, LuckSkills, FiniteSeedContext) {
     let input = context(&pool, &physical, &objective).unwrap();
     let skills = luck_skills(&master).unwrap();
     (master, skills, input)
+}
+
+#[test]
+fn best_order_cancellation_keeps_one_evaluated_order_and_all_pending_caps() {
+    let (master, _, mut input) = input();
+    input.gekisou = None;
+    let mut calls = 0;
+    let mut basis = [4, 2, 0, 3, 1];
+    let caps = vec![i128::from(i32::MAX); uniform::ORDERS];
+    let partial = evaluate_best_order_context(&master, None, &input, basis, &caps, None, None, || {
+        calls += 1;
+        calls >= 2
+    })
+    .unwrap()
+    .unwrap();
+    let witness = partial.best_order.unwrap();
+    assert_eq!(witness.evaluated_orders, 1);
+    assert_eq!(witness.order, [0, 1, 2, 3, 4]);
+    assert!(!witness.optimal);
+    assert_eq!(partial.score.upper(), f64::from(i32::MAX));
+    assert_eq!(partial.exact_score, None);
+    basis.sort_unstable();
+    assert!(evaluate_best_order_context(&master, None, &input, basis, &caps, None, None, || true).unwrap().is_none());
+}
+
+#[test]
+fn best_order_luck_expectation_encloses_independent_native_branch_means() {
+    use super::expectation::ExactExpectation;
+    use super::interval_topk::{compare_exact, exact_in_interval};
+    use ournotes_sim::live::full::{LuckExactBudget, LuckExactSession};
+    let (master, skills, input) = input_with_order_skills(true);
+    let mut exact = LuckExactSession::new(
+        &master,
+        &input.notes,
+        &input.events,
+        input.params,
+        input.gekisou.as_ref().unwrap(),
+        &input.play,
+        &input.delta_times,
+        input.rank_confirmations.as_deref(),
+        0,
+    )
+    .unwrap();
+    let mut work = LuckExactBudget::default();
+    let mut oracle = Vec::new();
+    let mut reachable = i32::MIN;
+    for order in uniform::all_orders() {
+        let performers = order.map(|slot| input.performers[slot].clone());
+        let attempt = exact.law(&performers, &mut work, || false).unwrap();
+        let law = attempt.law.expect("finite synthetic nominal branches");
+        let denominator =
+            law.atoms().iter().fold(1u128, |value, atom| value.checked_mul(atom.mass.denominator).unwrap());
+        let numerator = law
+            .atoms()
+            .iter()
+            .map(|atom| {
+                reachable = reachable.max(atom.score);
+                i128::from(atom.score)
+                    * i128::try_from(atom.mass.numerator).unwrap()
+                    * i128::try_from(denominator / atom.mass.denominator).unwrap()
+            })
+            .sum();
+        oracle.push((order, ExactExpectation { numerator, denominator }));
+    }
+    assert!(oracle.iter().any(|row| !compare_exact(row.1, oracle[0].1).unwrap().is_eq()));
+    oracle.sort_by(|a, b| compare_exact(b.1, a.1).unwrap().then(a.0.cmp(&b.0)));
+    let (best_order, maximum) = oracle[0];
+    assert!(
+        compare_exact(maximum, ExactExpectation { numerator: i128::from(reachable), denominator: 1 }).unwrap().is_lt()
+    );
+    let mut canonical = input.clone();
+    let (_, basis) = canonicalize_performers_with_basis(&mut canonical);
+    for capacity in [0, 1 << 20] {
+        let mut curves = LuckDpCache::new(capacity);
+        let result = evaluate_best_order_context(
+            &master,
+            Some(&skills),
+            &canonical,
+            basis,
+            &vec![i128::from(i32::MAX); uniform::ORDERS],
+            None,
+            Some(&mut curves),
+            || false,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(exact_in_interval(maximum, result.score).unwrap());
+        for order in &result.orders {
+            let value = oracle.iter().find(|row| row.0 == order.order).unwrap().1;
+            assert!(exact_in_interval(value, order.mean).unwrap());
+        }
+        let witness = result.best_order.unwrap();
+        let value = oracle.iter().find(|row| row.0 == witness.order).unwrap().1;
+        assert!(exact_in_interval(value, witness.mean).unwrap());
+        assert!(witness.evaluated_orders > 0);
+        if witness.optimal {
+            assert_eq!(witness.order, best_order);
+        }
+        if let Some(value) = result.exact_score {
+            assert!(compare_exact(value, maximum).unwrap().is_eq());
+        }
+    }
+}
+
+#[test]
+fn nonlinear_order_evaluation_retains_the_existing_score_enclosures_and_refinement_maps() {
+    let (master, skills, input) = input();
+    let mut session = ournotes_sim::live::full::LuckScoreSession::new(
+        &master,
+        &skills,
+        &input.notes,
+        &input.events,
+        input.params,
+        input.gekisou.as_ref().unwrap(),
+        &input.play,
+        &input.delta_times,
+        input.rank_confirmations.as_deref(),
+    );
+    let mut expected = Vec::new();
+    for order in uniform::all_orders() {
+        let performers = order.map(|slot| input.performers[slot].clone());
+        let summary = session.summary(&performers, None, || false).unwrap().unwrap();
+        let support = (summary.final_support.lower, summary.final_support.upper);
+        expected.push(OrderScoreInterval {
+            order,
+            evaluated: true,
+            mean: ournotes_sim::live::certified::F64Interval::new(summary.final_mean.lower, summary.final_mean.upper)
+                .unwrap()
+                .intersect(
+                    ournotes_sim::live::certified::F64Interval::new(f64::from(support.0), f64::from(support.1))
+                        .unwrap(),
+                )
+                .unwrap(),
+            support,
+            exact_mean: summary
+                .exact_constant_score
+                .map(|value| super::expectation::ExactExpectation { numerator: i128::from(value), denominator: 1 }),
+            final_life: summary.exact_final_life.map(|life| (life, life)),
+            tails: Default::default(),
+            refined_payoff: None,
+        });
+    }
+    let mid = expected[0].support.0.saturating_add((expected[0].support.1 - expected[0].support.0) / 2);
+    for map in [
+        PayoffMap::ScoreAtLeast { threshold: mid },
+        PayoffMap::CappedScore { threshold: mid },
+        PayoffMap::ScoreAndLifeAtLeast { threshold: mid, min_final_life: 1 },
+    ] {
+        let old = aggregate_orders(expected.clone(), &map).unwrap();
+        let actual = evaluate_luck_context(&master, &skills, &input, &map, None, || false).unwrap().unwrap();
+        assert_eq!(
+            (actual.score, actual.payoff, actual.exact_score, actual.exact_payoff),
+            (old.score, old.payoff, old.exact_score, old.exact_payoff)
+        );
+        for (a, b) in actual.orders.iter().zip(&expected) {
+            assert_eq!((a.order, a.mean, a.support, a.final_life), (b.order, b.mean, b.support, b.final_life));
+        }
+    }
 }
 
 #[test]

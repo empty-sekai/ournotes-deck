@@ -187,6 +187,7 @@ fn oracle(
                 expected_shortfall: None,
             }),
             best_order: None,
+            best_expected_order: None,
             order_outcomes: Vec::new(),
         });
         Ok(true)

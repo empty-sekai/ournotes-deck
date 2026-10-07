@@ -1,6 +1,7 @@
-//! Deck search: deterministic power/skip search and the exact search of played lives under the uniform member-order
-//! target (`super::uniform`). Candidate proposals are heuristic; every returned value is evaluated exactly under the
-//! declared model. Only exhaustion/proven pruning certifies K.
+//! Deck search: deterministic power/skip search and played-live search over the complete member-order domain.
+//! The default target averages the orders; the best-order metric maximizes their conditional score expectations.
+//! Candidate proposals are heuristic; completed values retain the declared model's exact values or enclosures.
+//! Only exhaustion/proven pruning certifies K.
 
 use super::expectation::{self, FiniteEvaluation, FiniteSeedContext, PhysicalDeck, SeedOutcome};
 use super::telemetry::{self, Recorder, Telemetry, Traversal, slot};
@@ -82,6 +83,7 @@ impl Entry {
                 rank_certified: None,
                 score_summary: None,
                 best_order: None,
+                best_expected_order: None,
                 order_outcomes: Vec::new(),
             });
         }
@@ -111,6 +113,7 @@ impl Entry {
             rank_certified: None,
             score_summary: Some(score_summary),
             best_order,
+            best_expected_order: None,
             order_outcomes: if self.evaluation.outcomes.len() == ORDERS {
                 self.evaluation
                     .outcomes
@@ -144,6 +147,7 @@ struct Engine<'a, 'm> {
     order_steps: [super::joint::OrderSteps; 6],
     top: Vec<Entry>,
     certified: Option<CertifiedState>,
+    lottery_mode: certified_engine::LotteryMode,
     /// Optional complete controller-family envelopes of fixed-member Snap subtrees.
     family: family_nodes::FamilyNodeCache<'a>,
     /// The master's lottery-related skills when the decks play lottery-free ([`certified_engine::LotteryMode::Free`]).
@@ -538,14 +542,18 @@ impl Engine<'_, '_> {
         };
         let live = matches!(self.request.objective.inner(), Objective::LiveScore { .. });
         let probability_law = if live {
-            let lottery = if self.certified.is_some() {
+            let lottery = if self.lottery_mode == certified_engine::LotteryMode::Certified {
                 "certifiedNativeLotteryIntervals"
             } else if self.lottery_free.is_some() {
                 "noLuckRange"
             } else {
                 "none"
             };
-            serde_json::json!({"kind":"uniformMemberOrder","orders":ORDERS,"lottery":lottery})
+            if matches!(self.metric, Metric::BestOrderExpectedScore) {
+                serde_json::json!({"kind":"bestMemberOrderExpectedScore","orders":ORDERS,"lottery":lottery})
+            } else {
+                serde_json::json!({"kind":"uniformMemberOrder","orders":ORDERS,"lottery":lottery})
+            }
         } else {
             serde_json::json!({"kind":"deterministic"})
         };
@@ -570,7 +578,11 @@ impl Engine<'_, '_> {
             player_goal: None,
             strategy: strategy.clone(),
             probability_law,
-            proof_scope: "conditional on declared master, roster and complete judgement/clock inputs, with the five members performing in a uniformly random order; client counters are not server reward authority",
+            proof_scope: if matches!(self.metric, Metric::BestOrderExpectedScore) {
+                "conditional on declared master, roster and complete judgement/clock inputs; maximize nominal expected score over all 120 performance orders; selected order optimality includes its canonical tie and is reported separately"
+            } else {
+                "conditional on declared master, roster and complete judgement/clock inputs, with the five members performing in a uniformly random order; client counters are not server reward authority"
+            },
             resolved_context: serde_json::Value::Null,
             results,
             telemetry,
@@ -667,7 +679,7 @@ pub(crate) fn payoff_of(
 ) -> Result<i128, Error> {
     match *metric {
         Metric::Power => Ok(power as i128),
-        Metric::Score => Ok(score as i128),
+        Metric::Score | Metric::BestOrderExpectedScore => Ok(score as i128),
         Metric::ScoreAtLeast { threshold } => Ok(i128::from(score >= threshold)),
         Metric::CappedScore { threshold } => Ok(score.min(threshold) as i128),
         Metric::ScoreAndLifeAtLeast { threshold, min_final_life } => Ok(i128::from(
@@ -827,8 +839,8 @@ pub fn evaluate_declared_context(
 }
 
 /// Low-level exact-model search; request.time_limit is respected in addition to Limits.
-/// Played input is COMPLETE declared judgement/clock data; a played live is valued by its mean payoff over the
-/// 120 performance orders (`super::uniform`).
+/// Played input is COMPLETE declared judgement/clock data; the declared metric aggregates all 120 performance
+/// orders, using uniform expected payoff by default and maximum conditional expectation for best-order score.
 #[allow(clippy::too_many_arguments)] // The audit inputs stay separately borrowed; JSON callers use RecommendationRequest.
 pub fn solve_physical(
     pool: &Pool,
@@ -1030,7 +1042,9 @@ pub(crate) fn solve_physical_impl(
         bonus_scratch: super::joint::BonusScratch::default(),
         order_steps: Default::default(),
         top: Vec::new(),
-        certified: if lottery == certified_engine::LotteryMode::Certified {
+        certified: if lottery == certified_engine::LotteryMode::Certified
+            || matches!(metric, Metric::BestOrderExpectedScore)
+        {
             Some(CertifiedState::new(
                 request.k,
                 if limits.cache_entries == 0 { 0 } else { certified_engine::LUCK_CURVE_CACHE_BYTES },
@@ -1038,6 +1052,7 @@ pub(crate) fn solve_physical_impl(
         } else {
             None
         },
+        lottery_mode: lottery,
         family,
         lottery_free: if lottery == certified_engine::LotteryMode::Free {
             Some(std::sync::Arc::new(ournotes_sim::live::full::luck_skills(pool.master)?))

@@ -1,5 +1,6 @@
 //! Power/skip Top-K search and explicit native-root expectation search.
-//! Played native objectives use [`expectation::oracle`]; order optimization is diagnostic only.
+//! Played native-root objectives use [`expectation::oracle`]. Formal recommendations support uniform-order
+//! expectation and an explicitly declared best conditional order expectation.
 //!
 //! Formal recommendations return leader/member-Snap teams, retaining distinct leaders and bindings. The legacy
 //! [`search`] function returns one result per set of five member cards; each legacy result is

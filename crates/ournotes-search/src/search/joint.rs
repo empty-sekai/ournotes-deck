@@ -1,11 +1,17 @@
-//! Joint member/Snap relaxation of the uniform member-order target (`super::uniform`).
+//! Joint member/Snap relaxation of the declared performance-order objective.
 //!
 //! The cheap envelope bounds the score of a team in one performance order by `P * min(A0 + sum of the slots' position
-//! gains, G) * (1 + eps)`. Its expectation over the 120 orders is at most the same expression with every gain
+//! gains, G) * (1 + eps)`. Its uniform expectation over the 120 orders is at most the same expression with every gain
 //! replaced by its mean over the five positions (linearity of the gain sum, Jensen for the concave `min`), so every
 //! node bound reads position-mean gains, and a cap read at [`super::uniform::MEAN_ORDERS`] bounds the sum over the
 //! orders. The per-note fine and raw caps keep their per-order structure: a complete team gets one of each per
 //! order, and their sum bounds its value.
+//!
+//! For the best-order expectation, each node gain row instead repeats its largest position gain. A 32-mask
+//! assignment bound places selected rows in distinct positions and intersects that relaxation. Both bounds
+//! include every original order separately. The existing 120-unit numerator grid bounds 120 times the maximum
+//! conditional expectation. Complete-team caps retain their original order labels and use their maximum on
+//! that grid. Controller-family means and carrier-split means apply only to the uniform objective.
 use super::expectation::PhysicalDeck;
 use super::{
     Objective, Pool, SearchRequest,
@@ -37,7 +43,7 @@ mod resource;
 mod split_tables;
 pub(crate) use bonus::BonusScratch;
 
-/// Leader first, then the other physical slots. Performance order is never a decision.
+/// Leader first, then the other physical slots. Performance orders are evaluated separately.
 pub(crate) const SLOTS: [usize; 5] = [2, 0, 1, 3, 4];
 
 /// A bound module: an upper bound of the payoff numerator, over the performance-order masses `orders`, of every
@@ -159,8 +165,9 @@ pub(crate) struct JointBounds {
     w: Vec<Vec<i64>>,
     lead: Vec<Vec<i64>>,
     profile: Vec<usize>,
-    /// Position-mean gains (every position of a row holds the row's mean): the gains of every node bound.
+    /// Each row repeats its position mean, or its position maximum for the best-order objective.
     gains: Vec<Vec<[f64; 5]>>,
+    best_order: bool,
     /// The per-position gains of the envelope, for the per-order caps of complete teams and the order-step bound.
     order_gains: Vec<Vec<[f64; 5]>>,
     /// Per member and choice, at least how far its largest per-position gain lies above its position-mean gain: with
@@ -246,6 +253,17 @@ fn pareto_pairs(mut pairs: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
 /// Every gain row replaced by its rounded-up position mean (see the module documentation).
 fn mean_table(gains: &[Vec<[f64; 5]>]) -> Vec<Vec<[f64; 5]>> {
     gains.iter().map(|rows| rows.iter().map(super::uniform::mean_row).collect()).collect()
+}
+
+fn node_gain_row(row: &[f64; 5], best_order: bool) -> [f64; 5] {
+    if best_order { [row.iter().copied().fold(0.0, f64::max); 5] } else { super::uniform::mean_row(row) }
+}
+
+fn node_gain_table(gains: &[Vec<[f64; 5]>], best_order: bool) -> Vec<Vec<[f64; 5]>> {
+    if !best_order {
+        return mean_table(gains);
+    }
+    gains.iter().map(|rows| rows.iter().map(|row| node_gain_row(row, true)).collect()).collect()
 }
 /// How far a row's largest per-position gain lies above its position mean (`mean[0]`, every entry the same), rounded
 /// up so that `add_up(mean, spread)` is at least the largest gain.
@@ -353,6 +371,7 @@ impl JointBounds {
             || !matches!(
                 metric,
                 Metric::Score
+                    | Metric::BestOrderExpectedScore
                     | Metric::ClientEventPoints { .. }
                     | Metric::ClientChallengePoints { .. }
                     | Metric::ScoreAtLeast { .. }
@@ -417,7 +436,8 @@ impl JointBounds {
         {
             return Err(unavailable("nonfinite/negative score relaxation"));
         }
-        let gains = mean_table(&order_gains);
+        let best_order = matches!(metric, Metric::BestOrderExpectedScore);
+        let gains = node_gain_table(&order_gains, best_order);
         let (spread, spread_top, column) = spread_tables(&order_gains, &gains, domain);
         let points = match metric {
             Metric::ScoreAtLeast { threshold } | Metric::ScoreAndLifeAtLeast { threshold, .. } => Some(
@@ -472,6 +492,7 @@ impl JointBounds {
             lead: t.lead,
             profile: t.profile_of,
             gains,
+            best_order,
             order_gains,
             spread,
             spread_top,
@@ -526,7 +547,9 @@ impl JointBounds {
                 })
                 .collect();
             compiled.carrier_levels = Some(CarrierLevels { carrier, at, keys });
-            compiled.carrier_split = carrier_split::CarrierSplit::compile(&compiled, pool, domain);
+            if !best_order {
+                compiled.carrier_split = carrier_split::CarrierSplit::compile(&compiled, pool, domain);
+            }
         }
         Ok(compiled)
     }
@@ -534,7 +557,7 @@ impl JointBounds {
     /// These cheap bounds with another linear envelope (per-position `gains`): the same power tables and choice order,
     /// no fine bound.
     fn level(&self, pool: &Pool, domain: &CandidateDomain, a0: f64, global: f64, gains: Vec<Vec<[f64; 5]>>) -> Self {
-        let means = mean_table(&gains);
+        let means = node_gain_table(&gains, self.best_order);
         let (spread, spread_top, column) = spread_tables(&gains, &means, domain);
         let mut b = Self {
             a: self.a.clone(),
@@ -542,6 +565,7 @@ impl JointBounds {
             lead: self.lead.clone(),
             profile: self.profile.clone(),
             gains: means,
+            best_order: self.best_order,
             order_gains: gains,
             spread,
             spread_top,
@@ -662,7 +686,7 @@ impl JointBounds {
         for &slot in &SLOTS[..depth] {
             order_placed[slot] = keys.gains(&env, p.members[slot], choices[slot]);
         }
-        let placed = order_placed.map(|g| super::uniform::mean_row(&g));
+        let placed = order_placed.map(|g| node_gain_row(&g, self.best_order));
         let a0 = keys.a0(&env, SLOTS[..depth].iter().map(|&slot| (p.members[slot], choices[slot])), free);
         Some(Keyed { a0, placed, order_placed })
     }
@@ -969,12 +993,12 @@ impl JointBounds {
         self.payoff_cap_from(self.a0, power, gain, bonus, f64::INFINITY)
     }
 
-    /// `payoff_cap` with the `A0` of some envelope at most this one's: a bound of the mean payoff over the orders when
-    /// `gain` sums position-mean gains and `max_gain` bounds the gain sum of every order (an infinite `max_gain`
-    /// leaves the global coefficient).
+    /// `payoff_cap` with the `A0` of some envelope at most this one's. Uniform expectations use position-mean
+    /// `gain`; the best-order objective also intersects its row-maximum gain with the assignment cap `max_gain`.
+    /// Both caps include every order, with each selected row assigned to a distinct performance position.
     fn payoff_cap_from(&self, a0: f64, power: i64, gain: f64, bonus: i64, max_gain: f64) -> i128 {
         let cap = |gain: f64| ((power as f64) * add_up(a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
-        let score_cap = cap(gain);
+        let score_cap = cap(if self.best_order { gain.min(max_gain) } else { gain });
         self.points.as_ref().map_or(score_cap, |pt| pt.mean_payoff(bonus, score_cap, cap(max_gain)))
     }
 
@@ -1010,8 +1034,8 @@ impl JointBounds {
         (spread, placement_sums(rows[..depth].iter()))
     }
 
-    /// At least the gain sum of every order of every completion of a prefix whose position-mean gain sum is at most
-    /// `gain` (see `order_gain_bounds`); infinite without points.
+    /// At least the gain sum of every order of every completion of a prefix whose node gain sum is at most
+    /// `gain` (see `order_gain_bounds`). Used by stepped payoffs and the best-order score objective.
     fn node_order_gain(
         &self,
         domain: &CandidateDomain,
@@ -1020,7 +1044,7 @@ impl JointBounds {
         gain: f64,
         keyed: Option<&Keyed>,
     ) -> f64 {
-        if self.points.is_none() {
+        if self.points.is_none() && !self.best_order {
             return f64::INFINITY;
         }
         let (spread, best) = self.order_gain_bounds(domain, p, depth, 5 - depth, keyed);
@@ -1800,6 +1824,27 @@ impl JointBounds {
         below: impl Fn(i128) -> bool,
         computed: &mut u64,
     ) -> bool {
+        if self.best_order {
+            let maximum =
+                |caps: &[i128]| caps.iter().copied().max().unwrap_or(0).saturating_mul(super::uniform::ORDERS as i128);
+            if self.fine.is_none() || below(maximum(caps)) {
+                return below(maximum(caps));
+            }
+            for (index, positions) in orders.iter().enumerate() {
+                let cap = &mut caps[index];
+                if let Some(raw) = self.raw_upper(domain, p, power, positions) {
+                    *cap = (*cap).min(raw);
+                }
+                *cap = (*cap).min(self.fine_upper(domain, p, power, positions, scratch).expect("compiled fine bound"));
+                *computed += 1;
+                // Every unfinished order retains its previous cap. A small sum or a completed promising
+                // order alone cannot exclude the best-order objective.
+                if below(maximum(caps)) {
+                    return true;
+                }
+            }
+            return false;
+        }
         let Some(mut sum) = caps.iter().try_fold(0i128, |a, &c| a.checked_add(c)) else {
             self.tighten_order_caps(domain, p, power, orders, caps, scratch);
             *computed += orders.len() as u64;
@@ -2403,6 +2448,83 @@ mod network_point_tests {
     use super::*;
     use ournotes_sim::{event, master::Master};
     use serde_json::json;
+
+    #[test]
+    fn maximum_position_rows_enclose_every_order_with_distinct_position_peaks() {
+        let rows = [
+            [1000.0, 1.0, 2.0, 3.0, 4.0],
+            [5.0, 2000.0, 6.0, 7.0, 8.0],
+            [9.0, 10.0, 3000.0, 11.0, 12.0],
+            [13.0, 14.0, 15.0, 4000.0, 16.0],
+            [17.0, 18.0, 19.0, 20.0, 5000.0],
+        ];
+        let gains: Vec<_> = rows.into_iter().map(|row| vec![row]).collect();
+        let uniform = node_gain_table(&gains, false);
+        let maximum = node_gain_table(&gains, true);
+        let uniform_cap: f64 = uniform.iter().map(|row| row[0][0]).sum();
+        let maximum_cap: f64 = maximum.iter().map(|row| row[0][0]).sum();
+        let mut largest = 0.0f64;
+        for order in super::super::uniform::all_orders() {
+            let score: f64 = order.iter().enumerate().map(|(position, &slot)| rows[slot][position]).sum();
+            largest = largest.max(score);
+            assert!(score <= maximum_cap);
+        }
+        assert_eq!(largest, 15_000.0);
+        assert!(largest > uniform_cap * 4.0);
+        assert!(maximum.iter().flatten().all(|row| row.iter().all(|&gain| gain == row[0])));
+    }
+
+    #[test]
+    fn best_order_assignment_cap_prevents_members_from_sharing_the_same_peak_position() {
+        // The first three members all want position zero. A bound must retain their alternate positions,
+        // but no complete order can collect all three row maxima at once.
+        let rows = [
+            [1000.0, 10.0, 20.0, 0.0, 0.0],
+            [2000.0, 30.0, 40.0, 0.0, 0.0],
+            [3000.0, 50.0, 60.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 4000.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 5000.0],
+        ];
+        let column = std::array::from_fn(|position| rows.iter().map(|row| row[position]).fold(0.0, f64::max));
+        let row_maxima: f64 = rows.iter().map(|row| row.iter().copied().fold(0.0, f64::max)).sum();
+        let actual = super::super::uniform::all_orders()
+            .iter()
+            .map(|order| order.iter().enumerate().map(|(position, &slot)| rows[slot][position]).sum::<f64>())
+            .fold(0.0, f64::max);
+        assert_eq!(actual, 12_050.0);
+        assert_eq!(row_maxima, 15_000.0);
+        let mut strictly_tighter = false;
+        for depth in 0..=5 {
+            let cap = order_gain_bound(&placement_sums(rows[..depth].iter()), &column, 0);
+            // Unselected rows still use per-column maxima, so every prefix covers every completion.
+            assert!(actual <= cap, "depth {depth}: {actual} > {cap}");
+            strictly_tighter |= cap < row_maxima;
+            if depth == 5 {
+                assert!(cap - actual < 1e-8, "complete assignment cap {cap}");
+            }
+        }
+        assert!(strictly_tighter);
+    }
+
+    #[test]
+    fn best_order_assignment_encloses_integer_ulp_boundaries_and_positive_overflow() {
+        // Individual terms are exact, while their sums cross the binary64 integer-spacing boundary.
+        let rows: [[f64; 5]; 5] = std::array::from_fn(|member| {
+            std::array::from_fn(|position| ((1u64 << 52) + (member * 7 + position * 3 + 1) as u64) as f64)
+        });
+        let column = std::array::from_fn(|position| rows.iter().map(|row| row[position]).fold(0.0, f64::max));
+        for depth in 0..=5 {
+            let cap = order_gain_bound(&placement_sums(rows[..depth].iter()), &column, 0);
+            assert!(cap.is_finite());
+            for order in super::super::uniform::all_orders() {
+                let exact: i128 = order.iter().enumerate().map(|(position, &slot)| rows[slot][position] as i128).sum();
+                assert!(cap as i128 >= exact, "depth {depth}, order {order:?}: {cap} < {exact}");
+            }
+        }
+        let large = [[f64::MAX; 5]; 5];
+        let cap = order_gain_bound(&placement_sums(large.iter()), &[f64::MAX; 5], 0);
+        assert_eq!(cap, f64::INFINITY, "positive overflow must retain a conservative upper bound");
+    }
 
     #[test]
     fn score_target_caps_preserve_signed_means_and_per_order_cutoffs() {

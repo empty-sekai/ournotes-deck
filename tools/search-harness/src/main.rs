@@ -542,6 +542,7 @@ mod tests {
             rank_certified: None,
             score_summary: None,
             best_order: None,
+            best_expected_order: None,
             order_outcomes: Vec::new(),
         }
     }

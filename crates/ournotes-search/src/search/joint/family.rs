@@ -24,7 +24,7 @@ impl JointBounds {
         table: &FamilyRewardTable,
         last_choices: &[usize],
     ) -> Option<i128> {
-        if self.points.is_some() || last_choices.is_empty() || table.members[2] != p.members[2] {
+        if self.best_order || self.points.is_some() || last_choices.is_empty() || table.members[2] != p.members[2] {
             return None;
         }
         let ns = domain.snaps().len();

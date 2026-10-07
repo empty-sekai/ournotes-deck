@@ -1046,8 +1046,8 @@ pub fn luck_score_bounds_replay(
     })
 }
 
-/// Per performance order of one deck, the certified LUCK curve DP and the production summary that contains it, timed
-/// apart, and which orders share a DP curve.
+/// Per performance order of one deck, the certified LUCK curve DP, factor-history summary and terminal
+/// expectation are timed separately. Both score intervals retain their own supports and admission status.
 pub fn luck_orders_profile(
     built: &BuiltProblem<'_>,
     members: [i64; 5],
@@ -1061,6 +1061,29 @@ pub fn luck_orders_profile(
     // One cache for the curves alone and one for the summaries, as the search shares it across orders.
     let mut cache = ournotes_sim::live::full::LuckDpCache::new(usize::MAX);
     let mut summary_cache = ournotes_sim::live::full::LuckDpCache::new(usize::MAX);
+    let mut terminal_cache = ournotes_sim::live::full::LuckDpCache::new(usize::MAX);
+    let mut summary_session = ournotes_sim::live::full::LuckScoreSession::new(
+        master,
+        &skills,
+        &input.notes,
+        &input.events,
+        input.params,
+        &setup,
+        &input.play,
+        &input.delta_times,
+        input.rank_confirmations.as_deref(),
+    );
+    let mut terminal_session = ournotes_sim::live::full::LuckScoreSession::new(
+        master,
+        &skills,
+        &input.notes,
+        &input.events,
+        input.params,
+        &setup,
+        &input.play,
+        &input.delta_times,
+        input.rank_confirmations.as_deref(),
+    );
     let curve_text = |result: &ournotes_sim::live::full::LuckDpCertifiedResult| {
         format!("{:?}{:?}{}/{}", result.steps, result.probes, result.peak_states, result.transitions)
     };
@@ -1124,29 +1147,44 @@ pub fn luck_orders_profile(
         );
         let summary_ms = started.elapsed().as_secs_f64() * 1e3;
         let started = std::time::Instant::now();
-        let summary_cached = ournotes_sim::live::full::luck_score_summary_with_curves(
-            master,
-            &skills,
-            &performers,
-            &input.notes,
-            &input.events,
-            input.params,
-            &setup,
-            &input.play,
-            &input.delta_times,
-            input.rank_confirmations.as_deref(),
-            Some(&mut summary_cache),
-        );
+        let summary_cached = summary_session.summary(&performers, Some(&mut summary_cache), || false);
         let summary_cached_ms = started.elapsed().as_secs_f64() * 1e3;
-        let same_summary = format!("{summary:?}") == format!("{summary_cached:?}");
+        let same_summary = match (&summary, &summary_cached) {
+            (Ok(a), Ok(Some(b))) => format!("{a:?}") == format!("{b:?}"),
+            (Err(a), Err(b)) => a == b,
+            _ => false,
+        };
+        let started = std::time::Instant::now();
+        let prepared = terminal_session.rush_cap_preparation(&performers, Some(&mut terminal_cache), || false);
+        let (terminal, terminal_refusal) = match prepared {
+            ournotes_sim::live::full::LuckRushPreparation::Ready(capability) => {
+                let value = capability.terminal_summary(i64::from(input.params.total_power));
+                let refusal = value.is_none().then(|| "terminal history enclosure unavailable".to_owned());
+                (value, refusal)
+            }
+            ournotes_sim::live::full::LuckRushPreparation::Unavailable { reason, error } => {
+                (None, Some(format!("{reason:?}: {error}")))
+            }
+            ournotes_sim::live::full::LuckRushPreparation::Stopped => (None, Some("cancelled".to_owned())),
+        };
+        let terminal_ms = started.elapsed().as_secs_f64() * 1e3;
+        let intersection = terminal.as_ref().zip(summary.as_ref().ok()).and_then(|(a, b)| {
+            let lower = a.final_mean.lower.max(b.final_mean.lower);
+            let upper = a.final_mean.upper.min(b.final_mean.upper);
+            (lower <= upper).then_some([lower, upper])
+        });
         rows.push(serde_json::json!({"order":order,"dpMs":dp_ms,"cachedMs":cached_ms,"sameCurve":same_curve,
             "summaryMs":summary_ms,"summaryCachedMs":summary_cached_ms,"sameSummary":same_summary,"curve":index,
             "peakStates":states,"transitions":transitions,
             "mean":summary.as_ref().ok().map(|s| [s.final_mean.lower, s.final_mean.upper]),
+            "summaryWidth":summary.as_ref().ok().map(|s| s.final_mean.upper - s.final_mean.lower),
+            "terminalMs":terminal_ms,"terminalSummary":terminal,
+            "terminalWidth":terminal.as_ref().map(|s| s.final_mean.upper - s.final_mean.lower),
+            "terminalRefusal":terminal_refusal,"meanIntersection":intersection,
             "error":summary.err().map(|e| e.to_string())}));
     }
     Ok(serde_json::json!({"members":members,"snaps":snaps,"curves":curves.len(),"cache":cache.stats(),
-        "summaryCache":summary_cache.stats(),"orders":rows}))
+        "summaryCache":summary_cache.stats(),"terminalCache":terminal_cache.stats(),"orders":rows}))
 }
 
 /// Benchmark the production summary for exactly the same supplied physical performance order.

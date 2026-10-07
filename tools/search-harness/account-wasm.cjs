@@ -34,6 +34,8 @@ assert.equal(capabilities.eventMusicRanking.goal, 'challengeLive');
 assert.equal(capabilities.eventMusicRanking.metric, 'score');
 assert.equal(capabilities.luckMissions, true);
 assert.equal(capabilities.support.freeLive.scoreAndLife, 'proven');
+assert.equal(capabilities.support.freeLive.bestOrderExpectedScore, 'proven');
+assert.equal(capabilities.bestOrderExpectedScore.orders, 120);
 assert.equal(capabilities.scoreAndLife.requiresCompleteJudgementStream, true);
 assert.equal(capabilities.skip.musicIdOrChallengeMusicId, true);
 const privateValues = ['PRIVATE_NAME_SENTINEL', '9007199254740993', '9223372036854775806',
@@ -71,7 +73,17 @@ for (const name of names) {
   assert.equal(actual.result.optimality.proven, true);
   assert.equal(actual.result.teams.length, 5, `${name}: complete K=5`);
   assert(actual.result.teams.some(team => team.layout.snaps.some(snap => snap !== null)), `${name}: nonempty Snap`);
-  if (JSON.parse(request).goal.kind === 'freeLive') {
+  if (JSON.parse(request).metric?.kind === 'bestOrderExpectedScore') {
+    for (const team of actual.result.teams) {
+      assert.equal(team.orders, null);
+      const witness = team.bestExpectedOrder;
+      assert.equal(witness.optimality, 'proven');
+      assert(witness.evaluatedOrders > 0 && witness.evaluatedOrders <= 120);
+      assert.deepEqual(witness.performanceOrder.map(slot => team.layout.members[slot]), witness.members);
+      assert.equal(BigInt(witness.expectedScore.numerator) * BigInt(team.value.exact.denominator),
+        BigInt(team.value.exact.numerator) * BigInt(witness.expectedScore.denominator));
+    }
+  } else if (JSON.parse(request).goal.kind === 'freeLive') {
     assert(caseReports > 0, `${name}: progress reports`);
     for (const team of actual.result.teams) {
       assert.equal(team.orders.count, 120);
@@ -95,6 +107,8 @@ for (const [name, change, issuePath] of [
   ['life-stream', q => { q.goal.play.stream.judged.pop(); }, 'goal.play.stream'],
   ['challenge-skip-points', q => { q.goal.musicId = 10; }, 'goal.challengeMusicId'],
   ['challenge-skip-items', q => { delete q.eventContext.selectedRewards; }, 'eventContext.selectedRewards'],
+  ['free-bestOrderExpectedScore', q => { q.goal.kind = 'skip'; }, 'metric.kind'],
+  ['free-bestOrderExpectedScore', q => { q.metric.threshold = 1; }, 'metric.threshold'],
 ]) {
   const request = JSON.parse(read(name + '.request.json'));
   change(request);

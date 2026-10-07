@@ -82,6 +82,9 @@ impl Engine<'_, '_> {
         power: i32,
         cut: Option<(&crate::search::joint::JointBounds, &crate::domain::CandidateDomain)>,
     ) -> Result<Leaf, Error> {
+        if matches!(self.metric, Metric::BestOrderExpectedScore) {
+            return self.evaluate_best_expected_order(physical, power, cut);
+        }
         if self.certified.is_some() {
             let mut score_cutoff = None;
             if matches!(self.metric, crate::types::Metric::Score)
@@ -158,12 +161,14 @@ impl Engine<'_, '_> {
                 let mut upper_work = telemetry::LotteryUpper::default();
                 let mut completed_orders = 0u64;
                 let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
-                let result = crate::search::certified_search::evaluate_luck_context_bounded(
+                let complete_terminal = matches!(self.metric, Metric::Score);
+                let result = crate::search::certified_search::evaluate_luck_context_bounded_policy(
                     master,
                     &skills,
                     &input,
                     &crate::search::certified_search::PayoffMap::Score,
                     Some(&mut curves),
+                    complete_terminal,
                     (&schedule, prepare_upper, |event| match event {
                         LuckContextEvent::UpperAttempt => {
                             upper_work.attempted_orders += 1;
@@ -549,6 +554,124 @@ impl Engine<'_, '_> {
         let census = self.tel.leaves.census.as_mut().expect("census started");
         census.record(physical.members, team, cheap, fine);
         Ok(Leaf::Pruned)
+    }
+}
+
+impl Engine<'_, '_> {
+    fn evaluate_best_expected_order(
+        &mut self,
+        physical: &PhysicalDeck,
+        power: i32,
+        cut: Option<(&crate::search::joint::JointBounds, &crate::domain::CandidateDomain)>,
+    ) -> Result<Leaf, Error> {
+        use crate::search::certified_search::{PayoffMap, aggregate_orders, canonicalize_performers_with_basis};
+        let cutoff = self.safe_cutoff();
+        let below = |cap: i128| {
+            cutoff.is_some_and(|(threshold, kth_power)| cap < threshold || (cap == threshold && power < kth_power))
+        };
+        if self.cached_certified_score_cap(physical, power).is_some_and(below) {
+            self.tel.leaves.order_bound_pruned += 1;
+            return Ok(Leaf::Pruned);
+        }
+        let max_grid = |caps: &[i128]| caps.iter().copied().max().unwrap_or(i128::MAX).saturating_mul(ORDERS as i128);
+        let mut caps = match cut {
+            Some((bounds, domain)) => bounds.order_cheap_caps(domain, physical, i64::from(power), &self.positions),
+            None => vec![i128::from(i32::MAX); ORDERS],
+        };
+        if below(max_grid(&caps)) {
+            self.tel.leaves.cheap_pruned += 1;
+            return Ok(Leaf::Pruned);
+        }
+        if let Some((bounds, domain)) = cut
+            && bounds.has_fine()
+            && cutoff.is_some()
+        {
+            let (_, resume) = self.rec.clock.lap(slot::FINE);
+            let pruned = bounds.tighten_order_caps_until(
+                domain,
+                physical,
+                i64::from(power),
+                &self.positions,
+                &mut caps,
+                &mut self.bound_scratch,
+                below,
+                &mut self.tel.leaves.fine_orders,
+            );
+            self.rec.clock.lap(resume);
+            if pruned {
+                self.tel.leaves.fine_pruned += 1;
+                return Ok(Leaf::Pruned);
+            }
+        }
+        let mut input = expectation::context(self.pool, physical, &self.request.objective)?;
+        if let Some(value) = self.simulation.music_length_ms {
+            input.params.music_length_ms = value;
+        }
+        if let Some(value) = self.simulation.score_music_length_ms {
+            input.params.score_music_length_ms = Some(value);
+        }
+        input.lottery_free = self.lottery_free.clone();
+        self.admit_certified_refinement(input.notes.len(), input.play.frames.len());
+        let (program, basis) = canonicalize_performers_with_basis(&mut input);
+        let map = PayoffMap::BestOrderExpectedScore;
+        let evaluation = if let Some(cached) = self.cached_certified_score(&program, power) {
+            let orders = cached
+                .orders
+                .into_iter()
+                .map(|mut order| {
+                    order.order = order.order.map(|slot| basis[slot]);
+                    order
+                })
+                .collect();
+            aggregate_orders(orders, &map)?
+        } else {
+            let skills = if self.lottery_mode == certified_engine::LotteryMode::Certified {
+                Some(self.certified_luck_skills()?)
+            } else {
+                None
+            };
+            let mut curves = std::mem::take(&mut self.certified.as_mut().expect("best-order request").luck_curves);
+            let master = self.pool.master;
+            let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+            self.tel.leaves.started += 1;
+            let result = crate::search::certified_search::evaluate_best_order_context(
+                master,
+                skills.as_deref(),
+                &input,
+                basis,
+                &canonical_order_caps(&caps, basis),
+                cutoff.map(|(threshold, kth_power)| (threshold, power, kth_power)),
+                Some(&mut curves),
+                || self.expired(),
+            );
+            self.rec.clock.lap(resume);
+            self.tel.caches.luck_curves.record(curves.stats());
+            self.certified.as_mut().expect("best-order request").luck_curves = curves;
+            let Some(evaluation) = result? else { return Ok(Leaf::Stopped) };
+            self.tel.leaves.simulations += evaluation.orders.iter().filter(|order| order.evaluated).count() as u64;
+            let mut inverse = [0; 5];
+            for (canonical, physical) in basis.into_iter().enumerate() {
+                inverse[physical] = canonical;
+            }
+            let canonical = evaluation
+                .orders
+                .iter()
+                .cloned()
+                .map(|mut order| {
+                    order.order = order.order.map(|slot| inverse[slot]);
+                    order
+                })
+                .collect();
+            self.cache_certified_score(program.clone(), power, &aggregate_orders(canonical, &map)?);
+            evaluation
+        };
+        let cap = (evaluation.score.upper().ceil() as i128).saturating_mul(ORDERS as i128);
+        self.cache_certified_score_cap(physical, power, cap);
+        if below(cap) {
+            self.tel.leaves.order_bound_pruned += 1;
+            return Ok(Leaf::Pruned);
+        }
+        Ok(Leaf::Certified(evaluation, program, map))
     }
 }
 

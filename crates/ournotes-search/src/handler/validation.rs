@@ -56,6 +56,7 @@ pub(crate) fn validate_payoff(
     }
     match (request.objective.inner(), metric) {
         (Objective::Power { .. }, Metric::Power)
+        | (Objective::LiveScore { .. }, Metric::BestOrderExpectedScore)
         | (
             Objective::SkipScore { .. } | Objective::LiveScore { .. },
             Metric::Score
@@ -89,13 +90,22 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
     let goal = r.goal.unwrap_or(inferred);
     let valid = match goal {
         PlayerGoal::Power => matches!((&r.execution, &r.metric), (Execution::Power { .. }, Metric::Power)),
-        PlayerGoal::DailyHighScore => matches!((&r.execution, &r.metric), (Execution::Live { .. }, Metric::Score)),
+        PlayerGoal::DailyHighScore => matches!(
+            (&r.execution, &r.metric),
+            (Execution::Live { .. }, Metric::Score | Metric::BestOrderExpectedScore)
+        ),
         PlayerGoal::StableTarget => r.metric.target().is_some(),
         PlayerGoal::EventFarming => r.metric.event().is_some(),
         PlayerGoal::SkipFarming => matches!(r.execution, Execution::Skip { .. }),
         PlayerGoal::GekisouScore => {
             matches!(r.execution, Execution::Live { gekisou: true, .. })
-                && matches!(r.metric, Metric::Score | Metric::CappedScore { .. } | Metric::ScoreAtLeast { .. })
+                && matches!(
+                    r.metric,
+                    Metric::Score
+                        | Metric::BestOrderExpectedScore
+                        | Metric::CappedScore { .. }
+                        | Metric::ScoreAtLeast { .. }
+                )
         }
     };
     if !valid {
@@ -119,6 +129,9 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
     let payoff_meaning = match r.metric {
         Metric::Power => "maximize current-progression deck power",
         Metric::Score => "maximize the expected final score over the random performance order under the declared play",
+        Metric::BestOrderExpectedScore => {
+            "maximize the conditional nominal expected final score over all 120 performance orders"
+        }
         Metric::ScoreAtLeast { .. } => {
             "maximize the probability of reaching the score target over the random performance order"
         }
@@ -143,7 +156,11 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
                 "complete declared judgement stream; touch timing and human error distribution not inferred"
             }
         });
-        assumptions.push("the five members perform in a uniformly random order; paired snaps follow their members");
+        assumptions.push(if matches!(r.metric, Metric::BestOrderExpectedScore) {
+            "select among all 120 performance orders by conditional expectation; paired snaps follow their members; the selected order is not guaranteed in gameplay"
+        } else {
+            "the five members perform in a uniformly random order; paired snaps follow their members"
+        });
         assumptions.push(
             "native lottery probability law; certified intervals remain explicit until sufficient to prove ranking",
         );

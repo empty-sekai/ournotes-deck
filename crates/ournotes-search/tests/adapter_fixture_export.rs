@@ -18,6 +18,8 @@ const FIXTURE_SEED: u64 = 20_261_001;
 const SCORE_ID: i64 = 1004;
 const EVENT_ID: i64 = 7;
 
+#[path = "fixtures/best_order.rs"]
+mod best_order;
 #[path = "fixtures/combo_integer.rs"]
 mod combo_integer;
 #[path = "fixtures/conversion_partitions.rs"]
@@ -2714,10 +2716,19 @@ fn export_account_transport_corpus() {
         if matches!(scene, "battle" | "arena") {
             goal["rank"] = json!(1);
         }
-        for metric in
-            ["score", "scoreAtLeast", "cappedScore", "scoreAndLife", "eventPoints", "challengePoints", "eventItems"]
-        {
-            if skipped && metric == "scoreAndLife" || challenge && metric == "challengePoints" {
+        for metric in [
+            "score",
+            "bestOrderExpectedScore",
+            "scoreAtLeast",
+            "cappedScore",
+            "scoreAndLife",
+            "eventPoints",
+            "challengePoints",
+            "eventItems",
+        ] {
+            if skipped && matches!(metric, "scoreAndLife" | "bestOrderExpectedScore")
+                || challenge && metric == "challengePoints"
+            {
                 continue;
             }
             let name = match (scene, metric) {
@@ -2792,7 +2803,7 @@ fn export_account_transport_corpus() {
         requests.push((name.to_string(), request));
         coverage.push(json!({"name":name,"scene":kind,"metric":"scoreAndLife","scope":"synthetic","play":"pattern"}));
     }
-    assert_eq!(requests.len(), 49, "46 scene/metric pairs plus accuracy and two explicit patterns");
+    assert_eq!(requests.len(), 54, "51 scene/metric pairs plus accuracy and two explicit patterns");
     let mut names = BTreeSet::new();
     for (name, request) in requests {
         assert!(names.insert(name.clone()), "duplicate corpus identity");

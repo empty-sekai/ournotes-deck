@@ -47,6 +47,7 @@ fn fixture() -> (Parsed, RecommendationOutcome) {
             rank_certified: Some(false),
             score_summary: None,
             best_order: None,
+            best_expected_order: None,
             order_outcomes: vec![],
         }],
     };

@@ -293,6 +293,8 @@ impl Scene {
 pub enum Metric {
     Power,
     Score,
+    /// Maximum, over all 120 performance orders, of each order's nominal expected final score.
+    BestOrderExpectedScore,
     ScoreAtLeast {
         threshold: i32,
     },
@@ -335,7 +337,10 @@ impl Metric {
     }
     pub(crate) fn upper(&self) -> Option<i128> {
         match self {
-            Self::Score | Self::ClientEventPoints { .. } | Self::ClientChallengePoints { .. } => Some(i32::MAX as i128),
+            Self::Score
+            | Self::BestOrderExpectedScore
+            | Self::ClientEventPoints { .. }
+            | Self::ClientChallengePoints { .. } => Some(i32::MAX as i128),
             Self::ScoreAtLeast { .. } | Self::ScoreAndLifeAtLeast { .. } => Some(1),
             Self::CappedScore { threshold } => Some(*threshold as i128),
             _ => None,
@@ -540,6 +545,19 @@ pub struct OrderResult {
     pub score: i32,
     pub payoff: String,
 }
+/// An actually evaluated performance order and its conditional nominal score expectation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpectedOrderResult {
+    pub performance_order: [usize; 5],
+    pub members: [i64; 5],
+    pub expected_score: Option<Fraction>,
+    pub score_interval: FractionInterval,
+    /// Includes the lexicographic slot-order tie-break across all 120 orders. Search results use
+    /// the canonical team layout: leader at slot 2, other member/Snap pairs sorted into 0, 1, 3, 4.
+    pub optimality: Optimality,
+    pub evaluated_orders: usize,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScoreSummary {
@@ -554,7 +572,7 @@ pub struct ScoreSummary {
     pub expected_shortfall: Option<Fraction>,
 }
 /// One result. For a played live it is a team in its canonical layout (the leader in slot 2, the other members in
-/// ascending card ID order, each with its Snap), valued by its mean over the 120 performance orders.
+/// ascending card ID order, each with its Snap), valued by the declared metric over all 120 performance orders.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecommendedDeck {
@@ -573,6 +591,8 @@ pub struct RecommendedDeck {
     pub score_summary: Option<ScoreSummary>,
     /// Played lives: the performance order with the highest payoff (then score; the first in lexicographic order).
     pub best_order: Option<OrderResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_expected_order: Option<ExpectedOrderResult>,
     /// Played lives: each of the 120 performance orders (the result's slots in performance order) with its score
     /// and payoff; empty otherwise. Not part of the JSON result.
     #[serde(skip)]

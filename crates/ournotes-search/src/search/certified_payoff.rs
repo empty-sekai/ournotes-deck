@@ -30,6 +30,7 @@ pub(crate) fn payoff_map(
     }
     match *metric {
         Metric::Score => return Ok(PayoffMap::Score),
+        Metric::BestOrderExpectedScore => return Ok(PayoffMap::BestOrderExpectedScore),
         Metric::ScoreAtLeast { threshold } => return Ok(PayoffMap::ScoreAtLeast { threshold }),
         Metric::CappedScore { threshold } => return Ok(PayoffMap::CappedScore { threshold }),
         Metric::ScoreAndLifeAtLeast { threshold, min_final_life } => {

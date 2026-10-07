@@ -2,7 +2,7 @@
 //! Native step payoffs consume tail probabilities, never a native payoff evaluated at the mean score.
 use super::{
     expectation::ExactExpectation,
-    interval_topk::{compare_exact, exact_in_interval},
+    interval_topk::{compare_exact, compare_exact_real, exact_in_interval},
     uniform,
 };
 use ournotes_sim::{Error, live::certified::F64Interval};
@@ -17,6 +17,8 @@ pub struct TailProbability {
 #[derive(Clone, Debug)]
 pub struct OrderScoreInterval {
     pub order: [usize; 5],
+    /// True after complete conditional score expectation evaluation. False marks a proved pending-order bound.
+    pub evaluated: bool,
     pub mean: F64Interval,
     pub support: (i32, i32),
     pub exact_mean: Option<ExactExpectation>,
@@ -37,6 +39,8 @@ pub struct PayoffStep {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PayoffMap {
     Score,
+    /// Each conditional law retains its expectation; aggregation maximizes only over performance orders.
+    BestOrderExpectedScore,
     ScoreAtLeast {
         threshold: i32,
     },
@@ -76,6 +80,16 @@ pub struct CertifiedEvaluation {
     pub exact_payoff: Option<ExactExpectation>,
     pub orders: Vec<OrderScoreInterval>,
     pub refinements: Vec<BoundaryRefinement>,
+    pub best_order: Option<Box<BestOrderWitness>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct BestOrderWitness {
+    pub order: [usize; 5],
+    pub mean: F64Interval,
+    pub exact_mean: Option<ExactExpectation>,
+    pub optimal: bool,
+    pub evaluated_orders: usize,
 }
 
 /// All cached and refined order labels use this same complete-performer basis. Paired support remains
@@ -157,6 +171,9 @@ impl OrderScoreInterval {
         }
         if self.exact_mean.is_some_and(|v| v.denominator == 0) || self.final_life.is_some_and(|(lo, hi)| lo > hi) {
             return Err(invalid("invalid exact mean or life support"));
+        }
+        if !self.evaluated && self.exact_mean.is_some() {
+            return Err(invalid("a pending order cannot declare an exact evaluated mean"));
         }
         if let Some(exact) = self.exact_mean
             && !exact_in_interval(exact, self.mean)?
@@ -295,7 +312,7 @@ pub(super) fn refine_order_with_exact_law(
         };
         let mass = ExactExpectation { numerator, denominator: atom.mass.denominator };
         let value = match map {
-            PayoffMap::Score => atom.score as i128,
+            PayoffMap::Score | PayoffMap::BestOrderExpectedScore => atom.score as i128,
             PayoffMap::ScoreAtLeast { threshold } => i128::from(atom.score >= *threshold),
             PayoffMap::CappedScore { threshold } => atom.score.min(*threshold) as i128,
             PayoffMap::ScoreAndLifeAtLeast { threshold, min_final_life } => {
@@ -334,6 +351,7 @@ pub(super) fn refine_order_with_exact_law(
         return Err(invalid("complete nominal law changes an exact score mean"));
     }
     let mut next = order.clone();
+    next.evaluated = true;
     next.mean = order.mean.intersect(score_bounds).ok_or_else(|| invalid("inconsistent exact score enclosure"))?;
     next.exact_mean = Some(score);
     next.support = support;
@@ -369,7 +387,7 @@ fn order_payoff(order: &OrderScoreInterval, map: &PayoffMap) -> Result<OrderPayo
         return Ok(plain(refined.bounds, refined.exact));
     }
     match map {
-        PayoffMap::Score => Ok(plain(order.mean, order.exact_mean)),
+        PayoffMap::Score | PayoffMap::BestOrderExpectedScore => Ok(plain(order.mean, order.exact_mean)),
         PayoffMap::ScoreAtLeast { threshold } | PayoffMap::ScoreAndLifeAtLeast { threshold, .. } => {
             let tail = order.tail(*threshold)?;
             let mut out = plain(tail.bounds, tail.exact);
@@ -477,6 +495,12 @@ pub fn aggregate_orders(mut orders: Vec<OrderScoreInterval>, map: &PayoffMap) ->
     if orders.windows(2).any(|v| v[0].order == v[1].order) {
         return Err(invalid("duplicate performance order"));
     }
+    if matches!(map, PayoffMap::BestOrderExpectedScore) {
+        return aggregate_best_order(orders);
+    }
+    if orders.iter().any(|order| !order.evaluated) {
+        return Err(invalid("uniform aggregation requires a complete evaluation of every order"));
+    }
     let (mut score, mut payoff) = (F64Interval::ZERO, F64Interval::ZERO);
     let (mut exact_score, mut exact_payoff) = (Some(fraction(0)), Some(fraction(0)));
     let mut refinements = Vec::new();
@@ -511,6 +535,208 @@ pub fn aggregate_orders(mut orders: Vec<OrderScoreInterval>, map: &PayoffMap) ->
         exact_payoff: exact_payoff.and_then(average_exact),
         orders,
         refinements,
+        best_order: None,
+    })
+}
+
+fn expected_bound_cmp(
+    a: Option<ExactExpectation>,
+    a_endpoint: f64,
+    b: Option<ExactExpectation>,
+    b_endpoint: f64,
+) -> Result<std::cmp::Ordering, Error> {
+    match (a, b) {
+        (Some(a), Some(b)) => compare_exact(a, b),
+        (Some(a), None) => compare_exact_real(a, b_endpoint),
+        (None, Some(b)) => compare_exact_real(b, a_endpoint).map(std::cmp::Ordering::reverse),
+        (None, None) => a_endpoint.partial_cmp(&b_endpoint).ok_or_else(|| invalid("nonfinite expectation bound")),
+    }
+}
+
+/// Every order has a complete-domain enclosure, including pending orders. The witness must have been
+/// evaluated; midpoint estimates and upper-only preparations cannot supply it. A canonical tie is established
+/// with exact fractions or certified endpoint separation, independently of the number of evaluated orders.
+fn aggregate_best_order(orders: Vec<OrderScoreInterval>) -> Result<CertifiedEvaluation, Error> {
+    let score = F64Interval::new(
+        orders.iter().map(|order| order.mean.lower()).fold(f64::NEG_INFINITY, f64::max),
+        orders.iter().map(|order| order.mean.upper()).fold(f64::NEG_INFINITY, f64::max),
+    )?;
+    let mut best: Option<&OrderScoreInterval> = None;
+    for order in orders.iter().filter(|order| order.evaluated) {
+        let replace = match best {
+            None => true,
+            Some(current) => {
+                expected_bound_cmp(order.exact_mean, order.mean.lower(), current.exact_mean, current.mean.lower())?
+                    .is_gt()
+            }
+        };
+        if replace {
+            best = Some(order);
+        }
+    }
+    let mut exact_score = None;
+    let best_order = best
+        .map(|best| {
+            let mut value_proven = true;
+            let mut optimal = true;
+            for other in orders.iter().filter(|order| order.order != best.order) {
+                let ordering =
+                    expected_bound_cmp(best.exact_mean, best.mean.lower(), other.exact_mean, other.mean.upper())?;
+                value_proven &= !ordering.is_lt();
+                optimal &= ordering.is_gt() || (ordering.is_eq() && best.order < other.order);
+            }
+            if value_proven {
+                exact_score = best.exact_mean;
+            }
+            Ok::<_, Error>(Box::new(BestOrderWitness {
+                order: best.order,
+                mean: best.mean,
+                exact_mean: best.exact_mean,
+                optimal,
+                evaluated_orders: orders.iter().filter(|order| order.evaluated).count(),
+            }))
+        })
+        .transpose()?;
+    Ok(CertifiedEvaluation {
+        score,
+        payoff: score,
+        exact_score,
+        exact_payoff: exact_score,
+        orders,
+        refinements: Vec::new(),
+        best_order,
+    })
+}
+
+/// A best-order candidate retains an evaluated witness even if its remaining order work stops. Every pending
+/// row remains a proved whole-order enclosure, so neither the maximum nor its proof omits an unfinished order.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn evaluate_best_order_context(
+    master: &ournotes_sim::master::Master,
+    skills: Option<&ournotes_sim::live::full::LuckSkills>,
+    input: &super::expectation::FiniteSeedContext,
+    basis: [usize; 5],
+    caps: &[i128],
+    cutoff: Option<(i128, i32, i32)>,
+    mut curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<Option<CertifiedEvaluation>, Error> {
+    if caps.len() != uniform::ORDERS {
+        return Err(invalid("best-order bounds require all 120 orders"));
+    }
+    let labels = uniform::all_orders();
+    let mut orders = labels
+        .iter()
+        .zip(caps)
+        .map(|(order, &cap)| {
+            let upper = cap.clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32;
+            Ok(OrderScoreInterval {
+                order: order.map(|slot| basis[slot]),
+                evaluated: false,
+                mean: F64Interval::new(f64::from(i32::MIN), f64::from(upper))?,
+                support: (i32::MIN, i32::MAX),
+                exact_mean: None,
+                final_life: None,
+                tails: BTreeMap::new(),
+                refined_payoff: None,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let mut schedule: Vec<_> = (0..uniform::ORDERS).collect();
+    schedule.sort_by(|&a, &b| caps[b].cmp(&caps[a]).then(orders[a].order.cmp(&orders[b].order)));
+    let mut session = skills
+        .map(|skills| {
+            let setup = input.gekisou.as_ref().ok_or_else(|| invalid("LUCK requires Gekisou context"))?;
+            Ok::<_, Error>(ournotes_sim::live::full::LuckScoreSession::new(
+                master,
+                skills,
+                &input.notes,
+                &input.events,
+                input.params,
+                setup,
+                &input.play,
+                &input.delta_times,
+                input.rank_confirmations.as_deref(),
+            ))
+        })
+        .transpose()?;
+    let mut evaluated = false;
+    let mut incumbent: Option<Box<BestOrderWitness>> = None;
+    for index in schedule {
+        if cancelled() {
+            break;
+        }
+        if let Some(best) = &incumbent {
+            let relation = expected_bound_cmp(best.exact_mean, best.mean.lower(), None, orders[index].mean.upper())?;
+            if relation.is_gt() || (relation.is_eq() && best.order < orders[index].order) {
+                continue;
+            }
+        }
+        let canonical_order = labels[index];
+        let value = if let Some(session) = &mut session {
+            let performers = canonical_order.map(|slot| input.performers[slot].clone());
+            let Some(summary) = session.summary_or_terminal(&performers, curves.as_deref_mut(), &mut cancelled)? else {
+                break;
+            };
+            summary_order(orders[index].order, summary)?
+        } else {
+            let outcome = input.simulate_performance_order(master, canonical_order)?;
+            if outcome.model.draws() != 0 {
+                return Err(invalid("deterministic best-order evaluation consumed lottery draws"));
+            }
+            OrderScoreInterval {
+                order: orders[index].order,
+                evaluated: true,
+                mean: F64Interval::integer(i128::from(outcome.final_score)),
+                support: (outcome.final_score, outcome.final_score),
+                exact_mean: Some(fraction(i128::from(outcome.final_score))),
+                final_life: Some((outcome.model.current_life(), outcome.model.current_life())),
+                tails: BTreeMap::new(),
+                refined_payoff: None,
+            }
+        };
+        if value.mean.upper() > orders[index].mean.upper() && value.mean.lower() > orders[index].mean.upper() {
+            return Err(invalid("evaluated order contradicts its complete-domain upper bound"));
+        }
+        let mut value = value;
+        value.mean = value.mean.intersect(orders[index].mean).ok_or_else(|| invalid("conflicting order bounds"))?;
+        orders[index] = value;
+        evaluated = true;
+        let complete = aggregate_orders(orders.clone(), &PayoffMap::BestOrderExpectedScore)?;
+        let cap = (complete.score.upper().ceil() as i128).saturating_mul(uniform::ORDERS as i128);
+        if cutoff
+            .is_some_and(|(threshold, power, kth_power)| cap < threshold || (cap == threshold && power < kth_power))
+        {
+            return Ok(Some(complete));
+        }
+        if complete.best_order.as_ref().is_some_and(|best| best.optimal) {
+            return Ok(Some(complete));
+        }
+        incumbent = complete.best_order;
+        if cancelled() {
+            break;
+        }
+    }
+    if evaluated { aggregate_orders(orders, &PayoffMap::BestOrderExpectedScore).map(Some) } else { Ok(None) }
+}
+
+fn summary_order(
+    order: [usize; 5],
+    summary: ournotes_sim::live::full::LuckScoreSummary,
+) -> Result<OrderScoreInterval, Error> {
+    let support = (summary.final_support.lower, summary.final_support.upper);
+    let mean = F64Interval::new(summary.final_mean.lower, summary.final_mean.upper)?
+        .intersect(F64Interval::new(support.0 as f64, support.1 as f64)?)
+        .ok_or_else(|| invalid("LUCK mean and support disagree"))?;
+    Ok(OrderScoreInterval {
+        order,
+        evaluated: true,
+        mean,
+        support,
+        exact_mean: summary.exact_constant_score.map(|s| fraction(s as i128)),
+        final_life: summary.exact_final_life.map(|life| (life, life)),
+        tails: BTreeMap::new(),
+        refined_payoff: None,
     })
 }
 
@@ -624,7 +850,31 @@ pub(super) fn evaluate_luck_context_bounded(
     skills: &ournotes_sim::live::full::LuckSkills,
     input: &super::expectation::FiniteSeedContext,
     map: &PayoffMap,
+    curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
+    control: (&[usize], bool, impl FnMut(LuckContextEvent<'_>) -> bool),
+    cancelled: impl FnMut() -> bool,
+) -> Result<LuckContextOutcome, Error> {
+    evaluate_luck_context_bounded_policy(
+        master,
+        skills,
+        input,
+        map,
+        curves,
+        matches!(map, PayoffMap::Score | PayoffMap::BestOrderExpectedScore),
+        control,
+        cancelled,
+    )
+}
+
+/// A nonlinear request retains its established score-law provider for subsequent payoff refinement.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn evaluate_luck_context_bounded_policy(
+    master: &ournotes_sim::master::Master,
+    skills: &ournotes_sim::live::full::LuckSkills,
+    input: &super::expectation::FiniteSeedContext,
+    map: &PayoffMap,
     mut curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
+    complete_terminal: bool,
     control: (&[usize], bool, impl FnMut(LuckContextEvent<'_>) -> bool),
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<LuckContextOutcome, Error> {
@@ -652,6 +902,7 @@ pub(super) fn evaluate_luck_context_bounded(
         input.rank_confirmations.as_deref(),
     );
     let labels = uniform::all_orders();
+    let mut prepared_scores = vec![None; uniform::ORDERS];
     if prepare_upper {
         let started = crate::clock::Instant::now();
         let finish = |observe: &mut dyn FnMut(LuckContextEvent<'_>) -> bool| {
@@ -675,7 +926,12 @@ pub(super) fn evaluate_luck_context_bounded(
                     finish(&mut observe);
                     return Ok(LuckContextOutcome::UpperOnly);
                 }
-                LuckRushPreparation::Ready(_) | LuckRushPreparation::Unavailable { .. } => {}
+                LuckRushPreparation::Ready(terminal) => {
+                    if complete_terminal {
+                        prepared_scores[index] = terminal.terminal_summary(i64::from(input.params.total_power));
+                    }
+                }
+                LuckRushPreparation::Unavailable { .. } => {}
             }
         }
         finish(&mut observe);
@@ -687,22 +943,17 @@ pub(super) fn evaluate_luck_context_bounded(
             return Ok(LuckContextOutcome::Stopped);
         }
         let performers = order.map(|slot| input.performers[slot].clone());
-        let Some(summary) = session.summary(&performers, curves.as_deref_mut(), &mut cancelled)? else {
+        let summary = match prepared_scores[index].take() {
+            Some(summary) => Some(summary),
+            None if prepare_upper || !complete_terminal => {
+                session.summary(&performers, curves.as_deref_mut(), &mut cancelled)?
+            }
+            None => session.summary_or_terminal(&performers, curves.as_deref_mut(), &mut cancelled)?,
+        };
+        let Some(summary) = summary else {
             return Ok(LuckContextOutcome::Stopped);
         };
-        let support = (summary.final_support.lower, summary.final_support.upper);
-        let mean = F64Interval::new(summary.final_mean.lower, summary.final_mean.upper)?
-            .intersect(F64Interval::new(support.0 as f64, support.1 as f64)?)
-            .ok_or_else(|| invalid("LUCK mean and support disagree"))?;
-        let value = OrderScoreInterval {
-            order,
-            mean,
-            support,
-            exact_mean: summary.exact_constant_score.map(|s| fraction(s as i128)),
-            final_life: summary.exact_final_life.map(|life| (life, life)),
-            tails: BTreeMap::new(),
-            refined_payoff: None,
-        };
+        let value = summary_order(order, summary)?;
         if !observe(LuckContextEvent::Scored { index, order: &value }) {
             return Ok(LuckContextOutcome::UpperOnly);
         }
@@ -722,6 +973,7 @@ mod tests {
             .into_iter()
             .map(|order| OrderScoreInterval {
                 order,
+                evaluated: true,
                 mean: F64Interval::point(mean).unwrap(),
                 support,
                 exact_mean: Some(fraction(mean as i128)),
@@ -730,6 +982,99 @@ mod tests {
                 refined_payoff: None,
             })
             .collect()
+    }
+
+    #[test]
+    fn best_order_maximizes_conditional_means_and_proves_exact_fraction_ties() {
+        let mut orders = laws(0.0, (0, 1_000_000));
+        for order in &mut orders {
+            order.mean = F64Interval::new(0.0, 1.0).unwrap();
+            order.exact_mean = Some(ExactExpectation { numerator: 1, denominator: 3 });
+        }
+        for index in [7, 40] {
+            orders[index].exact_mean = Some(ExactExpectation { numerator: 2, denominator: 3 });
+        }
+        let expected = orders[7].order;
+        let uniform = aggregate_orders(orders.clone(), &PayoffMap::Score).unwrap();
+        let best = aggregate_orders(orders, &PayoffMap::BestOrderExpectedScore).unwrap();
+        assert_eq!(best.exact_score, Some(ExactExpectation { numerator: 2, denominator: 3 }));
+        assert!(compare_exact(best.exact_score.unwrap(), uniform.exact_score.unwrap()).unwrap().is_gt());
+        let witness = best.best_order.unwrap();
+        assert_eq!(witness.order, expected);
+        assert!(witness.optimal);
+        assert_eq!(witness.evaluated_orders, 120);
+        assert!(best.score.contains(2.0 / 3.0));
+        assert!(best.score.upper() < 1_000_000.0);
+    }
+
+    #[test]
+    fn best_order_pending_bounds_preserve_the_maximum_and_canonical_tie() {
+        let mut orders = laws(0.0, (0, 100));
+        for order in &mut orders {
+            order.evaluated = false;
+            order.mean = F64Interval::new(0.0, 50.0).unwrap();
+            order.exact_mean = None;
+        }
+        orders[7].evaluated = true;
+        orders[7].mean = F64Interval::point(50.0).unwrap();
+        orders[7].exact_mean = Some(fraction(50));
+        let partial = aggregate_orders(orders.clone(), &PayoffMap::BestOrderExpectedScore).unwrap();
+        assert_eq!(partial.exact_score, Some(fraction(50)));
+        let witness = partial.best_order.unwrap();
+        assert_eq!(witness.order, orders[7].order);
+        assert!(!witness.optimal, "an earlier unevaluated order can tie");
+        assert_eq!(witness.evaluated_orders, 1);
+        assert!(aggregate_orders(orders.clone(), &PayoffMap::Score).is_err());
+        orders[0].evaluated = true;
+        orders[0].mean = F64Interval::point(50.0).unwrap();
+        orders[0].exact_mean = Some(fraction(50));
+        let tied = aggregate_orders(orders.clone(), &PayoffMap::BestOrderExpectedScore).unwrap();
+        assert!(tied.best_order.as_ref().unwrap().optimal);
+        assert_eq!(tied.best_order.as_ref().unwrap().evaluated_orders, 2);
+        orders[80].mean = F64Interval::new(0.0, 80.0).unwrap();
+        let open = aggregate_orders(orders, &PayoffMap::BestOrderExpectedScore).unwrap();
+        assert_eq!(open.exact_score, None);
+        assert_eq!((open.score.lower(), open.score.upper()), (50.0, 80.0));
+        assert!(!open.best_order.unwrap().optimal);
+    }
+
+    #[test]
+    fn best_order_completion_count_does_not_prove_overlapping_expectations() {
+        let mut orders = laws(10.0, (0, 100));
+        for order in &mut orders {
+            order.exact_mean = None;
+            order.mean = F64Interval::new(10.0, 11.0).unwrap();
+        }
+        orders[90].mean = F64Interval::new(10.5, 12.0).unwrap();
+        let best = aggregate_orders(orders, &PayoffMap::BestOrderExpectedScore).unwrap();
+        assert_eq!(best.exact_score, None);
+        let witness = best.best_order.unwrap();
+        assert_eq!(witness.evaluated_orders, 120);
+        assert!(!witness.optimal);
+        assert_eq!(uniform::order_index(&witness.order), 90);
+    }
+
+    #[test]
+    fn pending_orders_cannot_supply_exact_evaluated_metadata() {
+        let mut orders = laws(10.0, (0, 100));
+        orders[0].evaluated = false;
+        assert!(aggregate_orders(orders.clone(), &PayoffMap::BestOrderExpectedScore).is_err());
+        orders[0].evaluated = true;
+        orders[0].exact_mean = Some(ExactExpectation { numerator: 10, denominator: 0 });
+        assert!(aggregate_orders(orders, &PayoffMap::BestOrderExpectedScore).is_err());
+    }
+
+    #[test]
+    fn best_order_signed_zero_bounds_keep_the_mathematical_tie() {
+        let mut orders = laws(0.0, (0, 0));
+        for order in &mut orders {
+            order.exact_mean = None;
+        }
+        orders[0].mean = F64Interval::point(-0.0).unwrap();
+        let result = aggregate_orders(orders, &PayoffMap::BestOrderExpectedScore).unwrap();
+        let witness = result.best_order.unwrap();
+        assert_eq!(witness.order, [0, 1, 2, 3, 4]);
+        assert!(witness.optimal);
     }
 
     #[test]

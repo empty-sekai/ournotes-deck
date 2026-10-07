@@ -10,8 +10,8 @@ use crate::clock::Instant;
 use crate::search::Constraints;
 use crate::search::physical::ProgressHook;
 use crate::types::{
-    Execution, Fraction, FractionInterval, Limits, MAX_K, Metric, Optimality, PlayPolicy, RecommendationOutcome,
-    RecommendationRequest, RecommendedDeck, Scene, SimulationInput, Strategy,
+    Execution, ExpectedOrderResult, Fraction, FractionInterval, Limits, MAX_K, Metric, Optimality, PlayPolicy,
+    RecommendationOutcome, RecommendationRequest, RecommendedDeck, Scene, SimulationInput, Strategy,
 };
 use ournotes_sim::Error;
 use ournotes_sim::account::{AccountInput, Exclusions, Issue};
@@ -249,11 +249,18 @@ impl GoalKind {
         match self {
             GoalKind::Power => &["power"],
             GoalKind::Skip => &["score", "scoreAtLeast", "cappedScore", "eventPoints", "challengePoints", "eventItems"],
-            GoalKind::ChallengeLive => {
-                &["score", "scoreAtLeast", "cappedScore", "scoreAndLife", "eventPoints", "eventItems"]
-            }
+            GoalKind::ChallengeLive => &[
+                "score",
+                "bestOrderExpectedScore",
+                "scoreAtLeast",
+                "cappedScore",
+                "scoreAndLife",
+                "eventPoints",
+                "eventItems",
+            ],
             _ => &[
                 "score",
+                "bestOrderExpectedScore",
                 "scoreAtLeast",
                 "cappedScore",
                 "scoreAndLife",
@@ -278,6 +285,9 @@ impl GoalKind {
 
 /// How far this solver supports a goal and one of its metric kinds.
 pub fn support(kind: GoalKind, metric: &str) -> Support {
+    if kind.live() && metric == "bestOrderExpectedScore" {
+        return Support::Proven;
+    }
     match (kind, metric) {
         (GoalKind::Power, "power") => Support::Proven,
         (
@@ -394,7 +404,7 @@ pub fn order_of_index(mut index: usize) -> [usize; 5] {
 /// The fields of a metric kind; `None` for an unknown kind.
 fn metric_fields(kind: &str) -> Option<&'static [&'static str]> {
     let fields: &'static [&'static str] = match kind {
-        "score" => &[],
+        "score" | "bestOrderExpectedScore" => &[],
         "scoreAtLeast" | "cappedScore" => &["threshold"],
         "scoreAndLife" => &["threshold", "minFinalLife"],
         "eventPoints" | "challengePoints" => &["eventId", "consumption"],
@@ -606,6 +616,7 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
                     let e = m.event_id.unwrap_or_default();
                     metric = Some(match m.kind.as_str() {
                         "score" => Metric::Score,
+                        "bestOrderExpectedScore" => Metric::BestOrderExpectedScore,
                         "scoreAtLeast" => Metric::ScoreAtLeast { threshold: t },
                         "cappedScore" => Metric::CappedScore { threshold: t },
                         "scoreAndLife" => Metric::ScoreAndLifeAtLeast {
@@ -995,6 +1006,8 @@ pub struct Team {
     pub layout: Layout,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rank_certified: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_expected_order: Option<ExpectedOrderResult>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1168,7 +1181,7 @@ fn orders(deck: &RecommendedDeck, slot: &[usize; 5], layout: &Layout, score_metr
 /// The teams of a search outcome in their canonical layout, best first, at most `k`.
 fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_orders: bool) -> Result<Vec<Team>, Error> {
     let metric = &parsed.search.metric;
-    let score_metric = matches!(metric, Metric::Score);
+    let score_metric = matches!(metric, Metric::Score | Metric::BestOrderExpectedScore);
     let mut seen = BTreeSet::new();
     let mut rows = Vec::new();
     for deck in &outcome.results {
@@ -1230,6 +1243,10 @@ fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_orders: bool) ->
             orders,
             layout,
             rank_certified: deck.rank_certified,
+            best_expected_order: deck.best_expected_order.clone().map(|mut order| {
+                order.performance_order = order.performance_order.map(|physical| slot[physical]);
+                order
+            }),
         });
     }
     // Preserve the search ordering and its proof. Changing the tie objective here would not recover
@@ -1484,6 +1501,13 @@ pub fn capabilities() -> Value {
         "support": support_by_goal,
         "memoryBudgetBytes": null,
         "lottery": "certified expectations; only proved rank separation or equality certifies TopK",
+        "bestOrderExpectedScore": {
+            "orders": 120,
+            "value": "maximum conditional nominal expected final score over all performance orders",
+            "witness": "bestExpectedOrder",
+            "orderTieBreak": "lexicographic slot order in the canonical team layout: leader at slot 2, other member/Snap pairs sorted into slots 0,1,3,4",
+            "gameplayOrderGuaranteed": false
+        },
         "accuracyLaw": "deterministic evenly spread Greats; Just share of remaining eligible notes",
         "tieBreak": ["expectedPayoff", "power", "canonicalTeamKey"],
         "eventItemsRequireSelectedRewards": true,
@@ -1605,6 +1629,7 @@ mod tests {
             .enumerate()
             .map(|(index, order)| OrderScoreInterval {
                 order,
+                evaluated: true,
                 mean: F64Interval::point(if index == 0 { 2f64.powi(-121) } else { 0.0 }).unwrap(),
                 support: (0, 1),
                 exact_mean: Some(ExactExpectation {
@@ -1664,6 +1689,7 @@ mod tests {
                 rank_certified: Some(true),
                 score_summary: None,
                 best_order: None,
+                best_expected_order: None,
                 order_outcomes: vec![],
             }],
         };

@@ -378,6 +378,88 @@ fn same_prefix(left: &PhysicalDeck, right: &PhysicalDeck) -> bool {
 }
 
 #[test]
+fn best_order_bounds_enclose_independent_native_means_at_every_member_snap_prefix() {
+    let (master, owned, request) = fixture();
+    let pool = Pool::new(&master, &owned).unwrap();
+    let domain = CandidateDomain::build(&pool, &request.constraints).unwrap();
+    let bounds = JointBounds::compile(
+        &pool,
+        &request,
+        &domain,
+        &Metric::BestOrderExpectedScore,
+        None,
+        &SimulationInput::default(),
+    )
+    .unwrap();
+    assert!(bounds.family_reward_template().is_none());
+    assert!(bounds.carrier_split.is_none());
+    let oracles = native_candidates(&pool, &request, &domain);
+    let positions: Vec<_> = independent_orders().iter().map(crate::search::uniform::positions_of).collect();
+    let mut order_dependent = 0;
+    let mut checked_orders = 0;
+    for oracle in &oracles {
+        let best = *oracle.order_means.iter().max_by(|a, b| (a.0 * b.1).cmp(&(b.0 * a.1))).unwrap();
+        let grid = Rational::new(best.0.checked_mul(120).unwrap(), best.1);
+        order_dependent += usize::from(grid.0 * oracle.sum_of_order_means.1 > oracle.sum_of_order_means.0 * grid.1);
+        let physical = &oracle.physical;
+        for depth in 0..=5 {
+            let choices = JointBounds::prefix_choices(&domain, physical, depth);
+            let level = bounds.carrier_level(bounds.carriers_placed(physical, depth, &choices) + 5 - depth);
+            let keyed = bounds.keyed(physical, depth, &choices, 5 - depth, 5 - depth);
+            let cap = level
+                .expected_upper_keyed(
+                    &pool,
+                    &domain,
+                    physical,
+                    depth,
+                    &crate::search::uniform::MEAN_ORDERS,
+                    keyed.as_ref(),
+                )
+                .unwrap()
+                .0;
+            assert!(grid.at_most_integer(cap), "depth={depth}, team={physical:?}, cap={cap}, best={best:?}");
+            let correlated = level
+                .correlated_expected_upper_keyed(
+                    &pool,
+                    &domain,
+                    physical,
+                    depth,
+                    &crate::search::uniform::MEAN_ORDERS,
+                    keyed.as_ref(),
+                )
+                .unwrap();
+            assert!(grid.at_most_integer(correlated));
+            if let Some(resource) =
+                level.resource_expected_upper(&pool, &domain, physical, depth, &crate::search::uniform::MEAN_ORDERS)
+            {
+                assert!(grid.at_most_integer(resource));
+            }
+        }
+        let input = expectation::context(&pool, physical, &request.objective).unwrap();
+        let power = i64::from(input.params.total_power);
+        let mut caps = bounds.order_cheap_caps(&domain, physical, power, &positions);
+        let mut computed = 0;
+        assert!(!bounds.tighten_order_caps_until(
+            &domain,
+            physical,
+            power,
+            &positions,
+            &mut caps,
+            &mut JointScratch::default(),
+            |cap| !grid.at_most_integer(cap),
+            &mut computed,
+        ));
+        assert_eq!(computed, 120);
+        for (mean, cap) in oracle.order_means.iter().zip(caps) {
+            assert!(mean.at_most_integer(cap));
+            checked_orders += 1;
+        }
+    }
+    assert!(order_dependent > 0);
+    assert_eq!(checked_orders, 62 * 120);
+}
+
+#[test]
 fn family_node_masks_and_real_depth_four_suffix_bound_every_native_descendant() {
     let (master, owned, request) = fixture();
     let pool = Pool::new(&master, &owned).unwrap();
