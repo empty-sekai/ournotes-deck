@@ -22,6 +22,7 @@ pub use family::{
     LuckFamilyOrderLaw,
 };
 
+mod life_recording;
 mod recording_cache;
 mod shared_recording;
 
@@ -1394,8 +1395,9 @@ struct PreparedRecording<M> {
 
 /// Compiled recorder states for one immutable live context. The owning score session fixes the master,
 /// chart, frame schedule, parameters and rank arrivals. Rows and their resolved checkers retain source row
-/// identity, performer position and effect order. A life interpreter is identified by its complete ordered
-/// performer input; every other interpreter input is fixed by the session.
+/// identity, performer position and effect order. A life interpreter uses its complete compiled state, with
+/// initial power projected only under the score recorder's dependency certificate. If that optional identity
+/// cannot be encoded, the original complete ordered performer input remains a session-local fallback.
 #[derive(Default)]
 pub(super) struct RecordingCache {
     storage: recording_cache::Storage<LuckDpCertifiedResult>,
@@ -1561,7 +1563,20 @@ fn record_prepared<M: Mass>(
     delta_times: &[f32],
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<Transcript<M>>, Error> {
+    record_prepared_with_life(prepared, notes, play, delta_times, cancelled, None, None)
+}
+
+fn record_prepared_with_life<M: Mass>(
+    prepared: PreparedRecording<M>,
+    notes: &[LiveNote],
+    play: &LivePlay,
+    delta_times: &[f32],
+    cancelled: &mut impl FnMut() -> bool,
+    cached_life: Option<&life_recording::Tape>,
+    mut recorded_life: Option<&mut life_recording::Builder>,
+) -> Result<Option<Transcript<M>>, Error> {
     let PreparedRecording { mut model, mut life, plan, .. } = prepared;
+    let mut cached_life = cached_life.map(life_recording::Tape::reader);
     let gk = model.gk.as_mut().expect("Gekisou setup supplied");
     let ranges: Vec<_> = gk.ctrl.ranges.iter().map(|range| (range.start_ms, range.end_ms, range.mission)).collect();
     let templates = gk.ctrl.states.iter().map(|state| state.luck.clone()).collect();
@@ -1590,6 +1605,8 @@ fn record_prepared<M: Mass>(
         let recorded = record_frame(
             &mut model,
             life.as_mut(),
+            cached_life.as_mut(),
+            recorded_life.as_deref_mut(),
             &actions,
             &ranges,
             &note_map,
@@ -1613,6 +1630,8 @@ fn record_prepared<M: Mass>(
 fn record_frame<M: Mass>(
     model: &mut LiveModel,
     life: Option<&mut LiveModel>,
+    cached_life: Option<&mut life_recording::Reader<'_>>,
+    recorded_life: Option<&mut life_recording::Builder>,
     actions: &[(i64, Action<M>, Option<Checker>)],
     ranges: &[(i32, i32, i64)],
     note_map: &FxHashMap<i32, &LiveNote>,
@@ -1645,7 +1664,9 @@ fn record_frame<M: Mass>(
         previous_note = note.time_ms;
         judged.push((note.note_id, note.note_operate_type, note.time_ms, judgement.judgement));
     }
-    let phase_life = if let Some(life) = life {
+    let phase_life = if let Some(cached) = cached_life {
+        cached.next(&mut judged)?
+    } else if let Some(life) = life {
         timed(|p| &mut p.life_frames_ms, || life.frame_timed(frame.time_ms, &frame.judged, delta))?;
         if life.draws() != 0 {
             return Err(Error::Unsupported("LUCK life recorder consumed a random value".into()));
@@ -1657,6 +1678,9 @@ fn record_frame<M: Mass>(
     } else {
         [model.life.current_life; 2]
     };
+    if let Some(recording) = recorded_life {
+        recording.observe(phase_life, &frame.judged, &judged);
+    }
     timed(|p| &mut p.before_ms, || record_before(model, frame.time_ms, delta))?;
     let controller = &model.gk.as_ref().expect("Gekisou checked").ctrl;
     let states = |range: usize| controller.states[range].state;
@@ -1891,6 +1915,7 @@ pub struct LuckDpCache {
     capacity_words: usize,
     stats: LuckDpCacheStats,
     shared_recordings: shared_recording::SharedRecordings,
+    life_recordings: life_recording::Cache,
     pub(super) programs: super::luck_score_bounds::ProgramCache,
 }
 
@@ -1906,7 +1931,7 @@ pub struct LuckDpCacheStats {
     /// Retained complete recorder identities, including their dictionary and entry-buffer storage.
     pub recording_peak_entries: usize,
     pub recording_peak_bytes: usize,
-    /// Complete no-life recorder identities reused across immutable score sessions.
+    /// Complete recorder identities reused across immutable score sessions, including admitted life models.
     pub shared_recording_lookups: u64,
     pub shared_recording_hits: u64,
     /// Scope construction attempts and complete encoded scope bytes; a session constructs at most once per allowance.
@@ -1920,6 +1945,12 @@ pub struct LuckDpCacheStats {
     /// Separate request table: scope, exact key storage and distinct retained curve allocations.
     pub shared_recording_peak_entries: usize,
     pub shared_recording_peak_bytes: usize,
+    /// Complete native life/judgement transcripts reused independently of reduced lottery rows.
+    pub life_recording_lookups: u64,
+    pub life_recording_hits: u64,
+    pub life_recording_declines: u64,
+    pub life_recording_peak_entries: usize,
+    pub life_recording_peak_bytes: usize,
     /// Complete score certificates reused for equal initialized models within a score session.
     pub summary_lookups: u64,
     pub summary_hits: u64,
@@ -1969,6 +2000,12 @@ impl LuckDpCache {
         stats.shared_recording_capacity_declines = shared.capacity_declines;
         stats.shared_recording_peak_entries = shared.peak_entries;
         stats.shared_recording_peak_bytes = shared.peak_bytes;
+        let life = self.life_recordings.stats;
+        stats.life_recording_lookups = life.lookups;
+        stats.life_recording_hits = life.hits;
+        stats.life_recording_declines = life.declines;
+        stats.life_recording_peak_entries = life.peak_entries;
+        stats.life_recording_peak_bytes = life.peak_bytes;
         let programs = self.programs.stats;
         stats.program_lookups = programs.lookups;
         stats.program_hits = programs.hits;
@@ -2070,6 +2107,7 @@ impl LuckDpCache {
             recordings.limit(recording_capacity);
         }
         self.shared_recordings.limit(recording_capacity);
+        self.life_recordings.limit(recording_capacity);
         #[cfg(feature = "search-diagnostics")]
         let started = std::time::Instant::now();
         let mut prepared = prepare_recording::<ProbabilityMass>(
@@ -2088,9 +2126,14 @@ impl LuckDpCache {
         if cancelled() {
             return Ok(None);
         }
-        let recording_key = (self.capacity_words > 0
-            && (recordings.is_some() || (prepared.life.is_none() && prepared.life_deck.is_none())))
-        .then(|| RecordingCache::key(&prepared));
+        let life_key = (self.capacity_words > 0 && prepared.life.is_some())
+            .then(|| shared_recording::life_key(&mut prepared, skills))
+            .flatten();
+        let shared_admitted = life_key.is_some() || (prepared.life.is_none() && prepared.life_deck.is_none());
+        let recording_key = life_key.or_else(|| {
+            (self.capacity_words > 0 && (recordings.is_some() || shared_admitted))
+                .then(|| RecordingCache::key(&prepared))
+        });
         if let (Some(recordings), Some(key)) = (recordings.as_ref(), recording_key.as_ref()) {
             recordings.report(&mut self.stats);
             self.stats.recording_lookups += 1;
@@ -2107,10 +2150,7 @@ impl LuckDpCache {
             }
         }
         let mut shared_scope = None;
-        if prepared.life.is_none()
-            && prepared.life_deck.is_none()
-            && let Some(key) = recording_key.as_ref()
-        {
+        if shared_admitted && let Some(key) = recording_key.as_ref() {
             let context = shared_recording::Context {
                 notes,
                 events: skill_events,
@@ -2155,7 +2195,30 @@ impl LuckDpCache {
             }
             shared_scope = scope;
         }
-        let transcript = timed(|p| &mut p.total_ms, || record_prepared(prepared, notes, play, delta_times, cancelled));
+        let life_identity = recording_key.as_deref().and_then(shared_recording::life_identity);
+        let cached_life = shared_scope
+            .as_ref()
+            .zip(life_identity)
+            .and_then(|(scope, identity)| self.life_recordings.get(scope, identity));
+        if cancelled() {
+            return Ok(None);
+        }
+        let mut recorded_life = (cached_life.is_none() && shared_scope.is_some() && life_identity.is_some())
+            .then(|| life_recording::Builder::new(recording_capacity));
+        let transcript = timed(
+            |p| &mut p.total_ms,
+            || {
+                record_prepared_with_life(
+                    prepared,
+                    notes,
+                    play,
+                    delta_times,
+                    cancelled,
+                    cached_life.as_deref(),
+                    recorded_life.as_mut(),
+                )
+            },
+        );
         #[cfg(feature = "search-diagnostics")]
         {
             self.stats.record_ms += started.elapsed().as_secs_f64() * 1e3;
@@ -2164,6 +2227,7 @@ impl LuckDpCache {
         if cancelled() {
             return Ok(None);
         }
+        let recorded_life = recorded_life.and_then(|builder| builder.finish(play.frames.len()));
         let key = (self.capacity_words > 0).then(|| transcript.key()).flatten();
         if let Some(key) = &key {
             self.stats.lookups += 1;
@@ -2172,6 +2236,14 @@ impl LuckDpCache {
                     return Ok(None);
                 }
                 self.stats.hits += 1;
+                if let Some((scope, identity, tape)) = shared_scope
+                    .as_ref()
+                    .zip(life_identity)
+                    .zip(recorded_life)
+                    .map(|((scope, identity), tape)| (scope, identity, tape))
+                {
+                    self.life_recordings.insert(scope.clone(), identity.to_vec(), tape);
+                }
                 if let (Some(scope), Some(raw)) = (shared_scope, recording_key.as_ref()) {
                     self.shared_recordings.insert(scope, raw.clone(), found.clone());
                 }
@@ -2198,6 +2270,14 @@ impl LuckDpCache {
         });
         if cancelled() {
             return Ok(None);
+        }
+        if let Some((scope, identity, tape)) = shared_scope
+            .as_ref()
+            .zip(life_identity)
+            .zip(recorded_life)
+            .map(|((scope, identity), tape)| (scope, identity, tape))
+        {
+            self.life_recordings.insert(scope.clone(), identity.to_vec(), tape);
         }
         if let Some(key) = key {
             self.insert(key, result.clone());

@@ -58,6 +58,30 @@ impl RecordingInput {
         RecordingCache::key(&self.prepared())
     }
 
+    fn life_key(&self) -> Vec<u8> {
+        shared_recording::life_key(&mut self.prepared(), &luck_skills(&self.master).unwrap()).unwrap()
+    }
+
+    fn add_unproved_live_group(&mut self) {
+        self.master.live_skills.push(serde_json::from_value(json!({"_id":770})).unwrap());
+        // A complete live group containing life recovery retains its pre-live power row too. The row has
+        // no native live applier, but is outside the score recorder's exhaustive whitelist: no projection.
+        for (id, effect) in [(7700, 3001), (7701, 1000)] {
+            self.master.live_skill_effects.push(crate::master::LiveSkillEffectRow {
+                id,
+                live_skill_id: 770,
+                level: 1,
+                skill_effect_type: effect,
+                effect_value: 1,
+                activation_time_second: 0.5,
+                ..Default::default()
+            });
+        }
+        self.deck[0].live_skill = Some((770, 1));
+        self.events.push((0, 0));
+        self.master.reindex().unwrap();
+    }
+
     fn transcript(&self) -> Vec<u64> {
         record_prepared(self.prepared(), &self.notes, &self.play, &self.deltas, &mut || false)
             .unwrap()
@@ -363,7 +387,7 @@ fn shared_recording_scope_preserves_chart_frame_and_rank_arrival_fields() {
 }
 
 #[test]
-fn shared_recording_reuse_does_not_admit_the_optional_life_interpreter() {
+fn shared_life_recordings_preserve_unproved_power_and_actual_conversion_history() {
     let initial = RecordingInput::new();
     let mut changed = initial.clone();
     let condition = changed.master.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap();
@@ -371,21 +395,38 @@ fn shared_recording_reuse_does_not_admit_the_optional_life_interpreter() {
     condition.condition_values = vec![700];
     changed.master.judgement_parameters[0].damage = 600;
     changed.master.reindex().unwrap();
+    changed.add_unproved_live_group();
     let prepared = changed.prepared();
     assert!(prepared.life.is_some() && prepared.life_deck.is_some());
+    assert!(
+        super::super::super::luck_score_bounds::check_recorder(
+            prepared.life.as_ref().unwrap(),
+            &luck_skills(&changed.master).unwrap()
+        )
+        .is_err()
+    );
     let mut curves = LuckDpCache::new(1 << 20);
     let original = curve_words(&initial.fresh_session(&mut curves));
     let before = curves.stats();
+    let mut previous_key = None;
+    let mut hits = before.shared_recording_hits;
     for power in [1000, 2000] {
         changed.params.total_power = power;
+        let key = changed.life_key();
+        if let Some(previous) = previous_key.replace(key.clone()) {
+            assert_ne!(previous, key, "the life interpreter retains initial power");
+        }
         let expected = curve_words(&changed.independent());
         assert_eq!(curve_words(&changed.fresh_session(&mut curves)), expected);
-        assert_eq!(curves.stats().shared_recording_lookups, before.shared_recording_lookups);
-        assert_eq!(curves.stats().shared_recording_scope_builds, before.shared_recording_scope_builds);
-        assert_eq!(curves.stats().shared_recording_hits, before.shared_recording_hits);
+        assert_eq!(curves.stats().shared_recording_hits, hits);
+        assert_eq!(curve_words(&changed.clone().fresh_session(&mut curves)), expected);
+        hits += 1;
+        assert_eq!(curves.stats().shared_recording_hits, hits);
     }
     assert_eq!(curve_words(&initial.fresh_session(&mut curves)), original);
-    assert_eq!(curves.stats().shared_recording_hits, before.shared_recording_hits + 1);
+    assert_eq!(curves.stats().shared_recording_hits, hits);
+    assert_eq!(curve_words(&initial.fresh_session(&mut curves)), original);
+    assert_eq!(curves.stats().shared_recording_hits, hits + 1);
 
     let mut converted = initial.clone();
     converted.master.live_skills.push(serde_json::from_value(json!({"_id":710})).unwrap());
@@ -431,8 +472,334 @@ fn shared_recording_reuse_does_not_admit_the_optional_life_interpreter() {
     assert_eq!(native_life.conversion.converted, 1, "the optional interpreter must observe an actual conversion");
     let before = curves.stats();
     assert_eq!(curve_words(&converted.fresh_session(&mut curves)), curve_words(&converted.independent()));
-    assert_eq!(curves.stats().shared_recording_lookups, before.shared_recording_lookups);
-    assert_eq!(curves.stats().shared_recording_scope_builds, before.shared_recording_scope_builds);
+    assert_eq!(curves.stats().shared_recording_lookups, before.shared_recording_lookups + 1);
+    assert_eq!(curve_words(&converted.fresh_session(&mut curves)), curve_words(&converted.independent()));
+    assert_eq!(curves.stats().shared_recording_hits, before.shared_recording_hits + 1);
+    let life_hits = curves.stats().life_recording_hits;
+    converted.master.gekisou_skill_effects.iter_mut().find(|row| row.id == 2).unwrap().effect_value += 123;
+    converted.master.reindex().unwrap();
+    assert_eq!(curve_words(&converted.fresh_session(&mut curves)), curve_words(&converted.independent()));
+    assert_eq!(curves.stats().life_recording_hits, life_hits + 1);
+}
+
+#[test]
+fn shared_life_key_reuses_compiled_effects_and_preserves_the_complete_frame_history() {
+    let mut input = RecordingInput::new();
+    let condition = input.master.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap();
+    condition.condition_type = 2001;
+    condition.condition_values = vec![700];
+    input.master.judgement_parameters[0].damage = 600;
+    input.master.reindex().unwrap();
+    let original = input.raw_key();
+    let key = input.life_key();
+    let transcript = input.transcript();
+    let expected = curve_words(&input.independent());
+    let mut curves = LuckDpCache::new(1 << 20);
+    input.fresh_session(&mut curves);
+    // These attributes reach only resolved member-target predicates. This fixture's conditions read none
+    // of them, so the constructed life and lottery machines are identical despite different performer input.
+    for variant in 1..=8 {
+        input.deck[0].band_id = variant;
+        input.deck[0].card_type = variant;
+        input.deck[0].tag_ids = vec![variant, variant + 1];
+        assert_ne!(input.raw_key(), original);
+        assert_eq!(input.life_key(), key);
+        assert_eq!(input.transcript(), transcript);
+        let value = input.cached(&mut curves, None, &mut || false).unwrap().unwrap();
+        assert_eq!(curve_words(&value), expected);
+    }
+    assert_eq!(curves.stats().shared_recording_hits, 8);
+    assert!(curves.stats().shared_recording_peak_bytes <= 1 << 20);
+}
+
+#[test]
+fn shared_life_recordings_keep_every_context_field_and_refuse_partial_work() {
+    let mut input = RecordingInput::new();
+    let condition = input.master.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap();
+    condition.condition_type = 2001;
+    condition.condition_values = vec![700];
+    input.master.judgement_parameters[0].damage = 600;
+    input.master.reindex().unwrap();
+    type Change = (&'static str, fn(&mut RecordingInput));
+    let changes: [Change; 8] = [
+        ("assist factor", |input| input.params.assist_factor = 1.01),
+        ("delta bits", |input| input.deltas[0] = -0.0),
+        ("skill events", |input| input.events.push((0, 100))),
+        ("music length", |input| input.params.music_length_ms += 100),
+        ("score frame length", |input| input.params.score_music_length_ms = Some(3000)),
+        ("initial life", |input| {
+            input.master.live_settings.iter_mut().find(|row| row.key == "life_base").unwrap().value = "1001".into();
+        }),
+        ("damage table", |input| input.master.judgement_parameters[0].damage = 599),
+        ("rank arrival", |input| {
+            input.ranking = Some(vec![crate::replay::RankConfirmation { frame: 1, range: 0, rank: 2, percent: 175 }]);
+        }),
+    ];
+    for (name, change) in changes {
+        let mut changed = input.clone();
+        change(&mut changed);
+        changed.master.reindex().unwrap();
+        let expected = curve_words(&changed.independent());
+        let mut curves = LuckDpCache::new(1 << 20);
+        input.fresh_session(&mut curves);
+        let before = curves.stats();
+        assert_eq!(curve_words(&changed.fresh_session(&mut curves)), expected, "{name}");
+        assert_eq!(curves.stats().shared_recording_hits, before.shared_recording_hits, "{name}");
+        assert_eq!(curve_words(&changed.fresh_session(&mut curves)), expected, "{name}");
+        assert_eq!(curves.stats().shared_recording_hits, before.shared_recording_hits + 1, "{name}");
+    }
+    let mut complete_checks = 0;
+    input
+        .cached(&mut LuckDpCache::new(1 << 20), None, &mut || {
+            complete_checks += 1;
+            false
+        })
+        .unwrap()
+        .unwrap();
+    for stop_at in [1, 3, complete_checks / 2, complete_checks] {
+        let mut curves = LuckDpCache::new(1 << 20);
+        let mut checks = 0;
+        let result = input
+            .cached(&mut curves, None, &mut || {
+                checks += 1;
+                checks == stop_at
+            })
+            .unwrap();
+        assert!(result.is_none(), "stop check {stop_at}");
+        assert_eq!(curves.shared_recordings.retained(), (0, 0));
+        assert_eq!(curves.life_recordings.retained(), (0, 0));
+        assert_eq!(curve_words(&input.fresh_session(&mut curves)), curve_words(&input.independent()));
+    }
+    for capacity in [0, 1, 512, 1 << 20] {
+        let mut curves = LuckDpCache::new(capacity);
+        for _ in 0..2 {
+            assert_eq!(curve_words(&input.fresh_session(&mut curves)), curve_words(&input.independent()));
+            assert!(curves.shared_recordings.retained().1 <= capacity);
+            assert!(curves.life_recordings.retained().1 <= capacity);
+        }
+    }
+}
+
+#[test]
+fn shared_life_key_declines_opaque_or_oversized_states_and_restores_owned_inputs() {
+    let mut input = RecordingInput::new();
+    let condition = input.master.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap();
+    condition.condition_type = 2001;
+    condition.condition_values = vec![700];
+    input.master.reindex().unwrap();
+    let mut prepared = input.prepared();
+    let notes = prepared.life.as_ref().unwrap().notes.clone();
+    let events = prepared.life.as_ref().unwrap().events.clone();
+    let deck = prepared.life_deck.clone();
+    let power = prepared.life.as_ref().unwrap().score.calc.state.band_total_power;
+    let skills = luck_skills(&input.master).unwrap();
+    prepared.life.as_mut().unwrap().score.calc.assist_factor = f32::NAN;
+    assert!(shared_recording::life_key(&mut prepared, &skills).is_none());
+    assert_eq!(prepared.life.as_ref().unwrap().notes, notes);
+    assert_eq!(prepared.life.as_ref().unwrap().events, events);
+    assert_eq!(prepared.life_deck, deck);
+    assert_eq!(prepared.life.as_ref().unwrap().score.calc.state.band_total_power, power);
+    prepared.life.as_mut().unwrap().score.calc.assist_factor = 1.0;
+    prepared.life.as_mut().unwrap().trace = vec![(0, 0); 100_000];
+    assert!(shared_recording::life_key(&mut prepared, &skills).is_none());
+    assert_eq!(prepared.life.as_ref().unwrap().notes, notes);
+    assert_eq!(prepared.life.as_ref().unwrap().events, events);
+    assert_eq!(prepared.life_deck, deck);
+    assert_eq!(prepared.life.as_ref().unwrap().score.calc.state.band_total_power, power);
+}
+
+#[test]
+fn complete_life_transcripts_replay_across_distinct_lottery_writers() {
+    for distance in [2400, 20_000] {
+        let mut input = RecordingInput::new();
+        let condition = input.master.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap();
+        condition.condition_type = 2001;
+        condition.condition_values = vec![700];
+        input.master.judgement_parameters[0].damage = 100;
+        input.master.reindex().unwrap();
+        input.add_ranges(distance);
+        let mut builder = life_recording::Builder::new(1 << 20);
+        let complete = record_prepared_with_life(
+            input.prepared(),
+            &input.notes,
+            &input.play,
+            &input.deltas,
+            &mut || false,
+            None,
+            Some(&mut builder),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(complete.failure.is_none());
+        let tape = builder.finish(input.play.frames.len()).unwrap();
+        let original_key = input.life_key();
+        let identity = shared_recording::life_identity(&original_key).unwrap();
+        let mut curves = LuckDpCache::new(1 << 20);
+        input.fresh_session(&mut curves);
+        for value in [2000, 4000, 6000, 8000, 12000] {
+            input.master.gekisou_skill_effects.iter_mut().find(|row| row.id == 2).unwrap().effect_value = value;
+            input.master.reindex().unwrap();
+            let key = input.life_key();
+            assert_ne!(key, original_key);
+            assert_eq!(shared_recording::life_identity(&key).unwrap(), identity);
+            let expected = input.transcript();
+            let replayed = record_prepared_with_life(
+                input.prepared(),
+                &input.notes,
+                &input.play,
+                &input.deltas,
+                &mut || false,
+                Some(&tape),
+                None,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(replayed.key().unwrap(), expected, "distance={distance}, value={value}");
+            let life_hits = curves.stats().life_recording_hits;
+            assert_eq!(curve_words(&input.fresh_session(&mut curves)), curve_words(&input.independent()));
+            assert_eq!(curves.stats().life_recording_hits, life_hits + 1);
+        }
+        assert!(curves.life_recordings.retained().1 <= 1 << 20);
+        curves.capacity_words = 0;
+        assert_eq!(curve_words(&input.fresh_session(&mut curves)), curve_words(&input.independent()));
+        assert_eq!(curves.life_recordings.retained(), (0, 0));
+    }
+}
+
+#[test]
+fn certified_life_power_projection_preserves_complete_native_phase_and_judgement_schedules() {
+    for distance in [2400, 20_000] {
+        for external in [false, true] {
+            let mut input = RecordingInput::new();
+            let condition = input.master.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap();
+            condition.condition_type = 2001;
+            condition.condition_values = vec![700];
+            input.master.judgement_parameters[0].damage = 100;
+            // Keep the unrelated lottery support's condition 7000 intact: admission checks every GK row,
+            // including unselected skills. Only the ordinary LIFE reader owns this new rank condition.
+            let mut rank_condition = input.master.skill_conditions.iter().find(|row| row.id == 7000).unwrap().clone();
+            rank_condition.id = 70120;
+            rank_condition.condition_type = 7012;
+            rank_condition.condition_values = vec![3];
+            input.master.skill_conditions.push(rank_condition);
+            input.master.skill_condition_sets.push(crate::master::SkillConditionSetRow {
+                id: 70120,
+                group: 70120,
+                condition_ids: vec![70120],
+            });
+            input
+                .master
+                .support_skill_effects
+                .push(serde_json::from_value(row(501, "_supportSkillID", 501, 3001, 250, 70120, 0, 0)).unwrap());
+            input
+                .master
+                .skill_effect_settings
+                .push(serde_json::from_value(json!({"_id":770,"_skillEffectType":3001,"_phase":1})).unwrap());
+            input.deck[0].support_skills.push((501, 1));
+            input.master.reindex().unwrap();
+            assert!(luck_skills(&input.master).is_ok());
+            let mut outside_lottery = input.master.clone();
+            let unsupported = outside_lottery.skill_conditions.iter_mut().find(|row| row.id == 7000).unwrap();
+            unsupported.condition_type = 7012;
+            unsupported.condition_values = vec![3];
+            outside_lottery.reindex().unwrap();
+            assert!(matches!(luck_skills(&outside_lottery), Err(Error::Unsupported(_))));
+            input.add_ranges(distance);
+            if external {
+                input.ranking = Some(vec![
+                    crate::replay::RankConfirmation { frame: 8, range: 0, rank: 2, percent: 175 },
+                    crate::replay::RankConfirmation { frame: 9, range: 0, rank: 3, percent: -25 },
+                ]);
+            }
+            let capture = |input: &RecordingInput| {
+                let mut builder = life_recording::Builder::new(1 << 20);
+                let complete = record_prepared_with_life(
+                    input.prepared(),
+                    &input.notes,
+                    &input.play,
+                    &input.deltas,
+                    &mut || false,
+                    None,
+                    Some(&mut builder),
+                )
+                .unwrap()
+                .unwrap();
+                assert!(complete.failure.is_none());
+                (complete.key().unwrap(), builder.finish(input.play.frames.len()).unwrap())
+            };
+            let (original_transcript, original_tape) = capture(&input);
+            let original_key = input.life_key();
+            assert_eq!(shared_recording::life_identity(&original_key).unwrap()[0], 1, "power certificate admitted");
+            let expected = curve_words(&input.independent());
+            let mut curves = LuckDpCache::new(1 << 20);
+            input.fresh_session(&mut curves);
+            for power in [1000, 0, 1, -1, 16_777_217, i32::MIN, i32::MAX] {
+                input.params.total_power = power;
+                assert_eq!(input.life_key(), original_key);
+                let (transcript, native_tape) = capture(&input);
+                assert_eq!(transcript, original_transcript, "distance={distance}, external={external}, power={power}");
+                let mut native = native_tape.reader();
+                let mut cached = original_tape.reader();
+                let mut observed_rank_recovery = false;
+                for frame in &input.play.frames {
+                    let mut native_judged: Vec<_> = frame
+                        .judged
+                        .iter()
+                        .map(|judged| {
+                            let note = input.notes.iter().find(|note| note.note_id == judged.note_id).unwrap();
+                            (note.note_id, note.note_operate_type, note.time_ms, judged.judgement)
+                        })
+                        .collect();
+                    let mut cached_judged = native_judged.clone();
+                    let phase = native.next(&mut native_judged).unwrap();
+                    assert_eq!(phase, cached.next(&mut cached_judged).unwrap());
+                    observed_rank_recovery |= phase[1] > phase[0];
+                    assert_eq!(native_judged, cached_judged);
+                }
+                assert!(observed_rank_recovery, "the rank reader must cause a native phase-life change");
+                let before = curves.stats().shared_recording_hits;
+                assert_eq!(curve_words(&input.fresh_session(&mut curves)), expected);
+                assert_eq!(curve_words(&input.independent()), expected);
+                assert_eq!(curves.stats().shared_recording_hits, before + 1);
+            }
+            // A different reduced writer prevents whole-curve reuse while the power-certified native LIFE
+            // machine remains equal. This exercises the narrower transcript cache across both differences.
+            input.master.gekisou_skill_effects.iter_mut().find(|row| row.id == 2).unwrap().effect_value += 123;
+            input.master.reindex().unwrap();
+            input.params.total_power = 777;
+            let before = curves.stats().life_recording_hits;
+            assert_eq!(curve_words(&input.fresh_session(&mut curves)), curve_words(&input.independent()));
+            assert_eq!(curves.stats().life_recording_hits, before + 1);
+        }
+    }
+}
+
+#[test]
+fn life_transcript_eviction_and_capacity_release_keep_independent_results() {
+    let mut input = RecordingInput::new();
+    let condition = input.master.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap();
+    condition.condition_type = 2001;
+    condition.condition_values = vec![700];
+    input.add_unproved_live_group();
+    let mut curves = LuckDpCache::new(1 << 20);
+    for power in 1000..=1139 {
+        input.params.total_power = power;
+        input.fresh_session(&mut curves);
+        let (entries, bytes) = curves.life_recordings.retained();
+        assert!(entries <= 128 && bytes <= 1 << 20);
+    }
+    assert_eq!(curves.life_recordings.retained().0, 128);
+    for (power, should_hit) in [(1000, false), (1139, true)] {
+        input.params.total_power = power;
+        input.master.gekisou_skill_effects.iter_mut().find(|row| row.id == 2).unwrap().effect_value += 123;
+        input.master.reindex().unwrap();
+        let before = curves.stats().life_recording_hits;
+        assert_eq!(curve_words(&input.fresh_session(&mut curves)), curve_words(&input.independent()));
+        assert_eq!(curves.stats().life_recording_hits, before + u64::from(should_hit));
+    }
+    curves.capacity_words = 0;
+    assert_eq!(curve_words(&input.fresh_session(&mut curves)), curve_words(&input.independent()));
+    assert_eq!(curves.life_recordings.retained(), (0, 0));
 }
 
 #[test]

@@ -1,8 +1,10 @@
-//! Request-shared reuse of complete no-life reduced recordings.
+//! Request-shared reuse of complete reduced recordings.
 //!
-//! The session's existing recording key is unchanged. An additional owned scope contains every external
-//! recording input and the complete remaining initialized model state. Only initial score power is normalized:
-//! the reduced interpreter never calculates score and supplies literal zero to both controller phases.
+//! An owned scope contains every external recording input and the complete remaining initialized reduced
+//! model state. Only the reduced interpreter's initial score power is normalized: it never calculates score
+//! and supplies literal zero to both controller phases. An optional life interpreter keeps its complete
+//! initialized state. Its initial power can be projected out only after the existing exhaustive recorder
+//! dependency certificate proves that no life/judgement input reads score; otherwise power remains exact.
 //! A scope mismatch is a miss, and a different scope replaces the retained table only after completion.
 
 use super::*;
@@ -13,6 +15,7 @@ use std::sync::Arc;
 
 const MAX_BYTES: usize = 1 << 20;
 const ARC_HEADER_BYTES: usize = 2 * size_of::<usize>();
+const LIFE_KEY_PREFIX: &[u8] = b"compiled-life-recording\0\x02";
 
 pub(super) struct Scope {
     bytes: Box<[u8]>,
@@ -20,11 +23,11 @@ pub(super) struct Scope {
 }
 
 impl Scope {
-    fn bytes(&self) -> usize {
+    pub(super) fn bytes(&self) -> usize {
         ARC_HEADER_BYTES.saturating_add(size_of::<Self>()).saturating_add(self.bytes.len())
     }
 
-    fn same(a: &Arc<Self>, b: &Arc<Self>) -> bool {
+    pub(super) fn same(a: &Arc<Self>, b: &Arc<Self>) -> bool {
         Arc::ptr_eq(a, b) || (a.hash == b.hash && a.bytes == b.bytes)
     }
 }
@@ -101,6 +104,60 @@ fn residual_identity(model: &mut LiveModel) -> Option<String> {
     value
 }
 
+/// The life interpreter is a deterministic state machine admitted by `life_recorder`. Equal complete
+/// initialized states and the exact shared input stream therefore produce the same life/judgement history.
+/// The score recorder's exhaustive dependency certificate additionally permits initial power projection:
+/// score values and rank bonuses may change, but no admitted life/conversion/lifecycle reader consumes them.
+/// Solo ranks are fixed; external rank arrivals remain exact inputs. Without this certificate power stays.
+/// Notes/events have complete scope encodings; every other field, owner and mutable checker remains here.
+pub(super) fn life_key(prepared: &mut PreparedRecording<ProbabilityMass>, skills: &LuckSkills) -> Option<Vec<u8>> {
+    let life = prepared.life.as_mut()?;
+    let power_independent = super::super::luck_score_bounds::check_recorder(life, skills).is_ok();
+    let power = power_independent.then(|| std::mem::replace(&mut life.score.calc.state.band_total_power, 0));
+    let notes = std::mem::take(&mut life.notes);
+    let events = std::mem::take(&mut life.events);
+    let identity = super::super::luck_exact::initialized_identity(life);
+    life.notes = notes;
+    life.events = events;
+    if let Some(power) = power {
+        life.score.calc.state.band_total_power = power;
+    }
+    let identity = identity?;
+    // Performer input has already been fully compiled. The complete life model above identifies its
+    // effects; retaining an unconsumed performer field would unnecessarily split equal native states.
+    let life_deck = prepared.life_deck.take();
+    let reduced = RecordingCache::key(prepared);
+    prepared.life_deck = life_deck;
+    let bytes = LIFE_KEY_PREFIX
+        .len()
+        .checked_add(8)?
+        .checked_add(reduced.len())?
+        .checked_add(1)?
+        .checked_add(identity.len())?;
+    if bytes > MAX_BYTES {
+        return None;
+    }
+    let mut key = Vec::new();
+    key.try_reserve_exact(bytes).ok()?;
+    if key.capacity() > MAX_BYTES {
+        return None;
+    }
+    key.extend_from_slice(LIFE_KEY_PREFIX);
+    key.extend_from_slice(&(reduced.len() as u64).to_le_bytes());
+    key.extend_from_slice(&reduced);
+    // The proof mode is part of equality, so a declined power certificate never aliases an admitted one.
+    key.push(u8::from(power_independent));
+    key.extend_from_slice(identity.as_bytes());
+    Some(key)
+}
+
+/// The independent life interpreter's identity and power-proof mode, without the reduced lottery rows.
+pub(super) fn life_identity(key: &[u8]) -> Option<&[u8]> {
+    let body = key.strip_prefix(LIFE_KEY_PREFIX)?;
+    let length = usize::try_from(u64::from_le_bytes(body.get(..8)?.try_into().ok()?)).ok()?;
+    body.get(8usize.checked_add(length)?..)
+}
+
 /// Build once per immutable session. Public direct curve calls have no session memo and own a fresh scope.
 /// None declines optional reuse. Cancellation is separate so callers cannot turn it into an uncached success.
 fn scope(
@@ -111,9 +168,6 @@ fn scope(
 ) -> Result<Option<Arc<Scope>>, ()> {
     if cancelled() {
         return Err(());
-    }
-    if prepared.life.is_some() || prepared.life_deck.is_some() {
-        return Ok(None);
     }
     let Some(identity) = residual_identity(&mut prepared.model) else { return Ok(None) };
     if cancelled() {
@@ -151,7 +205,7 @@ fn scope(
     let mut out = Bytes { value, limit };
     let mut stopped = false;
     let built = (|| {
-        out.append(b"no-life-recording-scope\0\x01")?;
+        out.append(b"complete-recording-scope\0\x02")?;
         out.blob(identity.as_bytes())?;
         let Context { notes, events, params, setup, play, deltas, ranking } = context;
         let LiveParams {
@@ -346,7 +400,7 @@ impl SharedRecordings {
         if cancelled() {
             return Err(());
         }
-        if self.capacity == 0 || prepared.life.is_some() || prepared.life_deck.is_some() {
+        if self.capacity == 0 {
             return Ok(None);
         }
         if raw.len() > self.capacity
