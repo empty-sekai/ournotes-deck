@@ -10,6 +10,9 @@ mod record_only_tests;
 #[path = "family_tests.rs"]
 mod family_tests;
 
+#[path = "terminal_expectation_tests.rs"]
+mod terminal_expectation_tests;
+
 #[derive(Clone)]
 struct RushCase {
     master: Master,
@@ -227,12 +230,31 @@ impl Fraction {
             self.numerator.checked_shl((-exponent) as u32).unwrap() <= self.denominator.checked_mul(mantissa).unwrap()
         }
     }
+
+    /// Compare a lower endpoint with the exact rational branch sum using integer arithmetic.
+    fn at_least(self, lower: f64) -> bool {
+        assert!(lower.is_finite() && lower >= 0.0);
+        if lower == 0.0 {
+            return true;
+        }
+        let bits = lower.to_bits();
+        let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
+        let mantissa = u128::from((bits & ((1u64 << 52) - 1)) | (1u64 << 52));
+        assert!(exponent_bits > 0);
+        let exponent = exponent_bits - 1023 - 52;
+        if exponent >= 0 {
+            self.numerator >= self.denominator.checked_mul(mantissa).unwrap().checked_shl(exponent as u32).unwrap()
+        } else {
+            self.numerator.checked_shl((-exponent) as u32).unwrap() >= self.denominator.checked_mul(mantissa).unwrap()
+        }
+    }
 }
 
 struct NativeBranch {
     mass: Fraction,
     // Native final calculator value and actual range snapshots, observed without score-bound replay.
     total_score: i32,
+    final_life: i32,
     rank_bonuses: Vec<(usize, i32, i32, i64)>,
     rank_ranges: Vec<(i32, i32)>,
     // Every terminal note in (chart time, note id) order: (time, id, actual score, native Rush class).
@@ -431,6 +453,7 @@ fn native_branches(input: &RushCase) -> Vec<NativeBranch> {
         branches.push(NativeBranch {
             mass,
             total_score: native.score(),
+            final_life: native.current_life(),
             rank_bonuses: native.gekisou_rank_bonuses().to_vec(),
             rank_ranges: native.gekisou_ranges().iter().map(|range| (range.start_score, range.end_score)).collect(),
             notes,
@@ -1411,6 +1434,17 @@ fn assert_native_total_mean(input: &RushCase) -> Vec<NativeBranch> {
         let capability = input.ready(Some(&mut cache));
         let upper = capability.native_score_mean_upper(power).expect("every native rank window is certified");
         assert!(mean.at_most(upper), "complete native mean {mean:?} exceeds whole-score cap {upper}");
+        let summary = capability.terminal_summary(power).expect("both endpoints of the complete score are certified");
+        assert!(mean.at_least(summary.final_mean.lower), "terminal lower exceeds native mean {mean:?}: {summary:?}");
+        assert!(mean.at_most(summary.final_mean.upper), "terminal upper misses native mean {mean:?}: {summary:?}");
+        assert_eq!(summary.final_mean.upper.to_bits(), upper.to_bits());
+        for branch in &branches {
+            assert!(
+                summary.final_support.lower <= branch.total_score && branch.total_score <= summary.final_support.upper
+            );
+            assert_eq!(summary.exact_final_life, Some(branch.final_life));
+        }
+        assert!(capability.terminal_summary(power + 1).is_none());
         assert!(capability.native_score_mean_upper(power + 1).is_none());
         assert!(capability.native_score_mean_upper(-1).is_none());
         assert!(capability.native_score_mean_upper(i64::MAX).is_none());
@@ -1672,8 +1706,15 @@ fn native_total_historical_queries_preserve_real_fixed_coefficients_and_frame_bo
             _ => i64::from(recording.bonuses[0]),
         };
         assert_eq!(i64::from(recording.total) - recording.notes, bonus, "native fixed coefficient in {case:?}");
-        let upper = kernel_for_native_rank(&recording, || false).unwrap().mean_upper.unwrap();
+        let kernel = kernel_for_native_rank(&recording, || false).unwrap();
+        let upper = kernel.mean_upper.unwrap();
         assert!(Fraction::new(recording.total as u128, 1).at_most(upper), "{case:?}: {} > {upper}", recording.total);
+        let enclosure = kernel.expectation.unwrap();
+        assert!(
+            enclosure.mean.contains(f64::from(recording.total)),
+            "historical lower endpoint in {case:?}: {enclosure:?}"
+        );
+        assert!(enclosure.support.contains(recording.total));
     }
 }
 
@@ -1688,6 +1729,7 @@ fn native_total_declines_unproved_ranks_without_losing_note_caps_or_hiding_cance
         let recording = native_rank_recording(case);
         let result = kernel_for_native_rank(&recording, || false).unwrap();
         assert!(result.mean_upper.is_none(), "unproved rank became a whole-score certificate: {case:?}");
+        assert!(result.expectation.is_none(), "unproved rank became a completed expectation: {case:?}");
         assert!(!result.caps.is_empty());
     }
     let recording = native_rank_recording(NativeRankCase::Ordinary);

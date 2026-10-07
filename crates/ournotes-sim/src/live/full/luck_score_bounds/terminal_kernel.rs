@@ -1,14 +1,14 @@
-//! Native-note uppers from a complete deterministic recording and certified factor prefixes.
+//! Native-note enclosures from a complete deterministic recording and certified factor prefixes.
 //!
 //! A note's conversion, frozen life and combo inputs are deterministic under the recorder admission. Its last
 //! execution can be retained from an earlier query, so the combo enclosure includes every recorded observation.
 //! No current-state snapshot, judgement-reach envelope or probability independence assumption replaces that
-//! history. A separate rank-plan consumer may reuse these kernels for an optional full-score mean upper.
+//! history. A separate rank-plan consumer proves the complete terminal expectation and integer support.
 
 use super::terminal_prefix::{TerminalIngredients, TerminalNote};
 use super::trace_drift::Decline;
 use super::{BoundsEvent, BoundsTrace, LiveScoreCalculator, LuckDpCertifiedResult, note_bounds_at_power};
-use crate::live::certified::F32Interval;
+use crate::live::certified::{F32Interval, I32Interval};
 use crate::num::FxHashMap;
 
 #[derive(Debug)]
@@ -18,6 +18,8 @@ pub(super) struct Prepared {
     pub(super) caps: Vec<[i32; 4]>,
     /// Complete terminal notes and every native rank bonus passed the independent integer-support checks.
     pub(super) mean_upper: Option<f64>,
+    /// A complete two-sided terminal expectation, independent of the time-pooled exclusion caps.
+    pub(super) expectation: Option<super::native_total::ScoreEnclosure>,
 }
 
 #[derive(Clone, Copy)]
@@ -111,13 +113,13 @@ impl<'a> Kernel<'a> {
         })
     }
 
-    /// Integer uppers for these exact note occurrences, without pooling notes that share chart times.
+    /// Integer enclosures for these exact note occurrences, without pooling notes that share chart times.
     /// The caller separately establishes which query's ready probability law may be attached to them.
     pub(super) fn rows(
         &self,
         notes: &[TerminalNote],
         mut cancelled: impl FnMut() -> bool,
-    ) -> Result<Vec<[i32; 4]>, Decline> {
+    ) -> Result<Vec<[I32Interval; 4]>, Decline> {
         let mut caps = Vec::new();
         caps.try_reserve_exact(notes.len()).map_err(|_| Decline::Capacity)?;
         for (at, prefix) in notes.iter().enumerate() {
@@ -147,14 +149,15 @@ impl<'a> Kernel<'a> {
             if support.lower() < 0 || support.upper() == i32::MAX {
                 return Err(Decline::Magnitude);
             }
-            let mut row = [0; 4];
+            let mut row = [I32Interval::point(0); 4];
             for (value, bucket) in row.iter_mut().zip(bounds.buckets) {
-                *value = bucket.ok_or(Decline::Incomplete)?.upper;
+                let bucket = bucket.ok_or(Decline::Incomplete)?;
+                *value = I32Interval::new(bucket.lower, bucket.upper).map_err(|_| Decline::Nonfinite)?;
             }
             if !self.linked && (row[0] != row[1] || row[2] != row[3]) {
                 return Err(Decline::Incomplete);
             }
-            if row[..3].iter().any(|value| *value > row[3]) {
+            if row[..3].iter().any(|value| value.upper() > row[3].upper()) {
                 return Err(Decline::Magnitude);
             }
             caps.push(row);
@@ -185,12 +188,16 @@ pub(super) fn build(
         return Err(Decline::Incomplete);
     }
     let kernel = Kernel::new(calc, power, rush_percent, trace, ingredients, linked, &mut cancelled)?;
-    let mut caps = kernel.rows(&ingredients.notes, &mut cancelled)?;
-    let mean_upper = match super::native_total::build(&kernel, &caps, probability, &mut cancelled) {
-        Ok(upper) => Some(upper),
+    let rows = kernel.rows(&ingredients.notes, &mut cancelled)?;
+    let expectation = match super::native_total::build(&kernel, &rows, probability, &mut cancelled) {
+        Ok(expectation) => Some(expectation),
         Err(super::native_total::Decline::Cancelled) => return Err(Decline::Cancelled),
         Err(_) => None,
     };
+    let mean_upper = expectation.map(|value| value.mean.upper());
+    let mut caps = Vec::new();
+    caps.try_reserve_exact(rows.len()).map_err(|_| Decline::Capacity)?;
+    caps.extend(rows.into_iter().map(|row| row.map(I32Interval::upper)));
 
     // Fine entries preserve the input occurrence order at tied times; native factor prefixes use note IDs.
     // The direct score sum above keeps the original occurrences. Only the public time-only per-note interface
@@ -223,5 +230,5 @@ pub(super) fn build(
         terminal_kernel_combo_observations: kernel.observations,
         ..Default::default()
     });
-    Ok(Prepared { power, caps, mean_upper })
+    Ok(Prepared { power, caps, mean_upper, expectation })
 }

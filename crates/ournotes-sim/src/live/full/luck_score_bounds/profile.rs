@@ -5,6 +5,10 @@ use std::cell::RefCell;
 #[serde(rename_all = "camelCase")]
 pub struct LuckScoreProfile {
     pub evaluations: u64,
+    pub terminal_evaluations: u64,
+    pub terminal_replay_fallbacks: u64,
+    pub terminal_cancellations: u64,
+    pub terminal_capacity_refusals: u64,
     pub model_setup_ms: f64,
     pub curve_dp_ms: f64,
     pub recorder_run_ms: f64,
@@ -60,6 +64,10 @@ pub(super) fn record(value: LuckScoreProfile) {
     PROFILE.with(|profile| {
         let mut total = profile.borrow_mut();
         total.evaluations += value.evaluations;
+        total.terminal_evaluations += value.terminal_evaluations;
+        total.terminal_replay_fallbacks += value.terminal_replay_fallbacks;
+        total.terminal_cancellations += value.terminal_cancellations;
+        total.terminal_capacity_refusals += value.terminal_capacity_refusals;
         total.model_setup_ms += value.model_setup_ms;
         total.curve_dp_ms += value.curve_dp_ms;
         total.recorder_run_ms += value.recorder_run_ms;

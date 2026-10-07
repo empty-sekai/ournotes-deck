@@ -108,11 +108,24 @@ pub(crate) struct TerminalIngredients {
     /// Native execution order with original filing ordinals. Earlier rank queries may reuse the complete
     /// roundoff allowance, but their ideal prefixes must exclude every command not yet filed at that query.
     ordinary: Box<[OrdinaryCommand]>,
+    /// Required amplitude from rows whose complete fixed predicates were proved true by the recorder.
+    /// A raw trace grants no positive lower amplitude, because may_hold is only an overapproximation.
+    probe_sum_lower: f64,
     probe_sum_upper: f64,
     unconditional_probe_upper: f64,
 }
 
 impl TerminalIngredients {
+    /// The admitted recorder may establish which positive direct rows necessarily follow its common gate.
+    /// Arithmetic projection alone leaves this zero. The upper still includes every possibly held row.
+    pub(super) fn certify_linked_probe_lower(&mut self, lower: f64) -> Result<(), Decline> {
+        if !lower.is_finite() || lower < 0.0 || lower > self.probe_sum_upper {
+            return Err(Decline::Magnitude);
+        }
+        self.probe_sum_lower = lower;
+        Ok(())
+    }
+
     /// Enclose every floating field at this note's retained terminal execution. The original query/filing
     /// certificate covers all histories; linking the direct probe class remains an outer admission.
     #[cfg(test)]
@@ -129,9 +142,7 @@ impl TerminalIngredients {
                 let (mut lower, mut upper) = (note.ordinary_lower[j], note.ordinary_upper[j]);
                 if j == 1 {
                     let (probe_lower, probe_upper) = if linked {
-                        // may_hold includes rows whose fixed condition might be false. Its positive
-                        // amplitudes certify an upper sum, not a required active lower sum.
-                        if class == 0 { (0.0, 0.0) } else { (0.0, self.probe_sum_upper) }
+                        if class == 0 { (0.0, 0.0) } else { (self.probe_sum_lower, self.probe_sum_upper) }
                     } else {
                         (-self.unconditional_probe_upper, self.unconditional_probe_upper)
                     };
@@ -376,6 +387,7 @@ pub(crate) fn build(
         probe_time_runs: probe_runs,
         initial,
         ordinary: ordinary.into_boxed_slice(),
+        probe_sum_lower: 0.0,
         probe_sum_upper: probe_sum.upper,
         unconditional_probe_upper,
     })

@@ -1,8 +1,9 @@
-//! Terminal joint Rush/probe probabilities for conservative expected-score caps.
+//! Terminal joint Rush/probe probabilities and completed native expectation enclosures.
 //!
 //! This runs the admitted deterministic recorder and the certified lottery DP, but never the factor-history
 //! replay. It certifies which joint law belongs to the terminal notes; the caller still has to prove the supplied
-//! integer note caps. No probability-weighted cap is a score support, a candidate value or an exact score law.
+//! integer note caps. The optional native kernel independently certifies both expectation endpoints, integer
+//! support and every historical rank contribution before it supplies a completed score summary.
 
 use super::*;
 use std::sync::Arc;
@@ -45,9 +46,33 @@ pub struct LuckTerminalRush {
     note_factors: Option<Vec<[f64; 2]>>,
     /// Complete native terminal-note uppers at this preparation's exact power.
     native_notes: Option<terminal_kernel::Prepared>,
+    /// Established only by a completed admitted recorder, independently of terminal note projection.
+    exact_final_life: Option<i32>,
 }
 
 impl LuckTerminalRush {
+    /// A complete two-sided expectation for this exact power, together with an independent native integer
+    /// support and deterministic terminal life. Every terminal note and historical rank snapshot is enclosed.
+    /// A nonsingleton interval remains subject to comparison/refinement; it is neither an exact rational mean
+    /// nor a score distribution for nonlinear payoffs. Refusal leaves `LuckScoreSession::summary` available.
+    pub fn terminal_summary(&self, total_power: i64) -> Option<LuckScoreSummary> {
+        let native = self.native_notes.as_ref()?;
+        (total_power == i64::from(native.power)).then_some(())?;
+        let expectation = native.expectation?;
+        let life = self.exact_final_life?;
+        #[cfg(feature = "search-diagnostics")]
+        profile::record(LuckScoreProfile { evaluations: 1, terminal_evaluations: 1, ..Default::default() });
+        Some(LuckScoreSummary {
+            final_mean: expectation.mean.into(),
+            final_support: expectation.support.into(),
+            exact_constant_score: (expectation.support.lower() == expectation.support.upper())
+                .then_some(expectation.support.lower()),
+            exact_final_life: Some(life),
+            probability_peak_states: self.probability.peak_states,
+            probability_transitions: self.probability.transitions,
+        })
+    }
+
     /// A whole native-score expectation upper at this preparation's exact power. Every terminal note and
     /// every rank bonus has an independent nonnegative, nonwrapping integer support proof. This is only an
     /// exclusion upper; it supplies no candidate value, nonlinear payoff, score law or completed ranking.
@@ -129,6 +154,35 @@ impl LuckTerminalRush {
 }
 
 impl LuckScoreSession<'_> {
+    /// Complete a native expected-score enclosure with the terminal kernel when its full history proof is
+    /// available, otherwise run the factor-history evaluator. Cancellation never becomes a fallback result.
+    /// Callers that already prepared this deck may reuse `LuckTerminalRush::terminal_summary` directly and use
+    /// `summary` after a refusal, so no successful preparation is recorded again.
+    pub fn summary_or_terminal(
+        &mut self,
+        deck: &[Performer],
+        mut curves: Option<&mut LuckDpCache>,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<LuckScoreSummary>, Error> {
+        match self.rush_cap_preparation(deck, curves.as_deref_mut(), &mut cancelled) {
+            LuckRushPreparation::Ready(terminal) => {
+                if cancelled() {
+                    #[cfg(feature = "search-diagnostics")]
+                    profile::record(LuckScoreProfile { terminal_cancellations: 1, ..Default::default() });
+                    return Ok(None);
+                }
+                if let Some(summary) = terminal.terminal_summary(i64::from(self.params.total_power)) {
+                    return Ok(Some(summary));
+                }
+            }
+            LuckRushPreparation::Unavailable { .. } => {}
+            LuckRushPreparation::Stopped => return Ok(None),
+        }
+        #[cfg(feature = "search-diagnostics")]
+        profile::record(LuckScoreProfile { terminal_replay_fallbacks: 1, ..Default::default() });
+        self.summary(deck, curves, cancelled)
+    }
+
     /// Prepare terminal joint probabilities without factor-history replay. A caller may condition its native
     /// Rush multiplier, and matching direct probe amplitudes only under the observed LUCK gate, while retaining
     /// all ordinary effects and complete history/rank/conversion allowances. The recorder/DP admission is shared
@@ -142,12 +196,77 @@ impl LuckScoreSession<'_> {
         curves: Option<&mut LuckDpCache>,
         mut cancelled: impl FnMut() -> bool,
     ) -> LuckRushPreparation {
-        match prepare(self, deck, curves, &mut cancelled) {
+        let result = match prepare(self, deck, curves, &mut cancelled) {
             Ok(Some(capability)) => LuckRushPreparation::Ready(capability),
             Ok(None) => LuckRushPreparation::Stopped,
             Err((reason, error)) => LuckRushPreparation::Unavailable { reason, error },
+        };
+        #[cfg(feature = "search-diagnostics")]
+        profile::record(LuckScoreProfile {
+            terminal_cancellations: u64::from(matches!(result, LuckRushPreparation::Stopped)),
+            terminal_capacity_refusals: u64::from(matches!(
+                result,
+                LuckRushPreparation::Unavailable { error: Error::Capacity(_), .. }
+            )),
+            ..Default::default()
+        });
+        result
+    }
+}
+
+pub(super) fn fixed_truth(checker: &Checker) -> Option<bool> {
+    match checker {
+        Checker::Fixed(value) => Some(*value),
+        Checker::And { items, .. } => items.iter().try_fold(true, |value, item| Some(value & fixed_truth(item)?)),
+        Checker::Or(items) => items.iter().try_fold(false, |value, item| Some(value | fixed_truth(item)?)),
+        Checker::Not(inner) => fixed_truth(inner).map(|value| !value),
+        _ => None,
+    }
+}
+
+/// Every retained positive row whose complete fixed condition is true follows the common untimed direct
+/// trigger and gate. The recorder admission proves that neither a timer, reset nor a release can separate it.
+/// Row indices are unique native effect instances; equal owners retain all of their individual contributions.
+pub(super) fn required_probe_lower(
+    model: &LiveModel,
+    rows: &[LuckScoreRow],
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<f64, trace_drift::Decline> {
+    use trace_drift::Decline;
+    let mut by_row = FxHashMap::default();
+    by_row.try_reserve(rows.len()).map_err(|_| Decline::Capacity)?;
+    for (index, row) in rows.iter().enumerate() {
+        if index.is_multiple_of(64) && cancelled() {
+            return Err(Decline::Cancelled);
+        }
+        if by_row.insert(row.row, row).is_some() {
+            return Err(Decline::Incomplete);
         }
     }
+    let mut sum = F64Interval::ZERO;
+    let mut index = 0usize;
+    for skill in &model.cond {
+        for effect in skill.updater.effects() {
+            if index.is_multiple_of(64) && cancelled() {
+                return Err(Decline::Cancelled);
+            }
+            index = index.checked_add(1).ok_or(Decline::CountOverflow)?;
+            let Some(row) = by_row.remove(&effect.row) else { continue };
+            if !row.may_hold || row.value < 0.0 {
+                continue;
+            }
+            if effect.condition.as_ref().map_or(Some(true), fixed_truth).ok_or(Decline::Incomplete)? {
+                sum = sum.add(F64Interval::point(f64::from(row.value)).map_err(|_| Decline::Nonfinite)?);
+            }
+        }
+    }
+    if cancelled() {
+        return Err(Decline::Cancelled);
+    }
+    if !by_row.is_empty() {
+        return Err(Decline::Incomplete);
+    }
+    sum.lower().is_finite().then_some(sum.lower().max(0.0)).ok_or(Decline::Nonfinite)
 }
 
 fn prepare(
@@ -175,8 +294,22 @@ fn prepare(
             .map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
     let probe_gate =
         check_recorder(&model, session.skills).map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
-    let probes: Vec<_> = model
-        .luck_score_rows(session.skills)
+    let score_rows = model.luck_score_rows(session.skills);
+    let required_probe_lower = match required_probe_lower(&model, &score_rows, cancelled) {
+        Ok(lower) => Some(lower),
+        Err(trace_drift::Decline::Cancelled) => return Ok(None),
+        Err(error) => {
+            #[cfg(feature = "search-diagnostics")]
+            profile::record(LuckScoreProfile {
+                terminal_capacity_refusals: u64::from(error == trace_drift::Decline::Capacity),
+                ..Default::default()
+            });
+            #[cfg(not(feature = "search-diagnostics"))]
+            let _ = error;
+            None
+        }
+    };
+    let probes: Vec<_> = score_rows
         .into_iter()
         .filter(|row| row.may_hold)
         .map(|row| ProbeRow { owner: row.owner, value: row.value })
@@ -292,10 +425,20 @@ fn prepare(
     let Some(mut terminal) = terminal_notes(&trace, &probability, cancelled)? else {
         return Ok(None);
     };
+    terminal.exact_final_life = Some(model.current_life());
     #[cfg(feature = "search-diagnostics")]
     timing.next(Phase::Factors);
     match terminal_prefix::from_trace(&trace, initial_fields, &terminal.note_times, terminal.probe_gate, cancelled) {
-        Ok(prepared) => {
+        Ok(mut prepared) => {
+            if prepared.linked
+                // Foreign range finishes can alter the global Rush handle while another mission runs.
+                // Their positive probe lower retains zero until that activity correspondence is certified.
+                && session.setup.missions.iter().take(session.setup.fevers.len()).all(|&mission| mission == gekisou::M_LUCK)
+                && let Some(lower) = required_probe_lower
+            {
+                // Refusing an optional tightening leaves its previously proved zero lower amplitude.
+                let _ = prepared.ingredients.certify_linked_probe_lower(lower);
+            }
             #[cfg(feature = "search-diagnostics")]
             profile::record(prepared.profile);
             #[cfg(feature = "search-diagnostics")]
@@ -313,17 +456,29 @@ fn prepare(
             ) {
                 Ok(native) => terminal.native_notes = Some(native),
                 Err(trace_drift::Decline::Cancelled) => return Ok(None),
-                Err(_) => {
+                Err(error) => {
                     #[cfg(feature = "search-diagnostics")]
-                    profile::record(LuckScoreProfile { terminal_kernel_refusals: 1, ..Default::default() });
+                    profile::record(LuckScoreProfile {
+                        terminal_kernel_refusals: 1,
+                        terminal_capacity_refusals: u64::from(error == trace_drift::Decline::Capacity),
+                        ..Default::default()
+                    });
+                    #[cfg(not(feature = "search-diagnostics"))]
+                    let _ = error;
                 }
             }
             terminal.note_factors = Some(prepared.factors);
         }
         Err(trace_drift::Decline::Cancelled) => return Ok(None),
-        Err(_) => {
+        Err(error) => {
             #[cfg(feature = "search-diagnostics")]
-            profile::record(LuckScoreProfile { terminal_factor_refusals: 1, ..Default::default() });
+            profile::record(LuckScoreProfile {
+                terminal_factor_refusals: 1,
+                terminal_capacity_refusals: u64::from(error == trace_drift::Decline::Capacity),
+                ..Default::default()
+            });
+            #[cfg(not(feature = "search-diagnostics"))]
+            let _ = error;
         }
     }
     Ok(Some(terminal))
@@ -383,6 +538,7 @@ pub(super) fn terminal_notes(
         probe_gate,
         note_factors: None,
         native_notes: None,
+        exact_final_life: None,
     }))
 }
 
@@ -430,7 +586,7 @@ impl Timing {
 impl Drop for Timing {
     fn drop(&mut self) {
         self.next(self.phase);
-        // A prepass is not a completed score evaluation; only its actual phase work is recorded.
+        // Keep preparation work even when no caller consumes its optional completed score summary.
         profile::record(self.value);
     }
 }
