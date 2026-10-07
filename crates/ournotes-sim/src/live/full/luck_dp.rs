@@ -28,6 +28,11 @@ pub struct LuckDpResult {
 /// probabilities only; a whole-score certificate also needs the game's binary32/floor score pipeline.
 #[derive(Clone, Debug)]
 pub struct LuckDpCertifiedResult {
+    /// Possible native Rush handle filings at the operations of each original play frame.
+    pub rush_filings: Vec<LuckRushFrameSupport>,
+    /// At the skill boundary of each original play frame, possible old/new direct-probe classes.
+    /// Bit `2 * old + new` denotes a reachable transition. Entries include quiet and repeated frames.
+    pub probe_transitions: Vec<u8>,
     /// Joint probabilities in the order [neither, score only, Rush only, Rush and score]. Every bucket is
     /// accumulated directly from mutually exclusive DP states, never by subtracting rounded marginals.
     pub steps: Vec<(i32, [ProbabilityMass; 4])>,
@@ -37,7 +42,17 @@ pub struct LuckDpCertifiedResult {
     pub transitions: u64,
 }
 
+/// Existential filing support, before the frame's skills and at each subsequent lottery site.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LuckRushFrameSupport {
+    pub before: bool,
+    pub judged: Vec<bool>,
+    pub pending: bool,
+}
+
 struct DpResult<W> {
+    rush_filings: Vec<LuckRushFrameSupport>,
+    probe_transitions: Vec<u8>,
     steps: Vec<(i32, W)>,
     probes: Vec<bool>,
     peak_states: usize,
@@ -338,7 +353,7 @@ fn chance<M: Mass>(checker: &Checker, life: i32) -> Option<M> {
     }
 }
 
-fn fixed_condition(checker: &Checker) -> Option<bool> {
+pub(super) fn fixed_condition(checker: &Checker) -> Option<bool> {
     match checker {
         Checker::Fixed(value) => Some(*value),
         Checker::Not(inner) => fixed_condition(inner).map(|value| !value),
@@ -803,6 +818,7 @@ impl<'a, M: Mass> Dp<'a, M> {
         buff: i32,
         p: M,
         out: &mut Distribution<M>,
+        filed: &mut bool,
     ) -> Result<(), Error> {
         state.chain.lots -= 1;
         let first = if state.chain.next == -1 {
@@ -815,6 +831,10 @@ impl<'a, M: Mass> Dp<'a, M> {
         for (pn, result) in first.iter() {
             let mut next = state;
             let mut score = next.chain.score(&self.templates[range]);
+            // A zero-valued Rush command still files. Observe the handle calls, not the net factor change.
+            if p.multiply(pn).possible() {
+                *filed |= (score.rush_combo == 0 && result == 3) || (result != 3 && next.rush);
+            }
             if score.rush_combo == 0 || result != 3 {
                 next.rush = result == 3;
                 next.query_rush = next.rush;
@@ -842,15 +862,16 @@ impl<'a, M: Mass> Dp<'a, M> {
         buff: i32,
         speed: f32,
         consumes: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         if matches!(judgement, 0 | 7) {
-            return Ok(());
+            return Ok(false);
         }
         debug_assert_eq!(self.active_range, Some(range));
         let base: Vec<_> = M::base(self.machine, note_type, judgement)?
             .into_iter()
             .map(|(probability, point)| (probability, floor_to_i32((speed + 1f32) * point as f32)))
             .collect();
+        let mut filed = false;
         let mut out = std::mem::take(&mut self.spare);
         let mut previous = std::mem::take(&mut self.dist);
         for (state, probability) in previous.drain() {
@@ -860,29 +881,32 @@ impl<'a, M: Mass> Dp<'a, M> {
                 score.add_gauge(gauge)?;
                 next.chain = Chain::of(&score);
                 if consumes && score.lot_count > 0 {
-                    self.consume(next, range, buff, probability.multiply(pb), &mut out)?;
+                    self.consume(next, range, buff, probability.multiply(pb), &mut out, &mut filed)?;
                 } else {
                     self.push(&mut out, next, probability.multiply(pb))?;
                 }
             }
         }
         self.spare = previous;
-        self.replace(out)
+        self.replace(out)?;
+        Ok(filed)
     }
 
-    fn pending(&mut self, range: usize, buff: i32) -> Result<(), Error> {
+    fn pending(&mut self, range: usize, buff: i32) -> Result<bool, Error> {
         debug_assert_eq!(self.active_range, Some(range));
+        let mut filed = false;
         let mut out = std::mem::take(&mut self.spare);
         let mut previous = std::mem::take(&mut self.dist);
         for (state, probability) in previous.drain() {
             if state.chain.lots > 0 && !state.frame_lot {
-                self.consume(state, range, buff, probability, &mut out)?;
+                self.consume(state, range, buff, probability, &mut out, &mut filed)?;
             } else {
                 self.push(&mut out, state, probability)?;
             }
         }
         self.spare = previous;
-        self.replace(out)
+        self.replace(out)?;
+        Ok(filed)
     }
 
     fn weights(&self, probes: &[bool], at_frame: bool) -> M::Weights {
@@ -1076,6 +1100,8 @@ pub fn luck_rush_dp_certified_with_ranking(
         ranking,
     )?;
     Ok(LuckDpCertifiedResult {
+        rush_filings: result.rush_filings,
+        probe_transitions: result.probe_transitions,
         steps: result.steps,
         probes: result.probes,
         peak_states: result.peak_states,
@@ -1726,6 +1752,9 @@ fn propagate_cancellable<M: Mass>(
     let t = transcript;
     let mut dp = Dp::<M>::new(t.templates.clone(), &t.machine);
     let mut steps: Vec<(i32, M::Weights)> = Vec::new();
+    let mut probe_transitions = Vec::new();
+    let mut rush_filings = Vec::new();
+    let mut identity = 1u8;
     let mut previous_lot = false;
     let mut queued = vec![false; t.luck.len()];
     let (mut notes_from, mut actions_from, mut pending_from) = (0usize, 0usize, 0usize);
@@ -1752,6 +1781,8 @@ fn propagate_cancellable<M: Mass>(
             {
                 // No lottery or dependent skill state can change here. A consumed lot forces the FOLLOWING
                 // frame through the DP for 7021 and previous-frame 7000.
+                probe_transitions.push(identity);
+                rush_filings.push(LuckRushFrameSupport::default());
                 continue;
             }
             if let Some(range) = frame.start {
@@ -1759,7 +1790,12 @@ fn propagate_cancellable<M: Mass>(
                 dp.active_range = Some(range);
             }
             let starting_chain = frame.start.map(|range| Chain::of(&dp.templates[range]));
+            let mut edges = 0u8;
+            let mut filings = LuckRushFrameSupport::default();
+            // Distribution entries have positive possible mass. The certified instantiation retains every
+            // positive-support branch using outward ProbabilityMass arithmetic.
             dp.map(|mut state| {
+                let before = state.score;
                 if let Some(chain) = starting_chain {
                     state.chain = chain;
                 }
@@ -1768,6 +1804,7 @@ fn propagate_cancellable<M: Mass>(
                 state.frame_lot = false;
                 state.frame_miss = false;
                 if finish {
+                    filings.before |= state.rush;
                     state.rush = false;
                 }
                 if gate {
@@ -1778,12 +1815,16 @@ fn propagate_cancellable<M: Mass>(
                         state.score = false;
                     }
                 }
+                edges |= 1 << (2 * usize::from(before) + usize::from(state.score));
                 if complete {
                     state.minimum = 0;
                     state.miss_used = false;
                 }
                 Ok(state)
             })?;
+            probe_transitions.push(edges);
+            // Later lotteries, pending draws and the final map do not change the direct-probe class.
+            identity = u8::from(edges & 0b0101 != 0) | (u8::from(edges & 0b1010 != 0) << 3);
             if gate && frame.target >= 0 {
                 for &action in actions {
                     dp.action(action, frame.target as usize)?;
@@ -1804,9 +1845,11 @@ fn propagate_cancellable<M: Mass>(
                     end += 1;
                 }
                 for note in &notes[i..end] {
+                    let mut filed = false;
                     for h in &t.hits[hit..note.hits] {
-                        dp.note(h.range, note.note_type, note.judgement, h.buff, h.speed, h.consumes)?;
+                        filed |= dp.note(h.range, note.note_type, note.judgement, h.buff, h.speed, h.consumes)?;
                     }
+                    filings.judged.push(filed);
                     hit = note.hits;
                 }
                 if time < frame.time_ms {
@@ -1818,7 +1861,7 @@ fn propagate_cancellable<M: Mass>(
                 i = end;
             }
             for &(range, buff) in pending {
-                dp.pending(range, buff)?;
+                filings.pending |= dp.pending(range, buff)?;
             }
             if notes.last().is_some_and(|note| note.time_ms == frame.time_ms) {
                 let values = dp.weights(&t.probes, true);
@@ -1826,6 +1869,7 @@ fn propagate_cancellable<M: Mass>(
                     steps.push((frame.time_ms, values));
                 }
             }
+            rush_filings.push(filings);
             previous_lot = dp.dist.keys().any(|state| state.frame_lot);
             dp.map(|mut state| {
                 state.previous_miss = state.frame_miss;
@@ -1850,7 +1894,14 @@ fn propagate_cancellable<M: Mass>(
     if let Some(failure) = &t.failure {
         return Err(failure.clone());
     }
-    Ok(Some(DpResult { steps, probes: t.probes.clone(), peak_states: dp.peak, transitions: dp.transitions }))
+    Ok(Some(DpResult {
+        rush_filings,
+        probe_transitions,
+        steps,
+        probes: t.probes.clone(),
+        peak_states: dp.peak,
+        transitions: dp.transitions,
+    }))
 }
 
 /// Certified curves reused within one request, across performance orders and decks.
@@ -2021,6 +2072,8 @@ impl LuckDpCache {
         }
         let Some(result) = result? else { return Ok(None) };
         let result = std::sync::Arc::new(LuckDpCertifiedResult {
+            rush_filings: result.rush_filings,
+            probe_transitions: result.probe_transitions,
             steps: result.steps,
             probes: result.probes,
             peak_states: result.peak_states,
@@ -2607,7 +2660,14 @@ mod tests {
     }
 
     fn curve_words(curve: &LuckDpCertifiedResult) -> Vec<u64> {
-        let mut out = Vec::new();
+        let mut out = vec![curve.rush_filings.len() as u64];
+        for frame in &curve.rush_filings {
+            out.extend([u64::from(frame.before), frame.judged.len() as u64]);
+            out.extend(frame.judged.iter().map(|&filed| u64::from(filed)));
+            out.push(u64::from(frame.pending));
+        }
+        out.push(curve.probe_transitions.len() as u64);
+        out.extend(curve.probe_transitions.iter().map(|&mask| u64::from(mask)));
         for (time, joint) in &curve.steps {
             out.push(u64::from(*time as u32));
             joint.iter().for_each(|mass| out.extend(mass.bits()));
@@ -2936,5 +2996,456 @@ mod tests {
             assert_eq!(small.len(), 1);
             assert!(small.stats().peak_key_bytes <= capacity);
         }
+    }
+
+    #[test]
+    fn probe_mask_tracks_native_skill_boundary_and_expands_quiet_frames() {
+        for result in [0, 3] {
+            let (master, notes, params, setup, play, delta) = fixture(result, 60);
+            let skills = luck_skills(&master).unwrap();
+            let deck = [Performer {
+                gekisou_skill: Some((1, 1)),
+                gekisou_support_skills: vec![(31, 1)],
+                ..Default::default()
+            }];
+            let certified = luck_rush_dp_certified_with_ranking(
+                &master,
+                &skills,
+                &notes,
+                &[],
+                params,
+                &setup,
+                &play,
+                &delta,
+                &deck,
+                None,
+                None,
+            )
+            .unwrap();
+            assert_eq!(certified.probe_transitions.len(), play.frames.len());
+            assert!(certified.probe_transitions.iter().all(|&mask| (1..=15).contains(&mask)));
+            let mut native = LiveModel::new_gekisou(&master, &deck, &notes, &[], params, &setup).unwrap();
+            native.score.begin_bounds(Vec::new(), true);
+            let mut applied = 0i32;
+            let mut switched = 0;
+            for (index, (frame, &dt)) in play.frames.iter().zip(&delta).enumerate() {
+                let old = applied != 0;
+                native.frame_timed(frame.time_ms, &frame.judged, dt).unwrap();
+                for event in native.score.bounds_trace.as_mut().unwrap().events.drain(..) {
+                    if let super::super::luck_score_bounds::BoundsEvent::Factor { command, .. } = event {
+                        applied += command.note_mill;
+                    }
+                }
+                let new = applied != 0;
+                if frame.time_ms < params.music_length_ms {
+                    assert_eq!(
+                        certified.probe_transitions[index],
+                        1 << (2 * usize::from(old) + usize::from(new)),
+                        "result={result} frame={index}"
+                    );
+                }
+                switched += usize::from(old != new);
+            }
+            assert_eq!(switched > 0, result == 3);
+        }
+    }
+
+    #[test]
+    fn probe_mask_cached_and_uncached_certificates_keep_original_frame_ordinals() {
+        let (master, notes, params, setup, mut play, mut delta) = fixture(3, 60);
+        // Quiet frames have unequal times; compact propagation must still produce one mask per original frame.
+        play.frames.insert(1, PlayFrame { time_ms: 31, judged: Vec::new() });
+        delta[1] = 0.069;
+        delta.insert(1, 0.031);
+        let skills = luck_skills(&master).unwrap();
+        let deck =
+            [Performer { gekisou_skill: Some((1, 1)), gekisou_support_skills: vec![(31, 1)], ..Default::default() }];
+        let expected = luck_rush_dp_certified_with_ranking(
+            &master,
+            &skills,
+            &notes,
+            &[],
+            params,
+            &setup,
+            &play,
+            &delta,
+            &deck,
+            None,
+            None,
+        )
+        .unwrap();
+        let mut cache = LuckDpCache::new(1 << 20);
+        for _ in 0..2 {
+            let found = cache
+                .certified_cancellable(
+                    &master,
+                    &skills,
+                    &notes,
+                    &[],
+                    params,
+                    &setup,
+                    &play,
+                    &delta,
+                    &deck,
+                    None,
+                    None,
+                    None,
+                    &mut || false,
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(found.probe_transitions, expected.probe_transitions);
+            assert_eq!(found.probe_transitions.len(), play.frames.len());
+        }
+        assert_eq!(expected.probe_transitions[0], 1);
+        assert_eq!(expected.probe_transitions[1], 1);
+    }
+
+    #[test]
+    fn probe_mask_native_alternating_critical_miss_restarts_without_an_extra_cleanup_frame() {
+        let (mut master, _, mut params, mut setup, mut play, delta) = fixture(3, 70);
+        master.live_settings.iter_mut().find(|row| row.key == "gekisou_luck_gauge_max_rush").unwrap().value =
+            "140".into();
+        for kind in 0..5 {
+            master.gekisou_luck_bonus_lots.push(crate::master::LuckBonusLotRow {
+                id: 100 + kind,
+                chance_lot_type: kind,
+                lot_result: 0,
+                weight: 1,
+            });
+        }
+        let notes: Vec<_> = (1..=8)
+            .map(|i| LiveNote { note_id: i - 1, note_operate_type: 1, judgement_type: 1, time_ms: i * 100 })
+            .collect();
+        params.converted_note_count = notes.len() as i32;
+        setup.fevers = vec![(100, 900)];
+        for frame in &mut play.frames {
+            frame.judged.clear();
+        }
+        for note in &notes {
+            play.frames.iter_mut().find(|frame| frame.time_ms == note.time_ms).unwrap().judged.push(JudgedNote {
+                note_id: note.note_id,
+                judgement: 5,
+                judgement_time_ms: note.time_ms,
+            });
+        }
+        let skills = luck_skills(&master).unwrap();
+        let deck =
+            [Performer { gekisou_skill: Some((3, 1)), gekisou_support_skills: vec![(31, 1)], ..Default::default() }];
+        let curve = luck_rush_dp_certified_with_ranking(
+            &master,
+            &skills,
+            &notes,
+            &[],
+            params,
+            &setup,
+            &play,
+            &delta,
+            &deck,
+            None,
+            None,
+        )
+        .unwrap();
+        let mut native = LiveModel::new_gekisou(&master, &deck, &notes, &[], params, &setup).unwrap();
+        native.set_random(LiveRandom::with_support_prefix((0..64).map(|i| i % 2).collect()));
+        native.score.begin_bounds(Vec::new(), true);
+        let mut applied = 0i32;
+        let mut observed = Vec::new();
+        let mut lots = Vec::new();
+        for (index, (frame, &dt)) in play.frames.iter().zip(&delta).enumerate() {
+            let old = applied != 0;
+            native.frame_timed(frame.time_ms, &frame.judged, dt).unwrap();
+            lots.extend(native.gk.as_ref().unwrap().ctrl.lot_results.iter().copied());
+            for event in native.score.bounds_trace.as_mut().unwrap().events.drain(..) {
+                if let super::super::luck_score_bounds::BoundsEvent::Factor { command, .. } = event {
+                    applied += command.note_mill;
+                }
+            }
+            let edge = 1 << (2 * usize::from(old) + usize::from(applied != 0));
+            if frame.time_ms < params.music_length_ms {
+                assert_ne!(curve.probe_transitions[index] & edge, 0, "frame={index} edge={edge}");
+            }
+            observed.push(edge);
+        }
+        assert!(lots.windows(3).any(|values| values == [3, 0, 3]), "lots={lots:?}");
+        assert!(observed.windows(3).any(|edges| edges == [2, 4, 2]), "edges={observed:?}");
+        assert!(native.random.nominal_covers_draws());
+    }
+
+    #[test]
+    fn rush_filing_support_encloses_fresh_native_paths_with_equal_time_notes_pending_and_zero_bonus() {
+        use super::super::luck_score_bounds::{BoundsEvent, RushStage};
+        let mut terminals = 0usize;
+        let mut scenarios = 0usize;
+        let mut bounded = 0usize;
+        let mut declined = 0usize;
+        let mut pending_seen = false;
+        let mut net_zero_seen = false;
+        for outcomes in [vec![0], vec![3], vec![3, 0]] {
+            for percent in [0, 10] {
+                for score_value in [-10_000, 10_000] {
+                    for mode in 0..(if percent == 0 { 3 } else { 1 }) {
+                        scenarios += 1;
+                        let (mut master, _, mut params, mut setup, mut play, mut delta) = fixture(outcomes[0], 70);
+                        master
+                            .live_settings
+                            .iter_mut()
+                            .find(|row| row.key == "gekisou_luck_rush_score_bonus_percent")
+                            .unwrap()
+                            .value = percent.to_string();
+                        master
+                            .live_settings
+                            .iter_mut()
+                            .find(|row| row.key == "gekisou_luck_gauge_max_rush")
+                            .unwrap()
+                            .value = "140".into();
+                        master
+                            .gekisou_support_skill_effects
+                            .iter_mut()
+                            .find(|row| row.id == 31)
+                            .unwrap()
+                            .effect_value = score_value;
+                        if outcomes.len() == 2 {
+                            for kind in 0..5 {
+                                master.gekisou_luck_bonus_lots.push(crate::master::LuckBonusLotRow {
+                                    id: 100 + kind,
+                                    chance_lot_type: kind,
+                                    lot_result: outcomes[1],
+                                    weight: 1,
+                                });
+                            }
+                        }
+                        let notes: Vec<_> = [100, 100, 200, 300]
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, time_ms)| LiveNote {
+                                note_id: i as i32,
+                                note_operate_type: 1,
+                                judgement_type: 1,
+                                time_ms,
+                            })
+                            .collect();
+                        params.converted_note_count = notes.len() as i32;
+                        setup.fevers = vec![(100, 500)];
+                        if mode == 1 {
+                            setup.fevers.push((1400, 1700));
+                            setup.missions = vec![2, 1, 2];
+                            params.music_length_ms = 3000;
+                            play.frames =
+                                (0..=30).map(|i| PlayFrame { time_ms: i * 100, judged: Vec::new() }).collect();
+                            delta = vec![0.1; play.frames.len()];
+                        } else if mode == 2 {
+                            params.music_length_ms = 900;
+                        }
+                        for frame in &mut play.frames {
+                            frame.judged = notes
+                                .iter()
+                                .filter(|note| note.time_ms == frame.time_ms)
+                                .map(|note| JudgedNote {
+                                    note_id: note.note_id,
+                                    judgement: 5,
+                                    judgement_time_ms: note.time_ms,
+                                })
+                                .collect();
+                        }
+                        let deck = [Performer {
+                            gekisou_skill: Some((3, 1)),
+                            gekisou_support_skills: vec![(31, 1)],
+                            ..Default::default()
+                        }];
+                        let skills = luck_skills(&master).unwrap();
+                        let curve = luck_rush_dp_certified_with_ranking(
+                            &master,
+                            &skills,
+                            &notes,
+                            &[],
+                            params,
+                            &setup,
+                            &play,
+                            &delta,
+                            &deck,
+                            None,
+                            None,
+                        )
+                        .unwrap();
+                        let bounds = super::super::luck_score_bounds_with_ranking(
+                            &master,
+                            &deck,
+                            &notes,
+                            &[],
+                            params,
+                            &setup,
+                            &play,
+                            &delta,
+                            None,
+                        );
+                        assert_eq!(curve.probe_transitions.len(), play.frames.len());
+                        assert!(curve.probe_transitions.iter().all(|&mask| (1..=15).contains(&mask)));
+                        let active_tail = play
+                            .frames
+                            .iter()
+                            .zip(&curve.probe_transitions)
+                            .any(|(frame, &mask)| frame.time_ms > params.music_length_ms && mask != 0b0001);
+                        let bounds = if active_tail {
+                            assert_eq!(mode, 2);
+                            assert!(matches!(bounds, Err(Error::Unsupported(_))), "{bounds:?}");
+                            declined += 1;
+                            None
+                        } else {
+                            bounded += 1;
+                            Some(bounds.unwrap())
+                        };
+                        let mut native_outcomes = std::collections::BTreeSet::new();
+                        assert_eq!(curve.rush_filings.len(), play.frames.len());
+                        assert!(
+                            curve
+                                .rush_filings
+                                .iter()
+                                .zip(&play.frames)
+                                .all(|(support, frame)| support.judged.len() == frame.judged.len())
+                        );
+                        assert!(!curve.rush_filings[0].before && !curve.rush_filings[0].pending);
+                        let mut cache = LuckDpCache::new(1 << 20);
+                        for _ in 0..2 {
+                            let found = cache
+                                .certified(
+                                    &master,
+                                    &skills,
+                                    &notes,
+                                    &[],
+                                    params,
+                                    &setup,
+                                    &play,
+                                    &delta,
+                                    &deck,
+                                    None,
+                                    None,
+                                )
+                                .unwrap();
+                            assert_eq!(curve.rush_filings, found.rush_filings);
+                        }
+                        let mut prefixes = vec![Vec::new()];
+                        let mut runs = 0;
+                        while let Some(prefix) = prefixes.pop() {
+                            runs += 1;
+                            assert!(runs <= 4096, "compact native oracle");
+                            let mut native =
+                                LiveModel::new_gekisou(&master, &deck, &notes, &[], params, &setup).unwrap();
+                            native.set_random(LiveRandom::with_support_prefix(prefix.clone()));
+                            native.score.begin_bounds(Vec::new(), true);
+                            let mut failed = None;
+                            let mut observed = Vec::new();
+                            for (ordinal, (frame, &dt)) in play.frames.iter().zip(&delta).enumerate() {
+                                if let Err(error) = native.frame_timed(frame.time_ms, &frame.judged, dt) {
+                                    failed = Some(error);
+                                    break;
+                                }
+                                for event in native.score.bounds_trace.as_mut().unwrap().events.drain(..) {
+                                    if let BoundsEvent::Factor { command, rush_origin, .. } = event
+                                        && command.owner_id == -1
+                                    {
+                                        observed.push((ordinal, command.time_ms, command.luck, rush_origin));
+                                    }
+                                }
+                            }
+                            assert!(native.random.nominal_covers_draws());
+                            if let Some(branch) = native.random.nominal_branch() {
+                                assert!(failed.is_some());
+                                assert!(prefix.len() <= 12);
+                                for choice in 0..branch.len() {
+                                    let mut next = prefix.clone();
+                                    next.push(choice);
+                                    prefixes.push(next);
+                                }
+                                continue;
+                            }
+                            assert!(failed.is_none(), "{failed:?}");
+                            assert!(native.random.nominal_prefix_consumed());
+                            if let Some(bounds) = &bounds {
+                                assert!(
+                                    (bounds.final_support.lower..=bounds.final_support.upper).contains(&native.score())
+                                );
+                            }
+                            native_outcomes.insert((native.score(), native.current_life()));
+                            terminals += 1;
+                            for &(ordinal, time, _, origin) in &observed {
+                                let support = &curve.rush_filings[ordinal];
+                                let frame = &play.frames[ordinal];
+                                let possible = if let Some(point) = origin {
+                                    assert_eq!(point.play_frame, ordinal);
+                                    assert_eq!(point.stage, RushStage::Before);
+                                    support.before
+                                } else {
+                                    let note = frame
+                                        .judged
+                                        .iter()
+                                        .zip(&support.judged)
+                                        .any(|(judged, &possible)| judged.judgement_time_ms == time && possible);
+                                    let pending = time == frame.time_ms && support.pending;
+                                    pending_seen |= pending && frame.judged.is_empty();
+                                    note || pending
+                                };
+                                assert!(
+                                    possible,
+                                    "outcomes={outcomes:?} percent={percent} value={score_value} mode={mode} frame={ordinal} time={time}"
+                                );
+                            }
+                            net_zero_seen |= observed
+                                .windows(2)
+                                .any(|pair| pair[0].0 == pair[1].0 && pair[0].2 > 0 && pair[1].2 == -pair[0].2);
+                        }
+                        if bounds.is_none() {
+                            let mut session = super::super::LuckExactSession::new(
+                                &master,
+                                &notes,
+                                &[],
+                                params,
+                                &setup,
+                                &play,
+                                &delta,
+                                None,
+                                0,
+                            )
+                            .unwrap();
+                            let support = session
+                                .support(&deck, &mut super::super::LuckExactBudget::default(), None, || false)
+                                .unwrap();
+                            assert_eq!(support.decline, None);
+                            assert!(!support.attained_ceiling);
+                            assert_eq!(
+                                support.outcomes.into_iter().collect::<std::collections::BTreeSet<_>>(),
+                                native_outcomes
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(scenarios, 24);
+        assert_eq!(bounded + declined, scenarios);
+        assert!(bounded >= 18, "normal-length and mixed-mission controls retain their score enclosures");
+        assert!(declined > 0, "an active probe tail must decline its optional score enclosure");
+        assert!(terminals >= 20);
+        assert!(pending_seen, "the native oracle must include a pending handle filing without a judged note");
+        assert!(net_zero_seen, "same-frame enable and disable both file even when their sum is zero");
+    }
+
+    #[test]
+    fn rush_filing_support_does_not_emit_for_zero_mass_consumption() {
+        let (master, notes, params, setup, play, delta) = fixture(3, 70);
+        let skills = luck_skills(&master).unwrap();
+        let deck = [Performer { gekisou_skill: Some((3, 1)), ..Default::default() }];
+        let transcript =
+            record::<ProbabilityMass>(&master, &skills, &notes, &[], params, &setup, &play, &delta, &deck, None, None)
+                .unwrap();
+        let mut dp = Dp::<ProbabilityMass>::new(transcript.templates.clone(), &transcript.machine);
+        let mut state = State { chain: Chain::of(&transcript.templates[0]), ..State::default() };
+        state.chain.lots = 1;
+        state.chain.next = 3;
+        let mut filed = false;
+        let mut out = Distribution::<ProbabilityMass>::default();
+        dp.consume(state, 0, 0, ProbabilityMass::ZERO, &mut out, &mut filed).unwrap();
+        assert!(!filed);
+        assert!(out.is_empty());
     }
 }

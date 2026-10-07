@@ -8,6 +8,9 @@ use super::{
 use ournotes_sim::{Error, live::certified::F64Interval};
 use std::collections::BTreeMap;
 
+#[cfg(test)]
+mod fallback_tests;
+
 #[derive(Clone, Copy, Debug)]
 pub struct TailProbability {
     pub bounds: F64Interval,
@@ -76,6 +79,18 @@ pub struct CertifiedEvaluation {
     pub exact_payoff: Option<ExactExpectation>,
     pub orders: Vec<OrderScoreInterval>,
     pub refinements: Vec<BoundaryRefinement>,
+}
+
+impl CertifiedEvaluation {
+    pub(super) fn needs_native_payoff_support(&self, metric: &crate::types::Metric) -> bool {
+        !matches!(
+            metric,
+            crate::types::Metric::Score
+                | crate::types::Metric::ScoreAtLeast { .. }
+                | crate::types::Metric::CappedScore { .. }
+                | crate::types::Metric::ScoreAndLifeAtLeast { .. }
+        ) && self.orders.iter().any(|order| order.support == (i32::MIN, i32::MAX) && order.exact_mean.is_none())
+    }
 }
 
 /// All cached and refined order labels use this same complete-performer basis. Paired support remains
@@ -537,9 +552,43 @@ pub fn evaluate_luck_context(
     skills: &ournotes_sim::live::full::LuckSkills,
     input: &super::expectation::FiniteSeedContext,
     map: &PayoffMap,
-    mut curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
+    curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
     cancelled: impl FnMut() -> bool,
 ) -> Result<Option<CertifiedEvaluation>, Error> {
+    evaluate_luck_context_with_budget(
+        master,
+        skills,
+        input,
+        map,
+        curves,
+        &mut ournotes_sim::live::full::LuckExactBudget::default(),
+        cancelled,
+    )
+}
+
+fn universal_score_order(order: [usize; 5]) -> OrderScoreInterval {
+    OrderScoreInterval {
+        order,
+        mean: F64Interval::new(i32::MIN as f64, i32::MAX as f64).expect("finite native score domain"),
+        support: (i32::MIN, i32::MAX),
+        exact_mean: None,
+        final_life: None,
+        tails: BTreeMap::new(),
+        refined_payoff: None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_luck_context_with_budget(
+    master: &ournotes_sim::master::Master,
+    skills: &ournotes_sim::live::full::LuckSkills,
+    input: &super::expectation::FiniteSeedContext,
+    map: &PayoffMap,
+    mut curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
+    work: &mut ournotes_sim::live::full::LuckExactBudget,
+    cancelled: impl FnMut() -> bool,
+) -> Result<Option<CertifiedEvaluation>, Error> {
+    use ournotes_sim::live::full::{LuckExactDecline, LuckExactSession};
     let setup = input.gekisou.as_ref().ok_or_else(|| invalid("LUCK requires Gekisou context"))?;
     let mut session = ournotes_sim::live::full::LuckScoreSession::new(
         master,
@@ -553,14 +602,45 @@ pub fn evaluate_luck_context(
         input.rank_confirmations.as_deref(),
     );
     let mut cancelled = cancelled;
+    let mut exact = None;
     let mut orders = Vec::with_capacity(uniform::ORDERS);
     for order in uniform::all_orders() {
         if cancelled() {
             return Ok(None);
         }
         let performers = order.map(|slot| input.performers[slot].clone());
-        let Some(summary) = session.summary(&performers, curves.as_deref_mut(), &mut cancelled)? else {
-            return Ok(None);
+        let summary = match session.summary(&performers, curves.as_deref_mut(), &mut cancelled) {
+            Ok(Some(summary)) => summary,
+            Ok(None) => return Ok(None),
+            Err(Error::Unsupported(_) | Error::Capacity(_)) => {
+                if cancelled() {
+                    return Ok(None);
+                }
+                let mut value = universal_score_order(order);
+                if exact.is_none() {
+                    exact = Some(LuckExactSession::new(
+                        master,
+                        &input.notes,
+                        &input.events,
+                        input.params,
+                        setup,
+                        &input.play,
+                        &input.delta_times,
+                        input.rank_confirmations.as_deref(),
+                        0,
+                    )?);
+                }
+                let attempt = exact.as_mut().expect("initialized above").law(&performers, work, &mut cancelled)?;
+                if attempt.decline == Some(LuckExactDecline::Cancelled) || cancelled() {
+                    return Ok(None);
+                }
+                if let Some(law) = attempt.law {
+                    refine_order_with_exact_law(&mut value, map, &law)?;
+                }
+                orders.push(value);
+                continue;
+            }
+            Err(error) => return Err(error),
         };
         let support = (summary.final_support.lower, summary.final_support.upper);
         let mean = F64Interval::new(summary.final_mean.lower, summary.final_mean.upper)?

@@ -1,4 +1,6 @@
 //! Explicitly synthetic UTF-8 transport corpus input; no game assets or native truth.
+#[path = "fixtures/certificate_fallback.rs"]
+mod certificate_fallback;
 #[path = "../../ournotes-sim/tests/common/mod.rs"]
 mod common;
 #[path = "fixtures/damage_reduction.rs"]

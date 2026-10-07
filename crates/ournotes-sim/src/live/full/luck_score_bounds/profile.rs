@@ -9,6 +9,12 @@ pub struct LuckScoreProfile {
     pub curve_dp_ms: f64,
     pub recorder_run_ms: f64,
     pub bound_replay_ms: f64,
+    pub probe_mask_events: u64,
+    pub probe_mask_restricted: u64,
+    pub probe_mask_removed_edges: u64,
+    pub probe_mask_elided_rewinds: u64,
+    pub probe_mask_unbound: u64,
+    pub rush_potential_events: u64,
 }
 
 thread_local! {
@@ -23,6 +29,12 @@ pub(super) fn record(value: LuckScoreProfile) {
         total.curve_dp_ms += value.curve_dp_ms;
         total.recorder_run_ms += value.recorder_run_ms;
         total.bound_replay_ms += value.bound_replay_ms;
+        total.probe_mask_events += value.probe_mask_events;
+        total.probe_mask_restricted += value.probe_mask_restricted;
+        total.probe_mask_removed_edges += value.probe_mask_removed_edges;
+        total.probe_mask_elided_rewinds += value.probe_mask_elided_rewinds;
+        total.probe_mask_unbound += value.probe_mask_unbound;
+        total.rush_potential_events += value.rush_potential_events;
     });
 }
 

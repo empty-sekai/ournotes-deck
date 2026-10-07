@@ -15,6 +15,15 @@ use std::ops::ControlFlow;
 const CUTOFF_EVERY: usize = 30;
 
 #[cfg(test)]
+#[path = "maximum/score_pruning_tests.rs"]
+mod score_pruning_tests;
+
+/// Score orders with an upper bound below an attained score cannot change the maximum or its ties.
+fn score_order_dominated(ceiling: Option<i32>, best: Option<i128>) -> bool {
+    ceiling.zip(best).is_some_and(|(ceiling, best)| i128::from(ceiling) < best)
+}
+
+#[cfg(test)]
 #[path = "maximum/payoff_tests.rs"]
 mod payoff_tests;
 
@@ -202,6 +211,9 @@ impl Engine<'_, '_> {
                 if self.expired() {
                     self.rec.clock.lap(resume);
                     return Ok(Leaf::Stopped);
+                }
+                if score_metric && score_order_dominated(ceiling, best) {
+                    continue;
                 }
             }
             let mut result = exact.support(&performers, &mut budget, ceiling, || self.expired())?;

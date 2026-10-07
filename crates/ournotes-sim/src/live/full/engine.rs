@@ -400,6 +400,11 @@ impl ConditionSkillUpdater {
         self.gated_frame = false;
     }
 
+    /// Effects in the same sorted traversal used to dispatch sustained updaters in each phase.
+    pub(super) fn effects_in_update_order(&self) -> impl Iterator<Item = &CondEffect> {
+        self.sorted.iter().map(|&index| &self.effects[index])
+    }
+
     /// The effects of the skill (read only).
     pub(super) fn effects(&self) -> &[CondEffect] {
         &self.effects

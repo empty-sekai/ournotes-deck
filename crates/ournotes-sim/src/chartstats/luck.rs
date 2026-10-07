@@ -539,7 +539,14 @@ mod certified_tests {
     fn batch(probes: Vec<bool>, bucket: usize, peak_states: usize, transitions: u64) -> full::LuckDpCertifiedResult {
         let mut joint = [ProbabilityMass::ZERO; 4];
         joint[bucket] = ProbabilityMass::ONE;
-        full::LuckDpCertifiedResult { steps: vec![(100, joint)], probes, peak_states, transitions }
+        full::LuckDpCertifiedResult {
+            rush_filings: Vec::new(),
+            probe_transitions: Vec::new(),
+            steps: vec![(100, joint)],
+            probes,
+            peak_states,
+            transitions,
+        }
     }
 
     #[test]
