@@ -1272,7 +1272,10 @@ mod count_hit_tests {
     }
 
     #[test]
-    fn ordinary_counter_caps_bound_commands_without_changing_factor_windows() {
+    fn ordinary_counter_caps_tighten_commands_and_lifetime_factor_amplitudes() {
+        use ournotes_sim::live::score::ScoreFactorState;
+        use ournotes_sim::live::skill::{FactorCommand, apply_factor};
+
         let master = master();
         let mut env = env(&master);
         env.gkf = Some(Rc::new(count_frames()));
@@ -1307,18 +1310,58 @@ mod count_hit_tests {
         assert!((6.0..7.0).contains(&commands));
         assert!(old_commands >= 2000.0);
         assert!(executions < old_executions);
-        assert_eq!(norm, old_norm);
-        assert_eq!(spans, old_spans);
+        // Six Perfect judgements and a threshold of two allow at most three starts. Conditions can
+        // suppress those starts, but cannot add more. The generic historical-factor envelope retains
+        // every lifetime start, so the same certificate tightens its amplitudes as well as its commands.
+        let perfects = env.gkf.as_ref().unwrap().ent.iter().filter(|&&(_, judgement)| judgement == 5).count();
+        assert_eq!(perfects, 6);
+        let starts = perfects / 2;
+        assert_eq!(starts, 3);
+        assert!(norm.iter().all(|n| (1.5..1.501).contains(n)));
+        assert!(old_norm.iter().all(|n| (500.0..500.001).contains(n)));
+        assert_eq!(spans.len(), old_spans.len());
+        for (a, b) in spans.iter().zip(&old_spans) {
+            assert_eq!((a.0, a.1), (b.0, b.1));
+            assert!((1.5..1.501).contains(&a.2));
+            assert!((500.0..500.001).contains(&b.2));
+        }
         assert_eq!(w.len(), old_w.len());
         for (a, b) in w.iter().zip(&old_w) {
-            assert_eq!((a.lo, a.hi, a.note, a.judge), (b.lo, b.hi, b.note, b.judge));
+            assert_eq!((a.lo, a.hi, a.judge), (b.lo, b.hi, b.judge));
+            assert!((1.5..1.501).contains(&a.note));
+            assert!((500.0..500.001).contains(&b.note));
         }
+        assert_eq!(w.len(), 1);
+        // Independently exercise native factor arithmetic on the relaxed worst case: all three
+        // historical starts precede their end commands. This must fit both the window and drift norm.
+        let mut native = ScoreFactorState::new(1000);
+        for sign in [1, -1] {
+            for _ in 0..starts {
+                apply_factor(&mut native, &FactorCommand { note_mill: sign * 50_000, ..Default::default() });
+                let added = f64::from(native.note_score_up - 1.0);
+                assert!(added <= w[0].note && norm.iter().all(|&bound| added <= bound));
+            }
+            assert_eq!(native.note_score_up, if sign == 1 { 2.5 } else { 1.0 });
+        }
+        assert!((2 * starts) as f64 <= commands);
         let mut row = row;
         row.effect_type = 2004;
         row.targets = vec![5, 5, 6];
         let active = active_row(&env, &row, true, false).unwrap();
-        let (_, commands, _, _, _, _, _, _, _) = windows(&geo, 0, &[], &[active], &[]);
+        let (w, commands, norm, _, _, _, _, _, _) = windows(&geo, 0, &[], &[active], &[]);
         assert!((18.0..19.0).contains(&commands));
+        assert_eq!(w.len(), 1);
+        let mut native = ScoreFactorState::new(1000);
+        for _ in 0..starts {
+            for judgement in [5, 5, 6] {
+                apply_factor(&mut native, &FactorCommand { judgement, judge_mill: 50_000, ..Default::default() });
+            }
+        }
+        assert_eq!((native.good, native.great, native.perfect, native.just), (0.0, 0.0, 3.0, 1.5));
+        for (j, factor) in [native.good, native.great, native.perfect, native.just].into_iter().enumerate() {
+            assert!(f64::from(factor) <= w[0].judge[j] && f64::from(factor) <= norm[j]);
+        }
+        assert!((2 * starts * 3) as f64 <= commands);
     }
 
     #[test]
