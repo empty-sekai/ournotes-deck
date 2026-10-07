@@ -107,6 +107,20 @@ impl ScoreCapKey {
     }
 }
 
+/// Aggregate equality is separate from the original performer basis retained for per-order refinement.
+/// The frontier scopes the immutable request, exact power and complete payoff mapping independently.
+fn uniform_score_equality_identity(
+    master: &ournotes_sim::master::Master,
+    metric: &Metric,
+    map: &PayoffMap,
+    performers: &[ournotes_sim::live::full::Performer; 5],
+) -> Option<Vec<u8>> {
+    if !matches!(metric, Metric::Score) || !matches!(map, PayoffMap::Score) {
+        return None;
+    }
+    ournotes_sim::live::full::character_blind_uniform_score_identity(master, performers)
+}
+
 #[derive(Default)]
 struct ScoreCapCache {
     rows: BTreeMap<ScoreCapKey, i128>,
@@ -241,6 +255,12 @@ enum SummaryStage {
     RankResidue,
 }
 
+enum EqualityRefinement {
+    Merged,
+    Declined,
+    Stopped,
+}
+
 impl SummaryStage {
     fn record_order(self, telemetry: &mut telemetry::LotteryRefinement) {
         match self {
@@ -354,6 +374,12 @@ impl Engine<'_, '_> {
         // The leaf transfers its already constructed map; never rebuild a deck's native payoff steps.
         let (_, resume) = self.rec.clock.lap(slot::INTERVAL_FRONTIER);
         let payoff_identity = format!("{map:?}").into_bytes();
+        let equality_identity = if matches!(self.metric, Metric::Score) && matches!(&map, PayoffMap::Score) {
+            let input = expectation::context(self.pool, &physical, &self.request.objective)?;
+            uniform_score_equality_identity(self.pool.master, self.metric, &map, &input.performers)
+        } else {
+            None
+        };
         let state = self.certified.as_mut().expect("certified request");
         let members = physical.members.map(|i| self.pool.members[i].id);
         let snaps = physical.snaps.map(|i| i.map(|i| self.pool.snaps[i].id));
@@ -368,7 +394,8 @@ impl Engine<'_, '_> {
         let best_order = evaluation.best_order.clone();
         let partial = best_order.as_ref().is_some_and(|best| best.evaluated_orders < ORDERS && !best.optimal);
         let retained_program = (state.retain_refinement == Some(true)).then(|| program_identity.clone());
-        let equality = state.frontier.certify_equal_program(program_identity, power, payoff_identity);
+        let equality =
+            state.frontier.certify_equal_program(equality_identity.unwrap_or(program_identity), power, payoff_identity);
         state.frontier.insert(CandidateInterval {
             id,
             tie: CanonicalTie { power, key },
@@ -418,12 +445,27 @@ impl Engine<'_, '_> {
         let mut materialized = std::collections::BTreeSet::new();
         let mut summarized = std::collections::BTreeSet::new();
         let mut residue_attempted = std::collections::BTreeSet::new();
+        let mut equality_attempted = false;
         loop {
             let state = self.certified.as_ref().expect("certified request");
             let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
             let Some(proof) = pending_refinement(proof, || self.expired() || work.exhausted()) else {
                 return Ok(());
             };
+            // One current boundary pair gets a bounded complete-law equality attempt before numerical
+            // refinement. This is independent of per-order state and never changes the physical domain.
+            if matches!(self.metric, Metric::Score) && !equality_attempted {
+                equality_attempted = true;
+                if let Some(pair) = &proof.refinement
+                    && let Some(other) = pair.competitor
+                {
+                    match self.refine_certified_equality(pair.candidate, other, &mut work)? {
+                        EqualityRefinement::Merged => continue,
+                        EqualityRefinement::Declined => {}
+                        EqualityRefinement::Stopped => return Ok(()),
+                    }
+                }
+            }
             let state = self.certified.as_ref().expect("certified request");
             let mut candidates = proof.ambiguous.clone();
             // Smaller upper bounds identify contenders closer to exclusion by a proved lower bound.
@@ -628,6 +670,99 @@ impl Engine<'_, '_> {
                 self.report_progress();
             }
         }
+    }
+
+    fn refine_certified_equality(
+        &mut self,
+        left: u64,
+        right: u64,
+        work: &mut ournotes_sim::live::full::LuckExactBudget,
+    ) -> Result<EqualityRefinement, Error> {
+        use ournotes_sim::live::full::{LuckScoreEquivalenceDecline, certify_uniform_score_equivalence};
+        let state = self.certified.as_ref().expect("certified request");
+        let (a, b) = (&state.entries[&left], &state.entries[&right]);
+        if a.power != b.power {
+            return Ok(EqualityRefinement::Declined);
+        }
+        let (a, b) = (a.physical, b.physical);
+        self.tel.lottery_refinement.equality_attempts += 1;
+        let mut input = expectation::context(self.pool, &a, &self.request.objective)?;
+        let other = expectation::context(self.pool, &b, &self.request.objective)?;
+        // The provider currently proves the native solo-rank law only. All other context fields come
+        // from the same immutable request; context() varies only performers and the separately checked power.
+        if input.rank_confirmations.is_some() || other.rank_confirmations.is_some() || input.gekisou.is_none() {
+            self.tel.lottery_refinement.equality_declines += 1;
+            self.tel.lottery_refinement.equality_decline_reason = Some(LuckScoreEquivalenceDecline::Context);
+            return Ok(EqualityRefinement::Declined);
+        }
+        if let Some(value) = self.simulation.music_length_ms {
+            input.params.music_length_ms = value;
+        }
+        if let Some(value) = self.simulation.score_music_length_ms {
+            input.params.score_music_length_ms = Some(value);
+        }
+        let skills = self.certified_luck_skills()?;
+        let before = (work.remaining_runs, work.remaining_frames);
+        let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+        let result = certify_uniform_score_equivalence(
+            self.pool.master,
+            &skills,
+            &input.notes,
+            &input.events,
+            input.params,
+            input.gekisou.as_ref().expect("admitted native solo law"),
+            &input.play,
+            &input.delta_times,
+            &input.performers,
+            &other.performers,
+            work,
+            || self.expired(),
+        );
+        self.rec.clock.lap(resume);
+        let telemetry = &mut self.tel.lottery_refinement;
+        // The provider deducts real work even if native execution fails. Count it exactly once here,
+        // without labelling recordings as complete nominal paths or exact-law evaluations.
+        telemetry.replay_runs += before.0 - work.remaining_runs;
+        telemetry.frames += before.1 - work.remaining_frames;
+        telemetry.budget_exhausted |= work.exhausted();
+        let result = match result {
+            Ok(result) => result,
+            Err(Error::Unsupported(_)) => {
+                telemetry.equality_declines += 1;
+                telemetry.equality_decline_reason = Some(LuckScoreEquivalenceDecline::RecorderAdmission);
+                return Ok(EqualityRefinement::Declined);
+            }
+            Err(Error::Capacity(_)) => {
+                telemetry.equality_declines += 1;
+                telemetry.equality_decline_reason = Some(LuckScoreEquivalenceDecline::Capacity);
+                return Ok(EqualityRefinement::Declined);
+            }
+            Err(error) => return Err(error),
+        };
+        telemetry.equality_orders += result.orders_compared as u64;
+        telemetry.equality_timeline_orders += result.timeline_orders;
+        telemetry.equality_timeline_paths += result.timeline_paths;
+        telemetry.equality_timeline_transitions += result.timeline_transitions;
+        telemetry.equality_score_fold_queries += result.score_fold_queries;
+        telemetry.equality_decline_reason = result.decline;
+        if result.certificate.is_none() {
+            telemetry.equality_declines += 1;
+            return Ok(if result.decline == Some(LuckScoreEquivalenceDecline::Cancelled) {
+                EqualityRefinement::Stopped
+            } else {
+                EqualityRefinement::Declined
+            });
+        }
+        if result.orders_compared != ORDERS {
+            return Err(Error::Domain("uniform score equality certificate omitted original order labels".into()));
+        }
+        let state = self.certified.as_mut().expect("certified request");
+        state.frontier.merge_equal_classes(left, right)?;
+        state.entries.retain(|id, _| state.frontier.get(*id).is_some());
+        state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
+        self.tel.lottery_refinement.equality_merges += 1;
+        self.report_progress();
+        Ok(EqualityRefinement::Merged)
     }
 
     /// Existing order rows allow each completed summary to survive a later cancellation.
@@ -951,6 +1086,10 @@ mod refinement_tests {
             assert_eq!(values[field], 2);
         }
         for field in [
+            "equalityAttempts",
+            "equalityOrders",
+            "equalityMerges",
+            "equalityDeclines",
             "attemptedOrders",
             "completedOrders",
             "installedOrders",
@@ -963,6 +1102,7 @@ mod refinement_tests {
             assert_eq!(values[field], 0);
         }
         assert_eq!(values["budgetExhausted"], false);
+        assert!(values["equalityDeclineReason"].is_null());
     }
 
     fn score_rows(lower: f64, upper: f64) -> CertifiedEvaluation {
@@ -1040,6 +1180,121 @@ mod refinement_tests {
         state.install_refinement(1, score_rows(35.0, 45.0)).unwrap();
         assert_eq!(state.frontier.get(1).unwrap().score, tight);
         assert_eq!(state.frontier.get(2).unwrap().score, tight);
+    }
+
+    #[test]
+    fn uniform_score_equality_preserves_physical_canonical_ties_and_the_unseen_domain() {
+        use ournotes_sim::live::full::Performer;
+        use ournotes_sim::master::Master;
+
+        let master = Master::from_json_tables(|name| match name {
+            "MasterLiveSkill" => Some(r#"{"_allData":[{"_id":1},{"_id":2}]}"#),
+            "MasterLiveSkillEffect" => Some(
+                r#"{"_allData":[
+                {"_id":1,"_liveSkillID":1,"_level":1,"_skillEffectType":2000,"_effectValue":5000},
+                {"_id":2,"_liveSkillID":2,"_level":1,"_skillEffectType":2000,"_effectValue":3000}]}"#,
+            ),
+            "MasterSupportSkillEffect" => Some(
+                r#"{"_allData":[
+                {"_id":1,"_supportSkillID":1,"_level":1,"_skillTriggerType":2,
+                 "_skillEffectType":2000,"_effectValue":1000}]}"#,
+            ),
+            _ => None,
+        })
+        .unwrap();
+        let mut original: [Performer; 5] = std::array::from_fn(|slot| Performer {
+            character_id: slot as i64 + 1,
+            live_skill: Some((if slot == 0 { 1 } else { 2 }, 1)),
+            ..Default::default()
+        });
+        original[0].support_skills.push((1, 1));
+        let mut alias = original.clone();
+        for performer in &mut alias {
+            performer.character_id += 100;
+        }
+        alias.rotate_left(2);
+        assert_ne!(original, alias, "physical performer identities must remain distinct");
+        let identity = |deck| uniform_score_equality_identity(&master, &Metric::Score, &PayoffMap::Score, deck);
+        let original_identity = identity(&original).unwrap();
+        assert_eq!(identity(&alias), Some(original_identity.clone()));
+
+        // The aggregate proof must never replace an order-labelled program for Best or another payoff.
+        assert!(
+            uniform_score_equality_identity(
+                &master,
+                &Metric::BestOrderExpectedScore,
+                &PayoffMap::BestOrderExpectedScore,
+                &alias,
+            )
+            .is_none()
+        );
+        assert!(
+            uniform_score_equality_identity(
+                &master,
+                &Metric::Score,
+                &PayoffMap::ScoreAtLeast { threshold: 10 },
+                &alias,
+            )
+            .is_none()
+        );
+        let mut unknown = alias.clone();
+        unknown[0].support_skills.push((999, 1));
+        assert!(identity(&unknown).is_none(), "an unproved selected source keeps its original identity");
+
+        let mut frontier = IntervalTopK::new(2).unwrap();
+        for (id, deck) in [(30, &original), (10, &alias), (20, &original)] {
+            let equality = frontier.certify_equal_program(identity(deck).unwrap(), 100, b"Score".to_vec());
+            frontier
+                .insert(CandidateInterval {
+                    id,
+                    tie: CanonicalTie { power: 100, key: vec![id as i64] },
+                    score: F64Interval::new(10.0, 12.0).unwrap(),
+                    payoff: F64Interval::new(10.0, 12.0).unwrap(),
+                    exact_score: None,
+                    exact_payoff: None,
+                    equality: Some(equality),
+                    revision: 0,
+                })
+                .unwrap();
+        }
+        assert!(frontier.get(30).is_none(), "the larger physical canonical key loses the proved tie");
+        assert_eq!(frontier.len(), 2);
+        for remaining in [RemainingDomain::Open { upper: None }, RemainingDomain::Open { upper: Some(12.0) }] {
+            let proof = frontier.proof(remaining).unwrap();
+            assert!(!proof.complete && proof.ordered_prefix.is_empty(), "equal seen programs do not close unseen work");
+        }
+        let proof = frontier.proof(RemainingDomain::Exhausted).unwrap();
+        assert!(proof.complete);
+        assert_eq!(proof.ordered_prefix, [10, 20]);
+        assert!(proof.ordered_prefix.iter().all(|&id| frontier.get(id).unwrap().exact_payoff.is_none()));
+
+        // A different complete source-owner binding, or the same program at another exact power,
+        // must remain an unresolved competitor when only overlapping intervals are available.
+        let mut reattached = original.clone();
+        reattached[1].support_skills = std::mem::take(&mut reattached[0].support_skills);
+        let other_identity = identity(&reattached).unwrap();
+        assert_ne!(other_identity, original_identity);
+        for (program, power) in [(other_identity, 100), (original_identity, 101)] {
+            let mut with_competitor = IntervalTopK::new(2).unwrap();
+            for (id, program, power) in [(1, identity(&original).unwrap(), 100), (2, program, power)] {
+                let equality = with_competitor.certify_equal_program(program, power, b"Score".to_vec());
+                with_competitor
+                    .insert(CandidateInterval {
+                        id,
+                        tie: CanonicalTie { power, key: vec![id as i64] },
+                        score: F64Interval::new(10.0, 12.0).unwrap(),
+                        payoff: F64Interval::new(10.0, 12.0).unwrap(),
+                        exact_score: None,
+                        exact_payoff: None,
+                        equality: Some(equality),
+                        revision: 0,
+                    })
+                    .unwrap();
+            }
+            let proof = with_competitor.proof(RemainingDomain::Exhausted).unwrap();
+            assert!(!proof.complete && proof.ordered_prefix.is_empty());
+            assert_eq!(proof.ambiguous.len(), 2);
+        }
     }
 
     #[test]

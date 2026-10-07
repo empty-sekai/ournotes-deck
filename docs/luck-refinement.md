@@ -380,6 +380,19 @@ capability retains every allowed physical choice and writer-owner mapping; its i
 profile from another context or another admitted domain from being substituted. A profile is published only
 after its own 120 original labels complete. Unrequested profiles remain explicitly unknown.
 
+A completed profile may also supply a complete canonical probability program. Its key retains the full
+projected Performer multiset and immutable context; character normalization requires the same closed
+dependency proof. Each key also records its originating admitted domain, exact profile and fixed slot
+bijection. Constructing a program requires that key's own completed profile, with all 120 unique labels.
+
+Another fully admitted profile can reuse this program only when the complete canonical inputs match.
+Transport enumerates the target's original 120 orders and maps each target slot to the corresponding
+canonical slot. The ordered native input is identical under this bijection. The returned profile receives
+the target domain identity, target writer-owner label and target positions, in the target's original
+enumeration order. This preserves both physical coverage and the reward template's outward summation
+order; it does not commute native commands or combine approximately equal probability curves. Missing
+identity proof, capacity refusal or an unavailable program retains independent profile preparation.
+
 For each completed profile the reward template averages coefficients over all 120 original orders, using each member's
 actual position in each order. It retains every completed profile's base and member/Snap gains together with
 immutable physical-binding metadata. A depth-four node fixes four bindings and enumerates every legal choice
@@ -409,6 +422,10 @@ at most 64 entries and 8 MiB, further limited by `cacheEntries`. Container capac
 performer vectors, retained mappings and
 referenced probability payloads are accounted by their respective owners; these budgets are not process RSS
 or the combined memory of every cache.
+Complete probability programs share this same entry and byte allowance with admitted domains and profile
+coefficients. Their collection additionally uses at most 1 MiB and at most 63 entries, leaving an entry for
+a domain within the configured limit. Keys, all 120 curve references, container capacities, mappings and
+distinct retained curve allocations are counted; shared allocations within this collection are counted once.
 
 A successful complete-family capability requires complete coverage within every limit. Capacity failure, unsupported input or a
 local work budget produces an unavailable optional bound; cancellation produces a stopped preparation.
@@ -517,6 +534,22 @@ evaluation. In contrast, 120 complete terminal summaries can supply the full uni
 without factor-history replay. Overlapping candidate intervals can still require refinement; neither complete
 summaries nor the `leaves.lotteryUpper` preparation counters alone establish the full-domain ranking or
 `Complete`. Nonlinear payoff objectives continue to use the complete scorer and refinement provider below.
+
+An optional identity for a completed uniform-order exclusion certificate can omit character IDs only after
+a closed dependency check of every selected ordinary Live, support, Gekisou and Gekisou-support source.
+The check includes triggers, conditions, releases, resets, cumulative conditions, formation predicates and
+effect target consumers. A selected character target, missing row or unknown primitive preserves the original
+complete identity. Unselected master rows do not participate in this request's proof.
+
+The admitted identity retains the exact multiset of complete performers with only character ID normalized;
+all other fields, selected source IDs and levels, and source-vector order remain present. The cache still
+requires the exact native power and the same immutable request scope. This key is used only to retrieve or
+retain a complete `UpperOnly` exclusion certificate, or to establish equal uniform Score objectives after
+complete candidate evaluation. The frontier still retains every physical canonical tie key and requires
+the unseen domain to close before declaring a ranking proven. Equal objective programs do not manufacture
+an exact numerical mean. Candidate score-cache identities, canonical physical bases, per-order refinement
+programs and the separately declared best-order objective keep their existing identities. The
+score-cap cache still retains at most 64 entries, further limited by the request's `cacheEntries`.
 
 Completed terminal preparations can also be reused before another lottery recording or prefix-kernel build.
 The key contains the lossless full initialized model, exact native initial power and immutable request scope.
@@ -672,10 +705,94 @@ proved terminal coefficients, then intersected with its previous certificate. In
 are unchanged; missing rewards, unsupported snapshots or local capacity refusal keep the previous enclosure.
 Residue and ordinary summaries have distinct cache identities.
 
+## Complete score-law equality
+
+After the physical domain closes, uniform expected-score search can compare one ambiguous boundary pair
+before numerical refinement. The native provider proves equality by coupling complete execution histories
+for all 120 original order labels. It does not infer equality from matching score intervals, marginal
+probability curves, sampled outcomes or rounded expectations. The two candidates must have the same exact
+initial power and payoff mapping. The current provider admits native solo-rank contexts whose selected
+missions are all LUCK; best-order and nonlinear objectives retain their existing refinement paths.
+
+A fixed member correspondence selects a bijection between the two complete order sets. This correspondence
+does not project away any source: every native model still receives its original complete performers and
+member/Snap bindings. Each corresponding order must pass the ordinary recorder's complete dependency checks,
+finish the native controller, and match the complete controller transcript. Each score history is independently
+admitted before either direct trace comparison or complete timeline evaluation. The
+controller identity includes the original integer base and bonus lottery tables. Emitted action chances must
+be exactly zero or one; matching probability enclosures alone is insufficient. Random LUCK outcomes remain
+fully represented by the shared transition history and its complete DP admission.
+
+The score comparison retains command owners and order, times, filing locations, queries, combo inputs, rank
+snapshots and every original frame boundary. Its only score-event projection replaces a note's numeric LIFE
+with whether it is positive, matching the actual score read after the recorder has proved the LIFE and
+conversion feedback closure. Final LIFE is compared exactly. Controller LIFE reads remain subject to the
+original phase-specific dependency admission; their emitted action probabilities must be exactly zero or one
+and match in the complete transcript. An independent emission guard evaluates fixed probe predicates exactly
+and compares active probes' owners, phases, gates, source
+and effect ordinals, raw values and native signed mills. It retains active zero-value probes. Each owner can
+have at most one active probe, and ordinary factor producers sharing that owner must be live skills in a
+phase no later than the probe. The native live-before-conditional order then establishes actual same-frame
+command order, including backdated filings; an unproved tie declines the optional certificate.
+
+When admitted ordinary traces differ, the provider can retain the complete support of their shared
+score-observable histories. Each dynamic key contains the original controller state plus an interned ordered
+timeline. The hidden gauge, prefetched result, guarantee and once-Miss state remain in the key until every
+range finishes. Edges retain each actual Rush switch, FINISH disable and common probe-predicate switch with
+its original playback frame, phase and chart time. Multiple switches within one note or frame remain ordered
+edges. Quiet transcript repeats consume the original frame clock, and partial clock or range coverage cannot
+construct a complete support. No probability branch is sampled or removed because its mass is small.
+
+For every supported timeline, both candidates file their own admitted ordinary commands and the actual
+Rush/probe commands into the native incremental score calculator. The recorded-combo query entry shares
+native factor sorting, apply/undo, frame diffs, note integer arithmetic and fixed-score filing. Each query uses
+its exact recorded combo inputs; historical rank snapshots retain wrapping subtraction and integer percentage
+truncation. Source owners and same-time filing order remain inputs to native arithmetic. This comparison
+does not assume that differently ordered binary32 additions commute.
+
+Every paired timeline must produce the same native integer terminal score, and every original order must
+complete. The common exact controller law then couples equal scores path by path, proving equal expectations
+without constructing an exact rational mean. A single unequal terminal score refuses this optional equality
+proof; matching marginal distributions or enclosing probability masses cannot override that difference.
+
+Only a successful comparison and admission of every labelled order constructs the opaque certificate.
+The frontier then atomically joins the two complete equality classes, after checking their payoff scope,
+power, intersecting intervals and any exact values. Physical candidates and their canonical tie order remain
+distinct. This proves equal expected scores without manufacturing an exact numeric mean. It neither closes
+unseen physical work nor changes retained per-order replay identities.
+
+Recording starts and executed frames consume the existing shared exact-refinement budget, including work
+performed before a refusal, cancellation or native error. Orders are processed in pairs and released without
+adding a retained cache. Each recording's growing frame log has a one MiB guard; bounded fingerprint encoding
+and native model tables are separate temporary storage. Timeline support has limits of 100,000 original frames,
+100,000 live controller states, 100,000 prefix nodes, 1,024 terminal timelines, 4,096 edges per materialized
+path and 10 million transitions per order. A conservative 32 MiB estimate covers its retained maps, prefixes
+and path storage. The native score fold separately admits at most 8,192 allocated score frames and uses a
+32 MiB recipe/scratch estimate. It checks that frame limit before cloning the optional native calculator;
+actual score storage and the effect lifecycle's music boundary may have different horizons. Per attempt,
+folding permits at most 128 million queries, 256 million score-frame executions/undos and 512 million tape
+events, with regular cancellation checks. These arithmetic operations are counted separately from complete
+live playbacks. The original native recording budget and request deadline remain in force. Unsupported inputs, unproved score equality, uncertain
+ordering or exhausted resources preserve the prior frontier certificates and ordinary refinement fallback.
+
+The `score_equivalence_` tests compare a successful certificate against independently enumerated native
+terminal score/LIFE laws for all 120 orders, and cover score/controller differences, nontrivial action
+chance, zero probes, phase ties, cancellation and partial work. The `equality_merge_tests` check canonical
+ties, unseen domain work, atomic conflict rejection and the scope of redirected class identities.
+Active ordinary-counter relocation also exercises complete timeline folding and independently enumerated
+native laws over all 120 labels. A separate native nominal enumerator compares complete timeline-to-score
+maps against the production fold with non-dyadic skill amplitudes and multiple actual performer orders.
+It also checks late probe endings filed back at the music boundary, alongside ordinary endings at that same
+time. Cancellation after actual fold queries must still return no partial uniform certificate and account
+for every native recording run/frame already consumed. Recorded-query tests compare native integer scores
+and binary32 frame-diff state through signed same-time filings, rewinds, changed combos and historical rank
+snapshots. Timeline support tests compare actual unweighted native Rush/probe edges and reject cancelled or
+incomplete clocks.
+
 ## Refinement scheduling
 
-After the physical domain closes, expected-score and best-order expected-score searches first attempt complete
-factor-history summaries for every currently ambiguous boundary candidate. A second pass attempts the admitted
+After the optional uniform-score equality comparison, expected-score and best-order expected-score searches
+attempt complete factor-history summaries for every currently ambiguous boundary candidate. A second pass attempts the admitted
 rank-residue summaries. Only after those passes does the existing complete-law tree receive the remaining
 ambiguities. With retained detailed rows, each completed order immediately intersects the frontier and those
 installed narrowings survive cancellation. Missing detailed rows are reconstructed from the immutable request;

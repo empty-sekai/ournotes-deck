@@ -60,9 +60,10 @@ mod luck_exact;
 pub use luck_dp::{
     LuckControllerFamily, LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckFamilyBindings,
     LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline, LuckFamilyDomain, LuckFamilyError, LuckFamilyLimits,
-    LuckFamilyOrderLaw, LuckFamilyProfile, LuckRecordProfile, luck_has_judgement_conversion, luck_rush_dp,
-    luck_rush_dp_certified, luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_ranking,
-    luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
+    LuckFamilyOrderLaw, LuckFamilyProfile, LuckFamilyProgram, LuckFamilyProgramKey, LuckRecordProfile,
+    LuckScoreEquivalence, LuckScoreEquivalenceAttempt, LuckScoreEquivalenceDecline, certify_uniform_score_equivalence,
+    luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified, luck_rush_dp_certified_with_events,
+    luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
 };
 pub use luck_exact::{
     LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactSession,
@@ -92,8 +93,11 @@ pub use luck_shapes::{
 };
 pub use orders::{OrderSharing, OrderedLive, OrdersOutcome, RecordedOrder};
 mod raw_runtime;
+mod score_cap_identity;
 mod score_program;
 pub use raw_runtime::{RELAX_TARGET_JUDGEMENTS, RawJudgedNote, RawJudgementRuntime};
+#[doc(hidden)]
+pub use score_cap_identity::character_blind_uniform_score_identity;
 pub use score_program::ScoreProgram;
 mod range_frames;
 mod scorecalc;
@@ -129,7 +133,7 @@ const SKILL_TYPE_GEKISOU_SUPPORT: i64 = 5;
 const PHASES: [i64; 2] = [1, 2];
 
 /// One performance position of the deck, in skill order.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Performer {
     /// The member's live skill `(id, level)`.
     pub live_skill: Option<(i64, i64)>,

@@ -126,10 +126,19 @@ impl Engine<'_, '_> {
             }
             self.admit_certified_refinement(input.notes.len(), input.play.frames.len());
             let (program, basis) = crate::search::certified_search::canonicalize_performers_with_basis(&mut input);
+            // Only a complete uniform-order exclusion uses this separately admitted identity. Candidate
+            // equality, full score results, physical order labels and the canonical basis keep `program`.
+            let score_cap_program = (matches!(self.metric, crate::types::Metric::Score)
+                && self.limits.cache_entries > 0
+                && self.safe_cutoff().is_some())
+            .then(|| {
+                ournotes_sim::live::full::character_blind_uniform_score_identity(self.pool.master, &input.performers)
+            })
+            .flatten();
             if matches!(self.metric, crate::types::Metric::Score)
                 && let Some((threshold, kth_power)) = self.safe_cutoff()
                 && self
-                    .cached_certified_score_cap(&program, power)
+                    .cached_certified_score_cap(score_cap_program.as_deref().unwrap_or(&program), power)
                     .is_some_and(|cap| cap < threshold || (cap == threshold && power < kth_power))
             {
                 self.tel.leaves.order_bound_pruned += 1;
@@ -229,7 +238,7 @@ impl Engine<'_, '_> {
                     LuckContextOutcome::Full(score) => score,
                     LuckContextOutcome::UpperOnly => {
                         self.cache_certified_score_cap(
-                            program,
+                            score_cap_program.unwrap_or(program),
                             power,
                             cap_sum(&order_cutoff.as_ref().expect("certified exclusion").caps),
                         );

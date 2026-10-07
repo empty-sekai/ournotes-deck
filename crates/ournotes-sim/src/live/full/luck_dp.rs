@@ -19,12 +19,19 @@ use crate::num::{FxHashMap, floor_to_i32};
 mod family;
 pub use family::{
     LuckControllerFamily, LuckFamilyBindings, LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline, LuckFamilyDomain,
-    LuckFamilyError, LuckFamilyLimits, LuckFamilyOrderLaw, LuckFamilyProfile,
+    LuckFamilyError, LuckFamilyLimits, LuckFamilyOrderLaw, LuckFamilyProfile, LuckFamilyProgram, LuckFamilyProgramKey,
 };
 
 mod life_recording;
 mod recording_cache;
+mod score_equivalence;
 mod shared_recording;
+mod timeline_support;
+#[cfg(test)]
+pub(crate) use score_equivalence::audit_score_fold;
+pub use score_equivalence::{
+    LuckScoreEquivalence, LuckScoreEquivalenceAttempt, LuckScoreEquivalenceDecline, certify_uniform_score_equivalence,
+};
 
 /// A complete nominal lottery curve and the size of its sparse computation.
 #[derive(Clone, Debug)]
@@ -2986,6 +2993,10 @@ mod tests {
 
     mod effect_identity_tests {
         include!("luck_dp/effect_identity_tests.rs");
+    }
+
+    mod timeline_support_tests {
+        include!("luck_dp/timeline_support_tests.rs");
     }
 
     fn curve_words(curve: &LuckDpCertifiedResult) -> Vec<u64> {

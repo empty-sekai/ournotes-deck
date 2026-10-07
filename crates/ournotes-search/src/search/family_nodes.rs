@@ -12,6 +12,7 @@ use crate::search::{
 use ournotes_sim::{
     live::full::{
         LuckDpCache, LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline, LuckFamilyDomain, LuckFamilyLimits,
+        LuckFamilyProgram,
     },
     pool::Pool,
 };
@@ -79,6 +80,14 @@ pub(crate) struct FamilyNodeStats {
     pub(crate) admitted_families: u64,
     pub(crate) profile_lookups: u64,
     pub(crate) profile_hits: u64,
+    pub(crate) profile_program_lookups: u64,
+    pub(crate) profile_program_hits: u64,
+    pub(crate) profile_program_builds: u64,
+    pub(crate) profile_program_declines: u64,
+    pub(crate) profile_program_evictions: u64,
+    pub(crate) profile_program_peak_entries: usize,
+    pub(crate) profile_program_peak_bytes: usize,
+    pub(crate) profile_native_builds: u64,
     pub(crate) preparation_refusals: u64,
     pub(crate) preparation_declines: FamilyRefusals,
     /// Actual wall time spent in native family preparation, including refused or cancelled attempts.
@@ -102,7 +111,8 @@ struct Entry {
     bytes: usize,
 }
 
-type TakenFamily = (Box<FamilyState>, Option<usize>);
+type CachePosition = (usize, u64);
+type TakenFamily = (Box<FamilyState>, Option<CachePosition>);
 
 struct FamilyState {
     domain: LuckFamilyDomain,
@@ -126,6 +136,8 @@ pub(crate) struct FamilyNodeCache<'a> {
     context: Option<&'a LuckFamilyContext<'a>>,
     scope: Option<Rc<ProfileRewardTemplate>>,
     entries: VecDeque<Entry>,
+    programs: VecDeque<LuckFamilyProgram>,
+    program_bytes: usize,
     limit: usize,
     byte_limit: usize,
     profile_limit: usize,
@@ -171,6 +183,7 @@ impl<'a> FamilyNodeCache<'a> {
             .saturating_add(self.entries.capacity().saturating_mul(std::mem::size_of::<Entry>()))
             .saturating_add(self.scope.as_ref().map_or(0, |scope| scope.retained_bytes()))
             .saturating_add(self.payload_bytes)
+            .saturating_add(self.program_bytes)
     }
 
     fn set_scope(&mut self, scope: Rc<ProfileRewardTemplate>) -> bool {
@@ -179,6 +192,8 @@ impl<'a> FamilyNodeCache<'a> {
         }
         self.entries.clear();
         self.payload_bytes = 0;
+        self.programs = VecDeque::new();
+        self.program_bytes = 0;
         self.scope = Some(scope);
         if self.bytes() > self.byte_limit {
             self.scope = None;
@@ -193,7 +208,7 @@ impl<'a> FamilyNodeCache<'a> {
         self.remember_at(members, state, None);
     }
 
-    fn remember_at(&mut self, members: [usize; 5], state: Option<Box<FamilyState>>, position: Option<usize>) {
+    fn remember_at(&mut self, members: [usize; 5], state: Option<Box<FamilyState>>, position: Option<CachePosition>) {
         let bytes = match state.as_ref().map(|t| t.retained_bytes()) {
             Some(Some(bytes)) => bytes,
             Some(None) => return,
@@ -205,21 +220,78 @@ impl<'a> FamilyNodeCache<'a> {
         }
         self.payload_bytes = self.payload_bytes.saturating_add(bytes);
         let entry = Entry { members, state, bytes };
-        if let Some(position) = position {
-            self.entries.insert(position.min(self.entries.len()), entry);
+        if let Some((position, evictions)) = position {
+            let removed = usize::try_from(self.stats.evictions.saturating_sub(evictions)).unwrap_or(usize::MAX);
+            self.entries.insert(position.saturating_sub(removed).min(self.entries.len()), entry);
         } else {
             self.entries.push_back(entry);
         }
-        while self.entries.len() > self.limit || self.bytes() > self.byte_limit {
-            let Some(old) = self.entries.pop_front() else { break };
-            self.payload_bytes -= old.bytes;
-            self.stats.evictions += 1;
+        self.trim();
+        self.report_retained();
+    }
+
+    fn trim(&mut self) {
+        while self.entries.len().saturating_add(self.programs.len()) > self.limit || self.bytes() > self.byte_limit {
+            if let Some(old) = self.entries.pop_front() {
+                self.payload_bytes -= old.bytes;
+                self.stats.evictions += 1;
+            } else if self.programs.pop_front().is_some() {
+                self.stats.profile_program_evictions += 1;
+                self.recount_programs();
+            } else {
+                break;
+            }
         }
         if self.entries.is_empty() && self.bytes() > self.byte_limit {
             self.entries.shrink_to_fit();
         }
-        self.stats.peak_entries = self.stats.peak_entries.max(self.entries.len());
+        if self.programs.is_empty() && self.bytes() > self.byte_limit {
+            self.programs.shrink_to_fit();
+            self.recount_programs();
+        }
+    }
+
+    fn recount_programs(&mut self) {
+        self.program_bytes = LuckFamilyProgram::retained_collection_bytes(self.programs.iter())
+            .and_then(|bytes| {
+                bytes.checked_sub(self.programs.len().checked_mul(std::mem::size_of::<LuckFamilyProgram>())?)
+            })
+            .and_then(|bytes| {
+                bytes.checked_add(self.programs.capacity().checked_mul(std::mem::size_of::<LuckFamilyProgram>())?)
+            })
+            .unwrap_or(usize::MAX);
+    }
+
+    fn report_retained(&mut self) {
+        self.stats.peak_entries = self.stats.peak_entries.max(self.entries.len() + self.programs.len());
         self.stats.peak_bytes = self.stats.peak_bytes.max(self.bytes());
+        self.stats.profile_program_peak_entries = self.stats.profile_program_peak_entries.max(self.programs.len());
+        self.stats.profile_program_peak_bytes = self.stats.profile_program_peak_bytes.max(self.program_bytes);
+    }
+
+    fn remember_program(&mut self, program: LuckFamilyProgram) {
+        let limit = self.limit.saturating_sub(1).min(63);
+        let bytes = self.byte_limit.min(1 << 20);
+        if limit == 0 || program.retained_bytes() > bytes || self.programs.try_reserve(1).is_err() {
+            self.stats.profile_program_declines += 1;
+            return;
+        }
+        self.programs.push_back(program);
+        self.recount_programs();
+        while self.programs.len() > limit || self.program_bytes > bytes {
+            if self.programs.pop_front().is_none() {
+                break;
+            }
+            self.stats.profile_program_evictions += 1;
+            self.recount_programs();
+        }
+        if self.programs.is_empty() && self.program_bytes > bytes {
+            self.programs.shrink_to_fit();
+            self.recount_programs();
+        }
+        // Prototypes and admitted-domain states consume the same original entry and byte allowance.
+        self.trim();
+        self.report_retained();
     }
 
     fn family(
@@ -244,7 +316,7 @@ impl<'a> FamilyNodeCache<'a> {
             self.stats.family_hits += 1;
             let entry = self.entries.remove(index).expect("matched family entry");
             self.payload_bytes -= entry.bytes;
-            return Ok(entry.state.map(|state| (state, Some(index))));
+            return Ok(entry.state.map(|state| (state, Some((index, self.stats.evictions)))));
         }
         let Some(context) = self.context else { return Ok(None) };
         let mut choices: [Vec<LuckFamilyChoice>; 5] = std::array::from_fn(|_| Vec::new());
@@ -335,21 +407,69 @@ impl<'a> FamilyNodeCache<'a> {
                 return Ok(false);
             }
             let started = crate::clock::Instant::now();
-            let prepared = context.prepare_profile(&state.domain, profile, Some(curves), &mut *cancelled);
-            self.stats.preparation_ms += started.elapsed().as_secs_f64() * 1000.0;
-            let law = match prepared {
-                Ok(Some(law)) => law,
-                Ok(None) => return Err(()),
-                Err(refusal) => {
-                    if cancelled() {
+            let capacity = self.byte_limit.min(1 << 20);
+            let key = if self.limit > 1 {
+                context.profile_program_key(&state.domain, profile, capacity, &mut *cancelled)
+            } else {
+                None
+            };
+            if cancelled() {
+                self.stats.preparation_ms += started.elapsed().as_secs_f64() * 1000.0;
+                return Err(());
+            }
+            let transported = key.as_ref().and_then(|key| {
+                self.stats.profile_program_lookups += 1;
+                self.programs
+                    .iter()
+                    .find(|program| program.matches(key))
+                    .and_then(|program| program.transport(&state.domain, key, profile, &mut *cancelled))
+            });
+            if cancelled() {
+                self.stats.preparation_ms += started.elapsed().as_secs_f64() * 1000.0;
+                return Err(());
+            }
+            let law = if let Some(law) = transported {
+                self.stats.profile_program_hits += 1;
+                law
+            } else {
+                if key.is_none() {
+                    self.stats.profile_program_declines += 1;
+                }
+                let prepared = context.prepare_profile(&state.domain, profile, Some(&mut *curves), &mut *cancelled);
+                let law = match prepared {
+                    Ok(Some(law)) => law,
+                    Ok(None) => {
+                        self.stats.preparation_ms += started.elapsed().as_secs_f64() * 1000.0;
                         return Err(());
                     }
-                    self.stats.preparation_refusals += 1;
-                    self.stats.preparation_declines.record(refusal.reason);
-                    state.refused[profile] = true;
-                    return Ok(false);
+                    Err(refusal) => {
+                        self.stats.preparation_ms += started.elapsed().as_secs_f64() * 1000.0;
+                        if cancelled() {
+                            return Err(());
+                        }
+                        self.stats.preparation_refusals += 1;
+                        self.stats.preparation_declines.record(refusal.reason);
+                        state.refused[profile] = true;
+                        return Ok(false);
+                    }
+                };
+                self.stats.profile_native_builds += 1;
+                if let Some(key) = key {
+                    if let Some(program) =
+                        LuckFamilyProgram::from_profile(&state.domain, key, &law, capacity, &mut *cancelled)
+                    {
+                        self.stats.profile_program_builds += 1;
+                        self.remember_program(program);
+                    } else if !cancelled() {
+                        self.stats.profile_program_declines += 1;
+                    }
                 }
+                law
             };
+            self.stats.preparation_ms += started.elapsed().as_secs_f64() * 1000.0;
+            if cancelled() {
+                return Err(());
+            }
             let started = crate::clock::Instant::now();
             let reward = self
                 .scope

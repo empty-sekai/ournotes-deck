@@ -24,7 +24,7 @@ const MAX_CONTEXT_FRAMES: usize = 100_000;
 mod input_reuse;
 mod profiles;
 use profiles::AdmittedFamilyInputs;
-pub use profiles::{LuckFamilyDomain, LuckFamilyProfile};
+pub use profiles::{LuckFamilyDomain, LuckFamilyProfile, LuckFamilyProgram, LuckFamilyProgramKey};
 
 /// One legal physical Snap choice for a fixed member. `None` has no support skill sources and consumes no
 /// resource. A resource number denotes the same complete ordered Snap sources in every member's choice list.

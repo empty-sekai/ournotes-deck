@@ -46,6 +46,19 @@ impl InputKeys {
         Some(Self { physical })
     }
 
+    /// Sort the complete normalized descriptors, with multiplicities. The inverse is a fixed slot
+    /// bijection; it is used only to transport labels, never to reorder an actual native replay.
+    pub(super) fn canonical(&self, capacity: usize) -> Option<(Vec<u8>, [usize; SLOTS])> {
+        let mut order = [0, 1, 2, 3, 4];
+        order.sort_by(|&a, &b| self.physical[a].cmp(&self.physical[b]));
+        let bytes = self.key(&order, capacity)?;
+        let mut inverse = [0; SLOTS];
+        for (canonical, &physical) in order.iter().enumerate() {
+            inverse[physical] = canonical;
+        }
+        Some((bytes, inverse))
+    }
+
     pub(super) fn key(&self, order: &[usize; SLOTS], capacity: usize) -> Option<Vec<u8>> {
         let mut ordered = [None; SLOTS];
         let mut seen = 0u8;

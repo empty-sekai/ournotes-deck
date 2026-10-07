@@ -173,6 +173,13 @@ struct BoundsRecordOnly {
     diagnostic_started: bool,
 }
 
+/// A recorded pair is the ordinary combo factor before skill additions and the Gekisou combo factor.
+/// The private exact replay supplies the snapshot belonging to this query, indexed by original filing order.
+enum NoteInputs<'a> {
+    Native { combo: &'a ComboCounter, gekisou: Option<&'a dyn GekisouComboInfo> },
+    Recorded(&'a [Vec<Option<(f32, f32)>>]),
+}
+
 /// Empty frame storage has a lossless length representation. Nonempty entries keep their complete state.
 struct FrameLists<'a, T>(&'a [Vec<T>]);
 
@@ -580,6 +587,29 @@ impl IncrementalCalculator {
         combo: &ComboCounter,
         gekisou: Option<&dyn GekisouComboInfo>,
     ) -> Result<i32, Error> {
+        self.calculate_with_inputs(t, NoteInputs::Native { combo, gekisou })
+    }
+
+    /// Execute an admitted exact command tape using this query's recorded combo inputs. The caller must
+    /// preserve every native filing and query, and supply all changed combo observations before the query.
+    /// This is only a numeric execution primitive: arbitrary recorded inputs carry no admission certificate.
+    /// Program/trace/record-only observers cannot consume this path because they require native combo state.
+    pub(super) fn calculate_recorded(&mut self, t: i32, combos: &[Vec<Option<(f32, f32)>>]) -> Result<i32, Error> {
+        if self.bounds_trace.is_some()
+            || self.bounds_record_only.is_some()
+            || self.program.is_some()
+            || self.minimum_score_up.is_some()
+            || self.settled_frame != 0
+            || self.settled_total != 0
+            || self.settled_fixed != 0
+            || self.calc.luck_weight.is_some()
+        {
+            return Err(Error::Unsupported("recorded score query requires an unobserved unweighted calculator".into()));
+        }
+        self.calculate_with_inputs(t, NoteInputs::Recorded(combos))
+    }
+
+    fn calculate_with_inputs(&mut self, t: i32, inputs: NoteInputs<'_>) -> Result<i32, Error> {
         let g = get_frame(t);
         let mut to = if g < 0 { 0 } else { g };
         if self.max_frame <= g {
@@ -605,7 +635,7 @@ impl IncrementalCalculator {
             self.validate_record_only_notes(start, to)?;
         } else {
             for f in start..=to {
-                self.execute(f as usize, combo, gekisou)?;
+                self.execute(f as usize, &inputs)?;
             }
         }
         if let Some((ft, fs)) = self.pending_fixed.take() {
@@ -622,6 +652,9 @@ impl IncrementalCalculator {
         self.prev = to;
         self.added = -1;
         if let Some(trace) = &mut self.bounds_trace {
+            let NoteInputs::Native { combo, gekisou } = inputs else {
+                unreachable!("recorded queries reject native trace observers before execution")
+            };
             // Observe every currently addressable note, including notes this recorder did not reexecute.
             // The support evaluator uses these values on every possible native rewind path. Notes outside the
             // stale frames have unchanged combo inputs, so observing them again would emit nothing.
@@ -667,7 +700,7 @@ impl IncrementalCalculator {
         self.diffs[f].undo(&mut self.calc.state);
     }
 
-    fn execute(&mut self, f: usize, combo: &ComboCounter, gekisou: Option<&dyn GekisouComboInfo>) -> Result<(), Error> {
+    fn execute(&mut self, f: usize, inputs: &NoteInputs<'_>) -> Result<(), Error> {
         let (fl, nl) = (&self.factors[f], &mut self.notes[f]);
         self.order_f.clear();
         self.order_f.extend(0..fl.len());
@@ -686,35 +719,61 @@ impl IncrementalCalculator {
                 a += 1;
             } else {
                 let n = &mut nl[self.order_n[b]];
-                let c = combo.timing_combo(n.time_ms)?;
-                let (s, score_up) =
-                    self.calc.note_score_and_score_up(c, n.life, n.time_ms, n.note_type, n.score_type, gekisou)?;
-                observe_score_up(&mut self.minimum_score_up, score_up);
-                if let Some(program) = &mut self.program {
-                    let kernel = Kernel::capture(
-                        &self.calc,
-                        c,
-                        n.life,
-                        n.time_ms,
-                        n.note_type,
-                        n.score_type,
-                        gekisou,
-                        program.origin_power(),
-                    )?;
-                    program.execute_note(f, self.order_n[b], kernel);
-                }
-                #[cfg(feature = "search-diagnostics")]
-                {
-                    let cum = match &self.calc.combo_table {
-                        Some(table) => table.get_cumulative_factor(crate::live::score::COMBO, c)?,
-                        None => 0.0,
-                    };
-                    n.factors = [
-                        self.calc.gekisou_combo_bonus_factor(gekisou, n.time_ms)?,
-                        self.calc.state.combo_score_up + (crate::num::min_ignoring_nan(cum, 1f32) + 1f32),
-                        self.calc.state.note_score_up + self.calc.state.judgement_factor(n.score_type),
-                    ];
-                }
+                let s = match inputs {
+                    NoteInputs::Native { combo, gekisou } => {
+                        let c = combo.timing_combo(n.time_ms)?;
+                        let (s, score_up) = self.calc.note_score_and_score_up(
+                            c,
+                            n.life,
+                            n.time_ms,
+                            n.note_type,
+                            n.score_type,
+                            *gekisou,
+                        )?;
+                        observe_score_up(&mut self.minimum_score_up, score_up);
+                        if let Some(program) = &mut self.program {
+                            let kernel = Kernel::capture(
+                                &self.calc,
+                                c,
+                                n.life,
+                                n.time_ms,
+                                n.note_type,
+                                n.score_type,
+                                *gekisou,
+                                program.origin_power(),
+                            )?;
+                            program.execute_note(f, self.order_n[b], kernel);
+                        }
+                        #[cfg(feature = "search-diagnostics")]
+                        {
+                            let cum = match &self.calc.combo_table {
+                                Some(table) => table.get_cumulative_factor(crate::live::score::COMBO, c)?,
+                                None => 0.0,
+                            };
+                            n.factors = [
+                                self.calc.gekisou_combo_bonus_factor(*gekisou, n.time_ms)?,
+                                self.calc.state.combo_score_up + (crate::num::min_ignoring_nan(cum, 1f32) + 1f32),
+                                self.calc.state.note_score_up + self.calc.state.judgement_factor(n.score_type),
+                            ];
+                        }
+                        s
+                    }
+                    NoteInputs::Recorded(combos) => {
+                        let (ordinary, gekisou) =
+                            combos.get(f).and_then(|row| row.get(self.order_n[b])).copied().flatten().ok_or_else(
+                                || Error::Unsupported("recorded score query is missing a note's combo inputs".into()),
+                            )?;
+                        let combo = gekisou * (self.calc.state.combo_score_up + ordinary);
+                        let (score_up, luck) = self.calc.score_up_and_luck(n.score_type, n.time_ms);
+                        let s = self.calc.note_score_core(n.life, n.note_type, n.score_type, combo, score_up, luck)?;
+                        observe_score_up(&mut self.minimum_score_up, score_up);
+                        #[cfg(feature = "search-diagnostics")]
+                        {
+                            n.factors = [gekisou, self.calc.state.combo_score_up + ordinary, score_up];
+                        }
+                        s
+                    }
+                };
                 #[cfg(test)]
                 {
                     let st = &self.calc.state;
@@ -814,5 +873,172 @@ mod score_up_observation_tests {
         observe_score_up(&mut minimum, f32::NAN);
         observe_score_up(&mut minimum, 0.1);
         assert!(minimum.unwrap().is_nan());
+    }
+}
+
+#[cfg(test)]
+mod recorded_query_tests {
+    use super::*;
+    use crate::live::score::{COMBO, ComboTable, GEKISOU_COMBO};
+
+    struct Gk(i32);
+    impl GekisouComboInfo for Gk {
+        fn gekisou_combo(&self, time_ms: i32) -> Option<i32> {
+            (40..=220).contains(&time_ms).then_some(self.0)
+        }
+        fn combo_windows(&self, out: &mut Vec<(i32, i32, u64)>) {
+            out.push((40, 220, self.0 as u64));
+        }
+    }
+
+    fn calculator() -> IncrementalCalculator {
+        let table = ComboTable::build([
+            (i64::from(COMBO), 1, 0.037),
+            (i64::from(COMBO), 3, 0.081),
+            (i64::from(GEKISOU_COMBO), 1, 0.073),
+            (i64::from(GEKISOU_COMBO), 3, 0.097),
+        ])
+        .unwrap();
+        IncrementalCalculator::new(
+            LiveScoreCalculator {
+                score_adjustment_factor: 0.731,
+                music_difficulty_factor: 1.035,
+                converted_note_count: 7,
+                life_onus_factor: 0.5,
+                event_bonus_factor: 1.1,
+                assist_factor: 0.93,
+                note_factor_percent: [(100, 100)].into_iter().collect(),
+                judgement_score_factor_percent: [(1, 103), (2, 100)].into_iter().collect(),
+                state: ScoreFactorState::new(123457),
+                combo_table: Some(table),
+                luck_weight: None,
+            },
+            400,
+        )
+    }
+
+    fn fields(state: &ScoreFactorState) -> [u32; 9] {
+        [
+            state.band_total_power as u32,
+            state.combo_score_up.to_bits(),
+            state.note_score_up.to_bits(),
+            state.just.to_bits(),
+            state.perfect.to_bits(),
+            state.great.to_bits(),
+            state.good.to_bits(),
+            state.added_luck_bonus as u32,
+            state.gekisou_rank_bonus_score as u32,
+        ]
+    }
+
+    fn check_query(
+        native: &mut IncrementalCalculator,
+        recorded: &mut IncrementalCalculator,
+        time: i32,
+        combo: &ComboCounter,
+        gk: &Gk,
+    ) -> i32 {
+        let inputs: Vec<_> = native
+            .notes
+            .iter()
+            .map(|notes| {
+                notes
+                    .iter()
+                    .map(|note| Some(combo_inputs(&native.calc, combo, Some(gk), note.time_ms).unwrap()))
+                    .collect()
+            })
+            .collect();
+        let expected = native.calculate(time, combo, Some(gk)).unwrap();
+        assert_eq!(recorded.calculate_recorded(time, &inputs).unwrap(), expected);
+        assert_eq!(fields(&native.calc.state), fields(&recorded.calc.state));
+        assert_eq!(native.executed_note_scores(), recorded.executed_note_scores());
+        assert_eq!(native.rank_bonus, recorded.rank_bonus);
+        assert_eq!(native.fixed, recorded.fixed);
+        assert_eq!(native.prev, recorded.prev);
+        // Includes every native FrameDiff f32 field, even a drift that has not yet reached an integer floor.
+        for (a, b) in native.diffs.iter().zip(&recorded.diffs) {
+            assert_eq!((a.band_total_power, a.luck), (b.band_total_power, b.luck));
+            assert_eq!(
+                [a.combo, a.note, a.just, a.perfect, a.great, a.good].map(f32::to_bits),
+                [b.combo, b.note, b.just, b.perfect, b.great, b.good].map(f32::to_bits)
+            );
+        }
+        expected
+    }
+
+    #[test]
+    fn recorded_queries_keep_signed_owner_filings_rewinds_changed_combo_and_rank_snapshots() {
+        let mut native = calculator();
+        let mut combo = ComboCounter::new(8);
+        for time in [40, 80, 120] {
+            combo.add_judgement(time, 5).unwrap();
+        }
+        // Deliberately file owner order backwards; equal owner/time commands retain their filing order.
+        for (owner, note_mill) in [(402, -4500), (301, 11000), (102, 19000), (102, -1234)] {
+            native.add_factor(FactorCommand { time_ms: 80, owner_id: owner, note_mill, ..Default::default() });
+        }
+        native.add_factor(FactorCommand { time_ms: 40, owner_id: -1, luck: 10, ..Default::default() });
+        native.add_factor(FactorCommand {
+            time_ms: 100,
+            owner_id: 201,
+            combo_mill: -7301,
+            judgement: 6,
+            judge_mill: 4317,
+            ..Default::default()
+        });
+        for (id, time, life) in [(0, 80, 1000), (1, 120, 0), (2, 200, 700)] {
+            native.add_note(NoteCommand::new(time, life, id, 100, 1));
+        }
+        let mut recorded = native.clone();
+        let mut gk = Gk(1);
+        check_query(&mut native, &mut recorded, 240, &combo, &gk);
+        let before = combo_inputs(&native.calc, &combo, Some(&gk), 120).unwrap();
+        combo.add_judgement(100, 1).unwrap();
+        gk.0 = 4;
+        let after = combo_inputs(&native.calc, &combo, Some(&gk), 120).unwrap();
+        assert_ne!(before.0.to_bits(), after.0.to_bits());
+        assert_ne!(before.1.to_bits(), after.1.to_bits());
+        for calc in [&mut native, &mut recorded] {
+            calc.add_factor(FactorCommand { time_ms: 40, owner_id: 102, note_mill: -11234, ..Default::default() });
+            calc.add_note(NoteCommand::new(60, 300, 3, 100, 2));
+        }
+        check_query(&mut native, &mut recorded, 160, &combo, &gk);
+        let start = check_query(&mut native, &mut recorded, 60, &combo, &gk);
+        let end = check_query(&mut native, &mut recorded, 200, &combo, &gk);
+        assert_ne!(start, end);
+        let rank = (i128::from(end.wrapping_sub(start)) * -17 / 100) as i32;
+        assert_ne!(rank, 0);
+        for calc in [&mut native, &mut recorded] {
+            calc.add_fixed(220, rank);
+        }
+        check_query(&mut native, &mut recorded, 240, &combo, &gk);
+        assert_eq!(native.rank_bonus, 0, "pending rank is first added outside frame execution");
+        for calc in [&mut native, &mut recorded] {
+            calc.add_factor(FactorCommand { time_ms: 80, owner_id: 402, note_mill: 4500, ..Default::default() });
+            calc.add_factor(FactorCommand { time_ms: 220, owner_id: -1, luck: -10, ..Default::default() });
+        }
+        check_query(&mut native, &mut recorded, 240, &combo, &gk);
+        assert_eq!(native.rank_bonus, rank, "rewind now executes the filed rank's original frame");
+        check_query(&mut native, &mut recorded, 80, &combo, &gk);
+        check_query(&mut native, &mut recorded, 4000, &combo, &gk);
+    }
+
+    #[test]
+    fn recorded_queries_refuse_missing_inputs_and_native_observers() {
+        let mut missing = calculator();
+        missing.add_note(NoteCommand::new(40, 1000, 0, 100, 1));
+        assert!(matches!(missing.calculate_recorded(40, &[]), Err(Error::Unsupported(_))));
+        let mut traced = calculator();
+        traced.begin_bounds(Vec::new(), false);
+        assert!(matches!(traced.calculate_recorded(0, &[]), Err(Error::Unsupported(_))));
+        assert_eq!((traced.prev, traced.score), (-1, 0));
+        let mut program = calculator();
+        program.begin_program().unwrap();
+        assert!(matches!(program.calculate_recorded(0, &[]), Err(Error::Unsupported(_))));
+        assert_eq!((program.prev, program.score), (-1, 0));
+        let mut minimum = calculator();
+        minimum.minimum_score_up = Some(f32::INFINITY);
+        assert!(matches!(minimum.calculate_recorded(0, &[]), Err(Error::Unsupported(_))));
+        assert_eq!((minimum.prev, minimum.score), (-1, 0));
     }
 }

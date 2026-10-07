@@ -834,3 +834,9 @@ mod input_reuse_tests;
 
 #[path = "family_lazy_profile_tests.rs"]
 mod lazy_profile_tests;
+
+#[path = "family_program_tests.rs"]
+mod program_tests;
+
+#[path = "score_equivalence_tests.rs"]
+mod score_equivalence_tests;

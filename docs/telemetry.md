@@ -265,13 +265,16 @@ Combo 与结构校验；DP 和后续因子回放保持各自的阶段。
 | `admittedFamilies` | 全部配对域准入成功次数，不代表任何 profile 或候选已完成 |
 | `preparedFamilies` | 在一次缓存存活期间首次获得完整 profile 的 family 次数；淘汰重建后同一物理 family 可以再次计数 |
 | `profileLookups`、`profileHits` | 实际节点所需 profile 的查询次数及完整系数命中次数 |
+| `profileProgramLookups`、`profileProgramHits` | 完整规范概率程序的查询次数，以及成功映射全部 120 个目标标签的次数 |
+| `profileProgramBuilds`、`profileProgramDeclines`、`profileNativeBuilds` | 完整规范程序构建数、身份或程序保留不可用次数，以及通过原生准备而非映射完成的 profile 数 |
+| `profileProgramEvictions`、`profileProgramPeakEntries`、`profileProgramPeakBytes` | 程序缓存的淘汰数及条目/字节高水位；计入其 1 MiB 子上限和共享 family 缓存总限额 |
 | `preparationRefusals`、`preparationDeclines` | 原生 family 或成员/Snap 构造不可用的次数及原因分类，不含取消 |
 | `preparationMs` | 原生 family 准备耗时，包含被拒绝或中断的尝试 |
 | `envelopeMs`、`envelopeRefusals` | 系数表构造耗时及数值包络不可用次数；耗时包含中断，拒绝次数不含取消 |
 | `capacityDeclines` | 搜索侧的分配或收益模板作用域失败；原生 family 容量失败另记在 `preparationDeclines.capacity` |
 | `stopped` | 被中断的节点上界请求数；不会返回部分上界 |
 | `orderLaws`、`profiles` | 数值包络成功后实际安装的原始顺序标签数和完整 profile 数；每个 profile 有 120 个标签，不等于 DP 传播次数或已评分顺序数 |
-| `evictions`、`peakEntries`、`peakBytes` | 缓存淘汰数与已记录的条目/字节高水位；字节含容器、收益模板、完整准入输入和保留的 profile 系数，不含临时概率律、其他缓存或进程 RSS |
+| `evictions`、`peakEntries`、`peakBytes` | domain 状态淘汰数，以及 domain/程序合计的条目/字节高水位；字节含容器、收益模板、完整准入输入、profile 系数和保留的概率程序，不含临时概率律、其他缓存或进程 RSS |
 
 两个拒绝对象使用相同的原因键：`context`、`terminalMapping`、`pairDomain`、`recorderAdmission`、
 `lifeFeedback`、`judgementFeedback`、`writerProfiles`、`probabilityDomain`、`budget`、`capacity` 和
@@ -303,6 +306,14 @@ Combo 与结构校验；DP 和后续因子回放保持各自的阶段。
 
 | 字段 | 含义 |
 |---|---|
+| `equalityAttempts` | 提交给可选完整均匀站位分数律等价证明的边界候选对数 |
+| `equalityOrders` | 这些尝试中已完整比较的原始顺序标签数；部分覆盖不能授权合并 |
+| `equalityTimelineOrders` | 通过完整可观察轨迹及原生算分证明相等的原始顺序标签数 |
+| `equalityTimelinePaths` | 已完整求值的成对轨迹数，包括发现终分差异的轨迹对 |
+| `equalityTimelineTransitions` | 已完成的完整状态轨迹支持集遍历所处理的转移数 |
+| `equalityScoreFoldQueries` | 轨迹求值实际执行的原生算分查询数，包括拒绝或取消前的工作 |
+| `equalityMerges` | 完整 native 证书授权合并的已有等价类对数；物理候选及规范并列顺序保持独立 |
+| `equalityDeclines`、`equalityDeclineReason` | 可选等价证明的拒绝次数及报告原因；拒绝后保留独立前沿等价类和原有证书 |
 | `summaryOrders`、`summaryRefinements`、`summaryDeclines` | 完整概率律精修前，已完成的因子历史顺序包围区间、已安装交集和可选拒绝次数 |
 | `residueOrders`、`residueRefinements`、`residueDeclines` | 已完成的排名余数顺序包围区间、已安装交集和可选拒绝次数；不代表完整概率律或精确期望值 |
 | `attemptedOrders` | 尝试构造完整 nominal law 的顺序数 |
@@ -315,7 +326,10 @@ Combo 与结构校验；DP 和后续因子回放保持各自的阶段。
 | `replayRuns`、`frames`、`terminalPaths` | 所有细化尝试中已启动的重放段数、已执行帧数、已完成终止路径数；复用完整概率律不增加重放工作量 |
 
 细化运行计入 `time.simulationMs`。完整概率律的重放段与 `leaves.simulations` 分开计数；已完成的因子历史和余数顺序包围区间也会增加
-`leaves.simulations`。排名得到认证时可以停止，
+`leaves.simulations`。等价证明的实际录制工作计入相同的 `replayRuns`、`frames` 与共享配额，包括中断前的工作；
+它不增加 `terminalPaths`、精确概率律完成顺序数或候选评估次数。等价拒绝原因包括 `cancelled`、`workBudget`、
+`capacity`、`context`、`recorderAdmission`、`probabilityDomain`、`probePredicate`、`probeOwner`、`probePhase`、
+`ordinaryTie`、`actionChance`、`unfinished`、`scoreTrace` 和 `controllerTrace`。排名得到认证时可以停止，
 因此 `Complete` 不要求每个顺序都完成精确细化，也不保证结果中已有精确的有理数期望值。
 
 [nominal LUCK 精化方法](luck-refinement.md)说明了帧检查点、工作量计数和保留的排名证书。
@@ -374,6 +388,8 @@ LUCK 路径上的 `leaves.simulations` 统计已完成的顺序得分包围区�
 
 `luckScoreCaps` 记录完整评分程序的已认证分数上界的复用，这些上界在部分顺序已足以排除候选时保留。
 缓存条目提供上界，不提供候选精确值或完成证明。
+每个键仍包含精确综合力。仅当全部选中技能的依赖检查证明不读取角色编号时，均匀顺序程序才可共享排除条目；
+未知或读取角色编号的技能保留原完整身份。这不会合并物理候选或其规范并列排序键。
 
 ## `memory`
 

@@ -2092,8 +2092,8 @@ fn export_luck_search_benchmarks() {
     );
 }
 
-/// A separate two-team transport witness. The substituted member changes the full performer identity while
-/// retaining the same power and native score law, so complete histories still leave a genuine frontier tie.
+/// A separate two-team transport witness. A score-neutral source on the substituted member prevents earlier
+/// equality proofs from bypassing the summary, rank-residue and exact nominal refinement stages.
 fn rank_residue_transport_inputs() -> (String, String, String) {
     let mut document = luck_benchmark_document(8, 3, 6, false, 100, true);
     let table = &mut document["master"]["MasterMemberCard"];
@@ -2107,6 +2107,7 @@ fn rank_residue_transport_inputs() -> (String, String, String) {
             assert_eq!(original[index], substitute[index]);
         }
     }
+    luck_refinement::distinguish_neutral_residue_source(&mut document);
     let table = &mut document["master"]["MasterLiveMusicScore"];
     let count = table["columns"].as_array().unwrap().iter().position(|value| value == "_fullComboCount").unwrap();
     table["rows"][0][count] = json!(12);
@@ -2158,6 +2159,12 @@ fn rank_residue_transport_answer(
     assert_eq!(result.optimality, ournotes_search::types::Optimality::Proven);
     assert_eq!((result.telemetry.leaves.visited, result.telemetry.leaves.evaluated), (2, 2));
     let refinement = &result.telemetry.lottery_refinement;
+    assert_eq!((refinement.equality_attempts, refinement.equality_orders, refinement.equality_merges), (1, 0, 0));
+    assert_eq!(refinement.equality_declines, 1);
+    assert_eq!(
+        refinement.equality_decline_reason,
+        Some(ournotes_sim::live::full::LuckScoreEquivalenceDecline::ActionChance)
+    );
     assert_eq!((refinement.summary_orders, refinement.summary_refinements, refinement.summary_declines), (240, 240, 0));
     assert_eq!((refinement.residue_orders, refinement.residue_refinements, refinement.residue_declines), (240, 240, 0));
     assert_eq!((refinement.completed_orders, refinement.installed_orders, refinement.declined_orders), (240, 240, 0));
@@ -2168,6 +2175,12 @@ fn rank_residue_transport_answer(
     assert_eq!(winner.snaps, [None; 5]);
     assert_eq!(winner.power, 205_829);
     assert_eq!(winner.rank_certified, Some(true));
+    let mean = winner.expected_score.as_ref().expect("all 240 native nominal order laws completed");
+    assert_eq!(
+        (mean.numerator.as_str(), mean.denominator.as_str()),
+        ("140835056", "135"),
+        "the score-neutral extra source preserves the independently enumerated original mean"
+    );
     #[cfg(feature = "search-diagnostics")]
     {
         let profile = ournotes_sim::live::full::take_luck_score_profile();
@@ -2202,6 +2215,269 @@ fn export_rank_residue_transport_witness() {
     }
     let manifest = json!({"purpose":"Synthetic public rank-residue transport correctness; not a performance workload.",
         "progressIntervalMs":25,"cases":[{"name":"synthetic-rank-residue-two-team","data":"data.json",
+            "snapshot":"snapshot.json","request":"request.json","reference":"native.json"}]});
+    fs::write(root.join("manifest.json"), serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+}
+
+/// Six legal bindings of one neutral Snap: absent or held by any of five fixed members. The Snap
+/// adds the same positive power on every member, so the five held bindings outrank its absence.
+/// Member 1 has a distinct complete live source; moving the neutral Snap between it and the other
+/// members therefore needs the complete native equality proof, beyond the character-unread identity.
+fn score_equivalence_transport_inputs(active_counter: bool) -> (String, String, String) {
+    let mut synth = synthetic_master(5, 1, 5);
+    replace_table(
+        &mut synth,
+        "MasterMemberCardLevelLimit",
+        json!([
+            {"_id":32,"_rarity":3,"_awakeCount":2,"_limitLevel":40}
+        ]),
+    );
+    set_column(&mut synth, "MasterCharacter", &mut |row| row["_bandID"] = json!(1));
+    set_column(&mut synth, "MasterMemberCard", &mut |row| {
+        row["_rarity"] = json!(3);
+        row["_memberCardLevelGroup"] = json!(1);
+        row["_cardType"] = json!(1);
+        row["_bestMusicTagIDs"] = json!([1]);
+        row["_liveSkillID"] = json!(if row["_id"] == 1 { 1 } else { 2 });
+        row["_gekisouSkillID"] = json!(103);
+        for key in ["_performancePowerMax", "_technicPowerMax", "_visualPowerMax"] {
+            row[key] = json!(10_000);
+        }
+    });
+    set_column(&mut synth, "MasterLeaderSkillEffect", &mut |row| row["_effectValue"] = json!(0));
+    set_column(&mut synth, "MasterSupportCard", &mut |row| {
+        row["_rarity"] = json!(3);
+        row["_cardType"] = json!(1);
+        row["_supportSkillId01"] = json!(9880);
+        row["_supportSkillId02"] = json!(0);
+        row["_gekisouSupportSkillId01"] = json!(9882);
+        for key in ["_performancePowerMax", "_technicPowerMax", "_visualPowerMax"] {
+            row[key] = json!(10_000);
+        }
+    });
+    set_column(&mut synth, "MasterSupportCardRank", &mut |row| row["_gekisouSupportSkill01Level"] = json!(1));
+    set_column(&mut synth, "MasterLiveMusic", &mut |row| {
+        for key in ["_gekisouMission1", "_gekisouMission2", "_gekisouMission3"] {
+            row[key] = json!(2);
+        }
+    });
+    set_column(&mut synth, "MasterLiveMusicScore", &mut |row| row["_fullComboCount"] = json!(4));
+    set_column(&mut synth, "MasterLiveSettings", &mut |row| match row["_key"].as_str() {
+        Some("gekisou_luck_gauge_max") => row["_value"] = json!("10"),
+        Some("gekisou_luck_gauge_max_rush") => row["_value"] = json!("20"),
+        Some("gekisou_luck_rush_score_bonus_percent") => row["_value"] = json!("47"),
+        _ => {}
+    });
+    replace_table(
+        &mut synth,
+        "MasterLiveSkillEffect",
+        json!([
+            {"_id":1,"_liveSkillID":1,"_level":4,"_skillEffectType":2000,
+             "_effectValue":if active_counter {2500} else {3500},"_activationTimeSecond":0.12},
+            {"_id":2,"_liveSkillID":2,"_level":4,"_skillEffectType":2000,
+             "_effectValue":if active_counter {5000} else {9000},"_activationTimeSecond":0.2}
+        ]),
+    );
+    replace_table(
+        &mut synth,
+        "MasterSupportSkillEffect",
+        json!(
+            (1..=5)
+                .map(|level| json!({
+                    "_id":98800+level,"_supportSkillID":9880,"_level":level,"_skillTriggerType":1,
+                    "_skillTriggerConditionGroup":if active_counter {9884} else {53},
+                    "_skillEffectType":if active_counter {2000} else {3001},
+                    "_effectValue":if active_counter {3750} else {0},
+                    "_activationTimeSecond":if active_counter {0.1} else {0.0}
+                }))
+                .collect::<Vec<_>>()
+        ),
+    );
+    extend_table(
+        &mut synth,
+        "MasterSkillTarget",
+        vec![
+            json!({"_id":9881,"_skillTargetType":3,"_bandID":999}),
+            json!({"_id":9884,"_skillTargetType":4,"_judgement":5}),
+        ],
+    );
+    extend_table(
+        &mut synth,
+        "MasterSkillCondition",
+        vec![
+            json!({"_id":9881,"_conditionType":5000,"_conditionValues":[],"_conditionTargetIDs":[9881],"_isPositive":true}),
+            json!({"_id":9883,"_conditionType":7021,"_conditionValues":[],"_conditionTargetIDs":[],"_isPositive":true}),
+            json!({"_id":9884,"_conditionType":1030,"_conditionValues":[1],"_conditionTargetIDs":[9884],"_isPositive":true}),
+        ],
+    );
+    extend_table(
+        &mut synth,
+        "MasterSkillConditionSet",
+        vec![
+            json!({"_id":9881,"_group":9881,"_conditionIds":[9881]}),
+            json!({"_id":9883,"_group":9883,"_conditionIds":[9883]}),
+            json!({"_id":9884,"_group":9884,"_conditionIds":[9884]}),
+        ],
+    );
+    replace_table(&mut synth, "MasterGekisouSkill", json!([{"_id":103,"_gekisouMissionType":2}]));
+    replace_table(
+        &mut synth,
+        "MasterGekisouSkillEffect",
+        json!([{
+            "_id":103,"_gekisouSkillID":103,"_level":1,"_skillTriggerType":2,
+            "_skillTriggerConditionGroup":9883,"_skillEffectType":2000,"_effectValue":if active_counter {1250} else {7000}
+        }]),
+    );
+    replace_table(&mut synth, "MasterGekisouSupportSkill", json!([{"_id":9882,"_gekisouMissionType":2}]));
+    replace_table(
+        &mut synth,
+        "MasterGekisouSupportSkillEffect",
+        json!([{
+            "_id":9882,"_gekisouSupportSkillID":9882,"_level":1,"_skillTriggerType":2,
+            "_skillTriggerConditionGroup":9883,"_skillConditionGroup":9881,"_skillEffectType":2000,"_effectValue":1537
+        }]),
+    );
+    replace_table(
+        &mut synth,
+        "MasterLiveGekisouLuckBonusLot",
+        json!(
+            (0..5)
+                .flat_map(|kind| {
+                    [(0, 1), (3, 2)].map(move |(result, weight)| {
+                        json!({
+                            "_id":100+kind*10+result,"_chanceLotType":kind,"_lotResult":result,"_weight":weight
+                        })
+                    })
+                })
+                .collect::<Vec<_>>()
+        ),
+    );
+    let mut document = data_document(&synth, 5, 1, 5);
+    document["charts"][0]["notes"] = json!({"id":[1,2,3,4],"op":[1,1,1,1],
+        "judgementType":[1,1,1,1],"timeMs":[120,180,320,380]});
+    document["charts"][0]["skillEvents"]["timeMs"] = json!([80, 140, 200, 260, 320]);
+    document["charts"][0]["fevers"] = json!({"startMs":[100],"endMs":[420]});
+    document["charts"][0]["asset"]["key"] = json!("synthetic-score-equivalence-six-bindings");
+    document["provenance"]["source"] = json!("adapter_fixture_export::score_equivalence_transport_inputs");
+    document["provenance"]["masterVersion"] = json!("synthetic-score-equivalence-transport-1");
+    document["provenance"]["transportOnly"] = json!(true);
+    if active_counter {
+        document["charts"][0]["asset"]["key"] = json!("synthetic-score-timeline-six-bindings");
+        document["provenance"]["masterVersion"] = json!("synthetic-score-timeline-transport-1");
+    }
+    let text = document.to_string();
+    let data = DeckData::from_json(&text).unwrap();
+    let mut snapshot = snapshot_document(data.sha256.as_deref().unwrap(), 5, 1, 5);
+    snapshot["revision"] = json!("synthetic-score-equivalence-six-bindings-v1");
+    let mut request = joint_request_json("mission", true, json!({"kind":"score"}));
+    request["constraints"] = json!({"leader":3});
+    request["k"] = json!(3);
+    request["strategy"] = json!({"kind":"exhaustive"});
+    request["limits"] = json!({"cacheEntries":64,"maxCandidates":null,"timeLimitMs":null});
+    (text, snapshot.to_string(), request.to_string())
+}
+
+fn score_equivalence_transport_answer(
+    data: &str,
+    snapshot: &str,
+    request: &str,
+) -> ournotes_search::engine::SnapshotRecommendation {
+    let data = DeckData::from_json(data).unwrap();
+    let answer = ournotes_search::engine::recommend_snapshot(&data, snapshot, request, None);
+    assert_eq!(answer.status, ournotes_search::engine::SnapshotStatus::Ok, "{:?}", answer.errors);
+    let result = answer.result.as_ref().unwrap();
+    assert_eq!(result.completion, ournotes_search::search::Completion::Complete);
+    assert_eq!(result.optimality, ournotes_search::types::Optimality::Proven);
+    assert_eq!((result.telemetry.leaves.visited, result.telemetry.leaves.evaluated), (6, 6));
+    assert_eq!(result.telemetry.leaves.simulations, 6 * 120);
+    let refinement = &result.telemetry.lottery_refinement;
+    assert_eq!((refinement.equality_attempts, refinement.equality_orders, refinement.equality_merges), (1, 120, 1));
+    assert_eq!(refinement.equality_declines, 0);
+    assert!(refinement.equality_decline_reason.is_none());
+    assert!(refinement.replay_runs >= 4 * 120 && refinement.frames > 0);
+    assert_eq!((refinement.summary_orders, refinement.residue_orders, refinement.attempted_orders), (0, 0, 0));
+    assert!(!refinement.budget_exhausted);
+    assert_eq!(result.results.len(), 3);
+    for (deck, owner) in result.results.iter().zip([4, 3, 2]) {
+        assert_eq!(deck.members, [1, 2, 3, 4, 5]);
+        let mut snaps = [None; 5];
+        snaps[owner] = Some(1);
+        assert_eq!(deck.snaps, snaps, "equal native laws keep the real canonical Snap tie-break");
+        assert_eq!(deck.rank_certified, Some(true));
+        let interval = deck.score_interval.as_ref().unwrap();
+        assert!(interval.lower_f64() < interval.upper_f64(), "the rank uses equality, not an exact-score coincidence");
+        assert_eq!(deck.power, result.results[0].power);
+    }
+    answer
+}
+
+#[test]
+fn public_snapshot_proves_neutral_snap_owner_equality_for_canonical_top_three() {
+    let (data, snapshot, request) = score_equivalence_transport_inputs(false);
+    let answer = score_equivalence_transport_answer(&data, &snapshot, &request);
+    assert_eq!(answer.result.unwrap().telemetry.lottery_refinement.equality_timeline_orders, 0);
+}
+
+#[test]
+#[ignore = "writes a synthetic score-equivalence transport witness to OURNOTES_EQUALITY_TRANSPORT_OUT"]
+fn export_score_equivalence_transport_witness() {
+    let root = std::env::var_os("OURNOTES_EQUALITY_TRANSPORT_OUT").expect("OURNOTES_EQUALITY_TRANSPORT_OUT");
+    let root = Path::new(&root);
+    let (data, snapshot, request) = score_equivalence_transport_inputs(false);
+    let answer = score_equivalence_transport_answer(&data, &snapshot, &request);
+    fs::create_dir_all(root).unwrap();
+    for (name, text) in [
+        ("data.json", data),
+        ("snapshot.json", snapshot),
+        ("request.json", request),
+        ("native.json", serde_json::to_string(&answer).unwrap()),
+    ] {
+        fs::write(root.join(name), text).unwrap();
+    }
+    let manifest = json!({"purpose":"Synthetic public native score-equivalence correctness; not a performance workload.",
+        "progressIntervalMs":25,"cases":[{"name":"synthetic-score-equivalence-six-bindings","data":"data.json",
+            "snapshot":"snapshot.json","request":"request.json","reference":"native.json"}]});
+    fs::write(root.join("manifest.json"), serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+}
+
+#[test]
+fn public_snapshot_proves_active_counter_owner_ties_with_complete_timelines() {
+    let (data, snapshot, request) = score_equivalence_transport_inputs(true);
+    score_timeline_transport_answer(&data, &snapshot, &request);
+}
+
+fn score_timeline_transport_answer(
+    data: &str,
+    snapshot: &str,
+    request: &str,
+) -> ournotes_search::engine::SnapshotRecommendation {
+    let answer = score_equivalence_transport_answer(data, snapshot, request);
+    let work = &answer.result.as_ref().unwrap().telemetry.lottery_refinement;
+    assert_eq!(work.equality_timeline_orders, 120);
+    assert!(work.equality_timeline_paths > 120);
+    assert!(work.equality_timeline_transitions > 0);
+    assert!(work.equality_score_fold_queries > 0);
+    answer
+}
+
+#[test]
+#[ignore = "writes a synthetic complete-timeline transport witness to OURNOTES_TIMELINE_TRANSPORT_OUT"]
+fn export_score_timeline_transport_witness() {
+    let root = std::env::var_os("OURNOTES_TIMELINE_TRANSPORT_OUT").expect("OURNOTES_TIMELINE_TRANSPORT_OUT");
+    let root = Path::new(&root);
+    let (data, snapshot, request) = score_equivalence_transport_inputs(true);
+    let answer = score_timeline_transport_answer(&data, &snapshot, &request);
+    fs::create_dir_all(root).unwrap();
+    for (name, text) in [
+        ("data.json", data),
+        ("snapshot.json", snapshot),
+        ("request.json", request),
+        ("native.json", serde_json::to_string(&answer).unwrap()),
+    ] {
+        fs::write(root.join(name), text).unwrap();
+    }
+    let manifest = json!({"purpose":"Synthetic public complete score-timeline correctness; not a performance workload.",
+        "progressIntervalMs":25,"cases":[{"name":"synthetic-score-timeline-six-bindings","data":"data.json",
             "snapshot":"snapshot.json","request":"request.json","reference":"native.json"}]});
     fs::write(root.join("manifest.json"), serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
 }

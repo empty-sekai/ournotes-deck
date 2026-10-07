@@ -72,6 +72,24 @@ impl Default for Telemetry {
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LotteryRefinement {
+    /// Boundary pairs offered to the complete uniform-order native equality proof.
+    pub equality_attempts: u64,
+    /// Original order labels completely compared by those proofs; partial coverage never merges a class.
+    pub equality_orders: u64,
+    /// Complete labelled orders established by evaluating every observable timeline with native score arithmetic.
+    pub equality_timeline_orders: u64,
+    /// Complete paired timeline evaluations, including a pair that establishes a score difference.
+    pub equality_timeline_paths: u64,
+    /// Transitions of completed full-state timeline support traversals.
+    pub equality_timeline_transitions: u64,
+    /// Actual native score queries executed by timeline folds, including refused or cancelled attempts.
+    pub equality_score_fold_queries: u64,
+    /// Complete native proofs that joined two existing equality classes.
+    pub equality_merges: u64,
+    /// Optional equality attempts that retained the original independent frontier classes.
+    pub equality_declines: u64,
+    /// Admission refusal of the single optional boundary equality attempt, when one was reported.
+    pub equality_decline_reason: Option<ournotes_sim::live::full::LuckScoreEquivalenceDecline>,
     /// Complete factor-history order enclosures obtained before native path expansion.
     pub summary_orders: u64,
     /// Frontier updates that installed a complete factor-history enclosure or all-order aggregate.

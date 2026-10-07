@@ -1,6 +1,9 @@
 //! Whole-domain admission and individually completed writer profiles are separate capabilities.
 use super::*;
 
+mod programs;
+pub use programs::{LuckFamilyProgram, LuckFamilyProgramKey};
+
 #[derive(Debug)]
 pub(super) struct AdmittedFamilyInputs {
     pub(super) base: [Performer; SLOTS],

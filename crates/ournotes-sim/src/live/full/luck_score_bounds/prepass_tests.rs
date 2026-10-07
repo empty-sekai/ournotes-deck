@@ -19,6 +19,9 @@ mod rank_residue_tests;
 #[path = "terminal_cache_tests.rs"]
 mod terminal_cache_tests;
 
+#[path = "score_cap_identity_tests.rs"]
+mod score_cap_identity_tests;
+
 #[derive(Clone)]
 struct RushCase {
     master: Master,

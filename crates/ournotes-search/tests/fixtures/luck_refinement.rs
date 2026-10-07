@@ -10,6 +10,56 @@ use ournotes_search::{
 use ournotes_sim::{cards::Roster, data::DeckData};
 use serde_json::json;
 
+/// Keep the residue transport case outside both earlier equality certificates without changing its law.
+/// The substitute retains the same Rush score row under a distinct GK source and adds a fair, zero-valued
+/// range-start gauge command. At range start the native gauge is zero; either Bernoulli outcome therefore
+/// leaves exactly the same controller state. The strict pathwise certificate deliberately declines its
+/// nontrivial action chance, while exact nominal refinement must recover the original rational mean.
+pub(super) fn distinguish_neutral_residue_source(document: &mut serde_json::Value) {
+    fn column(table: &serde_json::Value, name: &str) -> usize {
+        table["columns"].as_array().unwrap().iter().position(|value| value == name).unwrap()
+    }
+    fn copy_row(table: &serde_json::Value, id: i64) -> serde_json::Value {
+        let key = column(table, "_id");
+        table["rows"].as_array().unwrap().iter().find(|row| row[key] == id).unwrap().clone()
+    }
+    fn append(table: &mut serde_json::Value, mut row: serde_json::Value, changes: &[(&str, serde_json::Value)]) {
+        for (name, value) in changes {
+            row[column(table, name)] = value.clone();
+        }
+        table["rows"].as_array_mut().unwrap().push(row);
+    }
+    let table = &mut document["master"]["MasterMemberCard"];
+    let (id, skill) = (column(table, "_id"), column(table, "_gekisouSkillID"));
+    let substitute = table["rows"].as_array_mut().unwrap().iter_mut().find(|row| row[id] == 6).unwrap();
+    assert_eq!(substitute[skill], 103);
+    substitute[skill] = json!(104);
+
+    let table = &mut document["master"]["MasterGekisouSkill"];
+    let row = copy_row(table, 103);
+    append(table, row, &[("_id", json!(104))]);
+    let table = &mut document["master"]["MasterGekisouSkillEffect"];
+    let score = copy_row(table, 103);
+    let gauge = copy_row(table, 102);
+    append(table, score, &[("_id", json!(104)), ("_gekisouSkillID", json!(104))]);
+    append(
+        table,
+        gauge,
+        &[
+            ("_id", json!(105)),
+            ("_gekisouSkillID", json!(104)),
+            ("_effectValue", json!(0)),
+            ("_skillConditionGroup", json!(1904)),
+        ],
+    );
+    let table = &mut document["master"]["MasterSkillCondition"];
+    let row = copy_row(table, 904);
+    append(table, row, &[("_id", json!(1904)), ("_conditionValues", json!([50]))]);
+    let table = &mut document["master"]["MasterSkillConditionSet"];
+    let row = copy_row(table, 904);
+    append(table, row, &[("_id", json!(1904)), ("_group", json!(1904)), ("_conditionIds", json!([1904]))]);
+}
+
 fn inputs(threshold: i32, k: usize, cache_entries: usize) -> (DeckData, Roster, RecommendationRequest) {
     let mut synth = synthetic_master(5, 2, 5);
     set_column(&mut synth, "MasterLiveMusic", &mut |row| {

@@ -247,6 +247,78 @@ impl IntervalTopK {
         EqualityCertificate { scope: self.scope.clone(), identity, power }
     }
 
+    /// Join complete equality classes after the caller proves their full score laws and payoff mappings equal.
+    /// Every physical candidate and canonical tie remains distinct. A partial recording, matching bounds or
+    /// sampled outcomes cannot authorize this operation. Conflicting certificates leave the frontier untouched.
+    pub(crate) fn merge_equal_classes(&mut self, left: CandidateId, right: CandidateId) -> Result<(), Error> {
+        let certificate = |id| {
+            self.candidates
+                .get(&id)
+                .and_then(|candidate| candidate.equality.clone())
+                .ok_or_else(|| invalid("equal-class merge requires two live certified candidates"))
+        };
+        let (left, right) = (certificate(left)?, certificate(right)?);
+        if left.identity == right.identity {
+            return Ok(());
+        }
+        let mapping = |identity| {
+            self.identities.iter().find_map(|((_, power, payoff), &id)| (id == identity).then_some((*power, payoff)))
+        };
+        let (Some(left_mapping), Some(right_mapping)) = (mapping(left.identity), mapping(right.identity)) else {
+            return Err(invalid("equal-class merge requires current registered identities"));
+        };
+        if left.power != right.power || left_mapping != right_mapping {
+            return Err(invalid("equal-class merge changes power or payoff mapping"));
+        }
+        let mut joined: Vec<_> = self
+            .candidates
+            .values()
+            .filter(|candidate| {
+                candidate
+                    .equality
+                    .as_ref()
+                    .is_some_and(|proof| proof.identity == left.identity || proof.identity == right.identity)
+            })
+            .cloned()
+            .collect();
+        let first = joined.first().expect("two live equality classes");
+        let (mut score, mut payoff) = (first.score, first.payoff);
+        let (mut exact_score, mut exact_payoff) = (first.exact_score, first.exact_payoff);
+        for candidate in &joined {
+            score = score.intersect(candidate.score).ok_or_else(|| invalid("equal score laws have disjoint bounds"))?;
+            payoff = payoff.intersect(candidate.payoff).ok_or_else(|| invalid("equal payoffs have disjoint bounds"))?;
+            for (known, next) in
+                [(&mut exact_score, candidate.exact_score), (&mut exact_payoff, candidate.exact_payoff)]
+            {
+                if let (Some(a), Some(b)) = (*known, next)
+                    && compare_exact(a, b)? != Ordering::Equal
+                {
+                    return Err(invalid("equal-class merge disagrees on an exact value"));
+                }
+                *known = known.or(next);
+            }
+        }
+        for candidate in &mut joined {
+            (candidate.score, candidate.payoff) = (score, payoff);
+            (candidate.exact_score, candidate.exact_payoff) = (exact_score, exact_payoff);
+            candidate.equality = Some(left.clone());
+            candidate.revision = candidate.revision.checked_add(1).ok_or_else(|| invalid("revision overflow"))?;
+            self.validate(candidate)?;
+        }
+        // All fallible checks precede mutation. Future interned identities use the joined class too;
+        // already issued certificates for the old class merely retain less equality information.
+        for identity in self.identities.values_mut() {
+            if *identity == right.identity {
+                *identity = left.identity;
+            }
+        }
+        for candidate in joined {
+            self.candidates.insert(candidate.id, candidate);
+        }
+        self.prune();
+        Ok(())
+    }
+
     fn validate(&self, candidate: &CandidateInterval) -> Result<(), Error> {
         if !finite(candidate.score) || !finite(candidate.payoff) {
             return Err(invalid("finite enclosures required"));
@@ -500,6 +572,10 @@ impl IntervalTopK {
         Ok(RankingProof { ordered_prefix, ambiguous, complete, refinement, pruned: self.pruned })
     }
 }
+
+#[cfg(test)]
+#[path = "interval_equality_merge_tests.rs"]
+mod equality_merge_tests;
 
 #[cfg(test)]
 mod tests {

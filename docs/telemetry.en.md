@@ -338,13 +338,16 @@ These counters are independent of leaf evaluations and candidate ranking.
 | `admittedFamilies` | Successful complete pair-domain admissions; no completed profile or candidate is implied |
 | `preparedFamilies` | Families receiving their first complete profile during one cache lifetime; eviction and reconstruction may count the same physical family again |
 | `profileLookups`, `profileHits` | Required-profile lookups for actual nodes and hits on complete cached coefficients |
+| `profileProgramLookups`, `profileProgramHits` | Complete canonical probability-program lookups and successful transport of all 120 target labels |
+| `profileProgramBuilds`, `profileProgramDeclines`, `profileNativeBuilds` | Completed canonical programs built, unavailable identity/program retention attempts, and profiles completed by native preparation rather than transport |
+| `profileProgramEvictions`, `profileProgramPeakEntries`, `profileProgramPeakBytes` | Program-memo evictions and retained high-water entries/bytes inside its 1 MiB sublimit and the shared family-cache allowance |
 | `preparationRefusals`, `preparationDeclines` | Unavailable native families or pair construction, with reason counts; excludes cancellation |
 | `preparationMs` | Native family preparation time, including refused and stopped attempts |
 | `envelopeMs`, `envelopeRefusals` | Coefficient-table construction time and unavailable numerical envelopes; time includes stopped attempts, refusal counts exclude cancellation |
 | `capacityDeclines` | Search-side allocation or reward-template-scope failures; native family capacity failures are separately included in `preparationDeclines.capacity` |
 | `stopped` | Interrupted node-bound requests; no partial upper is returned |
 | `orderLaws`, `profiles` | Original order labels and complete profiles successfully installed after numerical-envelope construction; each profile has 120 labels, and these are not DP-propagation or scored-order counts |
-| `evictions`, `peakEntries`, `peakBytes` | Cache evictions and recorded high-water entries/bytes for containers, the reward template, complete admitted inputs and retained profile coefficients; excludes transient probability laws, other caches and process RSS |
+| `evictions`, `peakEntries`, `peakBytes` | Domain-state evictions and combined domain/program high-water entries/bytes for containers, the reward template, complete admitted inputs, profile coefficients and retained probability programs; excludes transient probability laws, other caches and process RSS |
 
 Both refusal objects use the same reason keys: `context`, `terminalMapping`, `pairDomain`, `recorderAdmission`,
 `lifeFeedback`, `judgementFeedback`, `writerProfiles`, `probabilityDomain`, `budget`, `capacity` and
@@ -380,6 +383,14 @@ Counters accumulate within the request; exhausting an allowance or declining ref
 
 | Field | Meaning |
 |---|---|
+| `equalityAttempts` | Ambiguous boundary pairs offered to the optional complete uniform-order score-law equality proof |
+| `equalityOrders` | Original order labels fully compared by those attempts; partial coverage does not authorize a merge |
+| `equalityTimelineOrders` | Complete original order labels whose equality required every observable timeline to be evaluated with native score arithmetic |
+| `equalityTimelinePaths` | Completed paired timeline evaluations, including a pair that establishes a score difference |
+| `equalityTimelineTransitions` | Transitions in completed full-state timeline-support traversals |
+| `equalityScoreFoldQueries` | Actual native score queries executed by timeline folds, including work before refusal or cancellation |
+| `equalityMerges` | Complete native certificates that joined two existing equality classes while preserving physical candidates and canonical ties |
+| `equalityDeclines`, `equalityDeclineReason` | Optional equality refusals and the reported reason; a refusal retains independent frontier classes and their previous certificates |
 | `summaryOrders`, `summaryRefinements`, `summaryDeclines` | Completed factor-history order enclosures, installed intersections and optional refusals before complete-law refinement |
 | `residueOrders`, `residueRefinements`, `residueDeclines` | Completed rank-residue order enclosures, installed intersections and optional refusals; these are not complete-law or exact-value counts |
 | `attemptedOrders` | Orders for which construction of a complete nominal law was attempted |
@@ -393,6 +404,11 @@ Counters accumulate within the request; exhausting an allowance or declining ref
 
 Refinement time is charged to `time.simulationMs`. Complete-law replay segments are separate from
 `leaves.simulations`; completed factor-history and residue order enclosures also increment that simulation count.
+Equality recording work contributes to the same `replayRuns` and `frames` counters and shared allowances,
+including interrupted work. It does not increment `terminalPaths`, exact-law order completion or candidate
+evaluation counts. Equality refusal reasons are `cancelled`, `workBudget`, `capacity`, `context`,
+`recorderAdmission`, `probabilityDomain`, `probePredicate`, `probeOwner`, `probePhase`, `ordinaryTie`,
+`actionChance`, `unfinished`, `scoreTrace` and `controllerTrace`.
 Refinement can stop once the ranking is certified, so `Complete` does not require
 every order to have an exact law or every returned expectation to have an exact rational value.
 
@@ -472,6 +488,9 @@ the complete trace, factor commands, probability-readiness observations, scope a
 remaining-order caps; summary hits still supply complete order enclosures without playback.
 `luckScoreCaps` counts reuse of certified whole-program score upper bounds retained after partial-order
 exclusion. These entries supply upper bounds, not candidate values or completion certificates.
+The exact power remains part of every key. An optional complete selected-source dependency proof permits
+character-independent uniform-order programs to share an exclusion entry; unknown or character-reading
+sources keep the original full identity. This does not merge physical candidates or their canonical tie keys.
 
 ## `memory`
 

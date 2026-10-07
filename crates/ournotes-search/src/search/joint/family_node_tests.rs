@@ -862,3 +862,6 @@ mod end_to_end;
 
 #[path = "lazy_profile_node_tests.rs"]
 mod lazy_profile_tests;
+
+#[path = "family_program_node_tests.rs"]
+mod program_tests;
