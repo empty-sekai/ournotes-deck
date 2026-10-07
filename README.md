@@ -2,7 +2,7 @@
 
 BanG Dream! Our Notes 的综合力、跳过分数与演出分数计算，以及精确的 Top-K 组卡搜索。
 
-[English](README.en.md)
+[English](README.en.md) · [路线图](docs/roadmap.md)
 
 ## 仓库布局
 

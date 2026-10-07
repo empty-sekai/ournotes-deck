@@ -2,7 +2,7 @@
 
 Deck power, skip score and live score for BanG Dream! Our Notes, and an exact Top-K deck search.
 
-[中文](README.md)
+[中文](README.md) · [Roadmap](docs/roadmap.en.md)
 
 ## Repository layout
 
