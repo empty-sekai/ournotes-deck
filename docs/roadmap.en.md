@@ -6,7 +6,6 @@ Only unfinished work is listed; finished items are removed.
 
 ## In progress
 
-- An exact expectation over LUCK range lotteries, using their probabilities; LUCK charts are unsupported until then.
 - Exact proofs within a time budget on every objective and scene: tighter interior bounds on Gekisou charts, cheaper exact leaf evaluation (performance orders sharing their common start), and initial decks from a fast heuristic.
 - Tighter bounds on Gekisou charts (bonus bounds on combo charts).
 

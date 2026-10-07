@@ -58,21 +58,26 @@ mod luck;
 mod luck_dp;
 mod luck_exact;
 pub use luck_dp::{
-    LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckRecordProfile,
+    LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckRangeMoments, LuckRecordProfile,
     luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified, luck_rush_dp_certified_with_events,
-    luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
+    luck_rush_dp_certified_with_moments, luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events,
+    luck_rush_dp_with_ranking, take_luck_record_profile,
 };
 pub use luck_exact::{
     LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactSession,
     LuckExactStats, luck_exact_law_with_ranking,
 };
 mod luck_score_bounds;
+pub(crate) use luck_score_bounds::luck_score_expectation_for_chart;
+mod nominal_expectation;
 pub use luck_score_bounds::{
-    LuckScoreBounds, LuckScoreSession, LuckScoreSummary, luck_score_bounds, luck_score_bounds_with_ranking,
+    LuckRangeScoreBounds, LuckScoreBounds, LuckScoreExpectation, LuckScoreSession, LuckScoreSummary, RealBounds,
+    luck_score_bounds, luck_score_bounds_with_ranking, luck_score_expectation, luck_score_expectation_with_curves,
     luck_score_summary_with_curves, luck_score_summary_with_ranking, prepare_lottery_free,
 };
 #[cfg(feature = "search-diagnostics")]
 pub use luck_score_bounds::{LuckScoreProfile, take_luck_score_profile};
+pub(crate) use nominal_expectation::{has_nominal_score_probabilities, nominal_score_expectation_for_chart};
 mod orders;
 #[cfg(feature = "search-diagnostics")]
 #[doc(hidden)]
@@ -2011,8 +2016,10 @@ impl LiveModel {
                     let info = Some(&gk.ctrl as &dyn GekisouComboInfo);
                     let s0 = self.score.calculate(r.start_ms, &self.combo, info)?;
                     gk.program_rank_snapshots[idx].0 = self.score.program_snapshot();
+                    gk.rank_snapshot_queries[idx].0 = self.score.bounds_last_query();
                     let s1 = self.score.calculate(r.end_ms, &self.combo, info)?;
                     gk.program_rank_snapshots[idx].1 = self.score.program_snapshot();
+                    gk.rank_snapshot_queries[idx].1 = self.score.bounds_last_query();
                     gk.ctrl.states[idx].start_score = s0;
                     gk.ctrl.states[idx].end_score = s1;
                 }
@@ -2034,10 +2041,8 @@ impl LiveModel {
                 self.score.add_fixed(gk.ctrl.ranges[idx].end_ms, bonus);
                 let (start, end) = gk.program_rank_snapshots[idx];
                 self.score.record_rank_bonus(start, end, pct)?;
-                if !gk.solo_score_queries {
-                    let (start, end) = gk.rank_snapshot_queries[idx];
-                    self.score.bounds_rank(idx, gk.ctrl.ranges[idx].end_ms, pct, start, end);
-                }
+                let (start, end) = gk.rank_snapshot_queries[idx];
+                self.score.bounds_rank(idx, gk.ctrl.ranges[idx].end_ms, pct, start, end);
                 gk.rank_bonus.push((idx, rank, bonus, pct));
                 gk.rank_applications.push((self.trace.len(), idx));
                 self.prev_confirmed_rank = Some(rank);
