@@ -69,6 +69,7 @@ pub use luck_exact::{
 };
 mod luck_score_bounds;
 pub(crate) use luck_score_bounds::luck_score_expectation_for_chart;
+mod nominal_expectation;
 pub use luck_score_bounds::{
     LuckRangeScoreBounds, LuckScoreBounds, LuckScoreExpectation, LuckScoreSession, LuckScoreSummary, RealBounds,
     luck_score_bounds, luck_score_bounds_with_ranking, luck_score_expectation, luck_score_expectation_with_curves,
@@ -76,6 +77,7 @@ pub use luck_score_bounds::{
 };
 #[cfg(feature = "search-diagnostics")]
 pub use luck_score_bounds::{LuckScoreProfile, take_luck_score_profile};
+pub(crate) use nominal_expectation::{has_nominal_score_probabilities, nominal_score_expectation_for_chart};
 mod orders;
 #[cfg(feature = "search-diagnostics")]
 #[doc(hidden)]

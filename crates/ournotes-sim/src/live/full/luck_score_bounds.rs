@@ -361,6 +361,23 @@ fn fixed_predicate(checker: &Checker) -> bool {
 /// command filings and effect values. The DP life recorder retains these writers and consumes the same converted
 /// results. A sampled agreement is not the authority for exact_final_life or the ordinary score command history.
 fn check_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<(), Error> {
+    check_recorder_mode(model, skills, false)
+}
+
+pub(super) fn check_conditioned_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<(), Error> {
+    check_recorder_mode(model, skills, true)
+}
+
+fn recorded_predicate(checker: &Checker, conditioned: bool) -> bool {
+    match checker {
+        Checker::ConditionedProbability(_) => conditioned,
+        Checker::And { items, .. } | Checker::Or(items) => items.iter().all(|c| recorded_predicate(c, conditioned)),
+        Checker::Not(inner) => recorded_predicate(inner, conditioned),
+        _ => deterministic(checker),
+    }
+}
+
+fn check_recorder_mode(model: &LiveModel, skills: &LuckSkills, conditioned: bool) -> Result<(), Error> {
     // AddCommand invalidates all four native cache fields, so extra reads preserve the command-log
     // semantics at a constant cap. UpdateLifeMax deliberately does not invalidate: a read before a
     // max change can retain an old-cap recovery. A single reference path cannot certify that domain
@@ -373,7 +390,7 @@ fn check_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<(), Error> {
         if !matches!(row.effect_type, 2000..=2005 | 3000..=3004 | 4004 | 12000 | 12002..=12004 | 12006
             | 13000 | 13002..=13005 | 15000)
             || cumulative.is_some_and(|c| !deterministic_cumulative(c))
-            || checkers.iter().any(|checker| checker.as_ref().is_some_and(|c| !deterministic(c)))
+            || checkers.iter().any(|checker| checker.as_ref().is_some_and(|c| !recorded_predicate(c, conditioned)))
         {
             return Err(refuse(&format!("ordinary row {} has no proved deterministic score/life schedule", row.id)));
         }
@@ -420,7 +437,7 @@ fn check_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<(), Error> {
                 &[&effect.trigger, &effect.condition, &effect.reset],
             )?;
             for updater in skill.updater.updaters.iter().filter(|updater| updater.effect == effect_index) {
-                if updater.release.as_ref().is_some_and(|checker| !deterministic(checker)) {
+                if updater.release.as_ref().is_some_and(|checker| !recorded_predicate(checker, conditioned)) {
                     return Err(refuse("an ordinary release reads an unproved state"));
                 }
             }
@@ -1081,15 +1098,49 @@ fn luck_score_bounds_internal(
     if model.random.draws() != 0 {
         return Err(refuse("the supposedly deterministic recorder consumed random draws"));
     }
+    let result = complete_bounds_recording(
+        model,
+        calc,
+        rush_percent,
+        probability,
+        play.frames.len(),
+        setup.fevers.len(),
+        ranking.is_none() || counterfactual_solo,
+        details,
+        has_luck,
+        cancelled,
+    )?;
+    #[cfg(feature = "search-diagnostics")]
+    profile::record(LuckScoreProfile {
+        evaluations: 1,
+        model_setup_ms,
+        curve_dp_ms,
+        recorder_run_ms,
+        bound_replay_ms: phase_start.elapsed().as_secs_f64() * 1e3,
+    });
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn complete_bounds_recording(
+    mut model: LiveModel,
+    calc: LiveScoreCalculator,
+    rush_percent: i32,
+    probability: std::sync::Arc<LuckDpCertifiedResult>,
+    frames: usize,
+    ranges_len: usize,
+    rank_queries: bool,
+    details: bool,
+    has_luck: bool,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<LuckScoreBounds>, Error> {
     if model.gk.as_ref().is_none_or(|g| g.ctrl.states.iter().any(|state| state.state != gekisou::S_FINISH)) {
         return Err(refuse("terminal query precedes a range FINISH"));
     }
     let trace = model.score.bounds_trace.take().expect("bounds recorder enabled");
-    let query_limit = (play.frames.len() as u64)
+    let query_limit = (frames as u64)
         .checked_mul(2)
-        .and_then(|value| {
-            value.checked_add(if ranking.is_none() || counterfactual_solo { 2 * setup.fevers.len() as u64 } else { 0 })
-        })
+        .and_then(|value| value.checked_add(if rank_queries { 2 * ranges_len as u64 } else { 0 }))
         .ok_or_else(|| Error::Capacity("score query count overflow".into()))?;
     if trace.queries as u64 > query_limit {
         return Err(refuse("unaccounted native calculate entry point"));
@@ -1339,14 +1390,6 @@ fn luck_score_bounds_internal(
     if !has_luck {
         final_mean = F64Interval::integer(model.score() as i128);
     }
-    #[cfg(feature = "search-diagnostics")]
-    profile::record(LuckScoreProfile {
-        evaluations: 1,
-        model_setup_ms,
-        curve_dp_ms,
-        recorder_run_ms,
-        bound_replay_ms: phase_start.elapsed().as_secs_f64() * 1e3,
-    });
     Ok(Some(LuckScoreBounds {
         model: "independent nominal draws; all-path native arithmetic enclosure, not an exact expectation or search completion; note probabilities link after their native lottery commands are filed",
         final_support: final_support.into(),

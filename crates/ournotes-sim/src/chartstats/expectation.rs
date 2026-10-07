@@ -242,19 +242,12 @@ impl<'a, 'm> Evaluator<'a, 'm> {
                 ..formation.get(k).cloned().unwrap_or_default()
             })
             .collect();
-        full::luck_score_expectation_for_chart(
-            master,
-            &self.skills,
-            &deck,
-            live.notes,
-            live.events,
-            params,
-            &g.setup,
-            play,
-            &g.dt,
-            ranking,
-            probability,
-        )
+        let run = if full::has_nominal_score_probabilities(master, &deck, &self.skills) {
+            full::nominal_score_expectation_for_chart
+        } else {
+            full::luck_score_expectation_for_chart
+        };
+        run(master, &self.skills, &deck, live.notes, live.events, params, &g.setup, play, &g.dt, ranking, probability)
     }
 
     #[allow(clippy::too_many_arguments)]

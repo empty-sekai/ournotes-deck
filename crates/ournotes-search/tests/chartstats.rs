@@ -509,6 +509,433 @@ fn aptitude_run(
     (score, model.gekisou_ranges())
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ChanceGate {
+    Single(i64, bool),
+    Both,
+    Either,
+    Never,
+}
+
+/// Each leaf specifies the actual SKILL comparisons visited by the Boolean expression. Rates are the
+/// binary32 values of the condition contract; leaf scores come from complete ordinary engine runs.
+fn chance_leaves(gate: ChanceGate) -> Vec<(Vec<(i64, bool)>, f64)> {
+    let p = |percent| f64::from(percent as f32 / 100.0);
+    match gate {
+        ChanceGate::Single(percent, _) => {
+            vec![(vec![(percent, false)], 1.0 - p(percent)), (vec![(percent, true)], p(percent))]
+        }
+        ChanceGate::Both => vec![
+            (vec![(50, false)], 0.5),
+            (vec![(50, true), (25, false)], 0.5 * 0.75),
+            (vec![(50, true), (25, true)], 0.5 * 0.25),
+        ],
+        ChanceGate::Either => vec![
+            (vec![(50, true)], 0.5),
+            (vec![(50, false), (25, false)], 0.5 * 0.75),
+            (vec![(50, false), (25, true)], 0.5 * 0.25),
+        ],
+        ChanceGate::Never => vec![(vec![], 1.0)],
+    }
+    .into_iter()
+    .filter(|(_, mass)| *mass > 0.0)
+    .collect()
+}
+
+fn chance_data(fevers: &[(i32, i32)], gate: ChanceGate, missions: [i64; 3]) -> DeckData {
+    let mut d = aptitude_data(fevers);
+    for (id, percent, positive) in match gate {
+        ChanceGate::Single(percent, positive) => vec![(900, percent, positive)],
+        _ => vec![(900, 50, true), (901, 25, true)],
+    } {
+        d.master.skill_conditions.push(
+            serde_json::from_value(json!({"_id":id,"_conditionType":4011,
+                "_conditionValues":[percent],"_conditionTargetIDs":[],"_isPositive":positive}))
+            .unwrap(),
+        );
+    }
+    d.master
+        .skill_conditions
+        .push(serde_json::from_value(json!({"_id":902,"_conditionType":8000,"_isPositive":true})).unwrap());
+    let sets = match gate {
+        ChanceGate::Single(..) => vec![vec![80, 900]],
+        ChanceGate::Both => vec![vec![80, 900, 901]],
+        ChanceGate::Either => vec![vec![80, 900], vec![80, 901]],
+        ChanceGate::Never => vec![vec![80, 902, 900]],
+    };
+    for (i, ids) in sets.into_iter().enumerate() {
+        d.master
+            .skill_condition_sets
+            .push(serde_json::from_value(json!({"_id":900+i,"_group":900,"_conditionIds":ids})).unwrap());
+    }
+    d.master.gekisou_skill_effects.retain(|row| row.skill_id == 1);
+    d.master.gekisou_support_skill_effects.clear();
+    for row in &mut d.master.gekisou_skill_effects {
+        row.skill_trigger_condition_group = 900;
+        row.skill_effect_type = 2000;
+        row.effect_value = 10000;
+        row.activation_time_second = 5.0;
+    }
+    for music in &mut d.master.live_musics {
+        [music.gekisou_mission_1, music.gekisou_mission_2, music.gekisou_mission_3] = missions;
+    }
+    // A deterministic Critical lottery enters Rush, so probability-gated score commands overlap Rush
+    // without adding lottery branches to the independent SKILL event tree.
+    for row in &mut d.master.gekisou_luck_base_points {
+        row.base_point = 70;
+    }
+    for row in &mut d.master.gekisou_luck_bonus_lots {
+        row.weight = i64::from(row.lot_result == 3);
+    }
+    d.master.live_skills.push(serde_json::from_value(json!({"_id":903,"_skillCategories":[1]})).unwrap());
+    d.master.live_skill_effects.push(
+        serde_json::from_value(json!({"_id":903,"_liveSkillID":903,"_level":1,
+            "_skillEffectType":2000,"_activationTimeSecond":5.0,"_effectValue":10000}))
+        .unwrap(),
+    );
+    d.master.reindex().unwrap();
+    d
+}
+
+#[derive(Clone, Debug)]
+struct ChanceMean {
+    score: f64,
+    ranges: Vec<[f64; 3]>,
+}
+
+impl ChanceMean {
+    fn tail(&self) -> f64 {
+        self.score - self.ranges.iter().map(|range| range[0] + range[1]).sum::<f64>()
+    }
+}
+
+/// Select a native stream whose next values force this finite comparison prefix. The nominal mass
+/// comes from the specified leaves, never from the frequency of seeds that realize a prefix.
+fn chance_seed(samples: &[(i64, bool)]) -> i32 {
+    use ournotes_sim::live::random::{LiveRandom, SKILL};
+    (0..65536)
+        .find(|&seed| {
+            let mut random = LiveRandom::new(seed);
+            samples.iter().all(|&(percent, success)| (random.value(SKILL) < percent as f32 / 100.0) == success)
+        })
+        .expect("a native stream realizes this finite comparison prefix")
+}
+
+/// Enumerate one gate at each mission-1 Start frame, retaining complete native updater state between
+/// frames. Checking the per-frame draw count rejects unexpected checks, including failed short circuits.
+fn chance_mean(
+    d: &DeckData,
+    gate: ChanceGate,
+    missions: [i64; 3],
+    with_shape: bool,
+    plain_position: Option<usize>,
+    perfect: bool,
+) -> ChanceMean {
+    use ournotes_sim::live::random::LiveRandom;
+    let chart = d.chart(1004).unwrap();
+    let notes = notes_of(d);
+    let events: Vec<_> = chart.skill_events.iter().map(|event| (event.index, event.time_ms)).collect();
+    let setup = GekisouSetup { fevers: d.charts[0].fevers.clone(), missions: missions.into() };
+    let rule = JustRule::new(&d.master, &setup).unwrap();
+    let mut stream = JudgementStream::theoretical_best_gekisou(&chart, &d.charts[0].judgement_types, &rule).unwrap();
+    if perfect {
+        for judgement in &mut stream.judged {
+            if judgement[2] == 6 {
+                judgement[2] = 5;
+            }
+        }
+    }
+    let play = stream.to_live_play().unwrap();
+    let dt = stream.delta_times().unwrap();
+    let params = LiveParams {
+        total_power: POWER,
+        music_level: 24,
+        converted_note_count: chart.converted_note_count,
+        music_length_ms: chart.last_timing_note_ms + 1000,
+        score_music_length_ms: None,
+        assist_factor: 1.0,
+        skill_target_music_type: 1,
+    };
+    let mut recorder = full::LiveModel::new_gekisou(&d.master, &[], &notes, &events, params, &setup).unwrap();
+    let starts: Vec<_> = recorder
+        .record_range_frames(&play, &dt)
+        .unwrap()
+        .iter()
+        .zip(missions)
+        .filter_map(|(frames, mission)| (mission == 1).then_some(frames.start))
+        .collect();
+    assert_eq!(starts.len(), setup.fevers.iter().zip(missions).filter(|(_, mission)| *mission == 1).count());
+    let leaves: Vec<_> = chance_leaves(gate)
+        .into_iter()
+        .map(|(samples, mass)| (chance_seed(&samples), samples.len() as u64, mass))
+        .collect();
+    assert!((leaves.iter().map(|leaf| leaf.2).sum::<f64>() - 1.0).abs() < 1e-15);
+    let mut baseline = full::LiveModel::new_gekisou(&d.master, &[], &notes, &events, params, &setup).unwrap();
+    let mut native_draws = Vec::with_capacity(play.frames.len());
+    for (frame, &delta) in play.frames.iter().zip(&dt) {
+        baseline.set_random(LiveRandom::new(0));
+        baseline.frame_timed(frame.time_ms, &frame.judged, delta).unwrap();
+        native_draws.push(baseline.draws());
+    }
+    if missions[..setup.fevers.len()].contains(&2) {
+        assert!(!baseline.rush_command_spans().is_empty());
+    }
+    let mut deck = vec![Performer::default(); 5];
+    if with_shape {
+        deck[0].gekisou_skill = Some((1, 3));
+        deck[0].gekisou_mission_type = 1;
+    }
+    if let Some(position) = plain_position {
+        deck[position].live_skill = Some((903, 1));
+    }
+    let initial = full::LiveModel::new_gekisou(&d.master, &deck, &notes, &events, params, &setup).unwrap();
+    let mut paths = vec![(initial, 1.0)];
+    for (i, (frame, &delta)) in play.frames.iter().zip(&dt).enumerate() {
+        if with_shape && starts.contains(&i) {
+            let mut next = Vec::new();
+            for (state, mass) in paths {
+                for &(seed, checks, chance) in &leaves {
+                    let mut branch = state.clone();
+                    branch.set_random(LiveRandom::new(seed));
+                    branch.frame_timed(frame.time_ms, &frame.judged, delta).unwrap();
+                    assert_eq!(branch.draws(), native_draws[i] + checks, "frame {i}, gate {gate:?}");
+                    next.push((branch, mass * chance));
+                }
+            }
+            paths = next;
+        } else {
+            for (state, _) in &mut paths {
+                state.set_random(LiveRandom::new(0));
+                state.frame_timed(frame.time_ms, &frame.judged, delta).unwrap();
+                assert_eq!(state.draws(), native_draws[i], "frame {i}, gate {gate:?}");
+            }
+        }
+    }
+    assert_eq!(paths.len(), if with_shape { leaves.len().pow(starts.len() as u32) } else { 1 });
+    assert!((paths.iter().map(|path| path.1).sum::<f64>() - 1.0).abs() < 1e-14);
+    let mut result = ChanceMean { score: 0.0, ranges: vec![[0.0; 3]; setup.fevers.len()] };
+    for (state, mass) in paths {
+        result.score += mass * f64::from(state.score());
+        for (mean, range) in result.ranges.iter_mut().zip(state.gekisou_ranges()) {
+            mean[0] += mass * f64::from(range.end_score - range.start_score);
+            mean[1] += mass * f64::from(range.rank_bonus.unwrap());
+            mean[2] += mass * f64::from(range.luck_points);
+        }
+    }
+    result
+}
+
+fn encloses_chance(estimate: [f64; 2], expected: f64) {
+    assert!(
+        estimate[0] - estimate[1] - 1e-8 <= expected && expected <= estimate[0] + estimate[1] + 1e-8,
+        "expected {expected}, measured {estimate:?}"
+    );
+}
+
+fn check_chance_aptitude(d: &DeckData, gate: ChanceGate, missions: [i64; 3], check_cross: bool) {
+    let kinds = chartstats::kinds(&d.master);
+    let plain = kinds.iter().find(|kind| kind.effect_type == 2000 && kind.skill_condition_group == 0).unwrap();
+    let stats = chartstats::chart_stats_with(
+        &d.master,
+        &d.charts[0],
+        std::slice::from_ref(plain),
+        &chartstats::Options { replay_seeds: 1, ..Default::default() },
+    )
+    .unwrap();
+    let aptitude = stats.gekisou_aptitude.as_ref().unwrap();
+    assert_eq!(aptitude.variants.len(), 1);
+    let variant = &aptitude.variants[0];
+    checked(&variant.check);
+    assert_eq!(variant.converted, [0.0; 2]);
+    assert!(variant.ranges.iter().all(|range| range.max_combo == [0.0; 2] && range.just_count == [0.0; 2]));
+    for perfect in [false, true] {
+        let baseline = chance_mean(d, gate, missions, false, None, perfect);
+        let with = chance_mean(d, gate, missions, true, None, perfect);
+        encloses_chance(if perfect { variant.score_perfect } else { variant.score }, with.score - baseline.score);
+        encloses_chance(if perfect { variant.tail_perfect } else { variant.tail }, with.tail() - baseline.tail());
+        for ((actual, with), base) in variant.ranges.iter().zip(&with.ranges).zip(&baseline.ranges) {
+            encloses_chance(if perfect { actual.range_score_perfect } else { actual.range_score }, with[0] - base[0]);
+            encloses_chance(if perfect { actual.rank_bonus_perfect } else { actual.rank_bonus }, with[1] - base[1]);
+            encloses_chance(actual.luck_points, with[2] - base[2]);
+        }
+        if check_cross && !perfect {
+            for position in 0..5 {
+                let base_cross = chance_mean(d, gate, missions, false, Some(position), false);
+                let cross = chance_mean(d, gate, missions, true, Some(position), false);
+                encloses_chance(
+                    variant.weights.as_ref().unwrap()[position],
+                    (cross.score - with.score - base_cross.score + baseline.score) / f64::from(POWER),
+                );
+                for (i, ((cross_range, base_cross_range), (with_range, base_range))) in cross
+                    .ranges
+                    .iter()
+                    .zip(&base_cross.ranges)
+                    .zip(with.ranges.iter().zip(&baseline.ranges))
+                    .enumerate()
+                {
+                    encloses_chance(
+                        variant.range_weights.as_ref().unwrap()[position][i],
+                        (cross_range[0] - with_range[0] - base_cross_range[0] + base_range[0]) / f64::from(POWER),
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn aptitude_probability_score_gates_match_complete_native_expectations() {
+    for gate in [
+        ChanceGate::Single(0, true),
+        ChanceGate::Single(1, true),
+        ChanceGate::Single(100, true),
+        ChanceGate::Single(1, false),
+        ChanceGate::Both,
+        ChanceGate::Either,
+        ChanceGate::Never,
+    ] {
+        let d = chance_data(&APT_FEVERS, gate, [1, 2, 3]);
+        check_chance_aptitude(&d, gate, [1, 2, 3], matches!(gate, ChanceGate::Single(1, true)));
+    }
+}
+
+#[test]
+fn aptitude_probability_checks_repeat_independently_at_separate_range_starts() {
+    let gate = ChanceGate::Single(50, true);
+    let mut d = chance_data(&APT_FEVERS[..2], gate, [1, 1, 3]);
+    for row in &mut d.master.gekisou_skill_effects {
+        row.activation_time_second = 1.2;
+    }
+    check_chance_aptitude(&d, gate, [1, 1, 3], true);
+    let baseline = chance_mean(&d, gate, [1, 1, 3], false, None, false);
+    let with = chance_mean(&d, gate, [1, 1, 3], true, None, false);
+    assert!(with.ranges.iter().zip(baseline.ranges).all(|(with, base)| with[0] > base[0]));
+}
+
+/// A complete LUCK law after replacing the one SKILL comparison with a fixed Boolean answer. Both
+/// forms of condition 8000 have hit count zero, preserving the probability predicate's trigger result.
+fn chance_lottery_mean(d: &DeckData, active: Option<bool>, plain_position: Option<usize>) -> f64 {
+    let mut master = d.master.clone();
+    let condition = master.skill_conditions.iter_mut().find(|row| row.id == 900).unwrap();
+    condition.condition_type = 8000;
+    condition.is_positive = !active.unwrap_or(false);
+    condition.condition_values.clear();
+    master.reindex().unwrap();
+    let chart = d.chart(1004).unwrap();
+    let notes = notes_of(d);
+    let events: Vec<_> = chart.skill_events.iter().map(|event| (event.index, event.time_ms)).collect();
+    let setup = GekisouSetup { fevers: d.charts[0].fevers.clone(), missions: vec![2, 1, 3] };
+    let rule = JustRule::new(&master, &setup).unwrap();
+    let stream = JudgementStream::theoretical_best_gekisou(&chart, &d.charts[0].judgement_types, &rule).unwrap();
+    assert!(stream.judged.iter().all(|judgement| judgement[2] != 6));
+    let play = stream.to_live_play().unwrap();
+    let dt = stream.delta_times().unwrap();
+    let params = LiveParams {
+        total_power: POWER,
+        music_level: 24,
+        converted_note_count: chart.converted_note_count,
+        music_length_ms: chart.last_timing_note_ms + 1000,
+        score_music_length_ms: None,
+        assist_factor: 1.0,
+        skill_target_music_type: 1,
+    };
+    let mut recorder = full::LiveModel::new_gekisou(&master, &[], &notes, &events, params, &setup).unwrap();
+    let frames = recorder.record_range_frames(&play, &dt).unwrap();
+    assert_eq!(frames.len(), 1);
+    assert!(frames[0].finish < play.frames.len());
+    let mut deck = vec![Performer::default(); 5];
+    if active.is_some() {
+        deck[0].gekisou_skill = Some((1, 3));
+        deck[0].gekisou_mission_type = 2;
+    }
+    if let Some(position) = plain_position {
+        deck[position].live_skill = Some((903, 1));
+    }
+    let attempt = full::luck_exact_law_with_ranking(
+        &master,
+        &deck,
+        &notes,
+        &events,
+        params,
+        &setup,
+        &play,
+        &dt,
+        None,
+        &mut full::LuckExactBudget::default(),
+        || false,
+    )
+    .unwrap();
+    assert_eq!(attempt.decline, None);
+    let law = attempt.law.expect("every positive-mass LUCK path terminates");
+    assert!(law.atoms().len() >= 2, "Miss and Critical yield different complete scores");
+    assert!(attempt.stats.terminal_paths >= 4, "the consumed lot and its prefetched successor are both enumerated");
+    let mut mass = 0.0;
+    let mut mean = 0.0;
+    for atom in law.atoms() {
+        assert!(atom.mass.numerator > 0 && atom.mass.denominator > 0);
+        let chance = atom.mass.numerator as f64 / atom.mass.denominator as f64;
+        mass += chance;
+        mean += chance * f64::from(atom.score);
+    }
+    assert!((mass - 1.0).abs() < 1e-15);
+    mean
+}
+
+#[test]
+fn aptitude_probability_and_nondegenerate_lottery_match_complete_joint_score_laws() {
+    use ournotes_sim::live::skip::ChartNote;
+    let mut d = chance_data(&[(1000, 1150)], ChanceGate::Single(1, true), [2, 1, 3]);
+    d.charts[0].notes = [900, 1100, 1300, 2000]
+        .into_iter()
+        .enumerate()
+        .map(|(i, time_ms)| ChartNote { id: i as i32 + 1, time_ms, note_type: 1 })
+        .collect();
+    d.charts[0].judgement_types = vec![1; 4];
+    d.charts[0].skill_event_ms = vec![700, 800, 900, 1200, 1500];
+    assert_eq!(d.charts[0].notes.iter().filter(|note| 1000 < note.time_ms && note.time_ms <= 1150).count(), 1);
+    d.master.live_music_scores.iter_mut().find(|row| row.id == 1004).unwrap().full_combo_count = 4;
+    d.master.gekisou_skills.iter_mut().find(|row| row.id == 1).unwrap().gekisou_mission_type = 2;
+    d.master.skill_conditions.iter_mut().find(|row| row.id == 80).unwrap().condition_target_ids = vec![56];
+    for row in &mut d.master.gekisou_luck_base_points {
+        row.base_point = 140;
+    }
+    for row in &mut d.master.gekisou_luck_bonus_lots {
+        row.weight = i64::from(matches!(row.lot_result, 0 | 3));
+    }
+    d.master.reindex().unwrap();
+    let kinds = chartstats::kinds(&d.master);
+    let plain = kinds.iter().find(|kind| kind.effect_type == 2000 && kind.skill_condition_group == 0).unwrap();
+    let stats = chartstats::chart_stats_with(
+        &d.master,
+        &d.charts[0],
+        std::slice::from_ref(plain),
+        &chartstats::Options { replay_seeds: 1, ..Default::default() },
+    )
+    .unwrap();
+    let baseline = chance_lottery_mean(&d, None, None);
+    let probability = f64::from(1f32 / 100.0);
+    let nominal = |position| {
+        (1.0 - probability) * chance_lottery_mean(&d, Some(false), position)
+            + probability * chance_lottery_mean(&d, Some(true), position)
+    };
+    let expected = nominal(None);
+    let aptitude = stats.gekisou_aptitude.as_ref().unwrap();
+    assert_eq!(aptitude.variants.len(), 1);
+    let variant = &aptitude.variants[0];
+    encloses_chance(stats.expectation.as_ref().unwrap().score, baseline);
+    encloses_chance(variant.score, expected - baseline);
+    encloses_chance(variant.score_perfect, expected - baseline);
+    assert!(expected > baseline);
+    for position in 0..5 {
+        let base_cross = chance_lottery_mean(&d, None, Some(position));
+        encloses_chance(
+            variant.weights.as_ref().unwrap()[position],
+            (nominal(Some(position)) - expected - base_cross + baseline) / f64::from(POWER),
+        );
+    }
+    checked(&variant.check);
+}
+
 fn contains(estimate: [f64; 2], value: f64) -> bool {
     estimate[0] - estimate[1] <= value && value <= estimate[0] + estimate[1]
 }
