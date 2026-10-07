@@ -651,7 +651,11 @@ impl<'a> SnapLive<'a> {
             if gkf.as_ref().is_some_and(|g| g.combo.is_some() && !g.carriers.is_empty()) {
                 level_terms.push((pre_e, combo_max[before], rank));
             }
-            let k = pre_e * gpool * combo_max[before] / cnc as f64 * rank;
+            let terminal = pre_e * gpool * combo_max[before] / cnc as f64;
+            let k = terminal * rank;
+            if setup.gk.as_ref().is_some_and(|g| g.setup.missions.contains(&MISSION_LUCK)) {
+                coef.family_terminal.push([plain_e * gpool * combo_max[before] / cnc as f64, terminal]);
+            }
             coef.times.push(n.time_ms);
             coef.k.push(k);
             coef.max_jp.push(max_jp);

@@ -58,7 +58,8 @@ mod luck;
 mod luck_dp;
 mod luck_exact;
 pub use luck_dp::{
-    LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckRecordProfile,
+    LuckControllerFamily, LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckFamilyChoice,
+    LuckFamilyContext, LuckFamilyDecline, LuckFamilyError, LuckFamilyLimits, LuckFamilyOrderLaw, LuckRecordProfile,
     luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified, luck_rush_dp_certified_with_events,
     luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
 };

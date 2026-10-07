@@ -16,6 +16,12 @@ use super::*;
 use crate::live::certified::ProbabilityMass;
 use crate::num::{FxHashMap, floor_to_i32};
 
+mod family;
+pub use family::{
+    LuckControllerFamily, LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline, LuckFamilyError, LuckFamilyLimits,
+    LuckFamilyOrderLaw,
+};
+
 mod recording_cache;
 mod shared_recording;
 
@@ -527,16 +533,21 @@ fn consume_bound(frames: usize, mut judgements: impl Iterator<Item = usize>) -> 
 }
 
 fn compile<M: Mass>(
-    master: &Master,
     model: &mut LiveModel,
     skills: &LuckSkills,
     probes: Option<&[Option<usize>]>,
 ) -> Result<Plan<M>, Error> {
     let mut plan = Plan::default();
+    let mut identities = crate::num::FxHashSet::default();
     for condition in &model.cond {
         for (effect_index, effect) in condition.updater.effects().iter().enumerate() {
             let row = &model.rows[effect.row];
             let fail = |why| unsupported(row, why);
+            // The native applier registry spans all condition updaters. Probabilistic rows need distinct
+            // execution keys even when the deterministic recorder observes neither activation.
+            if !identities.insert(effect.effect_id) {
+                return Err(fail("a repeated condition effect state across updaters"));
+            }
             if !matches!(effect.phase, 1 | 2) {
                 return Err(fail("effect phase is outside the native two phases"));
             }
@@ -546,23 +557,9 @@ fn compile<M: Mass>(
                 .iter()
                 .find(|updater| updater.effect == effect_index)
                 .and_then(|updater| updater.release.as_ref());
-            let source = if condition.skill_type == SKILL_TYPE_GEKISOU {
-                LuckSource::Gekisou
-            } else {
-                LuckSource::GekisouSupport
-            };
-            let native = source
-                .rows(master)
-                .iter()
-                .find(|native| native.id == row.id)
-                .ok_or_else(|| Error::Master(format!("LUCK DP cannot find effect row {}", row.id)))?;
-            let mission = match source {
-                LuckSource::Gekisou => master.gekisou_skill(native.skill_id).map(|skill| skill.gekisou_mission_type),
-                LuckSource::GekisouSupport => {
-                    master.gekisou_support_skill(native.skill_id).map(|skill| skill.gekisou_mission_type)
-                }
-            };
-            if mission != Some(M_LUCK) {
+            // The constructed updater owns the exact selected source's mission gate. A raw effect row ID
+            // can occur in another source group, so a first table match cannot authorize this mechanism.
+            if condition.updater.gate_mission() != Some(M_LUCK) {
                 return Err(fail("only Luck mission mechanisms and score probes are supported"));
             }
             if effect.cumulative.is_some() {
@@ -1507,7 +1504,7 @@ fn prepare_recording<M: Mass>(
     if let Some(ranking) = ranking {
         model.set_rank_confirmation_timeline(ranking)?;
     }
-    let plan = compile::<M>(master, &mut model, skills, probes)?;
+    let plan = compile::<M>(&mut model, skills, probes)?;
     count(|p| &mut p.calls);
     if model.cond.is_empty() {
         count(|p| &mut p.without_skills);
@@ -2792,6 +2789,10 @@ mod tests {
 
     mod shared_recording_tests {
         include!("luck_dp/shared_recording_tests.rs");
+    }
+
+    mod effect_identity_tests {
+        include!("luck_dp/effect_identity_tests.rs");
     }
 
     fn curve_words(curve: &LuckDpCertifiedResult) -> Vec<u64> {

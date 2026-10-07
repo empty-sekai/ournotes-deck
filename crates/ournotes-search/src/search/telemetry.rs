@@ -645,6 +645,9 @@ pub struct Joint {
     pub seed_bonus_skipped: [u64; DEPTHS],
     /// Bound modules by name.
     pub modules: BTreeMap<&'static str, Count>,
+    /// Optional controller-family preparation, refusals and retained coefficient tables. These are not candidate
+    /// evaluations; actual probability propagation remains in the LUCK curve counters.
+    pub(crate) luck_family: super::physical::family_nodes::FamilyNodeStats,
 }
 
 /// Gekisou score with a combo range: the cheap bounds of decks with at most `n` combo carriers (a member and Snap

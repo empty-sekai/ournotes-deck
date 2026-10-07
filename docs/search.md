@@ -998,6 +998,49 @@ intersects valid caps. The analogous [carrier split](../crates/ournotes-search/s
 keeps its uncoupled cap when power or coefficient is nonpositive, the coefficient is nonfinite, or a finite
 positive scale cannot be obtained. The real inequality alone does not authorize an invalid floating-point scale.
 
+### Controller-family node bounds
+
+For certified LUCK expected score, the default joint traversal can use an additional bound at depth four.
+For each legal fifth member still present in the node's choice suffix, it fixes all five members and the leader,
+then prepares a controller family covering the complete allowed Snap repertoire on all five members. The
+[family admission](luck-refinement.md#complete-controller-families) proves that every such binding selects one
+of the covered controller profiles. It does not infer independence from one candidate's observed probability
+curve. Member, character, required-member, slot and physical Snap constraints remain in the actual search.
+
+A binding selects its profile before the uniformly random performance order. Let `a[p,o]` and `g[p,o,m,s]` be
+the admitted per-order coefficient uppers for profile `p`, original order `o`, and the actual position of member
+`m` with Snap choice `s`. The table first averages all 120 original orders separately within each profile, then
+sets `A0 = max_p mean_o a[p,o]` and `G[m,s] = max_p mean_o g[p,o,m,s]`, with outward arithmetic throughout.
+These component maxima may come from different profiles, which enlarges the bound. No profile or member
+position is substituted for the original order average.
+
+The coefficients weight only admitted terminal Rush and direct LUCK score-probe contributions by their joint
+four-bucket law. They retain the existing all-history rank contribution, conversion-budget remainder, unknown
+windows and full additive floating-point drift allowance. The original normal-chain inflation and global cap
+also remain. This uses the bound compiler's nonnegative power domain and coefficient decomposition; it does
+not assume native score is monotone in power or replace a physical candidate by another candidate.
+
+For the current node, the table applies the four actual Snap bindings and every allowed fifth-slot choice in
+`choices[start..]`. Existing resource and correlated assignment relaxations bound power and coefficient while
+respecting those masks. The maximum over every legal fifth-member completion bounds the whole node; one
+unavailable family prevents that optional node cap. Stale data in the unassigned slot is not a binding.
+The expected-score cap is multiplied by 120 to match the search numerator. Pruning uses the same strict
+cutoff and certified lower-power tie rule as the other bounds; equal score and power keys stay with the
+canonical ranking frontier.
+
+The request-local cache is scoped by the immutable family context, the exact owned reward template, and the
+complete member set with its leader. It retains complete coefficient tables or conservative refusals, with at
+most `min(cacheEntries, 64)` entries and 8 MiB of accounted retained allocations. Changing the compiled scope
+clears the entries. A family is prepared against the full Snap domain before a particular node's masks are
+applied, so later prefixes may reuse it without removing bindings. Zero cache capacity disables this optional
+path. Cancellation never inserts a partial table; completed individual DP curves may remain in their existing
+cache. See [`joint.luckFamily`](telemetry.en.md#jointluckfamily) for preparation, refusal and pruning counters.
+
+An unavailable bound or a local preparation budget limit continues the original traversal. Request cancellation
+keeps the node unexplored and preserves the real stop state. A controller family supplies only an expected-score
+upper: it is not a candidate evaluation, a full score law or a `Complete` certificate. Threshold probability,
+capped score, PT and final-life objectives retain their existing bounds and scoring definitions.
+
 ### Leaf evaluation
 
 On the deterministic played branch, a complete team in its canonical layout has one value per performance order

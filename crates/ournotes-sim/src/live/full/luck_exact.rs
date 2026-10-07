@@ -1,4 +1,4 @@
-//! A bounded, complete tree of independent nominal LUCK outcomes.
+//! A bounded, complete tree of independent nominal LUCK and skill-probability outcomes.
 //!
 //! Branches resume from complete frame checkpoints with the selected outcomes and draw cursor preserved.
 //! A law is returned after every positive-mass branch has terminated and its masses sum to one.
@@ -354,8 +354,8 @@ fn enumerate_law(
                 break;
             }
         }
-        // This check also applies to the interrupted draw that requests another branch. A late skill draw
-        // invalidates the entire law, including any already completed sibling paths.
+        // This check also applies to the interrupted draw that requests another branch. Any unmodelled raw
+        // draw invalidates the entire law, including already completed siblings of admitted semantic draws.
         if !model.random.nominal_covers_draws() {
             return Ok(declined(stats, LuckExactDecline::UnhandledRandom));
         }
@@ -1041,7 +1041,7 @@ mod tests {
     }
 
     #[test]
-    fn a_late_skill_draw_on_only_one_luck_branch_rejects_completed_siblings() {
+    fn a_late_nominal_skill_draw_preserves_completed_siblings_and_total_mass() {
         let (master, notes, params, setup, play, delta) = fixture();
         let deck = [Performer { support_skills: vec![(1, 1)], ..Default::default() }];
         let result = luck_exact_law_with_ranking(
@@ -1059,8 +1059,30 @@ mod tests {
         )
         .unwrap();
         assert!(result.stats.terminal_paths > 0, "Critical siblings complete before the Miss-only probability skill");
-        assert_eq!(result.decline, Some(LuckExactDecline::UnhandledRandom));
-        assert!(result.law.is_none());
+        assert_eq!(result.decline, None);
+        let law = result.law.expect("the late Bernoulli draw is covered in full");
+        assert_eq!(
+            law.atoms().iter().try_fold(LuckExactMass::ZERO, |sum, atom| sum.add(atom.mass)),
+            Some(LuckExactMass::ONE)
+        );
+        // This skill has zero amplitude. Its independent condition can add terminal paths but cannot change
+        // the complete native score/life law; completed siblings must keep their original probability mass.
+        let reference = luck_exact_law_with_ranking(
+            &master,
+            &[],
+            &notes,
+            &[],
+            params,
+            &setup,
+            &play,
+            &delta,
+            None,
+            &mut LuckExactBudget::default(),
+            || false,
+        )
+        .unwrap();
+        assert!(result.stats.terminal_paths > reference.stats.terminal_paths);
+        assert_eq!(law.atoms(), reference.law.unwrap().atoms());
     }
 
     #[test]

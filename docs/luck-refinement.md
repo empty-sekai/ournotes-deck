@@ -2,6 +2,24 @@
 
 The refinement provider evaluates the complete probability law for one specified performance order under the declared independent nominal LUCK draws. Each semantic draw uses the integer weights produced by the calculation model. Duplicate outcomes with the same result share their combined mass.
 
+## Nominal skill probabilities
+
+The provider also branches at each native `4011` probability check. Its success mass is the exact finite,
+clamped binary32 rate stored by the condition constructor, after the original integer-to-float conversion
+and division by 100. This is the same independent nominal skill-probability model used by the controller
+DP. The two exact integer weights sum to their common denominator; a rate whose reduced denominator does
+not fit the bounded integer representation, or a nonfinite rate, declines refinement.
+
+The semantic draw stays at the original condition-evaluation point. The original trigger, condition,
+release, short-circuit and reset order therefore decides which draws occur. Rates zero and one still
+consume one native draw, while requiring no nontrivial branch-prefix choice. All other unmodelled raw
+random calls continue to decline the complete law. Existing branch, arithmetic, work and cancellation
+limits apply to skill branches as well as lottery branches.
+
+Seeded playback continues to compare its original skill-stream random float against the original rate,
+with identical stream state and draw consumption. The independent nominal law makes no claim about the
+joint distribution over the finite seed space or the discretization of seeded random floats.
+
 ## Frame checkpoints
 
 A pending branch contains a selected outcome prefix, its exact rational mass, a complete model checkpoint and the index of the next frame. Checkpoints are taken before a frame after a bounded number of completed frames. Sibling branches share an immutable checkpoint and clone it for execution.
@@ -190,6 +208,85 @@ probability and native-arithmetic enclosure. Differential tests compare every tr
 bit against a recorder that executes native scoring, and compare all remaining controller, condition, life
 and conversion state. Separate cases check error order, fixed-frame identity, changing Combo inputs and
 observer refusals.
+
+## Complete controller families
+
+`LuckFamilyContext` and `LuckControllerFamily` provide optional expected-score node bounds with a complete
+controller law for a declared family of physical bindings. The context borrows the exact master tables,
+compiled skill catalogue, chart, events, parameters, Gekisou setup, play inputs and delta clock for its lifetime.
+The search also holds the exact compiled reward template. A compatible DP curve alone is not this authority.
+
+Context admission checks the complete causal, first-due judgement stream, unique chart-note identities,
+nonnegative clocks and bounded native frame geometry. Each note is judged once at its declared time; late,
+repeated or omitted inputs decline. Every active range must reach FINISH before a final empty frame. The
+terminal mapping records the original note-occurrence multiset and checks the Query count, a last Query
+whose prior probability-readiness covers its notes, and no pending rank. Solo ranking is required. Binding
+the reward template later requires equality of the complete sorted note-time multiset. These checks establish
+the mapping for the declared input stream rather than generalizing one scored candidate's terminal trace.
+
+Family preparation fixes five complete members and their leader, and admits every allowed physical Snap choice
+on every owner, including no Snap. Repeated resource IDs must have identical ordered support-source vectors
+across owners; a slot may not list the same resource twice. Every pair's full native model passes recorder
+admission and whole-model checks for effect identities, lifetime and handle limits, and the conditions needed
+for numeric and runtime errors to remain observable. After reward-only rows are projected away, the complete
+reduced controller program must also pass admission for its retained native phases, triggers, conditions,
+releases, resets and probability values. Its law uses the declared independent nominal draws, including the
+[skill-probability model](#nominal-skill-probabilities).
+
+The admitted family can contain at most one physical Snap resource that writes the LUCK controller. Its
+profiles are absence of that resource and each allowed owner of it; fixed member writers remain present.
+Each retained writer must have the LUCK mission gate of its actual selected native updater. A support
+writer therefore keeps the selected member's mission and support-activation metadata; its effect type alone
+does not establish the gate. Writer triggers, conditions, resets and releases must not read life, ordinary
+Live/support sources must not write the LUCK controller, and unsupported controller phases retain the
+ordinary scoring path. Negative ordinary duration
+extensions and timed sustained ordinary queues decline. Effect `15000` extends ordinary Live effects only;
+it does not extend Gekisou writer lifetimes or justify dropping a possible judgement-conversion edge.
+
+The union of every pair's possible conversion edges is closed transitively. Every judgement reachable on a
+LUCK note must stay in its original controller class, and every reachable judgement must have the native
+parameter rows needed by execution. Conversion rows that share the native memo's raw row identity must have
+the same target vector across the entire pair domain. An unreachable conversion may be omitted only under
+the separately checked late range-playing condition; short unextended windows or one observed execution do
+not establish that condition. Unknown identity, conversion or life dependencies decline the family.
+
+Each profile is evaluated in all 120 original member orders, with complete initialized performers and the
+original source order at each performance position. A coverage bitmap checks every profile/order pair;
+duplicates cannot stand in for missing pairs. The returned four buckets are the joint virtual direct-LUCK
+score-probe bit and native Rush bit at a note's chart time. The virtual probe bit is meaningful even when no
+member holds a probe, because complete program admission establishes its controller meaning. Projecting
+reward rows preserves the complete member fields and their native mission/support-selection metadata.
+
+For each profile the reward template averages coefficients over all 120 original orders, using each member's
+actual position in each order. Only after these complete averages does it take a component maximum across
+profiles. A fixed physical binding chooses one profile before the order draw, so linearity and these maxima
+bound that binding's expectation. Existing all-history rank, conversion, additive drift and unclassified-window
+allowances remain unweighted. The result is an upper only for Score; it supplies neither per-path support nor
+the expectation of a nonlinear payoff.
+
+The search's preparation limits are 4,096 pair models, at most six profiles and 720 order/profile evaluations,
+16,000,000 units of declared frame work, and 32 MiB of accounted family storage. The frame-work check includes
+the terminal mapping and every required order/profile. The retained coefficient-table cache separately uses
+at most 64 entries and 8 MiB, further limited by `cacheEntries`. Container capacities, retained mappings and
+referenced probability payloads are accounted by their respective owners; these budgets are not process RSS
+or the combined memory of every cache.
+
+A successful family requires complete coverage within every limit. Capacity failure, unsupported input or a
+local work budget produces an unavailable optional bound; cancellation produces a stopped preparation.
+Neither supplies a partial family or an optimistic maximum over only the completed profiles. Completed
+individual probability curves may be reused through their existing exact recording keys, but the family cache
+stores only complete coefficient tables or refusals in its immutable scope. Search completion and canonical
+Top-K still require the ordinary whole-domain proof.
+
+The [synthetic family oracle](../crates/ournotes-sim/src/live/full/luck_score_bounds/family_tests.rs) enumerates
+legal physical bindings, all 120 orders and native nominal probability branches, comparing the joint masses
+and checking total probability. [Admission cases](../crates/ournotes-sim/src/live/full/luck_score_bounds/family_admission_tests.rs)
+cover cross-source conversion identity, selected mission gates, clock and extension boundaries. The
+[node oracle](../crates/ournotes-search/src/search/joint/family_node_tests.rs) checks every legal descendant
+against actual depth-four suffix and resource masks, including complete refusal and cancellation behavior.
+An [end-to-end test](../crates/ournotes-search/src/search/joint/family_node_e2e_tests.rs) checks canonical Top-K
+with shuffled public IDs and the cache enabled or disabled, and checks that exhaustion of the candidate
+budget retains its unproven state. These finite checks complement the admission and upper-bound argument above.
 
 ## Expected-score upper preparation
 

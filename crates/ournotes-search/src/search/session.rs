@@ -408,6 +408,7 @@ impl<'m> SearchSession<'m> {
             order_steps: Default::default(),
             top: std::mem::take(&mut self.top),
             certified: None, // This incremental cursor evaluates deterministic Power/Skip only.
+            family: super::family_nodes::FamilyNodeCache::default(),
             lottery_free: None,
             seen: std::mem::take(&mut self.seen),
             fifo: std::mem::take(&mut self.fifo),

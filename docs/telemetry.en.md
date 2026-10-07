@@ -278,7 +278,42 @@ checked; `tail` and `pair` count at the parent's depth (they check its children)
 | `seedBonusSkipped` | PT warm start: prefixes outside the maximum-bonus regime |
 | `modules` | Bound modules by name (`memberAdditive`, ...; `carrierSplit`: the node bound split by the combo carriers of the slots to fill, see `carriers`; `carrierSplitTail`: the same bound over the children left in a node's choice loop), each `{checks, pruned}` over all depths |
 | `carriers` | Gekisou score on a chart with a combo range: cheap bounds by the number of combo carriers (a member and Snap bringing Gekisou combo bonus windows; a node with `c` carriers placed and `r` slots to fill reads level `c + r`): `levels` compiled apart from the pool-wide bounds (the largest over the search parts), `nodes[n]` the bounded nodes reading level `n` (0 to 5) |
+| `luckFamily` | Controller-family preparation, refusal and cache counters, detailed below |
 | `rootOrder` | Root children visited in descending order of their depth-1 bound: `skipped` counts root children left once one was strictly inferior to the K-th (each would be pruned at depth 1), `traversalsPruned` the traversals (the whole domain, or one Gekisou conversion part with its slot rules) whose best root child already was |
+
+### `joint.luckFamily`
+
+Preparation and cache counters for the optional certified-LUCK Score bound at joint depth four. Its native
+family covers fixed members with the complete allowed Snap domain before a node applies its actual prefix
+bindings and remaining choices. These counters are independent of leaf evaluations and candidate ranking.
+
+| Field | Meaning |
+|---|---|
+| `contextChecks`, `contextRefusals`, `contextStopped`, `contextMs` | Context-admission attempts, refusal counts by reason, stopped attempts and elapsed preparation time |
+| `checks`, `boundedNodes` | Node requests that reached the admitted family path, and requests that returned a complete numeric upper (including zero for an empty suffix) |
+| `familyLookups`, `familyHits`, `refusedHits` | Member-family lookups, complete coefficient-table hits and separately cached refusal hits |
+| `preparedFamilies` | Successfully prepared complete numeric coefficient tables; not evaluated candidates |
+| `preparationRefusals`, `preparationDeclines` | Unavailable native families or pair construction, with reason counts; excludes cancellation |
+| `preparationMs` | Native family preparation time, including refused and stopped attempts |
+| `envelopeMs`, `envelopeRefusals` | Coefficient-table construction time and unavailable numerical envelopes; time includes stopped attempts, refusal counts exclude cancellation |
+| `capacityDeclines` | Search-side allocation or reward-template-scope failures; native family capacity failures are separately included in `preparationDeclines.capacity` |
+| `stopped` | Interrupted node-bound requests; no partial upper is returned |
+| `orderLaws`, `profiles` | Complete native profile/order certificates materialized before numerical-envelope construction; they can increase when that later construction declines, and do not count actual DP propagations or scored orders |
+| `evictions`, `peakEntries`, `peakBytes` | Cache evictions and recorded high-water entries/bytes for cache containers, the retained reward template and complete coefficient tables; excludes transient family laws, other caches and process RSS |
+
+Both refusal objects use the same reason keys: `context`, `terminalMapping`, `pairDomain`, `recorderAdmission`,
+`lifeFeedback`, `judgementFeedback`, `writerProfiles`, `probabilityDomain`, `budget`, `capacity` and
+`incompleteCoverage`. A zero-cache or inapplicable objective skips this optional path and can leave its counters
+at zero. A refused-cache hit is not a successful family and does not increment `familyHits`.
+
+`joint.modules.luckFamily.{checks, pruned}` counts only usable family caps actually compared with the current
+Top-K cutoff, and the resulting exclusions. It need not equal `boundedNodes` or the native preparation counts.
+The cap retains the same canonical score/power tie rule as other joint bounds.
+
+All times are measured inside the request's search budget. `preparationMs` contains its DP/recording work;
+those nested profile times must not be added to it. Elapsed work before refusal or cancellation remains
+counted. These counters do not add candidate evaluations, change a stop reason or establish `Complete`.
+`peakBytes` is allocation accounting for this cache, not WASM linear-memory capacity or native/browser RSS.
 
 ## `composition`
 

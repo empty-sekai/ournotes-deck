@@ -7,6 +7,9 @@ use std::sync::Arc;
 #[path = "record_only_tests.rs"]
 mod record_only_tests;
 
+#[path = "family_tests.rs"]
+mod family_tests;
+
 #[derive(Clone)]
 struct RushCase {
     master: Master,

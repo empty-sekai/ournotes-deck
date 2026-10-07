@@ -15,6 +15,9 @@ pub(super) struct Coef {
     pub(super) times: Vec<i32>,
     /// Power-free part of the float chain before the floor: `adj * level factor * note% * combo / divisor`.
     pub(super) k: Vec<f64>,
+    /// Terminal-only coefficients without/with the existing unconditional Rush envelope.
+    /// Empty unless this is an admitted LUCK chart; historical rank is retained separately.
+    pub(super) family_terminal: Vec<[f64; 2]>,
     /// Largest judgement percent over the reachable judgements.
     pub(super) max_jp: Vec<f64>,
     /// Judgement percent of Good, Great, Perfect, Just when reachable, else 0.

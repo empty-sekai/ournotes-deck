@@ -132,7 +132,7 @@ pub struct LiveRandom {
     streams: [NetRandom; 4],
     /// Values drawn since the streams were seeded.
     draws: u64,
-    /// Optional independent nominal LUCK path. Native seeded execution never installs one.
+    /// Optional independent nominal lottery and skill path. Native seeded execution never installs one.
     nominal: Option<NominalScript>,
 }
 
@@ -143,7 +143,7 @@ pub(crate) struct NominalOutcome {
     pub value: i64,
 }
 
-/// A prefix of nontrivial semantic lottery outcomes, not a script of PRNG seeds or raw integer values.
+/// A prefix of nontrivial semantic outcomes, not a script of PRNG seeds or raw integer values.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NominalScript {
     prefix: Vec<usize>,
@@ -195,8 +195,8 @@ impl LiveRandom {
         self.nominal.is_some()
     }
 
-    /// Every raw draw must have passed through an admitted semantic LUCK draw. In particular a SKILL
-    /// probability draw, even one whose answer happens to be deterministic, declines this narrow backend.
+    /// Every raw draw must have passed through an admitted semantic lottery or skill-probability draw.
+    /// Unmodelled raw random calls still decline the nominal backend, even if their observed value is unused.
     pub(crate) fn nominal_covers_draws(&self) -> bool {
         self.nominal.as_ref().is_some_and(|script| script.handled_draws == self.draws)
     }
@@ -248,6 +248,39 @@ impl LiveRandom {
         outcomes.get(choice).map(|outcome| outcome.value).ok_or_else(|| invalid("path outcome is out of range"))
     }
 
+    /// Native skill comparison, or its independent nominal Bernoulli law when a nominal path is installed.
+    /// The nominal mass is the exact finite, clamped stored binary32 rate, matching the controller DP's
+    /// declared model. This does not assert that seeded random floats have a continuous uniform distribution.
+    pub(crate) fn skill_probability(&mut self, rate: f32) -> Result<bool, Error> {
+        if !self.is_nominal() {
+            return Ok(self.value(SKILL) < rate);
+        }
+        let invalid = || Error::Unsupported("nominal skill probability has no exact bounded integer weights".into());
+        if !rate.is_finite() {
+            return Err(invalid());
+        }
+        let rate = rate.clamp(0.0, 1.0);
+        if rate == 0.0 || rate == 1.0 {
+            // A deterministic semantic draw consumes one native draw but no branch-prefix choice.
+            return self.nominal_lottery(vec![(1, 1, i64::from(rate == 1.0))]).map(|value| value != 0);
+        }
+        let bits = rate.to_bits();
+        let exponent = (bits >> 23) & 0xff;
+        let mut numerator = u64::from(bits & 0x7fffff);
+        let mut shift = if exponent == 0 {
+            149
+        } else {
+            numerator |= 1 << 23;
+            150 - exponent
+        };
+        let common = numerator.trailing_zeros().min(shift);
+        numerator >>= common;
+        shift -= common;
+        let denominator = 1u64.checked_shl(shift).ok_or_else(invalid)?;
+        let failure = denominator.checked_sub(numerator).ok_or_else(invalid)?;
+        self.nominal_lottery(vec![(failure, denominator, 0), (numerator, denominator, 1)]).map(|value| value != 0)
+    }
+
     /// `Range(type, max)`.
     pub fn range(&mut self, stream: usize, max_value: i32) -> Result<i32, Error> {
         self.draws += 1;
@@ -276,6 +309,113 @@ impl LiveRandom {
 #[cfg(test)]
 mod nominal_tests {
     use super::*;
+
+    #[test]
+    fn skill_probability_keeps_seeded_values_and_all_stream_states() {
+        for seed in [i32::MIN, -971, -1, 0, 1, 529, i32::MAX] {
+            let mut actual = LiveRandom::new(seed);
+            let mut native = actual.clone();
+            for _ in 0..32 {
+                for rate in [-1.0, -0.0, 0.0, 0.01, 0.3, 0.5, 1.0, 2.0, f32::NAN, f32::INFINITY] {
+                    let expected = native.value(SKILL) < rate;
+                    assert_eq!(actual.skill_probability(rate).unwrap(), expected);
+                    assert_eq!(actual, native, "every stream and draw counter must remain identical");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nominal_skill_masses_are_exact_binary32_rates() {
+        for (rate, numerator, denominator) in [
+            (0.5, 1u64, 2u64),
+            (0.25, 1, 4),
+            (0.75, 3, 4),
+            (0.3, 5_033_165, 16_777_216),
+            (0.01, 5_368_709, 536_870_912),
+            (f32::from_bits(64 << 23), 1, 1u64 << 63),
+        ] {
+            let mut pending = LiveRandom::with_nominal_prefix(Vec::new());
+            assert!(pending.skill_probability(rate).is_err());
+            assert_eq!(
+                pending.nominal_branch().unwrap(),
+                [
+                    NominalOutcome { weight: denominator - numerator, total: denominator, value: 0 },
+                    NominalOutcome { weight: numerator, total: denominator, value: 1 },
+                ]
+            );
+            assert_eq!(pending.draws(), 1);
+            assert!(pending.nominal_covers_draws());
+            for (choice, expected) in [(0, false), (1, true)] {
+                let mut branch = LiveRandom::with_nominal_prefix(vec![choice]);
+                assert_eq!(branch.skill_probability(rate).unwrap(), expected);
+                assert!(branch.nominal_prefix_consumed() && branch.nominal_covers_draws());
+            }
+        }
+    }
+
+    #[test]
+    fn nominal_deterministic_skill_calls_still_consume_a_draw() {
+        let mut random = LiveRandom::with_nominal_prefix(Vec::new());
+        for (index, (rate, expected)) in
+            [(-3.0, false), (-0.0, false), (0.0, false), (1.0, true), (2.0, true)].into_iter().enumerate()
+        {
+            assert_eq!(random.skill_probability(rate).unwrap(), expected);
+            assert_eq!(random.draws(), index as u64 + 1);
+            assert!(random.nominal_prefix_consumed() && random.nominal_covers_draws());
+        }
+    }
+
+    #[test]
+    fn unsupported_nominal_skill_rates_never_supply_a_branch_or_hide_raw_draws() {
+        for rate in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, f32::MIN_POSITIVE, f32::from_bits(1)] {
+            let mut random = LiveRandom::with_nominal_prefix(Vec::new());
+            assert!(matches!(random.skill_probability(rate), Err(Error::Unsupported(_))));
+            assert!(random.nominal_branch().is_none());
+            assert_eq!(random.draws(), 0);
+        }
+        let mut random = LiveRandom::with_nominal_prefix(vec![1]);
+        random.value(SKILL);
+        assert!(random.skill_probability(0.5).unwrap());
+        assert!(!random.nominal_covers_draws());
+    }
+
+    #[test]
+    fn skill_and_lottery_prefixes_share_complete_checkpoint_consumption() {
+        let mut random = LiveRandom::with_nominal_prefix(vec![1]);
+        assert!(random.skill_probability(0.5).unwrap());
+        let checkpoint = random.clone();
+        random.extend_nominal_prefix(vec![1, 0, 1]).unwrap();
+        assert_eq!(random.nominal_lottery(vec![(1, 3, 10), (2, 3, 20)]).unwrap(), 10);
+        assert!(random.skill_probability(0.25).unwrap());
+        assert!(random.nominal_prefix_consumed() && random.nominal_covers_draws());
+        assert_eq!(random.draws(), 3);
+        assert_eq!(checkpoint.draws(), 1);
+        assert!(checkpoint.nominal_prefix_consumed());
+    }
+
+    #[test]
+    fn independent_skill_and_lottery_branches_keep_their_joint_mass() {
+        let mut total = 0;
+        for first in 0..2 {
+            for second in 0..2 {
+                for lottery in 0..2 {
+                    let mut random = LiveRandom::with_nominal_prefix(vec![first, second, lottery]);
+                    assert_eq!(random.skill_probability(0.5).unwrap(), first == 1);
+                    assert_eq!(random.skill_probability(0.25).unwrap(), second == 1);
+                    assert_eq!(
+                        random.nominal_lottery(vec![(1, 3, 10), (2, 3, 20)]).unwrap(),
+                        if lottery == 0 { 10 } else { 20 }
+                    );
+                    // Independent manual masses: 1/2, (3 or 1)/4, and (1 or 2)/3.
+                    total += [3, 1][second] * [1, 2][lottery];
+                    assert_eq!(random.draws(), 3);
+                    assert!(random.nominal_prefix_consumed() && random.nominal_covers_draws());
+                }
+            }
+        }
+        assert_eq!(total, 24);
+    }
 
     #[test]
     fn checkpoint_extension_preserves_consumption_and_unhandled_draws() {

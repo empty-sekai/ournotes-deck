@@ -241,7 +241,39 @@ Combo 与结构校验；DP 和后续因子回放保持各自的阶段。
 | `seedBonusSkipped` | PT 预热时不在最高奖金区间而跳过的前缀 |
 | `modules` | 按名称的上界模块（`memberAdditive` 等；`carrierSplit`：按空位将放的连击载体拆分的节点上界，载体见 `carriers`；`carrierSplitTail`：同一上界用于节点选择循环里剩下的全部子节点），各为全部深度合计的 `{checks, pruned}` |
 | `carriers` | 撃奏分数且谱面有连击区间时，按连击载体数分档的廉价上界（载体：带撃奏连击加成窗口的成员与 Snap；已放 `c` 个载体、还剩 `r` 个空位的节点读第 `c + r` 档）：`levels` 是全池上界之外编译的档数（各搜索分段取最大），`nodes[n]` 是读第 `n` 档（0 到 5）的受检节点数 |
+| `luckFamily` | 控制器 family 的准备、拒绝及缓存计数，详见下节 |
 | `rootOrder` | 根层按深度 1 上界降序访问：`skipped` 是某个分支已严格劣于第 K 名后不再访问的根分支数（它们都会在深度 1 被剪），`traversalsPruned` 是最好的根分支一开始就已劣于第 K 名的遍历数（整个域或撃奏的一个转换分段及其槽位规则） |
+
+### `joint.luckFamily`
+
+联合搜索深度四的可选 LUCK 期望分上界之准备及缓存计数。原生 family 固定成员、覆盖全部允许的 Snap 域，
+节点再应用实际前缀绑定与剩余选择。这些计数独立于叶候选评价和规范排名。
+
+| 字段 | 含义 |
+|---|---|
+| `contextChecks`、`contextRefusals`、`contextStopped`、`contextMs` | 上下文能力检查次数、按原因记录的拒绝数、中断次数及准备耗时 |
+| `checks`、`boundedNodes` | 进入已准入 family 路径的节点请求数，以及返回完整数值上界的请求数；后者包含空后缀的零上界 |
+| `familyLookups`、`familyHits`、`refusedHits` | 成员 family 查询数、完整系数表命中数及单独缓存的拒绝命中数 |
+| `preparedFamilies` | 成功准备的完整数值系数表数，不是候选评价数 |
+| `preparationRefusals`、`preparationDeclines` | 原生 family 或成员/Snap 构造不可用的次数及原因分类，不含取消 |
+| `preparationMs` | 原生 family 准备耗时，包含被拒绝或中断的尝试 |
+| `envelopeMs`、`envelopeRefusals` | 系数表构造耗时及数值包络不可用次数；耗时包含中断，拒绝次数不含取消 |
+| `capacityDeclines` | 搜索侧的分配或收益模板作用域失败；原生 family 容量失败另记在 `preparationDeclines.capacity` |
+| `stopped` | 被中断的节点上界请求数；不会返回部分上界 |
+| `orderLaws`、`profiles` | 在数值包络构造前已经完整生成的原生 profile/顺序证书数；后续包络拒绝时也可能增加，不等于实际 DP 传播次数或已评分顺序数 |
+| `evictions`、`peakEntries`、`peakBytes` | 缓存淘汰数与已记录的条目/字节高水位；字节含缓存容器、保留的收益模板和完整系数表，不含临时 family 概率律、其他缓存或进程 RSS |
+
+两个拒绝对象使用相同的原因键：`context`、`terminalMapping`、`pairDomain`、`recorderAdmission`、
+`lifeFeedback`、`judgementFeedback`、`writerProfiles`、`probabilityDomain`、`budget`、`capacity` 和
+`incompleteCoverage`。缓存容量为零或目标不适用时跳过此可选路径，相关计数可以全部为零。
+拒绝缓存的命中不是成功的 family，不增加 `familyHits`。
+
+`joint.modules.luckFamily.{checks, pruned}` 只记录实际拿到当前 Top-K 截止值前比较的可用 family 上界，
+以及由此完成的排除。因此不必等于 `boundedNodes` 或原生准备次数。剪枝保留原有的规范得分/综合力并列规则。
+
+所有耗时均发生在请求的搜索预算内。`preparationMs` 已包含其 DP/录制工作，不能再把这些嵌套 profile 耗时加到
+该总计上。拒绝或取消前实际发生的耗时仍计入。这些计数不增加候选评价数、不改变停止原因，也不能证明 `Complete`。
+`peakBytes` 是此缓存的分配核算，不是 WASM 线性内存容量，也不是原生或浏览器 RSS。
 
 ## `composition`
 

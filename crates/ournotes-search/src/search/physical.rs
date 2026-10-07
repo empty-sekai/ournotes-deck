@@ -27,6 +27,8 @@ mod certified_engine;
 use certified_engine::CertifiedState;
 #[path = "deck_payoff_search.rs"]
 mod deck_payoff_search;
+#[path = "family_nodes.rs"]
+pub(crate) mod family_nodes;
 #[path = "program_cache.rs"]
 mod program_cache;
 #[path = "progress.rs"]
@@ -142,6 +144,8 @@ struct Engine<'a, 'm> {
     order_steps: [super::joint::OrderSteps; 6],
     top: Vec<Entry>,
     certified: Option<CertifiedState>,
+    /// Optional complete controller-family envelopes of fixed-member Snap subtrees.
+    family: family_nodes::FamilyNodeCache<'a>,
     /// The master's lottery-related skills when the decks play lottery-free ([`certified_engine::LotteryMode::Free`]).
     lottery_free: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
     seen: HashSet<PhysicalDeck>,
@@ -953,6 +957,61 @@ pub(crate) fn solve_physical_impl(
         env.bounds.choices = b.members.len();
     }
     let lottery = certified_engine::lottery_mode(pool, request, &plan.domain)?;
+    let budget = super::budget::SearchBudget::new(start, limits.time_limit_ms.map(Duration::from_millis))?;
+    // This capability owns no candidate scores. One immutable geometry/context may serve many complete member
+    // families, but the request's own deadline also covers its preparation. Other objectives and cache-zero runs
+    // retain their original path.
+    let family_enabled = matches!(metric, Metric::Score)
+        && lottery == certified_engine::LotteryMode::Certified
+        && matches!(strategy, Strategy::Exhaustive | Strategy::BranchAndBound)
+        && fixed.is_none()
+        && feasible
+        && limits.cache_entries > 0
+        && limits.max_candidates != Some(0)
+        && !budget.expired()
+        && plan.joint.as_ref().is_some_and(|bounds| bounds.family_reward_template().is_some());
+    let family_started = family_enabled.then(Instant::now);
+    let family_setup = if family_enabled { super::full_setup(pool, &request.objective).ok().flatten() } else { None };
+    let family_skills =
+        if family_setup.is_some() { ournotes_sim::live::full::luck_skills(pool.master).ok() } else { None };
+    let mut family_refusal = family_enabled.then_some(ournotes_sim::live::full::LuckFamilyDecline::Context);
+    let mut family_stopped = false;
+    let family_context = (|| {
+        let setup = family_setup.as_ref()?;
+        let skills = family_skills.as_ref()?;
+        let gk = setup.gk.as_ref().filter(|gk| gk.confirmations.is_none())?;
+        match ournotes_sim::live::full::LuckFamilyContext::new(
+            pool.master,
+            skills,
+            &setup.notes,
+            &setup.events,
+            setup.params,
+            &gk.setup,
+            &setup.play,
+            &gk.dt,
+            || budget.expired(),
+        ) {
+            Ok(Some(context)) => {
+                family_refusal = None;
+                Some(context)
+            }
+            Ok(None) => {
+                family_refusal = None;
+                family_stopped = true;
+                None
+            }
+            Err(refusal) => {
+                family_refusal = Some(refusal.reason);
+                None
+            }
+        }
+    })();
+    let mut family =
+        family_nodes::FamilyNodeCache::new(family_context.as_ref(), limits.cache_entries, 8 * 1024 * 1024, 6);
+    if let Some(started) = family_started {
+        family.record_context_attempt(family_refusal, family_stopped, started.elapsed().as_secs_f64() * 1000.0);
+    }
+    tel.joint.luck_family = family.stats().clone();
     let mut engine = Engine {
         pool,
         request,
@@ -960,7 +1019,7 @@ pub(crate) fn solve_physical_impl(
         event_input,
         simulation,
         limits: &limits,
-        budget: super::budget::SearchBudget::new(start, limits.time_limit_ms.map(Duration::from_millis))?,
+        budget,
         stop: None,
         tel,
         rec: Recorder::new(origin),
@@ -978,6 +1037,7 @@ pub(crate) fn solve_physical_impl(
         } else {
             None
         },
+        family,
         lottery_free: if lottery == certified_engine::LotteryMode::Free {
             Some(std::sync::Arc::new(ournotes_sim::live::full::luck_skills(pool.master)?))
         } else {
@@ -1599,6 +1659,37 @@ fn joint_rec(
                 }
             } else {
                 joint.bonus_unavailable[depth] += 1;
+            }
+        }
+        if depth == 4 && e.certified.is_some() && matches!(e.metric, Metric::Score) && e.family.enabled() {
+            // All five members of each considered family are fixed, while its completed table covers every
+            // allowed Snap. The exact depth-four suffix then applies the four actual bindings and the remaining
+            // member/choice masks. No partial family or member maximum is an exclusion certificate.
+            let mut family = std::mem::take(&mut e.family);
+            let mut curves = std::mem::take(&mut e.certified.as_mut().expect("certified family node").luck_curves);
+            let pool = e.pool;
+            let result =
+                family.upper_at_depth_four(pool, domain, bounds, p, start, orders, &mut curves, &mut || e.expired());
+            e.tel.caches.luck_curves.record(curves.stats());
+            e.certified.as_mut().expect("certified family node").luck_curves = curves;
+            e.family = family;
+            e.tel.joint.luck_family = e.family.stats().clone();
+            match result {
+                family_nodes::FamilyNodeOutcome::Upper(cap) => {
+                    let module = e.tel.joint.modules.entry("luckFamily").or_default();
+                    module.checks += 1;
+                    // Canonical candidate ties stay with the existing frontier. Equality excludes only when the
+                    // same old whole-node power certificate is strictly below a proved cutoff power.
+                    if cap < threshold || (exact_ties && cap == threshold && power < i64::from(cutoff_power)) {
+                        module.pruned += 1;
+                        return Ok(true);
+                    }
+                }
+                family_nodes::FamilyNodeOutcome::Unavailable => {}
+                family_nodes::FamilyNodeOutcome::Stopped => {
+                    e.unexplored_node(p, depth, domain, bounds, orders)?;
+                    return Ok(false);
+                }
             }
         }
     }

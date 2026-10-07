@@ -11,7 +11,7 @@ use super::Performer;
 use super::gekisou::{Controller, M_ALL, M_LUCK, S_COMPLETE, S_FINISH, S_PLAYING, S_START};
 use super::life::LifeController;
 use crate::error::Error;
-use crate::live::random::{LiveRandom, SKILL};
+use crate::live::random::LiveRandom;
 use crate::master::{Master, SkillTargetRow};
 use crate::num::{ceil_to_i32, floor_to_i32};
 
@@ -405,7 +405,7 @@ impl Checker {
             // LUCK coefficient lives draw no lottery, so the luck chain effects a probability gates do nothing
             // (`LiveModel::set_luck_weights` admits no other gated effect).
             Checker::Probability(_) if ctx.gk.is_some_and(|g| g.ctrl.luck_weighted) => Ok((false, 0)),
-            Checker::Probability(rate) => Ok((ctx.random.value(SKILL) < *rate, 0)),
+            Checker::Probability(rate) => Ok((ctx.random.skill_probability(*rate)?, 0)),
             Checker::Fixed(ok) => Ok((*ok, *ok as i64)),
             Checker::NoteJudgementMatch { kind, targets, override_ms } => {
                 *override_ms = None;

@@ -374,7 +374,7 @@ fn fixed_predicate(checker: &Checker) -> bool {
 /// Therefore every lottery path has the recorder's identical converted judgements, life, combo inputs, ordinary
 /// command filings and effect values. The DP life recorder retains these writers and consumes the same converted
 /// results. A sampled agreement is not the authority for exact_final_life or the ordinary score command history.
-fn check_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<Option<i64>, Error> {
+pub(super) fn check_recorder(model: &LiveModel, skills: &LuckSkills) -> Result<Option<i64>, Error> {
     // AddCommand invalidates all four native cache fields, so extra reads preserve the command-log
     // semantics at a constant cap. UpdateLifeMax deliberately does not invalidate: a read before a
     // max change can retain an old-cap recovery. A single reference path cannot certify that domain
