@@ -134,6 +134,30 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
             "maximize expected selected resource quantity conditional on explicitly supplied server rewards"
         }
     };
+    let payoff_meaning = if r.aggregation == Aggregation::Maximum {
+        match r.metric {
+            Metric::Power => "maximize current-progression deck power",
+            Metric::Score => {
+                "maximize reachable final score over performance orders and positive-probability random outcomes"
+            }
+            Metric::ScoreAtLeast { .. } => "maximize the reachable score-target indicator",
+            Metric::CappedScore { .. } => "maximize reachable final score capped at the declared target",
+            Metric::ScoreAndLifeAtLeast { .. } => {
+                "maximize the reachable joint score and terminal-life target indicator"
+            }
+            Metric::ClientEventPoints { .. } => {
+                "maximize reachable client event-point preview per declared consumption"
+            }
+            Metric::ClientChallengePoints { .. } => {
+                "maximize reachable newly earned client challenge points per declared consumption"
+            }
+            Metric::ConditionalClientEventItems { .. } => {
+                "maximize reachable selected resource quantity under supplied server rewards"
+            }
+        }
+    } else {
+        payoff_meaning
+    };
     let mut assumptions = vec!["supplied roster progression and player bonuses; no upgrades or costs inferred"];
     if let Execution::Live { play, .. } = &r.execution {
         assumptions.push(match play {
@@ -143,10 +167,14 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
                 "complete declared judgement stream; touch timing and human error distribution not inferred"
             }
         });
-        assumptions.push("the five members perform in a uniformly random order; paired snaps follow their members");
-        assumptions.push(
-            "native lottery probability law; certified intervals remain explicit until sufficient to prove ranking",
-        );
+        if r.aggregation == Aggregation::Maximum {
+            assumptions.push("maximize over all performance orders with each Snap paired to its member, and all positive-probability nominal random paths");
+        } else {
+            assumptions.push("the five members perform in a uniformly random order; paired snaps follow their members");
+            assumptions.push(
+                "native lottery probability law; certified intervals remain explicit until sufficient to prove ranking",
+            );
+        }
     }
     if r.metric.event().is_some() {
         assumptions

@@ -20,8 +20,9 @@ impl SongValue {
     pub(super) fn from_deck(id: i64, deck: &RecommendedDeck) -> Result<Self, Error> {
         let invalid = || Error::Domain("complete song evaluation has no valid payoff certificate".into());
         let exact = deck
-            .expected_payoff
+            .objective_value
             .as_ref()
+            .or(deck.expected_payoff.as_ref())
             .map(|f| -> Result<ExactExpectation, Error> {
                 Ok(ExactExpectation {
                     numerator: f.numerator.parse().map_err(|_| invalid())?,
@@ -89,8 +90,35 @@ pub(super) fn ranked_prefix(values: &[SongValue]) -> Result<Vec<usize>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::Fraction;
     fn interval(id: i64, lower: f64, upper: f64) -> SongValue {
         SongValue { id, power: 100, exact: None, bounds: F64Interval::new(lower, upper).unwrap() }
+    }
+    #[test]
+    fn selected_objective_ranks_songs_with_different_average_and_peak_values() {
+        let deck = |expected: i32, maximum: Option<i32>| RecommendedDeck {
+            members: [1, 2, 3, 4, 5],
+            snaps: [None; 5],
+            power: 100,
+            objective_value: maximum.map(|value| Fraction { numerator: value.to_string(), denominator: "1".into() }),
+            maximum_score: maximum,
+            expected_score: Some(Fraction { numerator: expected.to_string(), denominator: "1".into() }),
+            expected_payoff: Some(Fraction { numerator: expected.to_string(), denominator: "1".into() }),
+            score_interval: None,
+            payoff_interval: None,
+            rank_certified: None,
+            score_summary: None,
+            best_order: None,
+            order_outcomes: Vec::new(),
+        };
+        let expected =
+            [SongValue::from_deck(1, &deck(100, None)).unwrap(), SongValue::from_deck(2, &deck(90, None)).unwrap()];
+        let maximum = [
+            SongValue::from_deck(1, &deck(100, Some(110))).unwrap(),
+            SongValue::from_deck(2, &deck(90, Some(140))).unwrap(),
+        ];
+        assert_eq!(ranked_prefix(&expected).unwrap(), [0, 1]);
+        assert_eq!(ranked_prefix(&maximum).unwrap(), [1, 0]);
     }
     #[test]
     fn separated_intervals_rank_without_fake_exact_means() {

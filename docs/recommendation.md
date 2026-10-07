@@ -9,15 +9,25 @@ See [account input](account-input.md) for the account envelope.
 ```
 
 The goal grammar includes `power`, `skip`, `freeLive`, `missionLive`, `battleLive`, `arenaLive`, and `challengeLive`.
+The optional top-level `aggregation` is `expected` (the default) or `maximum`. It changes the ranking objective
+while preserving the card pool, song, accuracy or complete play, room, event context and constraints. `expected`
+values each team's mean payoff over random performance orders and lottery outcomes; `maximum` values its highest
+reachable payoff over those same outcomes. For deterministic power and skip, both aggregations give the same value.
+For example, adding `"aggregation":"maximum"` to the request above searches for the highest reachable score under
+its declared accuracy. It does not change that accuracy to a perfect play. Unknown aggregation names are input errors.
+
 `capabilities()` reports which goal/metric pairs this build actually computes, plus the unsupported pairs.
+`defaultAggregation` is `expected`; `aggregations.expected` and `aggregations.maximum` map each supported goal to
+its available metric names. `aggregationTieBreak` reports the ranking key for each aggregation.
 A supported pair can still reject an unsupported skill or lifecycle, and support is not a latency guarantee.
 Battle/Arena use the declared room policy and native rank-1 confirmation on range completion. Custom ranks remain
 unsupported. LUCK uses certified score laws over the native lottery probabilities; a rank is proved only by separated
 bounds or a verified equal-program certificate. An overlapping frontier remains `RefinementRequired` and unproven.
 
-Live values average all 120 member performance orders. Snaps stay paired with their members. Nonleader layout is
+Expected Live values average all 120 member performance orders. Maximum Live values take the best reachable
+outcome across those orders, including LUCK outcomes with positive probability. Snaps stay paired with their members. Nonleader layout is
 canonical, with the leader in slot 2. Five fixed member/Snap pairs therefore give at most five teams, one per leader;
-the 120 performance orders never become additional recommended teams. The result preserves the search's order: expected payoff, power, then its
+the 120 performance orders never become additional recommended teams. The result preserves the search's order: selected payoff, power, then its
 canonical key. It does not reorder a truncated Top-K under a different secondary objective.
 
 `metric:{"kind":"challengePoints","eventId":7,"consumption":1}` maximizes newly earned Challenge points from
@@ -36,7 +46,7 @@ The event song-ranking choice uses `goal:{"kind":"challengeLive","challengeMusic
 with `metric:{"kind":"score"}` and the applicable held `eventIds`. `capabilities().eventMusicRanking` describes this
 mapping. The verified client stores per-difficulty high scores and the maximum SoloScore for each challenge song;
 the challenge-song ranking query is keyed by challengeMusicId, without difficulty. The recommendation maximizes
-expected score on the selected song and difficulty. It does not predict a server rank, combine different songs,
+the selected aggregation of score on the selected song and difficulty. It does not predict a server rank, combine different songs,
 or treat event-point accumulation as a song-ranking score.
 This mapping describes the verified challenge-song route. It does not infer the semantics of newer master-data
 `isMusicRankingDisabled` / `isTotalMusicRankingDisabled` fields absent from the verified native MasterEvent schema.
@@ -50,12 +60,21 @@ Only Challenge and power with `eventParameter:true` read event IDs for power bon
 
 Answers use status `ok`, `incomplete`, `invalid`, or `failed`; input issues never masquerade as an empty successful
 search. An `ok` result has `optimality.proven` only when the underlying search proves its canonical Top-K.
-Timeout and unresolved-overlap results keep `proven:false`. `value.exact` is a true expectation fraction or null;
+Timeout and unresolved-overlap results keep `proven:false`. Progress and final results echo `result.aggregation`.
+Final results also include `result.exitReason`, distinguishing exhaustion, time or candidate limits, and required refinement; progress omits it.
+For `expected`, `value.exact` is a true expectation fraction or null;
 `value.interval` contains certified lower/upper endpoints as exact binary rational fractions. Its integer `score`
 is a downward-rounded display bound when an exact expectation is unavailable. Non-score objectives use the same
 contract under `value.payoff`. `rankCertified` reports whether that team's displayed rank has been established.
 Final deterministic played-live teams include 120 scores and their order statistics. Lottery intervals and progress
 omit unavailable exact order scores. A certified rank does not claim that its expectation is known as an exact fraction.
+
+For `maximum`, `value.score` is the maximum reachable score and `value.exact` is its exact fraction with denominator
+1. A non-score metric's maximum is in `value.payoff`. The maximum score and maximum payoff are optimized separately
+within the team and need not occur in the same outcome. `team.bestOrder` contains `order` (member card IDs), `score`
+and nullable `payoff` for an outcome maximizing the selected metric, then score. `orders` is null in maximum mode:
+the peak objective does not report mean, median or probability statistics. A maximum for a threshold metric is 1
+when at least one reachable outcome satisfies it, and 0 otherwise; it is an attainability result, not a probability.
 
 Each progress callback is a complete answer with `final:false`. `recommend` returns `final:true` and is synchronous;
 run it in a Worker and terminate that Worker to cancel. Progress and final answers include the account scope but no

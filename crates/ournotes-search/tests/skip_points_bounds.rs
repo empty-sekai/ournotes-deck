@@ -171,6 +171,8 @@ fn oracle(
             members,
             snaps,
             power,
+            objective_value: Some(Fraction { numerator: pt.to_string(), denominator: "1".into() }),
+            maximum_score: Some(score),
             expected_score: Some(Fraction { numerator: score.to_string(), denominator: "1".into() }),
             expected_payoff: Some(Fraction { numerator: pt.to_string(), denominator: "1".into() }),
             score_interval: None,

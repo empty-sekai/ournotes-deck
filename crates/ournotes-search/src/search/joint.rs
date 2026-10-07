@@ -950,6 +950,22 @@ impl JointBounds {
         self.payoff_cap_from(self.a0, power, gain, bonus, f64::INFINITY)
     }
 
+    /// Bound every reachable order payoff of any completion of this prefix. The order-gain envelope bounds
+    /// each individual performance order; terminal steps are applied to that score ceiling.
+    pub(crate) fn maximum_upper(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+    ) -> (i128, i64) {
+        let (power, gain, bonus) = self.relax(pool, domain, p, depth, &SLOTS[depth..], &[0, 1, 2, 3, 4], None);
+        let (spread, best) = self.order_gain_bounds(domain, p, depth, 5 - depth, None);
+        let gain = add_up(gain, spread).min(order_gain_bound(&best, &self.column, 0));
+        let cap = ((power as f64) * add_up(self.a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
+        (self.points.as_ref().map_or(cap, |pt| pt.order_payoff(bonus, cap)), power)
+    }
+
     /// `payoff_cap` with the `A0` of some envelope at most this one's: a bound of the mean payoff over the orders when
     /// `gain` sums position-mean gains and `max_gain` bounds the gain sum of every order (an infinite `max_gain`
     /// leaves the global coefficient).

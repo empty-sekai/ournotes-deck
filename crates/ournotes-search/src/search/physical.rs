@@ -24,6 +24,8 @@ mod leaf;
 use leaf::Leaf;
 #[path = "certified_engine.rs"]
 mod certified_engine;
+#[path = "maximum.rs"]
+mod maximum;
 use certified_engine::CertifiedState;
 #[path = "deck_payoff_search.rs"]
 mod deck_payoff_search;
@@ -67,12 +69,15 @@ fn compare(a: &Entry, b: &Entry) -> Ordering {
         .then_with(|| a.snaps.cmp(&b.snaps))
 }
 impl Entry {
-    fn wire(self, metric: &Metric) -> Result<RecommendedDeck, Error> {
+    fn wire(self, metric: &Metric, aggregation: Aggregation, live: bool) -> Result<RecommendedDeck, Error> {
+        let expected = aggregation == Aggregation::Expected;
         if matches!(metric, Metric::Power) {
             return Ok(RecommendedDeck {
                 members: self.members,
                 snaps: self.snaps,
                 power: self.power,
+                objective_value: Some(self.evaluation.expected_payoff.into()),
+                maximum_score: None,
                 expected_score: None,
                 expected_payoff: Some(self.evaluation.expected_payoff.into()),
                 score_interval: None,
@@ -85,7 +90,7 @@ impl Entry {
         }
         let score_summary = score_summary(&self.evaluation.score_mass, metric.target())?;
         // The first order with the highest payoff, then the highest score (orders in lexicographic order).
-        let best_order = (self.evaluation.outcomes.len() == ORDERS)
+        let best_order = (live && (self.evaluation.outcomes.len() == ORDERS || aggregation == Aggregation::Maximum))
             .then(|| {
                 self.evaluation.outcomes.iter().reduce(|best, o| {
                     if (o.terminal_payoff, o.final_score) > (best.terminal_payoff, best.final_score) { o } else { best }
@@ -102,14 +107,16 @@ impl Entry {
             members: self.members,
             snaps: self.snaps,
             power: self.power,
-            expected_score: Some(self.evaluation.expected_score.into()),
-            expected_payoff: Some(self.evaluation.expected_payoff.into()),
+            objective_value: Some(self.evaluation.expected_payoff.into()),
+            maximum_score: Some(score_summary.maximum),
+            expected_score: expected.then(|| self.evaluation.expected_score.into()),
+            expected_payoff: expected.then(|| self.evaluation.expected_payoff.into()),
             score_interval: None,
             payoff_interval: None,
             rank_certified: None,
-            score_summary: Some(score_summary),
+            score_summary: expected.then_some(score_summary),
             best_order,
-            order_outcomes: if self.evaluation.outcomes.len() == ORDERS {
+            order_outcomes: if expected && self.evaluation.outcomes.len() == ORDERS {
                 self.evaluation
                     .outcomes
                     .iter()
@@ -123,6 +130,7 @@ impl Entry {
 }
 
 struct Engine<'a, 'm> {
+    aggregation: Aggregation,
     pool: &'a Pool<'m>,
     request: &'a SearchRequest,
     metric: &'a Metric,
@@ -270,7 +278,11 @@ impl Engine<'_, '_> {
         self.tel.leaves.visited += 1;
         let power = self.pool.deck_power(&physical.as_deck(), self.song, self.event)?.power();
         let evaluation = if self.live {
-            match self.evaluate_orders(&physical, power, cut)? {
+            match if self.aggregation == Aggregation::Maximum {
+                self.evaluate_maximum(&physical, power, cut)?
+            } else {
+                self.evaluate_orders(&physical, power, cut)?
+            } {
                 Leaf::Evaluated(evaluation) => evaluation,
                 Leaf::Certified(evaluation, program, payoff) => {
                     self.offer_certified(physical, power, evaluation, program, payoff)?;
@@ -533,7 +545,9 @@ impl Engine<'_, '_> {
             Optimality::Unproven
         };
         let live = matches!(self.request.objective.inner(), Objective::LiveScore { .. });
-        let probability_law = if live {
+        let probability_law = if live && self.aggregation == Aggregation::Maximum {
+            serde_json::json!({"kind":"reachableOutcomes","orders":ORDERS,"lottery":"nominalSupport"})
+        } else if live {
             let lottery = if self.certified.is_some() {
                 "certifiedNativeLotteryIntervals"
             } else if self.lottery_free.is_some() {
@@ -563,10 +577,15 @@ impl Engine<'_, '_> {
                 (false, false) => "physicalDeck",
             },
             metric: self.metric.clone(),
+            aggregation: self.aggregation,
             player_goal: None,
             strategy: strategy.clone(),
             probability_law,
-            proof_scope: "conditional on declared master, roster and complete judgement/clock inputs, with the five members performing in a uniformly random order; client counters are not server reward authority",
+            proof_scope: if self.aggregation == Aggregation::Maximum {
+                "maximum reachable terminal payoff under declared master, roster, judgement, clock and nominal random-outcome inputs"
+            } else {
+                "conditional on declared master, roster and complete judgement/clock inputs, with the five members performing in a uniformly random order; client counters are not server reward authority"
+            },
             resolved_context: serde_json::Value::Null,
             results,
             telemetry,
@@ -591,7 +610,11 @@ impl Engine<'_, '_> {
         let results = if self.certified.is_some() {
             self.certified_results(false)?.0
         } else {
-            self.top.iter().cloned().map(|e| e.wire(self.metric)).collect::<Result<Vec<_>, _>>()?
+            self.top
+                .iter()
+                .cloned()
+                .map(|e| e.wire(self.metric, self.aggregation, self.live))
+                .collect::<Result<Vec<_>, _>>()?
         };
         let elapsed = now.saturating_duration_since(start);
         Ok(self.outcome(strategy, ExitReason::TimeLimit, false, results, tel, elapsed))
@@ -836,6 +859,32 @@ pub fn solve_physical(
     network: Option<&[RankConfirmation]>,
     simulation: &SimulationInput,
 ) -> Result<RecommendationOutcome, Error> {
+    solve_physical_with_aggregation(
+        pool,
+        request,
+        metric,
+        event_input,
+        limits,
+        strategy,
+        network,
+        simulation,
+        Aggregation::Expected,
+    )
+}
+
+/// Search the declared terminal payoff under an explicit aggregation of reachable outcomes.
+#[allow(clippy::too_many_arguments)]
+pub fn solve_physical_with_aggregation(
+    pool: &Pool,
+    request: &SearchRequest,
+    metric: &Metric,
+    event_input: Option<&EventPayoffInput>,
+    limits: &Limits,
+    strategy: &Strategy,
+    network: Option<&[RankConfirmation]>,
+    simulation: &SimulationInput,
+    aggregation: Aggregation,
+) -> Result<RecommendationOutcome, Error> {
     let origin = Instant::now();
     solve_physical_impl(
         pool,
@@ -846,6 +895,7 @@ pub fn solve_physical(
         strategy,
         network,
         simulation,
+        aggregation,
         None,
         &[],
         None,
@@ -866,6 +916,7 @@ pub(crate) fn solve_physical_impl(
     strategy: &Strategy,
     network: Option<&[RankConfirmation]>,
     simulation: &SimulationInput,
+    aggregation: Aggregation,
     fixed: Option<PhysicalDeck>,
     initial: &[PhysicalDeck],
     compiled: Option<&crate::handler::ExecutionPlan>,
@@ -898,8 +949,10 @@ pub(crate) fn solve_physical_impl(
     let plan = match compiled {
         Some(plan) => plan,
         None => {
-            owned_plan =
-                crate::handler::compile_execution(pool, request, metric, event_input, network, simulation, strategy)?;
+            owned_plan = crate::handler::ExecutionPlan {
+                aggregation,
+                ..crate::handler::compile_execution(pool, request, metric, event_input, network, simulation, strategy)?
+            };
             &owned_plan
         }
     };
@@ -922,7 +975,10 @@ pub(crate) fn solve_physical_impl(
     env.cache_entries = limits.cache_entries;
     let live = matches!(request.objective.inner(), Objective::LiveScore { .. });
     let orders = if live { ORDERS } else { 1 };
-    env.target = Some(telemetry::Target { orders, denominator: orders.to_string() });
+    env.target = Some(telemetry::Target {
+        orders,
+        denominator: if plan.aggregation == Aggregation::Maximum { "1".into() } else { orders.to_string() },
+    });
     env.domain = Some(telemetry::Domain {
         members: candidates.len(),
         snaps: snaps.len(),
@@ -954,6 +1010,7 @@ pub(crate) fn solve_physical_impl(
     }
     let lottery = certified_engine::lottery_mode(pool, request, &plan.domain)?;
     let mut engine = Engine {
+        aggregation: plan.aggregation,
         pool,
         request,
         metric,
@@ -970,7 +1027,7 @@ pub(crate) fn solve_physical_impl(
         bonus_scratch: super::joint::BonusScratch::default(),
         order_steps: Default::default(),
         top: Vec::new(),
-        certified: if lottery == certified_engine::LotteryMode::Certified {
+        certified: if lottery == certified_engine::LotteryMode::Certified && plan.aggregation == Aggregation::Expected {
             Some(CertifiedState::new(
                 request.k,
                 if limits.cache_entries == 0 { 0 } else { certified_engine::LUCK_CURVE_CACHE_BYTES },
@@ -1023,6 +1080,13 @@ pub(crate) fn solve_physical_impl(
             engine.rec.end(&mut engine.tel);
         }
         match strategy {
+            Strategy::Exhaustive | Strategy::BranchAndBound if live && plan.aggregation == Aggregation::Maximum => {
+                engine.tel.environment.traversal =
+                    if plan.joint.is_some() { Traversal::Joint } else { Traversal::Exhaustive };
+                engine.rec.begin(&mut engine.tel, "search", None);
+                maximum::search(&mut engine, &plan.domain, plan.joint.as_ref())?;
+                engine.rec.end(&mut engine.tel);
+            }
             Strategy::Exhaustive | Strategy::BranchAndBound => {
                 let mut physical = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
                 // The deck payoff ranking either settles the Top-K or hands the search to the joint traversal.
@@ -1261,7 +1325,10 @@ pub(crate) fn solve_physical_impl(
         }
         results
     } else {
-        std::mem::take(&mut engine.top).into_iter().map(|e| e.wire(metric)).collect::<Result<Vec<_>, _>>()?
+        std::mem::take(&mut engine.top)
+            .into_iter()
+            .map(|e| e.wire(metric, plan.aggregation, live))
+            .collect::<Result<Vec<_>, _>>()?
     };
     let exit_reason = engine.stop.unwrap_or(ExitReason::Exhausted);
     engine.rec.end(&mut engine.tel);

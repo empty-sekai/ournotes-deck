@@ -146,6 +146,7 @@ pub(crate) struct NominalOutcome {
 /// A prefix of nontrivial semantic lottery outcomes, not a script of PRNG seeds or raw integer values.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NominalScript {
+    support_only: bool,
     prefix: Vec<usize>,
     cursor: usize,
     handled_draws: u64,
@@ -177,8 +178,31 @@ impl LiveRandom {
 
     pub(crate) fn with_nominal_prefix(prefix: Vec<usize>) -> Self {
         let mut random = Self::new(0);
-        random.nominal = Some(NominalScript { prefix, cursor: 0, handled_draws: 0, branch: None });
+        random.nominal = Some(NominalScript { support_only: false, prefix, cursor: 0, handled_draws: 0, branch: None });
         random
+    }
+
+    pub(crate) fn with_support_prefix(prefix: Vec<usize>) -> Self {
+        let mut random = Self::with_nominal_prefix(prefix);
+        random.nominal.as_mut().expect("nominal script").support_only = true;
+        random
+    }
+
+    pub(crate) fn support_probability(&mut self, rate: f32) -> Result<Option<bool>, Error> {
+        if !self.nominal.as_ref().is_some_and(|s| s.support_only) {
+            return Ok(None);
+        }
+        if !rate.is_finite() {
+            return Err(Error::Unsupported("nominal skill probability requires a finite rate".into()));
+        }
+        let weights = if rate <= 0.0 {
+            vec![(1, 1, 0)]
+        } else if rate >= 1.0 {
+            vec![(1, 1, 1)]
+        } else {
+            vec![(1, 2, 0), (1, 2, 1)]
+        };
+        self.nominal_lottery(weights).map(|result| Some(result != 0))
     }
 
     /// Extend the selected outcomes while preserving the checkpoint's consumed draws and cursor.
@@ -276,6 +300,26 @@ impl LiveRandom {
 #[cfg(test)]
 mod nominal_tests {
     use super::*;
+
+    #[test]
+    fn support_skill_probabilities_keep_only_positive_probability_outcomes() {
+        for (rate, expected) in [(-1.0, false), (0.0, false), (1.0, true), (2.0, true)] {
+            let mut random = LiveRandom::with_support_prefix(Vec::new());
+            assert_eq!(random.support_probability(rate).unwrap(), Some(expected));
+            assert!(random.nominal_prefix_consumed() && random.nominal_covers_draws());
+        }
+        for rate in [f32::from_bits(1), 0.01, 0.5, f32::from_bits(1.0f32.to_bits() - 1)] {
+            for (choice, expected) in [(0, false), (1, true)] {
+                let mut random = LiveRandom::with_support_prefix(vec![choice]);
+                assert_eq!(random.support_probability(rate).unwrap(), Some(expected));
+                assert!(random.nominal_prefix_consumed() && random.nominal_covers_draws());
+            }
+        }
+        let mut seeded = LiveRandom::new(17);
+        let before = seeded.clone();
+        assert_eq!(seeded.support_probability(0.5).unwrap(), None);
+        assert_eq!(seeded, before);
+    }
 
     #[test]
     fn checkpoint_extension_preserves_consumption_and_unhandled_draws() {

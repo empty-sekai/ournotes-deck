@@ -554,6 +554,7 @@ mod tests {
                     &Strategy::BranchAndBound,
                     None,
                     &SimulationInput::default(),
+                    crate::types::Aggregation::Expected,
                     None,
                     &[],
                     None,

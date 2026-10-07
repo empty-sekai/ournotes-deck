@@ -64,7 +64,7 @@ pub use luck_dp::{
 };
 pub use luck_exact::{
     LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactSession,
-    LuckExactStats, luck_exact_law_with_ranking,
+    LuckExactStats, LuckExactSupport, luck_exact_law_with_ranking,
 };
 mod luck_score_bounds;
 pub use luck_score_bounds::{

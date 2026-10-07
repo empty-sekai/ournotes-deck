@@ -13,6 +13,8 @@ use std::{
 /// Distance between complete frame checkpoints. An interrupted frame is replayed from the latest checkpoint.
 const CHECKPOINT_FRAMES: usize = 256;
 const MAX_BRANCH_DEPTH: usize = 32;
+const MAX_SUPPORT_BRANCH_DEPTH: usize = 4096;
+const MAX_SUPPORT_PREFIX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ORDER_RUNS: u64 = 32_768;
 const MAX_CACHED_LAWS: usize = 64;
 const MAX_CACHED_BYTES: usize = 32 * 1024 * 1024;
@@ -132,6 +134,16 @@ pub struct LuckExactAttempt {
     pub decline: Option<LuckExactDecline>,
 }
 
+/// Exact reachable terminal score/life pairs. Every pair has positive nominal probability.
+#[derive(Clone, Debug)]
+pub struct LuckExactSupport {
+    pub outcomes: Vec<(i32, i32)>,
+    pub stats: LuckExactStats,
+    pub decline: Option<LuckExactDecline>,
+    /// A reachable score attained the supplied certified ceiling.
+    pub attained_ceiling: bool,
+}
+
 fn declined(stats: LuckExactStats, why: LuckExactDecline) -> LuckExactAttempt {
     LuckExactAttempt { law: None, stats, decline: Some(why) }
 }
@@ -139,6 +151,13 @@ fn declined(stats: LuckExactStats, why: LuckExactDecline) -> LuckExactAttempt {
 struct CachedLaw {
     identity: String,
     law: LuckExactLaw,
+    bytes: usize,
+}
+
+struct CachedSupport {
+    identity: String,
+    outcomes: Vec<(i32, i32)>,
+    attained_ceiling: bool,
     bytes: usize,
 }
 
@@ -152,13 +171,14 @@ pub struct LuckExactSession<'a> {
     notes: &'a [LiveNote],
     events: &'a [(i32, i32)],
     params: LiveParams,
-    setup: &'a GekisouSetup,
+    setup: Option<&'a GekisouSetup>,
     play: &'a LivePlay,
     delta_times: &'a [f32],
     ranking: Option<&'a [RankConfirmation]>,
     capacity: usize,
     cached_bytes: usize,
     laws: VecDeque<CachedLaw>,
+    supports: VecDeque<CachedSupport>,
 }
 
 impl<'a> LuckExactSession<'a> {
@@ -182,13 +202,14 @@ impl<'a> LuckExactSession<'a> {
             notes,
             events,
             params,
-            setup,
+            setup: Some(setup),
             play,
             delta_times,
             ranking,
             capacity: cache_entries.min(MAX_CACHED_LAWS),
             cached_bytes: 0,
             laws: VecDeque::new(),
+            supports: VecDeque::new(),
         })
     }
 
@@ -208,12 +229,20 @@ impl<'a> LuckExactSession<'a> {
             return Ok(declined(stats, LuckExactDecline::WorkBudget));
         }
         let mut fresh = if let Some(ranking) = self.ranking {
-            let mut model =
-                LiveModel::new_gekisou_external(self.master, deck, self.notes, self.events, self.params, self.setup)?;
+            let mut model = LiveModel::new_gekisou_external(
+                self.master,
+                deck,
+                self.notes,
+                self.events,
+                self.params,
+                self.setup.expect("Gekisou law"),
+            )?;
             model.set_rank_confirmation_timeline(ranking)?;
             model
+        } else if let Some(setup) = self.setup {
+            LiveModel::new_gekisou(self.master, deck, self.notes, self.events, self.params, setup)?
         } else {
-            LiveModel::new_gekisou(self.master, deck, self.notes, self.events, self.params, self.setup)?
+            LiveModel::new(self.master, deck, self.notes, self.events, self.params)?
         };
         if fresh.draws() != 0 {
             return Ok(declined(stats, LuckExactDecline::UnhandledRandom));
@@ -244,6 +273,208 @@ impl<'a> LuckExactSession<'a> {
         }
         Ok(result)
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_live(
+        master: &'a Master,
+        notes: &'a [LiveNote],
+        events: &'a [(i32, i32)],
+        params: LiveParams,
+        play: &'a LivePlay,
+        delta_times: &'a [f32],
+        cache_entries: usize,
+    ) -> Result<Self, Error> {
+        if delta_times.len() != play.frames.len() {
+            return Err(Error::Input("one delta time per frame".into()));
+        }
+        Ok(Self {
+            master,
+            notes,
+            events,
+            params,
+            setup: None,
+            play,
+            delta_times,
+            ranking: None,
+            capacity: cache_entries.min(MAX_CACHED_LAWS),
+            cached_bytes: 0,
+            laws: VecDeque::new(),
+            supports: VecDeque::new(),
+        })
+    }
+
+    /// Enumerate reachable outcomes without multiplying probability masses. A supplied score ceiling must bound
+    /// every terminal path. Attaining it certifies the maximum and may stop the support traversal early.
+    pub fn support(
+        &mut self,
+        deck: &[Performer],
+        budget: &mut LuckExactBudget,
+        score_ceiling: Option<i32>,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<LuckExactSupport, Error> {
+        let mut model = if let Some(ranking) = self.ranking {
+            let mut model = LiveModel::new_gekisou_external(
+                self.master,
+                deck,
+                self.notes,
+                self.events,
+                self.params,
+                self.setup.expect("Gekisou ranking"),
+            )?;
+            model.set_rank_confirmation_timeline(ranking)?;
+            model
+        } else if let Some(setup) = self.setup {
+            LiveModel::new_gekisou(self.master, deck, self.notes, self.events, self.params, setup)?
+        } else {
+            LiveModel::new(self.master, deck, self.notes, self.events, self.params)?
+        };
+        let identity = (self.capacity != 0).then(|| initialized_identity(&mut model)).flatten();
+        if !cancelled()
+            && let Some(identity) = &identity
+            && let Some(cached) = self
+                .supports
+                .iter()
+                .find(|cached| &cached.identity == identity && (!cached.attained_ceiling || score_ceiling.is_some()))
+        {
+            return Ok(LuckExactSupport {
+                outcomes: cached.outcomes.clone(),
+                stats: LuckExactStats::default(),
+                decline: None,
+                attained_ceiling: cached.attained_ceiling,
+            });
+        }
+        let result = enumerate_support(model, self.play, self.delta_times, budget, score_ceiling, cancelled)?;
+        if result.decline.is_none()
+            && let Some(identity) = identity
+        {
+            let bytes = identity.len() + result.outcomes.len() * std::mem::size_of::<(i32, i32)>();
+            if bytes <= MAX_CACHED_BYTES {
+                while self.supports.len() >= self.capacity
+                    || self.supports.iter().map(|cached| cached.bytes).sum::<usize>() + bytes > MAX_CACHED_BYTES
+                {
+                    self.supports.pop_front();
+                }
+                self.supports.push_back(CachedSupport {
+                    identity,
+                    outcomes: result.outcomes.clone(),
+                    attained_ceiling: result.attained_ceiling,
+                    bytes,
+                });
+            }
+        }
+        Ok(result)
+    }
+}
+
+fn enumerate_support(
+    mut fresh: LiveModel,
+    play: &LivePlay,
+    delta_times: &[f32],
+    budget: &mut LuckExactBudget,
+    score_ceiling: Option<i32>,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<LuckExactSupport, Error> {
+    let mut stats = LuckExactStats::default();
+    let declined =
+        |stats, why| LuckExactSupport { outcomes: Vec::new(), stats, decline: Some(why), attained_ceiling: false };
+    if fresh.draws() != 0 {
+        return Ok(declined(stats, LuckExactDecline::UnhandledRandom));
+    }
+    fresh.set_random(LiveRandom::with_support_prefix(Vec::new()));
+    let mut pending = vec![(Vec::<usize>::new(), 0usize, Rc::new(fresh))];
+    let mut pending_prefix_bytes = 0usize;
+    let mut outcomes = std::collections::BTreeSet::new();
+    while let Some((prefix, mut checkpoint_frame, mut checkpoint)) = pending.pop() {
+        pending_prefix_bytes -= prefix.len() * std::mem::size_of::<usize>();
+        if cancelled() {
+            return Ok(declined(stats, LuckExactDecline::Cancelled));
+        }
+        if budget.exhausted() || stats.replay_runs >= MAX_ORDER_RUNS {
+            return Ok(declined(stats, LuckExactDecline::WorkBudget));
+        }
+        budget.remaining_runs -= 1;
+        stats.replay_runs += 1;
+        let mut model = (*checkpoint).clone();
+        model.random.extend_nominal_prefix(prefix.clone())?;
+        let mut execution_error = None;
+        let start_frame = checkpoint_frame;
+        for (frame_index, (frame, &dt)) in play.frames.iter().zip(delta_times).enumerate().skip(start_frame) {
+            if cancelled() {
+                return Ok(declined(stats, LuckExactDecline::Cancelled));
+            }
+            if budget.remaining_frames == 0 {
+                return Ok(declined(stats, LuckExactDecline::WorkBudget));
+            }
+            if frame_index - checkpoint_frame >= CHECKPOINT_FRAMES {
+                checkpoint_frame = frame_index;
+                checkpoint = Rc::new(model.clone());
+            }
+            budget.remaining_frames -= 1;
+            stats.frames += 1;
+            if let Err(error) = model.frame_timed(frame.time_ms, &frame.judged, dt) {
+                execution_error = Some(error);
+                break;
+            }
+        }
+        if !model.random.nominal_covers_draws() {
+            return Ok(declined(stats, LuckExactDecline::UnhandledRandom));
+        }
+        if let Some(branch) = model.random.nominal_branch() {
+            if execution_error.is_none() {
+                return Err(Error::Domain("nominal branch did not stop playback".into()));
+            }
+            if prefix.len() >= MAX_SUPPORT_BRANCH_DEPTH {
+                return Ok(declined(stats, LuckExactDecline::BranchDepth));
+            }
+            let prefix_bytes = (prefix.len() + 1) * std::mem::size_of::<usize>();
+            if branch.len().saturating_mul(prefix_bytes).saturating_add(pending_prefix_bytes) > MAX_SUPPORT_PREFIX_BYTES
+            {
+                return Ok(declined(stats, LuckExactDecline::WorkBudget));
+            }
+            if branch.len().saturating_add(pending.len()) > MAX_ORDER_RUNS as usize {
+                return Ok(declined(stats, LuckExactDecline::WorkBudget));
+            }
+            let mut choices: Vec<_> = branch.iter().enumerate().collect();
+            choices.sort_by_key(|(_, outcome)| outcome.value);
+            for (choice, outcome) in choices {
+                if outcome.weight == 0 {
+                    continue;
+                }
+                let mut next = Vec::with_capacity(prefix.len() + 1);
+                next.extend_from_slice(&prefix);
+                next.push(choice);
+                pending_prefix_bytes += next.len() * std::mem::size_of::<usize>();
+                pending.push((next, checkpoint_frame, Rc::clone(&checkpoint)));
+            }
+            continue;
+        }
+        if let Some(error) = execution_error {
+            return match error {
+                Error::Unsupported(_) | Error::Capacity(_) => Ok(declined(stats, LuckExactDecline::Unsupported)),
+                error => Err(error),
+            };
+        }
+        if !model.random.nominal_prefix_consumed() {
+            return Err(Error::Domain("nominal terminal did not consume its outcome prefix".into()));
+        }
+        outcomes.insert((model.score(), model.current_life()));
+        stats.terminal_paths += 1;
+        if score_ceiling.is_some_and(|ceiling| model.score() > ceiling) {
+            return Err(Error::Domain("reachable score exceeds its certified ceiling".into()));
+        }
+        if score_ceiling == Some(model.score()) {
+            return Ok(LuckExactSupport {
+                outcomes: outcomes.into_iter().collect(),
+                stats,
+                decline: None,
+                attained_ceiling: true,
+            });
+        }
+    }
+    if cancelled() {
+        return Ok(declined(stats, LuckExactDecline::Cancelled));
+    }
+    Ok(LuckExactSupport { outcomes: outcomes.into_iter().collect(), stats, decline: None, attained_ceiling: false })
 }
 
 fn initialized_identity(model: &mut LiveModel) -> Option<String> {
@@ -545,6 +776,64 @@ mod tests {
         for atom in law.atoms() {
             assert_eq!(atom.mass, LuckExactMass::reduced(counts[&(atom.score, atom.final_life)], 16).unwrap());
         }
+    }
+
+    #[test]
+    fn reachable_support_matches_complete_law_and_caches_exact_maximum_witnesses() {
+        let (master, notes, params, setup, play, delta) = fixture();
+        let mut session = LuckExactSession::new(&master, &notes, &[], params, &setup, &play, &delta, None, 8).unwrap();
+        let law = session.law(&[], &mut LuckExactBudget::default(), || false).unwrap().law.unwrap();
+        let expected: Vec<_> = law.atoms().iter().map(|atom| (atom.score, atom.final_life)).collect();
+        let support = session.support(&[], &mut LuckExactBudget::default(), None, || false).unwrap();
+        assert_eq!(support.outcomes, expected);
+        assert_eq!(support.decline, None);
+        let maximum = expected.iter().map(|&(score, _)| score).max().unwrap();
+        let mut fresh = LuckExactSession::new(&master, &notes, &[], params, &setup, &play, &delta, None, 8).unwrap();
+        let peak = fresh.support(&[], &mut LuckExactBudget::default(), Some(maximum), || false).unwrap();
+        assert!(peak.attained_ceiling);
+        assert_eq!(peak.outcomes.iter().map(|&(score, _)| score).max(), Some(maximum));
+        let cached = fresh
+            .support(&[], &mut LuckExactBudget { remaining_runs: 0, remaining_frames: 0 }, Some(maximum), || false)
+            .unwrap();
+        assert_eq!(cached.outcomes, peak.outcomes);
+        assert_eq!(cached.stats.frames, 0);
+        let incomplete = fresh
+            .support(&[], &mut LuckExactBudget { remaining_runs: 0, remaining_frames: 0 }, None, || false)
+            .unwrap();
+        assert_eq!(incomplete.decline, Some(LuckExactDecline::WorkBudget));
+        assert!(incomplete.outcomes.is_empty());
+    }
+
+    #[test]
+    fn many_lottery_notes_close_on_an_attained_certified_score_ceiling() {
+        let (mut master, mut notes, mut params, mut setup, mut play, _) = fixture();
+        master.support_skill_effects.clear();
+        master.reindex().unwrap();
+        notes = (1..=48).map(|id| LiveNote { note_id: id, time_ms: id * 100, ..notes[0] }).collect();
+        params.converted_note_count = notes.len() as i32;
+        params.music_length_ms = 8000;
+        setup.fevers[0].1 = 5000;
+        play.frames = (0..=80)
+            .map(|frame| PlayFrame {
+                time_ms: frame * 100,
+                judged: notes
+                    .iter()
+                    .filter(|note| note.time_ms == frame * 100)
+                    .map(|note| JudgedNote { note_id: note.note_id, judgement: 5, judgement_time_ms: note.time_ms })
+                    .collect(),
+            })
+            .collect();
+        let delta = vec![0.1; play.frames.len()];
+        let skills = super::super::luck_skills(&master).unwrap();
+        let mut bounds =
+            super::super::LuckScoreSession::new(&master, &skills, &notes, &[], params, &setup, &play, &delta, None);
+        let upper = bounds.summary(&[], None, || false).unwrap().unwrap().final_support.upper;
+        let mut session = LuckExactSession::new(&master, &notes, &[], params, &setup, &play, &delta, None, 8).unwrap();
+        let result = session.support(&[], &mut LuckExactBudget::default(), Some(upper), || false).unwrap();
+        assert_eq!(result.decline, None);
+        assert!(result.attained_ceiling);
+        assert_eq!(result.outcomes.iter().map(|&(score, _)| score).max(), Some(upper));
+        assert!(result.stats.terminal_paths < 100);
     }
 
     #[test]

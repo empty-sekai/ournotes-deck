@@ -75,7 +75,7 @@ pub struct FixedSongRanking {
 
 /// Rank one unchanged physical deck on explicitly selected songs, using the
 /// same fixed evaluator and performance orders. Every song resolves power and
-/// conditions afresh. Tie order is expected utility, power, then score ID.
+/// conditions afresh. Tie order is the selected objective value, power, then score ID.
 /// The shared budget includes all songs; only complete evaluations enter rank.
 /// A song-specific stream or duration requires separate evaluate_fixed calls.
 pub fn rank_fixed_songs(

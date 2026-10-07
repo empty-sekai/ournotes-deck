@@ -2206,6 +2206,163 @@ fn account_recommendation_power_and_free_live_use_real_search_and_preserve_priva
 }
 
 #[test]
+fn account_maximum_ranks_all_teams_by_their_best_reachable_order_with_the_same_play() {
+    use ournotes_search::{engine, recommendation::Status};
+    use std::cmp::Reverse;
+    let (data, account) = account_recommendation_fixture();
+    for play in [
+        json!({"accuracy":{"greatFraction":0.2}}),
+        json!({"play":{"kind":"pattern","greatFraction":0.2,"justFraction":0,"missEvery":3}}),
+    ] {
+        let mut goal = json!({"kind":"freeLive","musicId":10,"difficulty":"expert"});
+        goal.as_object_mut().unwrap().extend(play.as_object().unwrap().clone());
+        let mut request = account_request(goal);
+        request["constraints"]["noSnaps"] = json!(true);
+        let mean = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
+        assert!(matches!(mean.status, Status::Ok), "{:?}", mean.errors);
+        let mean = mean.result.unwrap();
+        assert!(mean.optimality.proven);
+        assert_eq!(mean.teams.len(), 5, "all five member sets with the fixed leader are needed for the oracle");
+        assert_eq!(serde_json::to_value(mean.aggregation).unwrap(), "expected");
+        let mut oracle: Vec<_> = mean
+            .teams
+            .iter()
+            .map(|team| (team.orders.as_ref().unwrap().max.score, team.power, team.layout.members))
+            .collect();
+        oracle.sort_by_key(|(score, power, members)| (Reverse(*score), Reverse(*power), *members));
+        request["aggregation"] = json!("maximum");
+        let mut reports = Vec::new();
+        let mut collect = |answer: &engine::Answer| reports.push(serde_json::to_value(answer).unwrap());
+        let peak = engine::recommend_account(
+            &data,
+            &account.to_string(),
+            &request.to_string(),
+            Some(engine::AnswerProgress { interval: std::time::Duration::ZERO, report: &mut collect }),
+        );
+        assert!(matches!(peak.status, Status::Ok), "{:?}", peak.errors);
+        let peak = peak.result.unwrap();
+        assert!(peak.optimality.proven);
+        assert_eq!(peak.goal, mean.goal, "aggregation preserves the resolved play conditions");
+        assert_eq!(serde_json::to_value(peak.aggregation).unwrap(), "maximum");
+        assert_eq!(peak.exit_reason, Some(ournotes_search::types::ExitReason::Exhausted));
+        assert_eq!(peak.teams.len(), oracle.len());
+        for (team, (score, power, members)) in peak.teams.iter().zip(oracle) {
+            assert_eq!(team.layout.members, members);
+            assert_eq!(team.power, power);
+            let value = team.value.as_ref().unwrap();
+            assert_eq!(value.score, score);
+            let exact = value.exact.as_ref().unwrap();
+            assert_eq!(exact.numerator, score.to_string());
+            assert_eq!(exact.denominator, "1");
+            assert!(team.orders.is_none(), "maximum values are not order-distribution statistics");
+            let best = team.best_order.as_ref().unwrap();
+            assert_eq!(best.score, score);
+            let mut order_members = best.order;
+            let mut layout_members = members;
+            order_members.sort();
+            layout_members.sort();
+            assert_eq!(order_members, layout_members);
+        }
+        assert!(!reports.is_empty());
+        for report in reports {
+            assert_eq!(report["result"]["aggregation"], "maximum");
+            assert_eq!(report["result"]["goal"], peak.goal);
+            assert_eq!(report["result"]["optimality"]["proven"], false);
+            assert!(report["result"].get("exitReason").is_none());
+        }
+    }
+}
+
+#[test]
+fn account_maximum_can_choose_a_different_team_from_expected_score() {
+    use ournotes_search::{engine, recommendation::Status};
+    let mut document = account_recommendation_data();
+    // All notes follow the final skill activation. The short skill only covers that last position;
+    // the long skill covers every position, making its mean higher and its maximum lower.
+    document["charts"][0]["notes"]["timeMs"] = json!((0..12).map(|i| 1100 + i).collect::<Vec<_>>());
+    let mut data = DeckData::from_json(&document.to_string()).unwrap();
+    for card in &mut data.master.member_cards {
+        card.rarity = 3;
+        card.card_type = 1;
+        card.best_music_tag_ids.clear();
+        card.performance_power_max = 5000;
+        card.technic_power_max = 5000;
+        card.visual_power_max = 5000;
+        card.level_group = 1;
+        card.leader_skill_id = 0;
+        card.live_skill_id = match card.id {
+            5 => 1,
+            6 => 2,
+            _ => 0,
+        };
+    }
+    for effect in &mut data.master.live_skill_effects {
+        effect.skill_condition_group = 0;
+        effect.skill_target_ids.clear();
+        effect.skill_effect_type = 2000;
+        effect.activation_time_second = if effect.live_skill_id == 1 { 0.2 } else { 5.0 };
+        effect.effect_value = if effect.live_skill_id == 1 { 5000 } else { 2000 };
+    }
+    let (_, mut account) = account_recommendation_fixture();
+    account["datasetId"] = json!(data.sha256);
+    let mut request = account_request(json!({"kind":"freeLive","musicId":10,"difficulty":"expert",
+        "accuracy":{"greatFraction":0.2}}));
+    request["constraints"]["noSnaps"] = json!(true);
+    request["constraints"]["includeMembers"] = json!([1, 2, 3, 4]);
+    request["k"] = json!(2);
+    let mean = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
+    assert!(matches!(mean.status, Status::Ok), "{:?}", mean.errors);
+    let mean = mean.result.unwrap();
+    assert!(mean.optimality.proven);
+    assert_eq!(mean.teams.len(), 2);
+    assert!(mean.teams[0].layout.members.contains(&6));
+    assert_eq!(mean.teams[0].power, mean.teams[1].power);
+    assert!(mean.teams[0].value.as_ref().unwrap().score > mean.teams[1].value.as_ref().unwrap().score);
+    assert!(mean.teams[0].orders.as_ref().unwrap().max.score < mean.teams[1].orders.as_ref().unwrap().max.score);
+
+    request["aggregation"] = json!("maximum");
+    let peak = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
+    assert!(matches!(peak.status, Status::Ok), "{:?}", peak.errors);
+    let peak = peak.result.unwrap();
+    assert!(peak.optimality.proven);
+    assert_eq!(peak.goal, mean.goal);
+    assert_eq!(peak.teams.len(), 2);
+    assert!(peak.teams[0].layout.members.contains(&5));
+    assert!(peak.teams[0].value.as_ref().unwrap().score > peak.teams[1].value.as_ref().unwrap().score);
+    assert_eq!(peak.teams[0].best_order.as_ref().unwrap().order[4], 5);
+
+    request["aggregation"] = json!("expected");
+    let restored = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
+    assert!(matches!(restored.status, Status::Ok), "{:?}", restored.errors);
+    assert_eq!(
+        serde_json::to_value(&restored.result.unwrap().teams).unwrap(),
+        serde_json::to_value(&mean.teams).unwrap()
+    );
+}
+
+#[test]
+fn account_aggregation_rejects_unknown_values_and_keeps_timeout_unproven() {
+    use ournotes_search::{engine, recommendation::Status};
+    let (data, account) = account_recommendation_fixture();
+    let mut request = account_request(json!({"kind":"freeLive","musicId":10,"difficulty":"expert"}));
+    request["aggregation"] = json!("median");
+    let invalid = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
+    assert!(matches!(invalid.status, Status::Invalid));
+    assert!(invalid.result.is_none());
+    assert!(invalid.errors.iter().any(|issue| issue.path == "aggregation" && issue.code == "input"));
+    request["aggregation"] = json!("maximum");
+    request["limits"]["timeLimitMs"] = json!(0);
+    let timed_out = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
+    assert!(matches!(timed_out.status, Status::Ok), "{:?}", timed_out.errors);
+    let result = timed_out.result.unwrap();
+    assert_eq!(serde_json::to_value(result.aggregation).unwrap(), "maximum");
+    assert_eq!(result.exit_reason, Some(ournotes_search::types::ExitReason::TimeLimit));
+    assert_eq!(serde_json::to_value(&result).unwrap()["exitReason"], "timeLimit");
+    assert!(!result.optimality.proven);
+    assert!(result.teams.is_empty());
+}
+
+#[test]
 fn account_answers_distinguish_missing_invalid_and_unsupported_without_zero_filling() {
     use ournotes_search::{engine, recommendation::Status};
     let (mut data, mut account) = account_recommendation_fixture();
@@ -2441,6 +2598,26 @@ fn export_account_transport_corpus() {
         coverage.push(json!({"name":name,"scene":kind,"metric":"scoreAndLife","scope":"synthetic","play":"pattern"}));
     }
     assert_eq!(requests.len(), 49, "46 scene/metric pairs plus accuracy and two explicit patterns");
+    let maximum_requests: Vec<_> = requests
+        .iter()
+        .map(|(name, request)| {
+            let mut request = request.clone();
+            request["aggregation"] = json!("maximum");
+            (format!("{name}-maximum"), request)
+        })
+        .collect();
+    let maximum_coverage: Vec<_> = coverage
+        .iter()
+        .map(|case| {
+            let mut case = case.clone();
+            case["name"] = json!(format!("{}-maximum", case["name"].as_str().unwrap()));
+            case["aggregation"] = json!("maximum");
+            case
+        })
+        .collect();
+    requests.extend(maximum_requests);
+    coverage.extend(maximum_coverage);
+    assert_eq!(requests.len(), 98, "both aggregations cover every scene, metric and play case");
     let mut names = BTreeSet::new();
     for (name, request) in requests {
         assert!(names.insert(name.clone()), "duplicate corpus identity");

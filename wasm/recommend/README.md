@@ -24,6 +24,10 @@ original request/answer/progress shapes; account inputs use the new formats belo
 - Answer: `ournotes-deck.account-recommendation/1`, with `status`, `missing`, `errors`, `final`, and `result`.
 - `capabilities()` returns JSON text identifying formats, supported pairs, and explicit limitations.
 
+Set request `aggregation` to `maximum` to rank by the highest reachable payoff while keeping the same play
+conditions. Omission selects `expected`. Read `capabilities.aggregations` before enabling the choice; progress
+and final answers echo `result.aggregation`. Maximum results expose the best order without probability statistics.
+
 `recommend` is synchronous. Use a dedicated Worker and terminate it to cancel. Callback exceptions are ignored.
 An input error is a structured answer, not a trap. Only a proven result may be called optimal. Explicit unsupported
 areas remain release gaps; the adapter does not make a sampled or weighted lottery score exact.
