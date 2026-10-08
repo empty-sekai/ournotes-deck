@@ -240,7 +240,10 @@ pub(super) fn identify_basis(
                     .is_none_or(|selected| row["fingerprint"].as_str().is_some_and(|f| selected.iter().any(|s| s == f)))
             })
             .all(|row| row["status"] == "success");
-    let verification_complete = rows.iter().all(|row| row.get("verification").is_none_or(|v| v["status"] == "success"));
+    let verification_requested = options.verify && options.propagate;
+    let verified_jobs = rows.iter().filter(|row| row.get("verification").is_some()).count();
+    let verification_complete = !verification_requested
+        || (verified_jobs == jobs.len() && rows.iter().all(|row| row["verification"]["status"] == "success"));
     json!({"format":"ournotes-deck.luck-response-basis/1",
         "identificationComplete":identification_complete,"probabilityComplete":propagation_complete,
         "complete":identification_complete && missing_selected.is_empty() && (!options.propagate || propagation_complete) && verification_complete,
@@ -248,13 +251,16 @@ pub(super) fn identify_basis(
         "nativeExpectationProven":false,"rankingProven":false,"usesMonteCarlo":false,
         "usesSingleSkillResponseComposition":false,"allSkillCombinationsPrecomputed":false,
         "missingSelectedPrograms":missing_selected,"jobs":rows,"programs":programs,
-        "memoryScope":"Separate retained identities, one compiled basis and retained native term responses; input data, returned JSON and native DP workspace are not a total RSS bound.",
+        "verificationRequested":verification_requested,"verificationComplete":verification_complete,
+        "memoryScope":"Separate allowances for retained identities, one compiled basis and native response payloads. Response-index capacity and Arc counters are reported separately and excluded from the response payload allowance. Inputs, returned JSON and native DP workspace are not a total RSS bound.",
         "stats":{"requestedJobs":jobs.len(),"compiledJobs":compiled,"basisTermReferences":term_references,
             "uniquePrograms":responses.len(),"exactTermAliases":aliases,"propagationCalls":propagations,
             "reconstructedJobs":reconstructions,"compileMs":compile_ms,"propagationMs":propagation_ms,
-            "mixtureMs":mixture_ms,"verificationCalls":verification_calls,"verificationMs":verification_ms,
+            "mixtureMs":mixture_ms,"verificationCalls":verification_calls,"verifiedJobs":verified_jobs,"verificationMs":verification_ms,
             "identityBudgetBytes":identity_limit,"programBudgetBytes":program_limit,"responseBudgetBytes":response_limit,
             "retainedIdentityBytes":registry.bytes,"retainedResponseBytes":response_bytes,
+            "responseIndexBytes":responses.capacity() * std::mem::size_of::<Option<Arc<LuckTableMinimumTermResponse>>>(),
+            "responseArcCounterBytes":responses.iter().filter(|response| response.is_some()).count() * 2 * std::mem::size_of::<usize>(),
             "compiledProgramPeakBytes":program_peak,"temporaryIdentityPeakBytes":identity_peak,
             "fingerprintWorkspacePeakBytes":fingerprint_peak,"elapsedMs":began.elapsed().as_secs_f64()*1000.0}})
 }
