@@ -50,7 +50,7 @@ fn performer_payload(performer: &Performer) -> Option<usize> {
 }
 
 impl WorkingSet<'_> {
-    fn allocated_bytes(&self) -> Option<usize> {
+    pub(super) fn allocated_bytes(&self) -> Option<usize> {
         let mut bytes = size_of::<AdmittedFamilyInputs>()
             .checked_add(size_of::<Vec<(usize, &Performer)>>())?
             .checked_add(self.resources_capacity.checked_mul(size_of::<(usize, &Performer)>())?)?

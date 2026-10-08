@@ -6,6 +6,7 @@
 //! The original member order, source order and native binary32 writer operations are retained in every one of the
 //! 120 performance orders. A family is published only after every writer-placement profile and order completed.
 
+use super::super::build_context::BuildContext;
 use super::*;
 use crate::live::skip::is_judgement_note;
 use std::collections::BTreeSet;
@@ -855,18 +856,25 @@ impl<'a> LuckFamilyContext<'a> {
         // This single-entry proof lives only during this admission. Original physical-pair construction and
         // all runtime/conversion checks still execute for every choice; only an equal projected constructor
         // that already succeeded in this exact context can avoid being compiled again.
-        let mut projected_admission = admission_reuse::PreviousProjection::new(
-            self,
-            admission_reuse::WorkingSet {
-                base: &base,
-                choices,
-                allowed: &allowed,
-                writers: &writers,
-                profiles: &profiles,
-                resources_capacity: resources.capacity(),
-            },
-            limits.max_retained_bytes,
-        );
+        let working = admission_reuse::WorkingSet {
+            base: &base,
+            choices,
+            allowed: &allowed,
+            writers: &writers,
+            profiles: &profiles,
+            resources_capacity: resources.capacity(),
+        };
+        // Both optional optimizations share the existing admission ledger. Reserve the projection proof
+        // (including its comparison scratch) first; the native source index gets only the remaining bytes.
+        // This is the existing retained/scratch allowance, not a new bound on the native model's own peak.
+        let index_allowance = working.allocated_bytes().and_then(|bytes| {
+            let bytes = bytes.checked_add(size_of::<Option<admission_reuse::PreviousProjection<'_, '_>>>())?;
+            let option_overhead = size_of::<Option<BuildContext<'_>>>().checked_sub(size_of::<BuildContext<'_>>())?;
+            limits.max_retained_bytes.checked_sub(bytes.checked_add(option_overhead)?)
+        });
+        let build_context = index_allowance.and_then(|allowance| BuildContext::try_bounded(self.master, allowance));
+        let mut projected_admission =
+            admission_reuse::PreviousProjection::new(self, working, limits.max_retained_bytes);
         // Optional command-work refinement has a stricter probe lifecycle contract than controller-law
         // admission. Check every physical pair, including reward-only choices, before sharing this flag.
         let mut probe_phase = None;
@@ -878,9 +886,22 @@ impl<'a> LuckFamilyContext<'a> {
                 }
                 let mut deck = base.clone();
                 deck[slot] = choice.performer.clone();
-                let model =
+                let model = if let Some(context) = &build_context {
+                    LiveModel::build_with_context(
+                        context,
+                        &deck,
+                        self.notes,
+                        self.events,
+                        self.params,
+                        Some(self.setup),
+                        false,
+                        None,
+                        None,
+                    )
+                } else {
                     LiveModel::new_gekisou(self.master, &deck, self.notes, self.events, self.params, self.setup)
-                        .map_err(|e| source_error(LuckFamilyDecline::RecorderAdmission, e))?;
+                }
+                .map_err(|e| source_error(LuckFamilyDecline::RecorderAdmission, e))?;
                 self.admit_pair(&model)?;
                 let original =
                     std::array::from_fn(|owner| if owner == slot { &choice.performer } else { &base[owner] });

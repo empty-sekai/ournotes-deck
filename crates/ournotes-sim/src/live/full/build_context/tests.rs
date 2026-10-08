@@ -2,7 +2,7 @@ use super::*;
 use crate::master::{SkillConditionSetRow, SupportSkillEffectRow};
 use serde_json::json;
 
-fn fixture() -> (Master, Vec<Performer>, Vec<LiveNote>, LiveParams, GekisouSetup) {
+pub(super) fn fixture() -> (Master, Vec<Performer>, Vec<LiveNote>, LiveParams, GekisouSetup) {
     let tables = json!({
         "MasterLiveSettings":[
             {"_id":1,"_key":"note_score_adjustment_factor","_value":"3"},
@@ -96,29 +96,31 @@ fn identity(mut model: LiveModel) -> String {
 #[test]
 fn source_indexes_keep_complete_initialized_state_and_native_frame_history() {
     let (master, mut deck, notes, params, setup) = fixture();
-    let context = BuildContext::new(&master);
+    let contexts = [BuildContext::new(&master), BuildContext::try_bounded(&master, 1 << 20).unwrap()];
     let events = [(0, 100), (1, 100), (2, 220), (0, 400)];
     for _ in 0..5 {
         for setup in [None, Some(&setup)] {
-            let mut reference =
-                LiveModel::build(&master, &deck, &notes, &events, params, setup, false, None, None).unwrap();
-            let mut indexed =
-                LiveModel::build_with_context(&context, &deck, &notes, &events, params, setup, false, None, None)
-                    .unwrap();
-            assert_eq!(identity(indexed.clone()), identity(reference.clone()));
-            for time in (0..=1600).step_by(20) {
-                let judged: Vec<_> = notes
-                    .iter()
-                    .filter(|note| note.time_ms == time)
-                    .map(|note| JudgedNote { note_id: note.note_id, judgement: 5, judgement_time_ms: note.time_ms })
-                    .collect();
-                reference.frame_timed(time, &judged, 0.02).unwrap();
-                indexed.frame_timed(time, &judged, 0.02).unwrap();
-                assert_eq!(indexed.trace(), reference.trace());
-                assert_eq!(indexed.current_life(), reference.current_life());
-                assert_eq!(indexed.draws(), reference.draws());
+            for context in &contexts {
+                let mut reference =
+                    LiveModel::build(&master, &deck, &notes, &events, params, setup, false, None, None).unwrap();
+                let mut indexed =
+                    LiveModel::build_with_context(context, &deck, &notes, &events, params, setup, false, None, None)
+                        .unwrap();
+                assert_eq!(identity(indexed.clone()), identity(reference.clone()));
+                for time in (0..=1600).step_by(20) {
+                    let judged: Vec<_> = notes
+                        .iter()
+                        .filter(|note| note.time_ms == time)
+                        .map(|note| JudgedNote { note_id: note.note_id, judgement: 5, judgement_time_ms: note.time_ms })
+                        .collect();
+                    reference.frame_timed(time, &judged, 0.02).unwrap();
+                    indexed.frame_timed(time, &judged, 0.02).unwrap();
+                    assert_eq!(indexed.trace(), reference.trace());
+                    assert_eq!(indexed.current_life(), reference.current_life());
+                    assert_eq!(indexed.draws(), reference.draws());
+                }
+                assert_eq!(identity(indexed), identity(reference));
             }
-            assert_eq!(identity(indexed), identity(reference));
         }
         deck.rotate_left(1);
     }
@@ -131,21 +133,14 @@ fn source_indexes_keep_duplicate_rows_and_constructor_error_priority() {
     master.skill_condition_sets.push(SkillConditionSetRow { id: 999, group: 999, condition_ids: vec![999] });
     master.support_skill_effects.push(master.support_skill_effects[0].clone());
     let check = |master: &Master| {
-        let indexed = LiveModel::build_with_context(
-            &BuildContext::new(master),
-            &deck,
-            &notes,
-            &[],
-            params,
-            Some(&setup),
-            false,
-            None,
-            None,
-        )
-        .unwrap_err();
         let reference = LiveModel::new_gekisou(master, &deck, &notes, &[], params, &setup).unwrap_err();
-        assert_eq!(indexed, reference);
-        indexed
+        for context in [BuildContext::new(master), BuildContext::try_bounded(master, 1 << 20).unwrap()] {
+            let indexed =
+                LiveModel::build_with_context(&context, &deck, &notes, &[], params, Some(&setup), false, None, None)
+                    .unwrap_err();
+            assert_eq!(indexed, reference);
+        }
+        reference
     };
     assert_eq!(check(&master), Error::Master("condition skill with a duplicate effect id".into()));
     master.support_skill_effects.pop();
@@ -158,22 +153,15 @@ fn source_indexes_keep_duplicate_rows_and_constructor_error_priority() {
 fn edited_and_filtered_masters_receive_fresh_indexes_and_complete_identities() {
     let (mut master, deck, notes, params, setup) = fixture();
     let built = |master: &Master| {
-        let indexed = LiveModel::build_with_context(
-            &BuildContext::new(master),
-            &deck,
-            &notes,
-            &[],
-            params,
-            Some(&setup),
-            false,
-            None,
-            None,
-        )
-        .unwrap();
-        let reference = LiveModel::new_gekisou(master, &deck, &notes, &[], params, &setup).unwrap();
-        let key = identity(indexed);
-        assert_eq!(key, identity(reference));
-        key
+        let reference = identity(LiveModel::new_gekisou(master, &deck, &notes, &[], params, &setup).unwrap());
+        for context in [BuildContext::new(master), BuildContext::try_bounded(master, 1 << 20).unwrap()] {
+            let indexed =
+                LiveModel::build_with_context(&context, &deck, &notes, &[], params, Some(&setup), false, None, None)
+                    .unwrap();
+            let key = identity(indexed);
+            assert_eq!(key, reference);
+        }
+        reference
     };
     let before = built(&master);
     // Effect rows and condition-set groups are selected from the current tables, without relying on reindex.

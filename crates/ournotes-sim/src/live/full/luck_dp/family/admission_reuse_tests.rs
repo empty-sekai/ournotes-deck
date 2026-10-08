@@ -364,3 +364,70 @@ fn family_admission_projection_capacity_counts_spare_slots_and_falls_back_withou
     // This is the caller's unchanged fallback when the optional memo has no allowance.
     context.admit_projection(&fixture.base.clone().map(|performer| projected(&fixture.master, &performer))).unwrap();
 }
+
+#[test]
+fn family_admission_bounded_index_and_fallback_keep_all_pairs_errors_and_cancel_polls() {
+    let mut fixture = Fixture::new();
+    // Unselected rows make the full immutable index larger than the small allowance. They are deliberately
+    // invalid as native effects: building an index must not validate anything the original deck never reads.
+    let template = fixture.master.gekisou_support_skill_effects[0].clone();
+    for id in 100_000..104_096 {
+        let mut row = template.clone();
+        row.id = id;
+        row.skill_id = id;
+        row.skill_effect_type = 999_999;
+        fixture.master.gekisou_support_skill_effects.push(row);
+    }
+    fixture.master.support_skill_effects.push(
+        serde_json::from_value(json!({
+            "_id":20,"_supportSkillID":20,"_level":1,"_skillEffectType":2000,
+            "_skillTriggerType":1,"_activationTimeSecond":-0.5,"_effectValue":100
+        }))
+        .unwrap(),
+    );
+    fixture.master.reindex().unwrap();
+    let context = fixture.context();
+    let indexed_limits = LuckFamilyLimits::default();
+    let fallback_limits = LuckFamilyLimits { max_retained_bytes: 64 * 1024, ..indexed_limits };
+    assert!(BuildContext::try_bounded(&fixture.master, fallback_limits.max_retained_bytes,).is_none());
+    assert!(BuildContext::try_bounded(&fixture.master, indexed_limits.max_retained_bytes / 2,).is_some());
+    let run = |choices: &[Vec<LuckFamilyChoice>; SLOTS], limits, stop: Option<usize>| {
+        VALIDATIONS.with(|counts| counts.set((0, 0)));
+        let mut polls = 0;
+        let result = context.admit_profile_domain(choices, limits, || {
+            polls += 1;
+            stop.is_some_and(|stop| polls >= stop)
+        });
+        (result, polls, VALIDATIONS.with(std::cell::Cell::get))
+    };
+    let (indexed, polls, counts) = run(&fixture.choices, indexed_limits, None);
+    let (fallback, fallback_polls, fallback_counts) = run(&fixture.choices, fallback_limits, None);
+    let indexed = indexed.unwrap().unwrap();
+    let fallback = fallback.unwrap().unwrap();
+    assert_eq!((counts, fallback_counts), ((65, 1), (65, 1)));
+    assert_eq!(polls, fallback_polls);
+    assert_eq!(indexed.note_times(), fallback.note_times());
+    assert_eq!(indexed.work(), fallback.work());
+    let a = indexed.bindings().unwrap();
+    let b = fallback.bindings().unwrap();
+    assert_eq!((&a.allowed, &a.writers, &a.profiles), (&b.allowed, &b.writers, &b.profiles));
+    assert_eq!(a.profiles.len(), 1);
+
+    for stop in [1, 10, polls - 1, polls] {
+        let (a, a_polls, a_counts) = run(&fixture.choices, indexed_limits, Some(stop));
+        let (b, b_polls, b_counts) = run(&fixture.choices, fallback_limits, Some(stop));
+        assert!(a.unwrap().is_none() && b.unwrap().is_none());
+        assert_eq!((a_polls, a_counts), (b_polls, b_counts), "cancel poll {stop}");
+    }
+    let mut bad = fixture.choices.clone();
+    for choices in &mut bad {
+        choices.last_mut().unwrap().performer.support_skills.push((20, 1));
+    }
+    let (a, a_polls, a_counts) = run(&bad, indexed_limits, None);
+    let (b, b_polls, b_counts) = run(&bad, fallback_limits, None);
+    let error = a.unwrap_err();
+    assert_eq!(error.reason, LuckFamilyDecline::RecorderAdmission);
+    assert_eq!(error, b.unwrap_err());
+    assert_eq!((a_polls, a_counts), (b_polls, b_counts));
+    assert!(a_counts.0 > 1 && a_counts.0 < 65, "the late bad physical pair is still audited");
+}
