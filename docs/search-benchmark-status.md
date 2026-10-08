@@ -176,8 +176,64 @@ tree `9baa5ec96e82d0b84e0c085a1c2088e0b68ed9ee`, exits normally with **`TimedOut
 60.1077 seconds end to end**. It visits 672 candidates and performs 15,079 native
 order simulations; native simulation accounts for 57.719 seconds. The exact CLI, input and output hashes
 are recorded in the evidence receipt. This single failed local run is separate from the 48-case public CI
-matrix and is not an optimization success. A reported-request CI suite is being integrated; no completed
-public CI pass for that suite is claimed here.
+matrix and is not an optimization success. The reported-request CI suite is now configured, with a native
+strict projection audit of the complete original roster before materialization. The default full performance
+suite contains the unchanged 48 PR #40 requests plus this original request. No completed public CI run of
+that 49-request suite is claimed here.
+
+## Subsequent local runs on the original inputs
+
+The [local evidence receipt](search-benchmark-local-evidence.json) records two further serial native
+measurements, both on AMD EPYC 9V74 / Linux x86_64 with Rust 1.88.0. These are selected original requests,
+not another full-matrix result. Every original input triple, candidate domain, order set and request budget
+is unchanged. Each public commit below has the exact Git tree of its frozen local build; the receipt retains
+both identities, executable hashes, unrounded times, original answer hashes and relevant telemetry.
+
+At source [`167cad21939e206000e67fe8428c6883be7aa1cb`](https://github.com/empty-sekai/ournotes-deck/commit/167cad21939e206000e67fe8428c6883be7aa1cb),
+the original reported request and nine selected PR #40 requests produce two complete/proven controls and
+eight timeouts. Both completed canonical Top-K results match source `21954072`; they are existing
+completions, not newly solved cases. The reported request's strict native audit preserves all 15 members,
+35 Snaps, all 15 eligible leaders, full cultivation, power fields and original request bytes. The input
+conversion performs no search and provides no ranking certificate.
+
+| Original request | Completion | Proven | End-to-end seconds |
+| --- | --- | --- | ---: |
+| `issue9-battle-original` | TimedOut | No | 60.077 |
+| `short-newcomer-score` | TimedOut | No | 60.060 |
+| `short-midcore-score` | TimedOut | No | 60.064 |
+| `short-veteran-score` | TimedOut | No | 60.059 |
+| `long-newcomer-score` | TimedOut | No | 60.051 |
+| `short-newcomer-probability` | TimedOut | No | 60.067 |
+| `sparse-newcomer-capped` | TimedOut | No | 60.051 |
+| `free-short-veteran` | Complete | Yes | 0.403 |
+| `no-luck-short-midcore` | Complete | Yes | 4.389 |
+| `no-luck-long-newcomer` | TimedOut | No | 60.058 |
+
+Source [`19813c2d3b4033bac9839c2f5e3a750dca33ca05`](https://github.com/empty-sekai/ournotes-deck/commit/19813c2d3b4033bac9839c2f5e3a750dca33ca05)
+then removes identities of fully filtered bonus sources from the private, fully admitted controller key.
+It preserves retained source order, every potentially read attribute, and the native main-presence gate
+that controls support construction. Twenty-four related correctness checks pass, including original
+native controller construction/transcripts, complete joint-law comparisons and all 120 order labels.
+The same four original LUCK score requests were rerun; all four still time out and remain unproven.
+
+| Original request | Completion | End-to-end seconds | Search nodes | Visited candidates |
+| --- | --- | ---: | ---: | ---: |
+| `short-newcomer-score` | TimedOut | 60.059 | 5,346 | 14 |
+| `short-midcore-score` | TimedOut | 60.117 | 533 | 56 |
+| `short-veteran-score` | TimedOut | 60.062 | 69 | 63 |
+| `long-newcomer-score` | TimedOut | 60.057 | 747 | 46 |
+
+For short newcomer, native profile builds fall from 1,724 to 7, completed-program hits increase from
+2,181 to 6,367, and search nodes increase from 1,411 to 5,346. However, complete-family preparation still
+takes 43.701 seconds, compared with 43.279 seconds before: 6,374 admitted families still repeat full
+physical-pair checks and reduced controller preparation. Only 14 candidates are visited in either run.
+This identifies a removed source of repeated work and a remaining bottleneck; it is not a complete-ranking
+speedup. All 55 shared returned candidates across the four comparisons have compatible score and payoff
+intervals; none of those pairs supplies an exact-point equality certificate. Their canonical global ranks
+are unresolved. Every unsuccessful result remains in the receipt.
+
+These local runs do not replace the complete source-specific Chromium evidence above. The new 49-request
+native/Chromium workflow must finish before its full-matrix result can be reported.
 
 ## Public artifacts
 
