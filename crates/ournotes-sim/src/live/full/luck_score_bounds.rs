@@ -988,6 +988,7 @@ pub struct LuckScoreSession<'a> {
     summaries: SummaryCache,
     program_scope: Option<std::sync::Arc<program::Scope>>,
     program_scope_ready: bool,
+    build_context: Option<super::build_context::BuildContext<'a>>,
 }
 
 struct CachedSummary {
@@ -1059,6 +1060,7 @@ impl<'a> LuckScoreSession<'a> {
             summaries: Default::default(),
             program_scope: None,
             program_scope_ready: false,
+            build_context: None,
         }
     }
 

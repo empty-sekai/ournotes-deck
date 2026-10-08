@@ -22,9 +22,19 @@ const MAX_CONTEXT_ITEMS: usize = 1_000_000;
 const MAX_CONTEXT_FRAMES: usize = 100_000;
 
 mod input_reuse;
+mod probe_runs;
 mod profiles;
 use profiles::AdmittedFamilyInputs;
-pub use profiles::{LuckFamilyDomain, LuckFamilyProfile, LuckFamilyProgram, LuckFamilyProgramKey};
+pub use profiles::{
+    LuckFamilyDomain, LuckFamilyProfile, LuckFamilyProfileDomain, LuckFamilyProfileWork, LuckFamilyProgram,
+    LuckFamilyProgramKey,
+};
+
+#[derive(Clone, Copy)]
+enum CoverWork {
+    Complete,
+    FirstProfile,
+}
 
 /// One legal physical Snap choice for a fixed member. `None` has no support skill sources and consumes no
 /// resource. A resource number denotes the same complete ordered Snap sources in every member's choice list.
@@ -130,6 +140,8 @@ struct DomainTerminalMapping {
     inputs: Vec<InputNote>,
     last_luck_note: i32,
     frame_work: u64,
+    /// All original frames from here on occur strictly after the positive music finish clamp.
+    first_late_frame: usize,
 }
 
 /// One immutable request context. The master, selected skill catalogue, declared frame stream, deltas and setup
@@ -161,9 +173,10 @@ pub struct LuckFamilyOrderLaw {
 }
 
 impl LuckFamilyOrderLaw {
-    /// Whether both labels retain the very same immutable joint-curve allocation. This authorizes reuse
-    /// of arithmetic which reads only `joint_at`; it proves no equality of controller programs, path laws,
-    /// physical resources or performance-order labels.
+    /// Whether both labels retain the very same immutable complete probability-result allocation. This
+    /// authorizes reuse of `joint_at` arithmetic and that result's original-frame probe transition masks,
+    /// under the same separately admitted frame mapping and probe lifecycle. It proves no equality of
+    /// controller programs, physical resources or performance-order labels; masks are not a path law.
     pub fn shares_joint_curve(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.probability, &other.probability)
     }
@@ -702,8 +715,13 @@ impl<'a> LuckFamilyContext<'a> {
             .map(|input| input.note.time_ms)
             .max()
             .unwrap_or(i32::MIN);
-        let mapping =
-            Arc::new(DomainTerminalMapping { times, inputs, last_luck_note, frame_work: play.frames.len() as u64 });
+        let mapping = Arc::new(DomainTerminalMapping {
+            times,
+            inputs,
+            last_luck_note,
+            frame_work: play.frames.len() as u64,
+            first_late_frame: play.frames.partition_point(|frame| frame.time_ms <= params.music_length_ms),
+        });
         if cancelled() {
             return Ok(None);
         }
@@ -725,6 +743,7 @@ impl<'a> LuckFamilyContext<'a> {
         &self,
         choices: &[Vec<LuckFamilyChoice>; SLOTS],
         limits: LuckFamilyLimits,
+        cover_work: CoverWork,
         cancelled: &mut impl FnMut() -> bool,
     ) -> Result<Option<AdmittedFamilyInputs>, LuckFamilyError> {
         if cancelled() {
@@ -792,11 +811,15 @@ impl<'a> LuckFamilyContext<'a> {
         if cancelled() {
             return Ok(None);
         }
-        // The complete physical profile count and immutable frame schedule already determine this work
-        // refusal. An over-budget family needs no native pair-model construction and supplies no authority.
+        // The complete physical profile map remains bounded in both capabilities. A complete-family request
+        // reserves every labelled order, while a profile domain reserves one complete profile and charges
+        // subsequent native preparations against the same cumulative order/frame allowance.
         let profiles = writer_profiles(&writers, &allowed)?;
-        let required = profiles
-            .len()
+        let work_profiles = match cover_work {
+            CoverWork::Complete => profiles.len(),
+            CoverWork::FirstProfile => 1,
+        };
+        let required = work_profiles
             .checked_mul(ORDERS)
             .ok_or_else(|| fail(LuckFamilyDecline::Capacity, "order/profile count overflow"))?;
         let frame_work = (required as u64)
@@ -815,6 +838,10 @@ impl<'a> LuckFamilyContext<'a> {
         // Conversion memoizes its targets by the raw effect row ID, across source tables and owners. Keep
         // that whole-domain identity before dropping any late conversion from the judgement graph.
         let mut conversion_targets = Vec::new();
+        // Optional command-work refinement has a stricter probe lifecycle contract than controller-law
+        // admission. Check every physical pair, including reward-only choices, before sharing this flag.
+        let mut probe_phase = None;
+        let mut probe_runs_admitted = true;
         for slot in 0..SLOTS {
             for choice in &choices[slot] {
                 if cancelled() {
@@ -826,6 +853,16 @@ impl<'a> LuckFamilyContext<'a> {
                     LiveModel::new_gekisou(self.master, &deck, self.notes, self.events, self.params, self.setup)
                         .map_err(|e| source_error(LuckFamilyDecline::RecorderAdmission, e))?;
                 self.admit_pair(&model, &deck)?;
+                match probe_runs::phase(&model, self.skills) {
+                    Some(Some(phase)) => {
+                        if probe_phase.is_some_and(|old| old != phase) {
+                            probe_runs_admitted = false;
+                        }
+                        probe_phase = Some(phase);
+                    }
+                    Some(None) => {}
+                    None => probe_runs_admitted = false,
+                }
                 remember_conversion_targets(&model, &mut conversion_targets)?;
                 let pair_edges = conversion_edges(&model, self.mapping.last_luck_note, self.setup)?;
                 let all_pair_edges = conversion_edges(&model, i32::MAX, self.setup)?;
@@ -885,7 +922,11 @@ impl<'a> LuckFamilyContext<'a> {
         if cancelled() {
             return Ok(None);
         }
-        Ok(Some(AdmittedFamilyInputs { base, bindings: LuckFamilyBindings { allowed, writers, profiles } }))
+        Ok(Some(AdmittedFamilyInputs {
+            base,
+            bindings: LuckFamilyBindings { allowed, writers, profiles },
+            probe_runs_admitted,
+        }))
     }
 
     /// Check the full allowed pair domain and complete all original order/profile computations. At most two
@@ -900,10 +941,10 @@ impl<'a> LuckFamilyContext<'a> {
         limits: LuckFamilyLimits,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Option<LuckControllerFamily>, LuckFamilyError> {
-        let Some(admitted) = self.admit_inputs(choices, limits, &mut cancelled)? else {
+        let Some(admitted) = self.admit_inputs(choices, limits, CoverWork::Complete, &mut cancelled)? else {
             return Ok(None);
         };
-        let AdmittedFamilyInputs { base, bindings: LuckFamilyBindings { allowed, writers, profiles } } = admitted;
+        let AdmittedFamilyInputs { base, bindings: LuckFamilyBindings { allowed, writers, profiles }, .. } = admitted;
         let required = profiles.len() * ORDERS;
         let mut family = LuckControllerFamily {
             mapping: Arc::clone(&self.mapping),

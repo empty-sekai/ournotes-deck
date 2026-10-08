@@ -126,6 +126,7 @@ impl Input {
         full.score.begin_bounds(probes, true);
         full.score.certify_bounds_filings(gate);
         let admitted = record_only && full.try_enable_bounds_record_only();
+        let context = crate::live::full::build_context::BuildContext::new(&self.master);
         let recording = fused::Recorder::prepare(
             &self.master,
             &skills,
@@ -138,6 +139,7 @@ impl Input {
             &self.deck,
             &full,
             admitted,
+            Some(&context),
         )?;
         full.set_seed(self.play.base_seed);
         Ok(recording.map(|recording| (full, recording)))

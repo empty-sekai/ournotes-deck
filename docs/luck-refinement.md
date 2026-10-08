@@ -316,7 +316,9 @@ observer refusals.
 
 `LuckFamilyContext` admits a declared family of physical bindings for optional expected-score node bounds.
 `LuckControllerFamily` contains its complete controller laws. The separate `LuckFamilyDomain` capability
-contains full-domain admission, while each `LuckFamilyProfile` contains one complete writer-owner profile.
+contains full-domain admission and a work allowance covering every possible profile. `LuckFamilyProfileDomain`
+contains the same complete physical-domain admission with a cumulative allowance for requested native profiles.
+Each `LuckFamilyProfile` contains one complete writer-owner profile.
 The context borrows the exact master tables,
 compiled skill catalogue, chart, events, parameters, Gekisou setup, play inputs and delta clock for its lifetime.
 The search also holds the exact compiled reward template. A compatible DP curve alone is not this authority.
@@ -374,11 +376,13 @@ unknown, cumulative or conversion programs keep the original construction path. 
 share the existing per-family recorder-key storage, its 128-entry/1 MiB limits and the configured curve
 allowance. A hit still registers the original physical profile and labelled order independently.
 
-The complete-family preparation API still computes every profile. Search instead admits the entire physical
-pair domain first and prepares complete profiles as actual depth-four nodes require them. The full-domain
-capability retains every allowed physical choice and writer-owner mapping; its immutable identity prevents a
+The complete-family preparation API computes every profile, and `admit_domain` checks its full possible
+order/profile work before returning. Search uses `admit_profile_domain` to check the entire physical pair
+domain first and prepares complete profiles as actual depth-four nodes require them. This separate capability
+retains every allowed physical choice and writer-owner mapping; its immutable identity prevents a
 profile from another context or another admitted domain from being substituted. A profile is published only
-after its own 120 original labels complete. Unrequested profiles remain explicitly unknown.
+after its own 120 original labels complete. Unrequested profiles remain explicitly unknown. Semantic admission
+still checks every pair: an unrequested LIFE dependency, conversion or unsupported writer refuses the domain.
 
 A completed profile may also supply a complete canonical probability program. Its key retains the full
 projected Performer multiset and immutable context; character normalization requires the same closed
@@ -414,10 +418,17 @@ adds its own coefficients in the original outward summation order. The table has
 1 MiB of accounted capacity; zero or insufficient capacity uses direct arithmetic. It supplies no new program
 equivalence or candidate-ranking certificate.
 
-The search's preparation limits are 4,096 pair models, at most 31 profiles and 3,720 order/profile evaluations,
-16,000,000 units of declared frame work, and 32 MiB of accounted family storage. Admission retains the complete
-family's work check even when search initially requests only one profile: the frame-work check includes the
-terminal mapping and every order/profile in the full family. The retained domain and coefficient cache separately uses
+The search's preparation limits are 4,096 pair models, at most 31 profiles, 3,720 reserved native order
+evaluations, 16,000,000 units of reserved native frame work, and 32 MiB of accounted family storage.
+Its profile-domain admission checks the full profile count and requires the allowance to fit the common
+terminal mapping plus one complete 120-order profile. Before each native profile attempt it reserves another
+120 orders and their full frame schedules against the same cumulative allowance; refusal or cancellation
+keeps this conservative reservation. It never starts a partial profile merely because some orders would fit.
+Complete-program transport retains the target's 120 original labels and executes no native recording frames,
+so it consumes no additional native work reservation. `reservedProfileOrderWork`, `reservedProfileFrameWork`
+and `profileBudgetRefusals` report this accounting separately from completed profiles and original order laws.
+The complete-family `prepare` and `admit_domain` interfaces retain their full possible-cover work check.
+The retained domain and coefficient cache separately uses
 at most 64 entries and 8 MiB, further limited by `cacheEntries`. Container capacities, complete input choices and
 performer vectors, retained mappings and
 referenced probability payloads are accounted by their respective owners; these budgets are not process RSS
@@ -777,9 +788,10 @@ original phase-specific dependency admission; their emitted action probabilities
 and match in the complete transcript. An independent emission guard evaluates fixed probe predicates exactly
 and compares active probes' owners, phases, gates, source
 and effect ordinals, raw values and native signed mills. It retains active zero-value probes. Each owner can
-have at most one active probe, and ordinary factor producers sharing that owner must be live skills in a
-phase no later than the probe. The native live-before-conditional order then establishes actual same-frame
-command order, including backdated filings; an unproved tie declines the optional certificate.
+have at most one active probe. Ordinary factor producers sharing that owner must precede the probe in the
+native phase/source order: an earlier phase, a live skill in the same phase, or an earlier conditional source
+in that phase. The original frame loop establishes the same-frame command order, including backdated filings;
+the same conditional source or a later producer declines the optional certificate.
 
 When admitted ordinary traces differ, the provider can retain the complete support of their shared
 score-observable histories. Each dynamic key contains the original controller state plus an interned ordered
@@ -795,6 +807,28 @@ native factor sorting, apply/undo, frame diffs, note integer arithmetic and fixe
 its exact recorded combo inputs; historical rank snapshots retain wrapping subtraction and integer percentage
 truncation. Source owners and same-time filing order remain inputs to native arithmetic. This comparison
 does not assume that differently ordered binary32 additions commute.
+
+Complete timelines share their identical ordered prefixes during score playback. The prefix index retains
+every supported terminal's original identity and visits only ancestors of those terminals. Each checkpoint
+owns both candidates' full native incremental calculators, including retained per-note scores, every
+binary32 frame difference, pending fixed bonuses and factor filing order. It also retains the exact ordinary
+event cursor, combo observations, historical score snapshots and current Rush/probe flags. Checkpoints are
+local to one admitted order comparison; distinct controller prefixes never share a calculator state.
+
+The playback cursor stops before the anchored ordinary event. Several actual switches at one Query or
+ProbabilityReady therefore remain separate ordered filings, including note-driven and pending-consume
+switches at the same frame. A terminal that is also a prefix of another complete timeline evaluates its
+no-further-switches suffix independently. By induction on the ordered edges, the copied state at each child
+equals the state obtained by replaying that candidate's complete prefix from its initial calculator. Running
+the remaining ordinary suffix consequently gives the same native integer terminal score as independent
+full-tape playback, including historical rank rewinds and late probe endings filed at the music boundary.
+
+Depth-first traversal retains checkpoints only at branches. A 32 MiB capacity estimate covers the prefix
+index, traversal containers and live checkpoint state, including native frame vectors and recorded combo
+and rank arrays. Reaching this optional allowance releases the traversal state and evaluates each remaining
+complete terminal with independent full-tape playback. A terminal already compared successfully is not
+visited again. All actual query, frame, event and recording work consumes the existing request budgets;
+checkpoint capacity, cancellation or an unequal score cannot produce a partial equality certificate.
 
 Every paired timeline must produce the same native integer terminal score, and every original order must
 complete. The common exact controller law then couples equal scores path by path, proving equal expectations
@@ -844,7 +878,8 @@ ambiguities. With retained detailed rows, each completed order immediately inter
 installed narrowings survive cancellation. Missing detailed rows are reconstructed from the immutable request;
 this reconstruction installs a new aggregate only after all 120 orders complete. An interrupted reconstruction
 keeps the prior frontier certificate. Both paths preserve the actual domain-completion state. Other terminal
-objectives retain their own probability-law refinement.
+objectives first attempt the complete terminal-payoff projection described below, then retain their existing
+complete probability-law refinement.
 
 Ambiguous candidates with smaller current certified payoff upper bounds receive refinement first, with
 candidate identifiers breaking ties. Their upper bounds are closer to exclusion by a competitor's proved
@@ -857,6 +892,58 @@ The interval frontier establishes each returned rank from complete certificates 
 Additional synthetic checks cover several draws in one frame, conditional-state isolation, bounded stochastic
 depth, initialized-model identity, complete-law reuse, and a complete threshold ranking over a 601-frame schedule
 with request cache capacities of zero and 64.
+
+## Complete terminal-payoff projection
+
+For score-threshold probability, capped score and joint score/LIFE thresholds, an optional provider folds
+one candidate's own complete observable timelines through its native score calculator. The controller
+recurrence retains the full hidden state and the ordered observable prefix until every range finishes.
+Terminal states with the same complete timeline contribute disjoint probability masses to that timeline.
+Each native integer score is mapped to the requested terminal payoff before its mass is accumulated.
+Deduplicated timelines are not equally weighted, and outward masses are never renormalized.
+
+The recording, original clock, probe emission and native score-fold admissions are shared with the paired
+score provider. This provider needs no coupling between different candidates or different initial powers.
+Each original order still supplies its own complete performer array and controller law. Final LIFE may be
+used only after the recorder establishes its deterministic value for that order. A random LIFE mechanism
+requiring an additional joint state remains unavailable to this optional projection.
+
+A result is published only after all supported terminals are evaluated exactly once. General weighted
+results are outward payoff enclosures; they do not claim an exact expectation or alter the raw score law.
+If every complete terminal has the same integer payoff, the provider additionally certifies that constant
+exactly. Unit total probability follows from the complete native integer lottery partitions and full
+recurrence, rather than from an interval merely containing one. This permits exact zero/one probabilities
+or constant capped scores while the underlying random scores remain distinct.
+
+The search tries this projection across ambiguous retained candidates before spending the remaining shared
+budget on native RNG-leaf replay. Detailed completed orders narrow their own payoff certificates immediately;
+an aggregate reconstructed without retained order rows is installed only when every order completes.
+An unresolved nonconstant enclosure preserves the threshold/truncation metadata needed by later refinement.
+No score-law equality class is merged by a payoff-only certificate. Cancellation, unsupported emission order,
+capacity refusal and exhausted work preserve all earlier certificates and the original completion state.
+
+## Profile command bounds and leaf reuse
+
+A completed controller profile can additionally bound the number of direct probe activations. Its original
+frame transition masks define a two-state layered graph, starting with the probe inactive. A max-plus pass
+counts false-to-true transitions. Combining edges from different hidden states can add impossible paths, so
+this graph supplies an upper bound without replacing the controller's probability law. Every original frame
+must be present, all terminal paths must close inactive, and every frame beyond the music boundary must
+remain inactive. The complete physical pair domain must prove compatible fixed probe predicates and phases.
+Missing evidence in any original order preserves the previous command allowance.
+
+For each actual five-member/Snap binding, eligible untimed probe rows use the smaller of their original
+command allowance and the complete profile's activation bound. Ordinary rows and unsupported timer, release,
+reset or limit lifecycles retain their existing allowances. Per-position maxima cover all 120 shuffles, and
+the original floating-point error derivation is recomputed from those conservative command counts. This
+unweighted error allowance remains separate from expected score coefficients. The smaller independently
+valid bound is used; no probability scales away a possible arithmetic history.
+
+The completed coefficient table also bounds individual physical leaves. A depth-four node may stay open
+because one remaining binding is strong, while another child can be excluded using its own singleton cap.
+This leaf lookup uses only the same immutable compiled scope and already completed cached profiles. It runs
+no additional recording, extends no budget and inserts no cache entry. A missing table or profile restores
+the ordinary leaf path. Canonical ties retain the existing strict payoff and power comparison rules.
 
 ## Initial proposals
 

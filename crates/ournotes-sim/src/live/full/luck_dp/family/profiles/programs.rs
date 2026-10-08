@@ -60,8 +60,21 @@ fn unique_curve_bytes<'a>(curves: impl Iterator<Item = &'a Arc<LuckDpCertifiedRe
 }
 
 impl LuckFamilyContext<'_> {
-    /// Optional identity proof. Every selected source row must pass the existing closed character-unread
-    /// proof, including omitted score rows. Every other complete Performer field and vector order is retained.
+    /// The same complete canonical input identity, under a fully admitted physical domain whose native
+    /// profiles consume a cumulative work allowance. Constructing a key supplies no probability certificate.
+    pub fn budgeted_profile_program_key(
+        &self,
+        domain: &LuckFamilyProfileDomain,
+        profile: usize,
+        capacity: usize,
+        cancelled: impl FnMut() -> bool,
+    ) -> Option<LuckFamilyProgramKey> {
+        self.profile_program_key(&domain.domain, profile, capacity, cancelled)
+    }
+
+    /// Optional identity proof. Every selected source row passes the closed attribute-read proof, including
+    /// omitted score rows. The whole-deck target union retains every potentially read member field, while
+    /// source identities, levels and vector order stay exact. Only the private key erases unread attributes.
     pub fn profile_program_key(
         &self,
         domain: &LuckFamilyDomain,
@@ -99,6 +112,30 @@ impl LuckFamilyContext<'_> {
 impl LuckFamilyProgram {
     pub fn matches(&self, key: &LuckFamilyProgramKey) -> bool {
         Arc::ptr_eq(&self.mapping, &key.mapping) && self.key == key.bytes
+    }
+
+    /// Preserve the exact originating domain, writer profile and complete label cover when retaining a
+    /// program from a work-budgeted profile capability.
+    pub fn from_budgeted_profile(
+        domain: &LuckFamilyProfileDomain,
+        key: LuckFamilyProgramKey,
+        profile: &LuckFamilyProfile,
+        capacity: usize,
+        cancelled: impl FnMut() -> bool,
+    ) -> Option<Self> {
+        Self::from_profile(&domain.domain, key, profile, capacity, cancelled)
+    }
+
+    /// Transport all original labels under the same exact input identity. This reuses complete native work
+    /// and executes no new native recording frames, independently of the target's remaining frame allowance.
+    pub fn transport_budgeted(
+        &self,
+        domain: &LuckFamilyProfileDomain,
+        key: &LuckFamilyProgramKey,
+        profile: usize,
+        cancelled: impl FnMut() -> bool,
+    ) -> Option<LuckFamilyProfile> {
+        self.transport(&domain.domain, key, profile, cancelled)
     }
 
     /// Compile only from the very profile which authorized this key and bijection. A caller cannot combine
@@ -202,6 +239,7 @@ impl LuckFamilyProgram {
             mapping: Arc::clone(&domain.mapping),
             profile,
             orders,
+            probe_runs_admitted: domain.admitted.probe_runs_admitted,
             bytes,
         })
     }

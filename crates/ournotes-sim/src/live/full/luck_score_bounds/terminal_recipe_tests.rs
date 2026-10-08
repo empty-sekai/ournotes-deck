@@ -218,3 +218,31 @@ fn terminal_recipe_cancellation_preserves_only_complete_history_and_latest_power
         assert_eq!(cache.stats().terminal_builds, 1);
     }
 }
+
+#[test]
+fn terminal_recipes_reserve_one_actual_decode_workspace_inside_the_existing_cache_budget() {
+    let base = four_bucket_case(2400, 2, false);
+    let mut second = base.clone();
+    second.params.assist_factor = 0.75;
+    let mut cache = LuckDpCache::new(8 << 20);
+    base.ready(Some(&mut cache));
+    second.ready(Some(&mut cache));
+    let (total, workspaces) = cache.programs.test_workspace_accounting();
+    assert_eq!(workspaces.len(), 2);
+    assert!(workspaces.iter().all(|&bytes| bytes > 0), "both native recordings must exercise the packed path");
+    let workspace = *workspaces.iter().max().unwrap();
+    assert!(workspaces.iter().sum::<usize>() > workspace, "one workspace must be shared by different recipes");
+    assert_eq!(cache.stats().program_peak_bytes, total);
+    assert!(total > workspace && total <= 8 << 20);
+    // A recipe hit reconstructs its native trace within that reservation and cannot grow the common ledger.
+    second.params.total_power += 1;
+    let before = cache.stats();
+    assert_same_terminal(&second, &second.ready(Some(&mut cache)), &second.ready(None));
+    assert_eq!(cache.stats().terminal_recipe_hits, before.terminal_recipe_hits + 1);
+    assert_eq!(cache.programs.test_workspace_accounting().0, total);
+    // Lowering the same budget must evict until retained values plus the remaining maximum workspace fit.
+    cache.programs.limit(total - 1);
+    let (remaining, _) = cache.programs.test_workspace_accounting();
+    assert!(remaining < total);
+    assert!(cache.stats().program_evictions > before.program_evictions);
+}

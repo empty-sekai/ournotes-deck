@@ -13,6 +13,17 @@ struct FamilyAssignment {
     power: i64,
 }
 
+/// Work performed for this complete mask. Offset reductions are score coefficients per unit of power,
+/// counted once per actual binding check, including repeated cache hits; they are not unique saved work.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct FamilyBoundResult {
+    pub(crate) upper: i128,
+    pub(crate) binding_drift_checks: u64,
+    pub(crate) binding_drift_tightened: u64,
+    pub(crate) binding_offset_reduction_sum: f64,
+    pub(crate) maximum_binding_offset_reduction: f64,
+}
+
 impl JointBounds {
     pub(crate) fn family_reward_template(&self) -> Option<Rc<ProfileRewardTemplate>> {
         self.family_rewards.clone()
@@ -38,7 +49,8 @@ impl JointBounds {
             return None;
         }
         let assignments = self.family_assignments(domain, p, table.members, &table.bindings, last_choices)?;
-        family_assignment_upper(&assignments, |i| table.profiles.get(i), table.eps, table.global)
+        family_assignment_upper(&assignments, |i| table.profiles.get(i), table.eps, table.global, None)
+            .map(|result| result.upper)
     }
 
     /// All required profile IDs are derived from the very same physical-binding enumeration as the upper.
@@ -66,6 +78,7 @@ impl JointBounds {
 
     /// Every feasible final choice must have its own completed 120-label profile. A missing entry refuses
     /// this entire mask, so the traversal continues under its existing whole-domain upper.
+    #[cfg(test)]
     pub(crate) fn family_profiles_upper(
         &self,
         domain: &CandidateDomain,
@@ -73,6 +86,16 @@ impl JointBounds {
         table: &FamilyProfileTable,
         last_choices: &[usize],
     ) -> Option<i128> {
+        self.family_profiles_upper_measured(domain, p, table, last_choices).map(|result| result.upper)
+    }
+
+    pub(crate) fn family_profiles_upper_measured(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        table: &FamilyProfileTable,
+        last_choices: &[usize],
+    ) -> Option<FamilyBoundResult> {
         if table.bindings.profile_count() != table.profiles.len()
             || table.profiles.is_empty()
             || table
@@ -84,7 +107,13 @@ impl JointBounds {
             return None;
         }
         let assignments = self.family_assignments(domain, p, table.members, &table.bindings, last_choices)?;
-        family_assignment_upper(&assignments, |i| table.profiles.get(i)?.as_ref(), table.eps, table.global)
+        family_assignment_upper(
+            &assignments,
+            |i| table.profiles.get(i)?.as_ref(),
+            table.eps,
+            table.global,
+            self.family_rewards.as_deref().map(|template| (template, table.members)),
+        )
     }
 
     fn family_assignments(
@@ -170,11 +199,24 @@ fn family_assignment_upper<'a>(
     profile: impl Fn(usize) -> Option<&'a crate::search::snaps::FamilyProfileReward>,
     eps: f64,
     global: f64,
-) -> Option<i128> {
+    drift: Option<(&ProfileRewardTemplate, [usize; 5])>,
+) -> Option<FamilyBoundResult> {
     let mut upper = None;
+    let mut result = FamilyBoundResult::default();
     for assignment in assignments {
         let profile = profile(assignment.profile)?;
-        let mut gain = F64Interval::point(profile.a0).ok()?;
+        let mut a0 = profile.a0;
+        if let Some((template, members)) = drift {
+            result.binding_drift_checks += 1;
+            if let Some(tightened) = template.binding_drift_a0(members, profile, &assignment.choices) {
+                a0 = a0.min(tightened);
+                let reduction = profile.a0 - a0;
+                result.binding_drift_tightened += u64::from(reduction > 0.0);
+                result.binding_offset_reduction_sum += reduction;
+                result.maximum_binding_offset_reduction = result.maximum_binding_offset_reduction.max(reduction);
+            }
+        }
+        let mut gain = F64Interval::point(a0).ok()?;
         for slot in 0..5 {
             gain = gain.add(F64Interval::point(*profile.mean[slot].get(assignment.choices[slot])?).ok()?);
         }
@@ -188,7 +230,8 @@ fn family_assignment_upper<'a>(
         let cap = (direct.ceil() as i128).checked_mul(super::super::uniform::ORDERS as i128)?;
         upper = Some(upper.map_or(cap, |old: i128| old.max(cap)));
     }
-    upper
+    result.upper = upper?;
+    Some(result)
 }
 
 #[cfg(test)]

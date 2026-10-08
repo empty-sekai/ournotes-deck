@@ -154,6 +154,16 @@ impl Value {
                 }
             }
     }
+
+    /// A terminal recipe temporarily reconstructs one complete native trace. Preparation holds this cache
+    /// exclusively and drops that trace before replacing a result, so the common byte allowance reserves
+    /// the maximum single workspace, in addition to all simultaneously retained values.
+    fn decode_workspace_bytes(&self) -> usize {
+        match self {
+            Self::TerminalRecipe { recipe, .. } => recipe.decode_workspace_bytes(),
+            Self::Program(_) | Self::Terminal { .. } => 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -184,6 +194,11 @@ pub(in super::super) struct ProgramCache {
 }
 
 impl ProgramCache {
+    #[cfg(test)]
+    pub(in super::super) fn test_workspace_accounting(&self) -> (usize, Vec<usize>) {
+        (self.allocated_bytes(), self.entries.iter().map(|entry| entry.value.decode_workspace_bytes()).collect())
+    }
+
     pub(in super::super) fn limit(&mut self, capacity: usize) {
         if self.capacity == capacity {
             return;
@@ -281,9 +296,11 @@ impl ProgramCache {
             Value::TerminalRecipe { recipe, .. } => Some(Arc::clone(recipe)),
             _ => None,
         });
-        let bytes = self
-            .terminal_entry_bytes(&identity, terminal)
-            .saturating_add(recipe.as_ref().map_or(0, |recipe| ARC_HEADER_BYTES + recipe.allocated_bytes()));
+        let bytes = self.terminal_entry_bytes(&identity, terminal).saturating_add(
+            recipe
+                .as_ref()
+                .map_or(0, |recipe| ARC_HEADER_BYTES + recipe.allocated_bytes() + recipe.decode_workspace_bytes()),
+        );
         if bytes > self.capacity || self.capacity == 0 {
             return Some(());
         }
@@ -327,7 +344,9 @@ impl ProgramCache {
         cancelled: &mut impl FnMut() -> bool,
     ) -> Option<()> {
         let exact_bytes = self.terminal_entry_bytes(&identity, terminal);
-        let combined_bytes = exact_bytes.saturating_add(ARC_HEADER_BYTES + recipe.allocated_bytes());
+        let combined_bytes = exact_bytes
+            .saturating_add(ARC_HEADER_BYTES + recipe.allocated_bytes())
+            .saturating_add(recipe.decode_workspace_bytes());
         let value = if self.capacity > 0 && exact_bytes <= self.capacity {
             let value = Arc::new(terminal.cache_clone());
             Some(if combined_bytes <= self.capacity {
@@ -384,7 +403,9 @@ impl ProgramCache {
                 recorded.shared.bytes.capacity() + size_of::<recorded::SharedTrace>() + ARC_HEADER_BYTES
             })
             + curve_bytes(value.curve());
-        if own.saturating_add(shared) > self.capacity || self.capacity == 0 {
+        if own.saturating_add(shared).saturating_add(value.decode_workspace_bytes()) > self.capacity
+            || self.capacity == 0
+        {
             return;
         }
         while self.entries.len() >= MAX_ENTRIES {
@@ -407,7 +428,8 @@ impl ProgramCache {
         let mut curves = FxHashSet::default();
         let mut scopes = FxHashSet::default();
         let mut traces = FxHashSet::default();
-        self.entries.iter().fold(self.entries.capacity() * size_of::<Entry>(), |mut bytes, entry| {
+        let workspace = self.entries.iter().map(|entry| entry.value.decode_workspace_bytes()).max().unwrap_or(0);
+        self.entries.iter().fold(self.entries.capacity() * size_of::<Entry>() + workspace, |mut bytes, entry| {
             bytes += entry.value.allocated_bytes();
             if curves.insert(Arc::as_ptr(entry.value.curve())) {
                 bytes += curve_bytes(entry.value.curve());

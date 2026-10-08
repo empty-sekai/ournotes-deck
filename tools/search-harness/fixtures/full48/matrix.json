@@ -1,0 +1,1666 @@
+{
+  "format": "ournotes-deck.harness-matrix/1",
+  "name": "full48",
+  "source": "source.json",
+  "watchdogMs": 90000,
+  "profiles": {
+    "newcomer": "profiles/newcomer.json",
+    "midcore": "profiles/midcore.json",
+    "veteran": "profiles/veteran.json"
+  },
+  "charts": {
+    "short": {
+      "scoreId": 10006103,
+      "musicId": 100061,
+      "scene": "mission"
+    },
+    "long": {
+      "scoreId": 10010703,
+      "musicId": 100107,
+      "scene": "mission"
+    },
+    "mixed-short": {
+      "scoreId": 10002003,
+      "musicId": 100020,
+      "scene": "mission"
+    },
+    "sparse": {
+      "scoreId": 10009203,
+      "musicId": 100092,
+      "scene": "mission"
+    },
+    "dense": {
+      "scoreId": 10009303,
+      "musicId": 100093,
+      "scene": "mission"
+    },
+    "mixed-long": {
+      "scoreId": 10010503,
+      "musicId": 100105,
+      "scene": "mission"
+    },
+    "free-short": {
+      "scoreId": 10006103,
+      "musicId": 100061,
+      "scene": "free"
+    },
+    "free-long": {
+      "scoreId": 10010703,
+      "musicId": 100107,
+      "scene": "free"
+    },
+    "no-luck-short": {
+      "scoreId": 10000203,
+      "musicId": 100002,
+      "scene": "mission"
+    },
+    "no-luck-long": {
+      "scoreId": 10007003,
+      "musicId": 100070,
+      "scene": "mission"
+    }
+  },
+  "plays": {
+    "best": {
+      "kind": "theoreticalBest"
+    },
+    "miss-every-211": {
+      "kind": "nativeTheoreticalWithMisses",
+      "missEvery": 211,
+      "seed": 0
+    }
+  },
+  "contexts": {
+    "event-one": {
+      "powerSnapshot": {
+        "eventIds": [
+          1
+        ],
+        "capturedJstTicks": null
+      },
+      "resultClock": {
+        "kind": "eventStartOffset",
+        "eventId": 1,
+        "seconds": 496800,
+        "execution": "played"
+      },
+      "eventPayoff": {
+        "consumedCount": 1,
+        "localEvents": [
+          {
+            "eventId": 1,
+            "points": 0,
+            "challengePoints": 0,
+            "added": []
+          }
+        ],
+        "eventWindowAdapter": "canonical-master-no-offset"
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "short-newcomer-score",
+      "group": "score",
+      "chart": "short",
+      "profile": "newcomer",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10006103,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100061
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "short-newcomer-probability",
+      "group": "nonlinear",
+      "chart": "short",
+      "profile": "newcomer",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10006103,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100061
+        },
+        "metric": {
+          "kind": "scoreAtLeast",
+          "threshold": 4509532
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "short-midcore-score",
+      "group": "score",
+      "chart": "short",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10006103,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100061
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "short-midcore-capped",
+      "group": "nonlinear",
+      "chart": "short",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10006103,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100061
+        },
+        "metric": {
+          "kind": "cappedScore",
+          "threshold": 9128573
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "short-veteran-score",
+      "group": "score",
+      "chart": "short",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10006103,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100061
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "short-veteran-pt",
+      "group": "nonlinear",
+      "chart": "short",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10006103,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100061
+        },
+        "metric": {
+          "kind": "clientEventPoints",
+          "eventId": 1
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      },
+      "context": "event-one"
+    },
+    {
+      "name": "long-newcomer-score",
+      "group": "score",
+      "chart": "long",
+      "profile": "newcomer",
+      "play": "miss-every-211",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010703,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100107
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "long-newcomer-life",
+      "group": "nonlinear",
+      "chart": "long",
+      "profile": "newcomer",
+      "play": "miss-every-211",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010703,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100107
+        },
+        "metric": {
+          "kind": "scoreAndLifeAtLeast",
+          "threshold": 3393889,
+          "minFinalLife": 1000
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "long-midcore-score",
+      "group": "score",
+      "chart": "long",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010703,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100107
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "long-midcore-probability",
+      "group": "nonlinear",
+      "chart": "long",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010703,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100107
+        },
+        "metric": {
+          "kind": "scoreAtLeast",
+          "threshold": 8128007
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "long-veteran-score",
+      "group": "score",
+      "chart": "long",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010703,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100107
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "long-veteran-capped",
+      "group": "nonlinear",
+      "chart": "long",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010703,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100107
+        },
+        "metric": {
+          "kind": "cappedScore",
+          "threshold": 16142865
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "mixed-short-newcomer-score",
+      "group": "score",
+      "chart": "mixed-short",
+      "profile": "newcomer",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10002003,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100020
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "mixed-short-newcomer-pt",
+      "group": "nonlinear",
+      "chart": "mixed-short",
+      "profile": "newcomer",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10002003,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100020
+        },
+        "metric": {
+          "kind": "clientEventPoints",
+          "eventId": 1
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      },
+      "context": "event-one"
+    },
+    {
+      "name": "mixed-short-midcore-score",
+      "group": "score",
+      "chart": "mixed-short",
+      "profile": "midcore",
+      "play": "miss-every-211",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10002003,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100020
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "mixed-short-midcore-life",
+      "group": "nonlinear",
+      "chart": "mixed-short",
+      "profile": "midcore",
+      "play": "miss-every-211",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10002003,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100020
+        },
+        "metric": {
+          "kind": "scoreAndLifeAtLeast",
+          "threshold": 10298241,
+          "minFinalLife": 1000
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "mixed-short-veteran-score",
+      "group": "score",
+      "chart": "mixed-short",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10002003,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100020
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "mixed-short-veteran-probability",
+      "group": "nonlinear",
+      "chart": "mixed-short",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10002003,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100020
+        },
+        "metric": {
+          "kind": "scoreAtLeast",
+          "threshold": 25276717
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "sparse-newcomer-score",
+      "group": "score",
+      "chart": "sparse",
+      "profile": "newcomer",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10009203,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100092
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "sparse-newcomer-capped",
+      "group": "nonlinear",
+      "chart": "sparse",
+      "profile": "newcomer",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10009203,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100092
+        },
+        "metric": {
+          "kind": "cappedScore",
+          "threshold": 4539971
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "sparse-midcore-score",
+      "group": "score",
+      "chart": "sparse",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10009203,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100092
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "sparse-midcore-pt",
+      "group": "nonlinear",
+      "chart": "sparse",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10009203,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100092
+        },
+        "metric": {
+          "kind": "clientEventPoints",
+          "eventId": 1
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      },
+      "context": "event-one"
+    },
+    {
+      "name": "sparse-veteran-score",
+      "group": "score",
+      "chart": "sparse",
+      "profile": "veteran",
+      "play": "miss-every-211",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10009203,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100092
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "sparse-veteran-life",
+      "group": "nonlinear",
+      "chart": "sparse",
+      "profile": "veteran",
+      "play": "miss-every-211",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10009203,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100092
+        },
+        "metric": {
+          "kind": "scoreAndLifeAtLeast",
+          "threshold": 18579280,
+          "minFinalLife": 1000
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "dense-newcomer-score",
+      "group": "score",
+      "chart": "dense",
+      "profile": "newcomer",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10009303,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100093
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "dense-newcomer-probability",
+      "group": "nonlinear",
+      "chart": "dense",
+      "profile": "newcomer",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10009303,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100093
+        },
+        "metric": {
+          "kind": "scoreAtLeast",
+          "threshold": 3641633
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "dense-midcore-score",
+      "group": "score",
+      "chart": "dense",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10009303,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100093
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "dense-midcore-capped",
+      "group": "nonlinear",
+      "chart": "dense",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10009303,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100093
+        },
+        "metric": {
+          "kind": "cappedScore",
+          "threshold": 7246998
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "dense-veteran-score",
+      "group": "score",
+      "chart": "dense",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10009303,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100093
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "dense-veteran-pt",
+      "group": "nonlinear",
+      "chart": "dense",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10009303,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100093
+        },
+        "metric": {
+          "kind": "clientEventPoints",
+          "eventId": 1
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      },
+      "context": "event-one"
+    },
+    {
+      "name": "mixed-long-newcomer-score",
+      "group": "score",
+      "chart": "mixed-long",
+      "profile": "newcomer",
+      "play": "miss-every-211",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010503,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100105
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "mixed-long-newcomer-life",
+      "group": "nonlinear",
+      "chart": "mixed-long",
+      "profile": "newcomer",
+      "play": "miss-every-211",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010503,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100105
+        },
+        "metric": {
+          "kind": "scoreAndLifeAtLeast",
+          "threshold": 6806979,
+          "minFinalLife": 1000
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "mixed-long-midcore-score",
+      "group": "score",
+      "chart": "mixed-long",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010503,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100105
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "mixed-long-midcore-capped",
+      "group": "nonlinear",
+      "chart": "mixed-long",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010503,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100105
+        },
+        "metric": {
+          "kind": "cappedScore",
+          "threshold": 15172380
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "mixed-long-veteran-score",
+      "group": "score",
+      "chart": "mixed-long",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010503,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100105
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "mixed-long-veteran-pt",
+      "group": "nonlinear",
+      "chart": "mixed-long",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010503,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100105
+        },
+        "metric": {
+          "kind": "clientEventPoints",
+          "eventId": 1
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      },
+      "context": "event-one"
+    },
+    {
+      "name": "free-short-newcomer",
+      "group": "control",
+      "chart": "free-short",
+      "profile": "newcomer",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10006103,
+          "gekisou": false
+        },
+        "scenario": {
+          "kind": "free",
+          "musicId": 100061
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "free-short-midcore",
+      "group": "control",
+      "chart": "free-short",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10006103,
+          "gekisou": false
+        },
+        "scenario": {
+          "kind": "free",
+          "musicId": 100061
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "free-short-veteran",
+      "group": "control",
+      "chart": "free-short",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10006103,
+          "gekisou": false
+        },
+        "scenario": {
+          "kind": "free",
+          "musicId": 100061
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "free-long-newcomer",
+      "group": "control",
+      "chart": "free-long",
+      "profile": "newcomer",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010703,
+          "gekisou": false
+        },
+        "scenario": {
+          "kind": "free",
+          "musicId": 100107
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "free-long-midcore",
+      "group": "control",
+      "chart": "free-long",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010703,
+          "gekisou": false
+        },
+        "scenario": {
+          "kind": "free",
+          "musicId": 100107
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "free-long-veteran",
+      "group": "control",
+      "chart": "free-long",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10010703,
+          "gekisou": false
+        },
+        "scenario": {
+          "kind": "free",
+          "musicId": 100107
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "no-luck-short-newcomer",
+      "group": "control",
+      "chart": "no-luck-short",
+      "profile": "newcomer",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10000203,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100002
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "no-luck-short-midcore",
+      "group": "control",
+      "chart": "no-luck-short",
+      "profile": "midcore",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10000203,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100002
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "no-luck-short-veteran",
+      "group": "control",
+      "chart": "no-luck-short",
+      "profile": "veteran",
+      "play": "best",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10000203,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100002
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "no-luck-long-newcomer",
+      "group": "control",
+      "chart": "no-luck-long",
+      "profile": "newcomer",
+      "play": "miss-every-211",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10007003,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100070
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "no-luck-long-midcore",
+      "group": "control",
+      "chart": "no-luck-long",
+      "profile": "midcore",
+      "play": "miss-every-211",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10007003,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100070
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    },
+    {
+      "name": "no-luck-long-veteran",
+      "group": "control",
+      "chart": "no-luck-long",
+      "profile": "veteran",
+      "play": "miss-every-211",
+      "request": {
+        "format": "ournotes-deck.search-request/1",
+        "execution": {
+          "kind": "live",
+          "scoreId": 10007003,
+          "gekisou": true
+        },
+        "scenario": {
+          "kind": "mission",
+          "musicId": 100070
+        },
+        "metric": {
+          "kind": "score"
+        },
+        "constraints": {},
+        "k": 3,
+        "strategy": {
+          "kind": "branchAndBound"
+        },
+        "limits": {
+          "timeLimitMs": 60000,
+          "maxCandidates": null,
+          "cacheEntries": 1024
+        }
+      }
+    }
+  ]
+}

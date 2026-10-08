@@ -1769,3 +1769,47 @@ fn native_total_declines_unproved_ranks_without_losing_note_caps_or_hiding_cance
         assert_eq!(resumed.mean_upper.map(f64::to_bits), reference.mean_upper.map(f64::to_bits));
     }
 }
+
+#[test]
+fn packed_terminal_trace_preserves_original_native_rank_kernels_and_refusals() {
+    for case in [
+        NativeRankCase::Ordinary,
+        NativeRankCase::SameFrame,
+        NativeRankCase::LateReduction,
+        NativeRankCase::CoefficientZero,
+        NativeRankCase::CoefficientTwo,
+        NativeRankCase::OutsideFixedFrame,
+        NativeRankCase::OverwrittenPending,
+        NativeRankCase::ChangedSharedCoefficient,
+        NativeRankCase::LateReadiness,
+        NativeRankCase::NegativePercent,
+        NativeRankCase::UnfiledPending,
+    ] {
+        // The reference's commands and score come from the original native calculator, before the codec is
+        // called. Both the successful proof and every structural refusal must survive the storage change.
+        let mut recording = native_rank_recording(case);
+        let expected = kernel_for_native_rank(&recording, || false).unwrap();
+        let expected_plan = super::super::rank_trace::compile(&recording.trace, || false);
+        recording.trace = super::super::prepass::test_packed_trace(&recording.trace);
+        let actual = kernel_for_native_rank(&recording, || false).unwrap();
+        assert_eq!(super::super::rank_trace::compile(&recording.trace, || false), expected_plan, "{case:?}");
+        assert_eq!(actual.power, expected.power, "{case:?}");
+        assert_eq!(actual.caps, expected.caps, "{case:?}");
+        assert_eq!(actual.mean_upper.map(f64::to_bits), expected.mean_upper.map(f64::to_bits), "{case:?}");
+        let bits = |value: Option<super::super::native_total::ScoreEnclosure>| {
+            value.map(|value| {
+                (
+                    value.mean.lower().to_bits(),
+                    value.mean.upper().to_bits(),
+                    value.support.lower(),
+                    value.support.upper(),
+                )
+            })
+        };
+        assert_eq!(bits(actual.expectation), bits(expected.expectation), "{case:?}");
+        if let Some(enclosure) = actual.expectation {
+            assert!(enclosure.mean.contains(f64::from(recording.total)), "native mean in {case:?}");
+            assert!(enclosure.support.contains(recording.total), "native score in {case:?}");
+        }
+    }
+}

@@ -10,6 +10,10 @@ use crate::live::full::LuckExactBudget;
 use std::mem::size_of;
 
 mod score_fold;
+mod terminal_payoff;
+pub use terminal_payoff::{
+    LuckTerminalPayoff, LuckTerminalPayoffAttempt, LuckTerminalPayoffBounds, LuckTerminalPayoffSession,
+};
 
 const ORDERS: usize = 120;
 const MAX_RECORD_BYTES: usize = 1024 * 1024;
@@ -128,6 +132,21 @@ struct EffectiveProbe {
     mill: i32,
 }
 
+/// Native processes PHASES in their declared order, and within each phase all live sources precede
+/// conditional sources, whose complete execution lists are applied in model.cond order. A conditional
+/// source's old instances and new triggers may interleave, so same-phase rows in the probe's own source
+/// are deliberately not ordered by effect ID. The prefix fold may append a probe only after producers
+/// that this total source order proves earlier, including every replacement and removal they emit.
+fn ordinary_before_probe(phase: i64, condition_source: Option<usize>, probe: &EffectiveProbe) -> bool {
+    let (Some(ordinary_phase), Some(probe_phase)) =
+        (PHASES.iter().position(|&value| value == phase), PHASES.iter().position(|&value| value == probe.phase))
+    else {
+        return false;
+    };
+    ordinary_phase < probe_phase
+        || (ordinary_phase == probe_phase && condition_source.is_none_or(|source| source < probe.source))
+}
+
 /// Keep even zero-valued effective probes: their native filings still invalidate score frames. False fixed
 /// predicates are evaluated exactly rather than through may_hold's conservative boolean approximation.
 fn probes(model: &LiveModel, skills: &LuckSkills) -> Checked<(Vec<ProbeRow>, String, Vec<EffectiveProbe>)> {
@@ -192,8 +211,7 @@ fn probes(model: &LiveModel, skills: &LuckSkills) -> Checked<(Vec<ProbeRow>, Str
             });
         }
     }
-    // Within a phase native applies every live item before every condition item. Across phases it is 1,2.
-    // Thus these are the only admitted same-owner ordinary producers, including cumulative replacements.
+    // Every admitted same-owner ordinary producer must precede the reconstructed probe in native order.
     for probe in &active {
         for skill in &model.live {
             let owner = (skill.member as i32).wrapping_mul(100).wrapping_add(OWNER_MEMBER);
@@ -202,18 +220,20 @@ fn probes(model: &LiveModel, skills: &LuckSkills) -> Checked<(Vec<ProbeRow>, Str
             }
             for effect in &skill.effects {
                 if matches!(model.rows[effect.row].effect_type, 2000..=2005)
-                    && (!PHASES.contains(&effect.phase) || effect.phase > probe.phase)
+                    && !ordinary_before_probe(effect.phase, None, probe)
                 {
                     return declined(LuckScoreEquivalenceDecline::OrdinaryTie);
                 }
             }
         }
-        for skill in &model.cond {
+        for (source, skill) in model.cond.iter().enumerate() {
             let owner_type = if skill.skill_type == SKILL_TYPE_GEKISOU { OWNER_MEMBER } else { OWNER_SNAP };
             let owner = (skill.member as i32).wrapping_mul(100).wrapping_add(owner_type);
             if owner == probe.owner
                 && skill.updater.effects().iter().any(|effect| {
-                    !related.contains(&effect.row) && matches!(model.rows[effect.row].effect_type, 2000..=2005)
+                    !related.contains(&effect.row)
+                        && matches!(model.rows[effect.row].effect_type, 2000..=2005)
+                        && !ordinary_before_probe(effect.phase, Some(source), probe)
                 })
             {
                 return declined(LuckScoreEquivalenceDecline::OrdinaryTie);
@@ -553,16 +573,20 @@ pub fn certify_uniform_score_equivalence(
                 )?
                 .ok_or(Failure::Decline(LuckScoreEquivalenceDecline::Cancelled))?;
                 timeline_transitions = timeline_transitions.saturating_add(support.transitions);
-                for index in 0..support.len() {
-                    poll(&mut cancelled)?;
-                    let path = native(support.path(index), LuckScoreEquivalenceDecline::Capacity)?;
-                    let left_score = left_recipe.evaluate(&path, &mut fold_work, &mut cancelled)?;
-                    let right_score = right_recipe.evaluate(&path, &mut fold_work, &mut cancelled)?;
-                    timeline_paths += 1;
-                    if left_score != right_score {
-                        return declined(LuckScoreEquivalenceDecline::ScoreTrace);
-                    }
-                }
+                score_fold::evaluate_support(
+                    [&left_recipe, &right_recipe],
+                    &support,
+                    &mut fold_work,
+                    &mut cancelled,
+                    |_, [left_score, right_score]| {
+                        timeline_paths += 1;
+                        if left_score == right_score {
+                            Ok(())
+                        } else {
+                            declined(LuckScoreEquivalenceDecline::ScoreTrace)
+                        }
+                    },
+                )?;
                 timeline_orders += 1;
             }
             poll(&mut cancelled)?;
@@ -600,6 +624,9 @@ pub(crate) type ScoreFoldAuditTimeline = Vec<(usize, u8, i32, bool, bool)>;
 #[cfg(test)]
 pub(crate) struct ScoreFoldAudit {
     pub paths: Vec<(ScoreFoldAuditTimeline, i32)>,
+    pub shared_queries: u64,
+    pub independent_queries: u64,
+    pub checkpoint_peak_bytes: usize,
 }
 
 #[cfg(test)]
@@ -614,6 +641,7 @@ pub(crate) fn audit_score_fold(
     play: &LivePlay,
     delta_times: &[f32],
     deck: &[Performer; 5],
+    checkpoint_limit: Option<usize>,
 ) -> Result<ScoreFoldAudit, Error> {
     let audit = || -> Checked<ScoreFoldAudit> {
         let context = Context { master, skills, notes, events, params, setup, play, delta: delta_times };
@@ -631,11 +659,36 @@ pub(crate) fn audit_score_fold(
             LuckScoreEquivalenceDecline::ProbabilityDomain,
         )?
         .ok_or(Failure::Decline(LuckScoreEquivalenceDecline::Cancelled))?;
+        let mut shared_work = score_fold::Work::default();
+        let mut shared_scores = vec![None; support.len()];
+        let visit = |index: usize, [score]: [i32; 1]| {
+            if shared_scores[index].replace(score).is_some() {
+                return Err(Failure::Native(Error::Domain("score-fold terminal was visited twice".into())));
+            }
+            Ok(())
+        };
+        if let Some(limit) = checkpoint_limit {
+            score_fold::evaluate_support_with_limit(
+                [&recipe],
+                &support,
+                &mut shared_work,
+                &mut || false,
+                limit,
+                visit,
+            )?;
+        } else {
+            score_fold::evaluate_support([&recipe], &support, &mut shared_work, &mut || false, visit)?;
+        }
         let mut work = score_fold::Work::default();
         let mut paths = Vec::new();
         for index in 0..support.len() {
             let path = native(support.path(index), LuckScoreEquivalenceDecline::Capacity)?;
             let score = recipe.evaluate(&path, &mut work, &mut || false)?;
+            if shared_scores[index] != Some(score) {
+                return Err(Failure::Native(Error::Domain(
+                    "shared-prefix score differs from complete native tape".into(),
+                )));
+            }
             let key = path
                 .into_iter()
                 .map(|edge| {
@@ -650,7 +703,12 @@ pub(crate) fn audit_score_fold(
                 .collect();
             paths.push((key, score));
         }
-        Ok(ScoreFoldAudit { paths })
+        Ok(ScoreFoldAudit {
+            paths,
+            shared_queries: shared_work.queries,
+            independent_queries: work.queries,
+            checkpoint_peak_bytes: shared_work.checkpoint_peak_bytes,
+        })
     };
     audit().map_err(|failure| match failure {
         Failure::Decline(reason) => Error::Unsupported(format!("score-fold audit declined: {reason:?}")),

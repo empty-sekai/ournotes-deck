@@ -102,6 +102,16 @@ pub struct LotteryRefinement {
     pub residue_refinements: u64,
     /// Optional rank-residue refinements that declined and kept the previous certificates.
     pub residue_declines: u64,
+    /// Optional per-order nonlinear payoff folds over complete controller-output histories.
+    pub terminal_attempted_orders: u64,
+    pub terminal_completed_orders: u64,
+    pub terminal_installed_orders: u64,
+    pub terminal_declined_orders: u64,
+    pub terminal_decline_reason: Option<ournotes_sim::live::full::LuckScoreEquivalenceDecline>,
+    /// Complete native terminal evaluations; hidden RNG paths with a common timeline share one fold.
+    pub terminal_timeline_paths: u64,
+    pub terminal_timeline_transitions: u64,
+    pub terminal_score_fold_queries: u64,
     pub attempted_orders: u64,
     /// Orders for which the provider completed every positive-mass nominal path.
     pub completed_orders: u64,

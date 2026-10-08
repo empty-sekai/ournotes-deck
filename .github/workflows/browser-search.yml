@@ -1,0 +1,206 @@
+name: Chromium Worker search
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      corpus:
+        description: Declared completion corpus
+        type: choice
+        options: [all, synthetic, full48]
+        default: all
+        required: true
+      repeats:
+        description: Serial measurements per request and runtime
+        type: choice
+        options: ['1', '2']
+        default: '1'
+        required: true
+      require_complete:
+        description: Fail unless every Chromium request is proven complete within 20 seconds end to end (requests retain 60 seconds)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chromium-search-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    if: github.event.action != 'labeled' || github.event.label.name == 'browser-full-matrix'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      mode: ${{ steps.plan.outputs.mode }}
+      source: ${{ steps.plan.outputs.source }}
+      repeats: ${{ steps.plan.outputs.repeats }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Select immutable request shards
+        id: plan
+        env:
+          CORPUS: ${{ inputs.corpus || (contains(github.event.pull_request.labels.*.name, 'browser-full-matrix') && 'all' || 'smoke') }}
+          REPEATS: ${{ inputs.repeats || '1' }}
+        run: |
+          mkdir -p work
+          node tools/search-harness/browser-ci.cjs plan "$CORPUS" > work/browser-plan.json
+          python3 - <<'PY'
+          import json, os, subprocess
+          plan = json.load(open('work/browser-plan.json'))
+          source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for key, value in [('matrix', json.dumps(plan['matrix'], separators=(',', ':'))),
+                                 ('mode', plan['mode']), ('source', source), ('repeats', os.environ['REPEATS']),
+                                 ('synthetic', str(plan['needSynthetic']).lower()), ('real', str(plan['needReal']).lower())]:
+                  output.write(f'{key}={value}\n')
+          PY
+      - name: Check harness contracts
+        run: python3 -m unittest discover -s tools/search-harness -p 'test_*.py'
+      - uses: actions/cache@v4
+        if: steps.plan.outputs.real == 'true'
+        with:
+          path: work/dataset-cache
+          key: browser-matrix-data-${{ hashFiles('tools/search-harness/fixtures/full48/source.json') }}
+      - name: Build native harness and same-source recommendation WASM
+        run: |
+          cargo build --release --locked --manifest-path tools/search-harness/Cargo.toml --bin benchmark_prepare --bin profile_case
+          cargo build --release --locked --target wasm32-unknown-unknown --manifest-path wasm/recommend/Cargo.toml
+          bindgen_version=$(python3 -c 'import tomllib; print(tomllib.load(open("wasm/recommend/Cargo.toml", "rb"))["dependencies"]["wasm-bindgen"].removeprefix("="))')
+          cargo install wasm-bindgen-cli --version "$bindgen_version" --locked
+          wasm-bindgen --target web --out-dir work/browser-bundle/pkg wasm/recommend/target/wasm32-unknown-unknown/release/ournotes_recommend_wasm.wasm
+          mkdir -p work/browser-bundle/bin
+          cp tools/search-harness/target/release/profile_case work/browser-bundle/bin/profile_case
+      - name: Export the complete synthetic completion corpus
+        if: steps.plan.outputs.synthetic == 'true'
+        env:
+          OURNOTES_LUCK_BENCH_OUT: ${{ github.workspace }}/work/synthetic-inputs
+        run: |
+          cargo test --release --locked --test adapter_fixture_export export_luck_search_benchmarks -- --ignored --exact
+          node tools/search-harness/browser-ci.cjs bundle work/synthetic-inputs/benchmark.json work/browser-bundle
+      - name: Materialize the complete pinned real-chart matrix
+        if: steps.plan.outputs.real == 'true'
+        run: |
+          python3 tools/search-harness/matrix.py prepare --suite full48 --cases all --no-build --cache-dir work/dataset-cache --out work/full48-inputs
+          node tools/search-harness/browser-ci.cjs bundle work/full48-inputs/benchmark.json work/browser-bundle
+      - name: Record source and artifact identities
+        run: |
+          cp work/browser-plan.json work/browser-bundle/plan.json
+          node tools/search-harness/browser-ci.cjs receipt . work/browser-bundle
+          tar -czf work/browser-bundle.tar.gz -C work browser-bundle
+      - name: Preserve binaries and exact input bytes
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-search-inputs
+          path: work/browser-bundle.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  chromium:
+    needs: prepare
+    name: Chromium / ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      NODE_PATH: ${{ github.workspace }}/work/browser-runtime/node_modules
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: browser-search-inputs
+          path: work
+      - name: Restore the same build and install real Chromium
+        run: |
+          tar -xzf work/browser-bundle.tar.gz -C work
+          npm install --prefix work/browser-runtime --no-save --package-lock=false playwright@1.58.2
+          work/browser-runtime/node_modules/.bin/playwright install --with-deps chromium
+      - name: Run every selected original request in both runtimes
+        env:
+          CORPUS: ${{ matrix.suite }}
+          CASES: ${{ matrix.cases }}
+          EXPECTED_CASES: ${{ matrix.expectedCases }}
+          REQUIRED_CASES: ${{ matrix.requireComplete }}
+          REPEATS: ${{ needs.prepare.outputs.repeats }}
+          MODE: ${{ needs.prepare.outputs.mode }}
+          ENFORCE_COMPLETION: ${{ github.event_name != 'workflow_dispatch' || inputs.require_complete }}
+          SHARD: ${{ matrix.name }}
+        run: |
+          REQUIRE_TARGET=false
+          if [[ "$MODE" != smoke && "$ENFORCE_COMPLETION" == true ]]; then REQUIRE_TARGET=true; fi
+          if [[ "$MODE" != smoke && "$ENFORCE_COMPLETION" == false ]]; then REQUIRED_CASES=none; fi
+          node tools/search-harness/browser-ci.cjs run "work/browser-bundle/inputs/$CORPUS/benchmark.json" \
+            work/browser-bundle "work/browser-results/$SHARD" --source . --cases "$CASES" \
+            --expected-cases "$EXPECTED_CASES" --repeats "$REPEATS" --require-complete "$REQUIRED_CASES" \
+            --require-target "$REQUIRE_TARGET"
+      - name: Preserve all outcomes, including failed and unfinished requests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-results-${{ matrix.name }}
+          path: work/browser-results/${{ matrix.name }}/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  summary:
+    needs: [prepare, chromium]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: browser-results-*
+          path: work/browser-results
+      - name: Account for every planned shard and completion target
+        env:
+          MATRIX_PLAN: ${{ needs.prepare.outputs.matrix }}
+          REPEATS: ${{ needs.prepare.outputs.repeats }}
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.source }}
+        run: |
+          node tools/search-harness/browser-ci.cjs collect work/browser-results work/browser-summary \
+            "$MATRIX_PLAN" "$REPEATS" "$SOURCE_COMMIT"
+      - name: Preserve combined coverage and completion summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-search-summary
+          path: work/browser-summary/
+          if-no-files-found: ignore
+          retention-days: 14

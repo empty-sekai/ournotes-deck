@@ -1,4 +1,4 @@
-// Serial, paired native or real Chromium Worker measurements over immutable requests.
+// Serial native or real Chromium Worker measurements over immutable requests.
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
@@ -10,10 +10,39 @@ const { projection } = require('./json-tokens.cjs');
 
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
 const read = file => fs.readFileSync(file, 'utf8');
-const option = (args, name, fallback) => {
-  const at = args.indexOf(name);
-  return at < 0 ? fallback : args[at + 1];
-};
+function parseArguments(args) {
+  const options = {}, positional = [];
+  const valued = new Set(['--runtime', '--repeats', '--cases', '--baseline-source', '--candidate-source']);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--candidate-only') options[arg] = true;
+    else if (valued.has(arg)) {
+      assert(args[i + 1] && !args[i + 1].startsWith('--'), `${arg} requires a value`);
+      assert(!Object.hasOwn(options, arg), `duplicate option ${arg}`);
+      options[arg] = args[++i];
+    } else {
+      assert(!arg.startsWith('--'), `unknown option ${arg}`);
+      positional.push(arg);
+    }
+  }
+  const candidateOnly = options['--candidate-only'] === true;
+  assert.equal(positional.length, candidateOnly ? 3 : 4,
+    'benchmark.cjs MANIFEST BASELINE CANDIDATE OUTPUT [options]\n'
+    + 'benchmark.cjs MANIFEST CANDIDATE OUTPUT --candidate-only [options]\n'
+    + 'options: --runtime native|browser --repeats N --cases NAME,... --baseline-source ROOT --candidate-source ROOT');
+  assert(!candidateOnly || !options['--baseline-source'], '--baseline-source requires paired mode');
+  const [manifest, first, second, fourth] = positional;
+  const runtime = options['--runtime'] ?? 'native';
+  assert(['native', 'browser'].includes(runtime), 'runtime must be native or browser');
+  const repeats = Number(options['--repeats'] ?? (candidateOnly ? 1 : 2));
+  assert(Number.isSafeInteger(repeats) && repeats > 0, 'positive integer repeat count');
+  return { manifest, baseline: candidateOnly ? null : first, candidate: candidateOnly ? first : second,
+    output: candidateOnly ? second : fourth, candidateOnly, runtime, repeats,
+    selected: options['--cases']?.split(','),
+    sources: { baseline: options['--baseline-source'], candidate: options['--candidate-source'] } };
+}
+const runOrder = (candidateOnly, repeat, caseIndex) => candidateOnly ? ['candidate']
+  : (repeat + caseIndex) % 2 ? ['candidate', 'baseline'] : ['baseline', 'candidate'];
 const fractionCompare = (a, b) => {
   const difference = BigInt(a.numerator) * BigInt(b.denominator) - BigInt(b.numerator) * BigInt(a.denominator);
   return difference < 0n ? -1 : difference > 0n ? 1 : 0;
@@ -63,8 +92,22 @@ function distribution(values) {
   const q = p => sorted.length ? sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)] : null;
   return { count: sorted.length, min: sorted[0] ?? null, p50: q(0.5), p90: q(0.9), max: sorted.at(-1) ?? null };
 }
-function summarize(rows) {
-  return Object.fromEntries(['baseline', 'candidate'].map(label => {
+function completionSummary(rows) {
+  const complete = rows.filter(row => row.completion === 'Complete');
+  const proven = complete.filter(row => row.optimality === 'proven');
+  const withinBudget = row => Number.isFinite(row.searchWallMs) && Number.isFinite(row.timeLimitMs)
+    && row.searchWallMs <= row.timeLimitMs;
+  return { requests: rows.length, complete: complete.length, proven: proven.length,
+    completeWithinBudget: complete.filter(withinBudget).length, provenWithinBudget: proven.filter(withinBudget).length,
+    allComplete: rows.length > 0 && complete.length === rows.length,
+    allProvenWithinBudget: rows.length > 0 && proven.filter(withinBudget).length === rows.length,
+    completions: rows.reduce((counts, row) => {
+      counts[row.completion] = (counts[row.completion] || 0) + 1;
+      return counts;
+    }, {}) };
+}
+function summarize(rows, labels = ['baseline', 'candidate']) {
+  return Object.fromEntries(labels.map(label => {
     const selected = rows.filter(row => row.variant === label);
     const byFamily = {};
     for (const row of selected) {
@@ -77,7 +120,7 @@ function summarize(rows) {
     for (const name of new Set(selected.map(row => row.name))) {
       const samples = selected.filter(row => row.name === name);
       byCase[name] = {
-        requests: samples.length, complete: samples.filter(row => row.completion === 'Complete').length,
+        ...completionSummary(samples),
         searchWallMs: distribution(samples.map(row => row.searchWallMs)), peakBytes: distribution(samples.map(row => row.peakBytes)),
         candidates: distribution(samples.map(row => row.leaves.visited)),
         simulations: distribution(samples.map(row => row.leaves.simulations)),
@@ -87,7 +130,7 @@ function summarize(rows) {
       };
     }
     return [label, {
-      requests: selected.length, complete: selected.filter(row => row.completion === 'Complete').length,
+      ...completionSummary(selected),
       searchWallMs: distribution(selected.map(row => row.searchWallMs)),
       completeWallMs: distribution(selected.filter(row => row.completion === 'Complete').map(row => row.searchWallMs)),
       peakBytes: distribution(selected.map(row => row.peakBytes)), byFamily, byCase,
@@ -112,22 +155,58 @@ function sourceIdentity(directory) {
 async function nativeRun(binary, files, output, timeout) {
   const begin = performance.now();
   let stdout = '', stderr = '';
-  await new Promise((resolve, reject) => {
-    const child = spawn(binary, [files.data, files.snapshot, files.request, output], { stdio: ['ignore', 'pipe', 'pipe'] });
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(Error('native process external deadline')); }, timeout);
-    child.stdout.on('data', data => { stdout += data; });
-    child.stderr.on('data', data => { stderr += data; });
-    child.on('error', error => { clearTimeout(timer); reject(error); });
-    child.on('exit', code => {
-      clearTimeout(timer);
-      if (code === 0) resolve(); else reject(Error(`native process exit ${code}: ${stderr}`));
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn(binary, [files.data, files.snapshot, files.request, output], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let failure;
+      const timer = setTimeout(() => {
+        failure = Error('native process external deadline');
+        child.kill('SIGKILL');
+      }, timeout);
+      child.stdout.on('data', data => { stdout += data; });
+      child.stderr.on('data', data => { stderr += data; });
+      child.on('error', error => { failure ||= error; });
+      // close follows process exit and drains both output streams, including after a watchdog kill.
+      child.on('close', (code, signal) => {
+        clearTimeout(timer);
+        if (failure) reject(failure);
+        else if (code === 0) resolve();
+        else reject(Error(`native process exit ${code}, signal ${signal}: ${stderr}`));
+      });
     });
-  });
+  } finally {
+    fs.writeFileSync(`${output}.log`, stdout + stderr);
+  }
   const records = stdout.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
   const done = [...records].reverse().find(row => Number.isFinite(row.elapsedMs));
   assert(done, 'native binary must emit an elapsedMs record (profile_case or benchmark_case)');
-  fs.writeFileSync(`${output}.log`, stdout + stderr);
   return { result: read(output), searchWallMs: done.elapsedMs, processWallMs: performance.now() - begin, profiles: done };
+}
+function validateAnswer(text, requestText, datasetId) {
+  const answer = JSON.parse(text), request = JSON.parse(requestText), outcome = answer.result;
+  assert.equal(answer.status, 'ok', 'recommendation status must be ok');
+  assert.deepEqual(answer.errors, [], 'recommendation errors must be empty');
+  assert.deepEqual(answer.missing, [], 'recommendation missing facts must be empty');
+  assert(outcome, 'recommendation result is required');
+  assert.equal(answer.datasetId, datasetId, 'dataset identity');
+  const field = (fields, key) => fields.find(([name]) => name === key)?.[1];
+  const expected = projection(requestText), actual = field(projection(text), 'result')[1];
+  assert(field(expected, 'metric'), 'request metric is required');
+  assert.deepEqual(field(actual, 'metric'), field(expected, 'metric'), 'request metric changed');
+  assert.deepEqual(field(actual, 'strategy'), field(expected, 'strategy')
+    ?? ['object', projection('{"kind":"branchAndBound"}')], 'request strategy changed');
+  assert(['Complete', 'TimedOut', 'RefinementRequired'].includes(outcome.completion), 'known completion state');
+  assert(Array.isArray(outcome.results), 'recommendation results must be an array');
+  if (outcome.completion === 'Complete') {
+    assert.equal(outcome.optimality, 'proven', 'complete recommendation must be proven');
+    assert.equal(outcome.telemetry?.proof?.complete, true, 'complete recommendation must carry a complete proof');
+    assert.equal(outcome.exitReason, 'exhausted', 'complete recommendation must exhaust its domain');
+    assert.equal(outcome.results.length, request.k ?? 5, 'complete recommendation must return the requested K');
+    assert(outcome.results.every(team => team.rankCertified !== false), 'uncertified returned rank');
+  } else {
+    assert.notEqual(outcome.optimality, 'proven', 'incomplete recommendation cannot be proven');
+  }
+  return outcome;
 }
 async function browserRunner(variants) {
   const { chromium } = require('playwright');
@@ -184,40 +263,41 @@ wasmBeforeBytes:beforeBytes,wasmAfterBytes:module.memory.buffer.byteLength,share
   }
 }
 async function main() {
-  const args = process.argv.slice(2);
-  const [manifestArg, baselineArg, candidateArg, outputArg] = args;
-  if (!outputArg) throw Error('benchmark.cjs MANIFEST BASELINE CANDIDATE OUTPUT --runtime native|browser [--repeats 2] [--cases NAME,...] [--baseline-source ROOT] [--candidate-source ROOT]');
-  const runtime = option(args, '--runtime', 'native');
-  assert(['native', 'browser'].includes(runtime), 'runtime must be native or browser');
-  const repeats = Number(option(args, '--repeats', 2));
-  assert(Number.isSafeInteger(repeats) && repeats > 0, 'positive integer repeat count');
-  const manifestPath = path.resolve(manifestArg), root = path.dirname(manifestPath);
-  const manifestText = read(manifestPath), manifest = JSON.parse(manifestText);
-  assert.equal(manifest.format, 'ournotes-deck.search-benchmark/1');
-  const selected = option(args, '--cases', null)?.split(',');
-  const cases = manifest.cases.filter(entry => !selected || selected.includes(entry.name));
-  assert(cases.length > 0, 'selected cases are empty');
-  if (selected) for (const name of selected) assert(cases.some(entry => entry.name === name), `unknown case ${name}`);
-  const variants = { baseline: path.resolve(baselineArg), candidate: path.resolve(candidateArg) };
-  const out = path.resolve(outputArg);
+  const options = parseArguments(process.argv.slice(2));
+  const { candidateOnly, runtime, repeats, selected } = options;
+  const manifestPath = path.resolve(options.manifest), root = path.dirname(manifestPath);
+  const variants = candidateOnly ? { candidate: path.resolve(options.candidate) }
+    : { baseline: path.resolve(options.baseline), candidate: path.resolve(options.candidate) };
+  const out = path.resolve(options.output);
   fs.mkdirSync(out, { recursive: true });
   const report = {
-    format: 'ournotes-deck.search-benchmark-report/1', runtime, repeats, order: 'AB/BA alternated by repeat and case',
-    manifestSha256: sha(manifestText), runnerSha256: sha(read(__filename)),
+    format: 'ournotes-deck.search-benchmark-report/1', runtime, repeats,
+    mode: candidateOnly ? 'candidateOnly' : 'paired',
+    order: candidateOnly ? 'candidate once per repeat and case' : 'AB/BA alternated by repeat and case',
+    passed: false, passedScope: 'executionAndAnswerContracts', independentOracle: 'notRun',
+    manifestSha256: null, runnerSha256: sha(read(__filename)),
     node: process.version, platform: process.platform, arch: process.arch,
     cpus: os.cpus().length, cpuModel: os.cpus()[0]?.model, totalMemory: os.totalmem(),
-    variants: Object.fromEntries(Object.entries(variants).map(([label, location]) => [label, {
-      path: location, sha256: sha(fs.readFileSync(runtime === 'native' ? location : path.join(location, 'ournotes_recommend_wasm_bg.wasm'))),
-      source: sourceIdentity(option(args, `--${label}-source`, null)),
-    }])), rows: [], comparisons: [],
+    variants: {}, rows: [], comparisons: [],
   };
   const save = () => {
-    report.summary = summarize(report.rows);
+    report.summary = summarize(report.rows, Object.keys(variants));
     fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
   };
-  const browser = runtime === 'browser' ? await browserRunner(variants) : null;
-  if (browser) report.chromium = browser.version;
+  let browser;
   try {
+    const manifestText = read(manifestPath), manifest = JSON.parse(manifestText);
+    report.manifestSha256 = sha(manifestText);
+    assert.equal(manifest.format, 'ournotes-deck.search-benchmark/1');
+    const cases = manifest.cases.filter(entry => !selected || selected.includes(entry.name));
+    assert(cases.length > 0, 'selected cases are empty');
+    if (selected) for (const name of selected) assert(cases.some(entry => entry.name === name), `unknown case ${name}`);
+    report.variants = Object.fromEntries(Object.entries(variants).map(([label, location]) => [label, {
+      path: location, sha256: sha(fs.readFileSync(runtime === 'native' ? location : path.join(location, 'ournotes_recommend_wasm_bg.wasm'))),
+      source: sourceIdentity(options.sources[label]),
+    }]));
+    browser = runtime === 'browser' ? await browserRunner(variants) : null;
+    if (browser) report.chromium = browser.version;
     for (let caseIndex = 0; caseIndex < cases.length; caseIndex++) {
       const entry = cases[caseIndex];
       assert.match(entry.name, /^[A-Za-z0-9_-]+$/);
@@ -226,7 +306,7 @@ async function main() {
       const request = JSON.parse(input.request);
       assert.equal(request.limits.timeLimitMs, manifest.requestTimeLimitMs, 'request time limit must equal the manifest');
       for (let repeat = 0; repeat < repeats; repeat++) {
-        const order = (repeat + caseIndex) % 2 ? ['candidate', 'baseline'] : ['baseline', 'candidate'];
+        const order = runOrder(candidateOnly, repeat, caseIndex);
         const answers = {};
         for (const variant of order) {
           const runId = `${entry.name}-${repeat + 1}-${variant}`;
@@ -235,8 +315,7 @@ async function main() {
           const result = browser ? await browser.run(variant, input, manifest.timeoutMs || 90000)
             : await nativeRun(variants[variant], files, output, manifest.timeoutMs || 90000);
           fs.writeFileSync(output, result.result);
-          const answer = JSON.parse(result.result), outcome = answer.result;
-          assert(outcome, `${runId}: invalid recommendation: ${JSON.stringify(answer.errors)}`);
+          const outcome = validateAnswer(result.result, input.request, sha(input.data));
           const telemetry = outcome.telemetry;
           const row = {
             name: entry.name, family: entry.family, metric: entry.metric, repeat: repeat + 1, variant, runtime,
@@ -251,20 +330,35 @@ async function main() {
             caches: telemetry.caches, refinement: telemetry.lotteryRefinement, profiles: result.profiles,
             answerSha256: sha(result.result), semanticProjectionSha256: sha(JSON.stringify(projection(result.result))),
           };
-          if (outcome.completion === 'Complete') {
-            assert(outcome.results.every(team => team.rankCertified === undefined || team.rankCertified), 'uncertified returned rank');
-          }
           report.rows.push(row); answers[variant] = result.result; save();
           console.log(JSON.stringify({ type: 'done', name: entry.name, repeat: repeat + 1, variant,
             completion: row.completion, searchWallMs: row.searchWallMs, peakBytes: row.peakBytes,
             candidates: row.leaves.visited, simulations: row.leaves.simulations, refinement: row.refinement }));
         }
-        report.comparisons.push({ name: entry.name, repeat: repeat + 1, ...compareAnswers(answers.baseline, answers.candidate) });
+        if (!candidateOnly) {
+          report.comparisons.push({ name: entry.name, repeat: repeat + 1,
+            ...compareAnswers(answers.baseline, answers.candidate) });
+        }
         save();
       }
     }
-  } finally { await browser?.close(); }
-  report.passed = true; save();
+    report.passed = true;
+  } catch (error) {
+    report.passed = false;
+    report.error = { name: error.name, message: error.message };
+    throw error;
+  } finally {
+    try {
+      await browser?.close();
+    } catch (error) {
+      report.passed = false;
+      report.error ||= { name: error.name, message: error.message };
+      report.cleanupError = { name: error.name, message: error.message };
+      throw error;
+    } finally {
+      save();
+    }
+  }
   const summary = Object.fromEntries(Object.entries(report.summary).map(([label, value]) => {
     const { byCase, ...totals } = value;
     return [label, totals];
@@ -272,4 +366,4 @@ async function main() {
   console.log(JSON.stringify({ type: 'summary', ...summary }));
 }
 if (require.main === module) main().catch(error => { console.error(error.stack); process.exitCode = 1; });
-module.exports = { compareAnswers, distribution, summarize };
+module.exports = { compareAnswers, distribution, summarize, parseArguments, runOrder, validateAnswer, sourceIdentity };

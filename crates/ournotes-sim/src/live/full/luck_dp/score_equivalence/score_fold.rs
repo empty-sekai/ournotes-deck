@@ -8,6 +8,11 @@ use super::*;
 use crate::live::score::get_frame;
 use crate::live::skill::FactorCommand;
 
+mod prefix;
+pub(super) use prefix::evaluate_support;
+#[cfg(test)]
+pub(super) use prefix::evaluate_support_with_limit;
+
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 const MAX_FRAMES: usize = 8192;
 const MAX_QUERIES: u64 = 128_000_000;
@@ -19,6 +24,8 @@ pub(super) struct Work {
     pub queries: u64,
     frame_steps: u64,
     events: u64,
+    #[cfg(test)]
+    pub checkpoint_peak_bytes: usize,
 }
 
 pub(super) struct Recipe {

@@ -2,6 +2,8 @@
 use super::*;
 use ournotes_sim::live::certified::F64Interval;
 
+mod span_peak;
+
 /// Outward accumulation of an unchanged window in the probe-off envelope. The original envelope and its full
 /// history drift are accumulated independently; an invalid conditional term becomes unbounded and keeps the old cap.
 fn probe_off_window(events: &mut [F64Interval], lo: u32, hi: u32, factor: f64) {
@@ -28,8 +30,18 @@ impl FineView<'_> {
     /// binary32 representation adds two more roundings per lifetime command
     /// (integer-to-float conversion and division, including saturated mill values). Infinite without a
     /// certificate.
+    #[cfg(any(test, feature = "search-diagnostics"))]
     pub(super) fn cand_drift(&self, parts: [&Contrib; 5], rush_masks: Option<&RushMasks>) -> f64 {
-        let (e, n, peak, peak_frame) = self.cand_counts(parts, rush_masks);
+        self.cand_drift_with_scratch(parts, rush_masks, &mut span_peak::Scratch::default())
+    }
+
+    fn cand_drift_with_scratch(
+        &self,
+        parts: [&Contrib; 5],
+        rush_masks: Option<&RushMasks>,
+        scratch: &mut span_peak::Scratch,
+    ) -> f64 {
+        let (e, n, peak, peak_frame) = self.cand_counts(parts, rush_masks, scratch);
         let representation = (2.0 * n).next_up();
         let weight = ((3.0 * e).next_up() + representation).next_up();
         let Some(amplification) = float_margin::amplification(weight, 2f64.powi(-24)) else {
@@ -53,9 +65,12 @@ impl FineView<'_> {
 
     /// The counts `cand_drift` reads: command executions, lifetime commands, the largest factor sum at one command
     /// time and intersecting one native score frame.
-    fn cand_counts(&self, parts: [&Contrib; 5], rush_masks: Option<&RushMasks>) -> (f64, f64, f64, f64) {
-        let mut peak = 0f64;
-        let mut peak_frame = 0f64;
+    fn cand_counts(
+        &self,
+        parts: [&Contrib; 5],
+        rush_masks: Option<&RushMasks>,
+        scratch: &mut span_peak::Scratch,
+    ) -> (f64, f64, f64, f64) {
         let (mut e, mut n) = (0f64, 0f64);
         let rush_masks = rush_masks.filter(|_| self.fine.rush_eligible);
         for p in parts {
@@ -66,23 +81,8 @@ impl FineView<'_> {
                 e = (e + ops).next_up();
                 n = (n + cmds).next_up();
             }
-            for &(a, _, _) in &p.spans {
-                let frame = self.fine.score_frames.at(a);
-                let (mut at, mut near) = (0f64, 0f64);
-                for q in parts {
-                    for &(b0, b1, g) in &q.spans {
-                        if b0 <= a && a < b1 {
-                            at = (at + g).next_up();
-                        }
-                        if self.fine.score_frames.meets(b0, b1, frame) {
-                            near = (near + g).next_up();
-                        }
-                    }
-                }
-                peak = peak.max(at);
-                peak_frame = peak_frame.max(near);
-            }
         }
+        let (peak, peak_frame) = scratch.peaks(parts, self.fine.score_frames);
         (e, n, peak, peak_frame)
     }
 
@@ -98,7 +98,7 @@ impl FineView<'_> {
         scratch: &mut Scratch,
         rush_masks: Option<&RushMasks>,
     ) -> i64 {
-        let margin = (self.cand_drift(parts, rush_masks), self.chain());
+        let margin = (self.cand_drift_with_scratch(parts, rush_masks, &mut scratch.span_peak), self.chain());
         self.fine_bound_with_eps(power, parts, src, life, scratch, margin, rush_masks)
     }
 
@@ -534,7 +534,8 @@ impl JointFineBounds {
                 })
             })
             .collect();
-        let (executions, commands, peak, peak_frame) = view.cand_counts(parts, rush_masks);
+        let (executions, commands, peak, peak_frame) =
+            view.cand_counts(parts, rush_masks, &mut span_peak::Scratch::default());
         let exec = &self.fine.exec_profile;
         let per_second: Vec<u32> = exec.chunks(25).map(|c| c.iter().copied().max().unwrap_or(0)).collect();
         serde_json::json!({
@@ -828,6 +829,7 @@ pub(crate) struct CapTerms {
 
 #[derive(Default)]
 pub(super) struct Scratch {
+    pub(super) span_peak: span_peak::Scratch,
     pub(super) rush_cache: rush::WindowCache,
     pub(super) rush_replacements: Vec<Option<Rc<rush::EntryWindows>>>,
     pub(super) note: Vec<f64>,

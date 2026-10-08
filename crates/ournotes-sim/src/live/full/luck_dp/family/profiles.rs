@@ -8,6 +8,7 @@ pub use programs::{LuckFamilyProgram, LuckFamilyProgramKey};
 pub(super) struct AdmittedFamilyInputs {
     pub(super) base: [Performer; SLOTS],
     pub(super) bindings: LuckFamilyBindings,
+    pub(super) probe_runs_admitted: bool,
 }
 
 /// Every supplied physical pair has passed the same admission and complete-cover work guards as `prepare`.
@@ -22,6 +23,26 @@ pub struct LuckFamilyDomain {
     bytes: usize,
 }
 
+/// Whole physical-pair admission with a cumulative allowance for requested native profiles. This capability
+/// does not promise that every possible writer profile fits that allowance. Each returned profile still
+/// contains every original order; an unrequested, refused or interrupted profile remains unknown.
+#[derive(Debug)]
+pub struct LuckFamilyProfileDomain {
+    domain: LuckFamilyDomain,
+    work: LuckFamilyProfileWork,
+}
+
+/// Conservatively reserved native work, including the common geometry pass. A native preparation reserves
+/// all 120 orders before execution; refusal or cancellation does not refund that reservation. Complete-program
+/// transport executes no native recording frames and leaves these counters unchanged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LuckFamilyProfileWork {
+    pub profile_attempts: u64,
+    pub reserved_order_evaluations: usize,
+    pub reserved_frame_work: u64,
+    pub budget_refusals: u64,
+}
+
 /// Exactly one original writer-owner profile, with all 120 original performance-order labels completed.
 /// This cannot be used as a complete `LuckControllerFamily` or as another admitted domain's profile.
 #[derive(Debug)]
@@ -30,6 +51,7 @@ pub struct LuckFamilyProfile {
     mapping: Arc<DomainTerminalMapping>,
     profile: usize,
     orders: Vec<LuckFamilyOrderLaw>,
+    probe_runs_admitted: bool,
     bytes: usize,
 }
 
@@ -83,6 +105,60 @@ impl LuckFamilyDomain {
     }
 }
 
+impl LuckFamilyProfileDomain {
+    pub fn profile_count(&self) -> usize {
+        self.domain.profile_count()
+    }
+
+    pub fn profile_for(&self, resources: &[Option<usize>; SLOTS]) -> Option<usize> {
+        self.domain.profile_for(resources)
+    }
+
+    pub fn bindings(&self) -> Option<LuckFamilyBindings> {
+        self.domain.bindings()
+    }
+
+    pub fn note_times(&self) -> &[i32] {
+        self.domain.note_times()
+    }
+
+    pub fn probe_gate(&self) -> Option<i64> {
+        self.domain.probe_gate()
+    }
+
+    pub fn owns_profile(&self, profile: &LuckFamilyProfile) -> bool {
+        self.domain.owns_profile(profile)
+    }
+
+    pub fn retained_bytes(&self) -> usize {
+        self.domain.retained_bytes().saturating_sub(size_of::<LuckFamilyDomain>()).saturating_add(size_of::<Self>())
+    }
+
+    pub fn work(&self) -> LuckFamilyProfileWork {
+        self.work
+    }
+
+    fn reserve_profile(&mut self) -> Result<(), LuckFamilyError> {
+        let orders = self
+            .work
+            .reserved_order_evaluations
+            .checked_add(ORDERS)
+            .ok_or_else(|| fail(LuckFamilyDecline::Capacity, "profile order-work overflow"))?;
+        let frames = (ORDERS as u64)
+            .checked_mul(self.domain.mapping.frame_work)
+            .and_then(|frames| frames.checked_add(self.work.reserved_frame_work))
+            .ok_or_else(|| fail(LuckFamilyDecline::Capacity, "profile frame-work overflow"))?;
+        if orders > self.domain.limits.max_order_evaluations || frames > self.domain.limits.max_frame_work {
+            self.work.budget_refusals = self.work.budget_refusals.saturating_add(1);
+            return Err(fail(LuckFamilyDecline::Budget, "requested profile exceeds remaining native work"));
+        }
+        self.work.profile_attempts = self.work.profile_attempts.saturating_add(1);
+        self.work.reserved_order_evaluations = orders;
+        self.work.reserved_frame_work = frames;
+        Ok(())
+    }
+}
+
 impl LuckFamilyProfile {
     pub fn profile(&self) -> usize {
         self.profile
@@ -90,6 +166,23 @@ impl LuckFamilyProfile {
 
     pub fn orders(&self) -> &[LuckFamilyOrderLaw] {
         &self.orders
+    }
+
+    /// Maximum direct positive-7021 starts along a relaxed two-state path for this original order.
+    /// This is an integer work bound, not a probability law or a score-factor amplitude. Every native path
+    /// is represented; joining edges from incompatible controller states can only increase the maximum.
+    /// The full physical domain must have fixed-true holders in one legal phase. The original frame cover,
+    /// initial false state, closed final lifecycle and inactive music-clamped tail are checked separately.
+    /// Missing evidence keeps the original command budget; it does not invalidate the completed law.
+    pub fn order_probe_run_bound(&self, order: usize) -> Option<u64> {
+        if !self.probe_runs_admitted || self.orders.len() != ORDERS {
+            return None;
+        }
+        probe_runs::maximum(
+            &self.orders.get(order)?.probability.probe_transitions,
+            usize::try_from(self.mapping.frame_work).ok()?,
+            self.mapping.first_late_frame,
+        )
     }
 
     pub fn retained_bytes(&self) -> usize {
@@ -143,9 +236,47 @@ impl LuckFamilyContext<'_> {
         limits: LuckFamilyLimits,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Option<LuckFamilyDomain>, LuckFamilyError> {
-        let Some(admitted) = self.admit_inputs(choices, limits, &mut cancelled)? else {
+        let Some(admitted) = self.admit_inputs(choices, limits, CoverWork::Complete, &mut cancelled)? else {
             return Ok(None);
         };
+        self.retain_domain(choices, limits, admitted, &mut cancelled)
+    }
+
+    /// Check every physical pair and retain the complete writer-owner map. The work allowance must hold one
+    /// full native profile; later native preparations reserve their complete 120-order work cumulatively.
+    /// Only a returned `LuckFamilyProfile` supplies probabilities for its own original profile and labels.
+    pub fn admit_profile_domain(
+        &self,
+        choices: &[Vec<LuckFamilyChoice>; SLOTS],
+        limits: LuckFamilyLimits,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<LuckFamilyProfileDomain>, LuckFamilyError> {
+        let Some(admitted) = self.admit_inputs(choices, limits, CoverWork::FirstProfile, &mut cancelled)? else {
+            return Ok(None);
+        };
+        let Some(domain) = self.retain_domain(choices, limits, admitted, &mut cancelled)? else {
+            return Ok(None);
+        };
+        let result = LuckFamilyProfileDomain {
+            domain,
+            work: LuckFamilyProfileWork { reserved_frame_work: self.mapping.frame_work, ..Default::default() },
+        };
+        if result.retained_bytes() > limits.max_retained_bytes {
+            return Err(fail(LuckFamilyDecline::Capacity, "profile domain exceeds the byte budget"));
+        }
+        if cancelled() {
+            return Ok(None);
+        }
+        Ok(Some(result))
+    }
+
+    fn retain_domain(
+        &self,
+        choices: &[Vec<LuckFamilyChoice>; SLOTS],
+        limits: LuckFamilyLimits,
+        admitted: AdmittedFamilyInputs,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<Option<LuckFamilyDomain>, LuckFamilyError> {
         let mut copied = std::array::from_fn(|_| Vec::new());
         for (target, source) in copied.iter_mut().zip(choices) {
             if cancelled() {
@@ -171,6 +302,28 @@ impl LuckFamilyContext<'_> {
             return Ok(None);
         }
         Ok(Some(domain))
+    }
+
+    /// Complete one requested profile after reserving all of its native order/frame work. A failed or cancelled
+    /// attempt keeps its charge. The private complete-cover representation cannot escape this capability.
+    pub fn prepare_budgeted_profile(
+        &self,
+        domain: &mut LuckFamilyProfileDomain,
+        profile: usize,
+        curves: Option<&mut LuckDpCache>,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<LuckFamilyProfile>, LuckFamilyError> {
+        if cancelled() {
+            return Ok(None);
+        }
+        if !Arc::ptr_eq(&self.mapping, &domain.domain.mapping) {
+            return Err(fail(LuckFamilyDecline::Context, "profile domain belongs to another immutable context"));
+        }
+        if profile >= domain.profile_count() {
+            return Err(fail(LuckFamilyDecline::IncompleteCoverage, "writer profile outside the admitted domain"));
+        }
+        domain.reserve_profile()?;
+        self.prepare_profile(&domain.domain, profile, curves, cancelled)
     }
 
     /// Complete one exact admitted writer-owner profile. Cancellation, refusal or missing labels never publish
@@ -216,6 +369,7 @@ impl LuckFamilyContext<'_> {
             mapping: Arc::clone(&self.mapping),
             profile,
             orders: reserve(ORDERS)?,
+            probe_runs_admitted: domain.admitted.probe_runs_admitted,
             bytes: 0,
         };
         completed.bytes = size_of::<LuckFamilyProfile>()

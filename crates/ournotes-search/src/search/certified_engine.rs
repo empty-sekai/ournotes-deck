@@ -3,12 +3,17 @@ use super::*;
 use crate::search::{
     certified_search::{
         BestOrderWitness, CertifiedEvaluation, PayoffMap, aggregate_orders, canonicalize_performers,
-        canonicalize_performers_with_basis, refine_order_with_exact_law, refinement_uncertainty,
+        canonicalize_performers_with_basis, refine_order_with_exact_law, refine_order_with_terminal_payoff,
+        refinement_uncertainty,
     },
     interval_topk::{CandidateInterval, CanonicalTie, IntervalTopK, RankingProof, RemainingDomain},
 };
 use ournotes_sim::live::certified::F64Interval;
 use std::collections::BTreeSet;
+
+/// Work deduplication only: the immutable Engine fixes the full scenario, master, clock and order law.
+/// Full program bytes, exact power and all mapping parameters remain in each retained key.
+type TerminalProgramKey = (Vec<u8>, i32, ournotes_sim::live::full::LuckTerminalPayoff);
 
 /// How a played Gekisou request treats the lottery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -445,6 +450,8 @@ impl Engine<'_, '_> {
         let mut materialized = std::collections::BTreeSet::new();
         let mut summarized = std::collections::BTreeSet::new();
         let mut residue_attempted = std::collections::BTreeSet::new();
+        let mut terminal_attempted = BTreeSet::new();
+        let mut terminal_programs = BTreeSet::<TerminalProgramKey>::new();
         let mut equality_attempted = false;
         loop {
             let state = self.certified.as_ref().expect("certified request");
@@ -503,6 +510,20 @@ impl Engine<'_, '_> {
                     fresh_summary || self.refine_certified_summary(id, stage)?
                 };
                 if !complete {
+                    return Ok(());
+                }
+                continue;
+            }
+            // Complete observable histories can settle nonlinear payoffs without replaying every hidden
+            // RNG leaf. Give each live program this bounded stage before any exact-law tree spends the
+            // shared replay allowance; refusals preserve the original exact-law fallback below.
+            if matches!(
+                self.metric,
+                Metric::ScoreAtLeast { .. } | Metric::CappedScore { .. } | Metric::ScoreAndLifeAtLeast { .. }
+            ) && let Some(id) = candidates.iter().copied().find(|id| !terminal_attempted.contains(id))
+            {
+                terminal_attempted.insert(id);
+                if !self.refine_certified_terminal_payoff(id, &mut terminal_programs, &mut work)? {
                     return Ok(());
                 }
                 continue;
@@ -670,6 +691,134 @@ impl Engine<'_, '_> {
                 self.report_progress();
             }
         }
+    }
+
+    /// A per-program terminal-law stage, independent of pairwise score-law equality. Each installed
+    /// result still aggregates all original 120 labels; an unfinished optional order installs nothing.
+    fn refine_certified_terminal_payoff(
+        &mut self,
+        id: u64,
+        attempted_programs: &mut BTreeSet<TerminalProgramKey>,
+        work: &mut ournotes_sim::live::full::LuckExactBudget,
+    ) -> Result<bool, Error> {
+        use ournotes_sim::live::full::{LuckScoreEquivalenceDecline, LuckTerminalPayoffSession};
+        let entry = &self.certified.as_ref().expect("certified request").entries[&id];
+        let (physical, power) = (entry.physical, entry.power);
+        let mut input = expectation::context(self.pool, &physical, &self.request.objective)?;
+        if input.rank_confirmations.is_some() || input.gekisou.is_none() {
+            return Ok(true);
+        }
+        if let Some(value) = self.simulation.music_length_ms {
+            input.params.music_length_ms = value;
+        }
+        if let Some(value) = self.simulation.score_music_length_ms {
+            input.params.score_music_length_ms = Some(value);
+        }
+        let program = canonicalize_performers(&mut input);
+        let map = crate::search::certified_payoff::payoff_map(
+            self.pool,
+            self.request,
+            self.metric,
+            self.event_input,
+            &physical,
+            power,
+            (i32::MIN, i32::MAX),
+        )?;
+        let Some(mapping) = map.terminal_payoff() else { return Ok(true) };
+        let key = (program.clone(), power, mapping);
+        if attempted_programs.contains(&key) {
+            return Ok(true);
+        }
+        // This optional bounded ledger only avoids duplicate work for already equal complete programs.
+        // A full ledger or disabled cache simply repeats the work; it never discards a physical candidate.
+        if attempted_programs.len() < self.limits.cache_entries.min(64) && program.len() <= 512 * 1024 {
+            attempted_programs.insert(key);
+        }
+        if self.certified.as_ref().expect("certified request").entries[&id].refinement.is_none() {
+            for entry in self.certified.as_mut().expect("certified request").entries.values_mut() {
+                entry.refinement = None;
+            }
+            if !self.materialize_certified_refinement(id, false)? {
+                return Ok(false);
+            }
+        }
+        let retained = self.certified.as_ref().expect("certified request").entries[&id]
+            .refinement
+            .as_ref()
+            .expect("materialized terminal boundary");
+        if retained.program != program || retained.map != map {
+            return Err(Error::Domain(
+                "terminal payoff refinement changed the program basis or complete mapping".into(),
+            ));
+        }
+        let mut priorities = retained
+            .evaluation
+            .refinements
+            .iter()
+            .map(|refinement| {
+                let index = refinement.order_index;
+                Ok((index, refinement_uncertainty(&retained.evaluation.orders[index], &map)?))
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        priorities.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        let skills = self.certified_luck_skills()?;
+        let mut session = LuckTerminalPayoffSession::new(
+            self.pool.master,
+            &skills,
+            &input.notes,
+            &input.events,
+            input.params,
+            input.gekisou.as_ref().expect("admitted solo context"),
+            &input.play,
+            &input.delta_times,
+        );
+        for (index, _) in priorities {
+            let state = self.certified.as_ref().expect("certified request");
+            let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
+            if proof.complete || !proof.ambiguous.contains(&id) {
+                return Ok(true);
+            }
+            let order =
+                state.entries[&id].refinement.as_ref().expect("terminal boundary").evaluation.orders[index].order;
+            if self.expired() || work.exhausted() {
+                return Ok(false);
+            }
+            let performers = order.map(|slot| input.performers[slot].clone());
+            self.tel.lottery_refinement.terminal_attempted_orders += 1;
+            let before = (work.remaining_runs, work.remaining_frames);
+            let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+            let result = session.payoff(&performers, mapping, work, || self.expired());
+            self.rec.clock.lap(resume);
+            let telemetry = &mut self.tel.lottery_refinement;
+            telemetry.replay_runs += before.0 - work.remaining_runs;
+            telemetry.frames += before.1 - work.remaining_frames;
+            telemetry.budget_exhausted |= work.exhausted();
+            let result = result?;
+            telemetry.terminal_timeline_paths += result.timeline_paths;
+            telemetry.terminal_timeline_transitions += result.timeline_transitions;
+            telemetry.terminal_score_fold_queries += result.score_fold_queries;
+            telemetry.terminal_decline_reason = result.decline;
+            let Some(payoff) = result.payoff else {
+                telemetry.terminal_declined_orders += 1;
+                if result.decline == Some(LuckScoreEquivalenceDecline::Cancelled) {
+                    return Ok(false);
+                }
+                if result.decline == Some(LuckScoreEquivalenceDecline::WorkBudget) {
+                    return Ok(!work.exhausted());
+                }
+                continue;
+            };
+            telemetry.terminal_completed_orders += 1;
+            let state = self.certified.as_mut().expect("certified request");
+            let retained =
+                state.entries.get_mut(&id).expect("live terminal boundary").refinement.as_mut().expect("retained");
+            refine_order_with_terminal_payoff(&mut retained.evaluation.orders[index], &map, &payoff)?;
+            let evaluation = aggregate_orders(retained.evaluation.orders.clone(), &map)?;
+            state.install_refinement(id, evaluation)?;
+            self.tel.lottery_refinement.terminal_installed_orders += 1;
+            self.report_progress();
+        }
+        Ok(true)
     }
 
     fn refine_certified_equality(

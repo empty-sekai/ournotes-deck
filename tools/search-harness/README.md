@@ -199,6 +199,130 @@ disabled caches. The complete-law backend has separate Cartesian probability-bra
 tests in `ournotes-sim`; the integration oracle shares that backend and the client
 reward model.
 
+## Fixed real-chart matrix
+
+[`fixtures/full48`](fixtures/full48/README.md) contains 48 complete request definitions:
+18 LUCK Score requests, 18 nonlinear objectives and 12 Free or lottery-free controls.
+The three declared inventories retain every listed owned card, all eligible leaders
+and every legal unique Snap binding. Every request specifies K=3, 60,000 ms, no
+candidate limit and 1,024 cache entries. The native theoretical play recipes and
+event-clock facts are materialized without changing those limits or the payoff.
+
+```sh
+python3 tools/search-harness/matrix.py prepare --suite full48 --out work/full48-inputs
+node tools/search-harness/benchmark.cjs work/full48-inputs/benchmark.json \
+  PROFILE_CASE work/full48-native --candidate-only --runtime native --candidate-source .
+node tools/search-harness/benchmark.cjs work/full48-inputs/benchmark.json \
+  WEB_PACKAGE work/full48-browser --candidate-only --runtime browser --candidate-source .
+```
+
+Preparation acquires the dataset declared by `source.json` and verifies its decoded
+size and SHA-256. `--data FILE --offline` accepts an already downloaded file only
+when it has the same identity. `--no-build --prepare-binary FILE` uses an existing
+`benchmark_prepare`. Preparing all cases writes the full benchmark, unchanged
+snapshots, native play streams, requests and a preparation receipt. The `--cases`
+option selects `all`, `score` or explicit names; it never edits a selected request.
+
+`--candidate-only` runs each request once by default and retains its original
+completion status. Its `passed` field means execution and answer contracts passed;
+`summary.candidate.allProvenWithinBudget` separately states whether every case was
+proven complete inside its declared budget. The paired mode retains its existing
+AB/BA order and default of two repetitions.
+
+## Chromium Worker CI
+
+[Chromium Worker search](../../.github/workflows/browser-search.yml) builds the
+native harness and recommendation WASM from the exact same source commit. Pull
+requests use the PR head commit. The workflow runs actual Playwright Chromium,
+with a fresh module Worker and unshared WASM memory for each request; Node WASM
+does not substitute for that execution.
+
+| Trigger | Requests | Completion gate |
+| --- | --- | --- |
+| PR open/update, or a push to `main` | Six short synthetic requests and `short-newcomer-score` from the real matrix | Synthetic Score, Free and lottery-free controls must finish with a proof within 60 seconds; every request must satisfy transport, output and cross-runtime contracts |
+| PR label `browser-full-matrix` | All 16 synthetic requests and all 48 real requests | Every Chromium request must be proven complete within 20 seconds end to end |
+| Manual `workflow_dispatch` | `all`, `synthetic` or `full48`, with one or two serial repetitions | Complete within 20 seconds end to end by default; the explicit `require_complete=false` option collects unresolved or slower measurements while retaining their actual status |
+
+The PR label permits the full run from a pull-request branch. Manual dispatch uses
+the selected workflow ref; when the workflow is available for dispatch, it can be
+started and downloaded with the GitHub CLI:
+
+```sh
+gh workflow run browser-search.yml --ref BRANCH \
+  -f corpus=all -f repeats=1 -f require_complete=true
+gh run list --workflow browser-search.yml --branch BRANCH
+gh run watch RUN_ID --exit-status
+gh run download RUN_ID --dir work/chromium-run
+```
+
+Real requests are split by the three fixed inventory profiles, with 16 cases per
+job. The synthetic corpus has its own job. Each job runs one solver at a time,
+alternating native-first and Chromium-first across cases. A Worker failure or
+external watchdog expiry is recorded as a runner error; the remaining declared
+cases still run. The 90-second external Worker watchdog detects stalled execution
+and does not replace or lengthen the request's 60-second search budget.
+
+The portable input bundle copies each original JSON file byte for byte into a
+content-addressed blob, then changes only the manifest's file locations. The source
+manifest, per-input hashes, native preparation receipt, source commit and source
+file hashes accompany the binaries. Each job verifies those identities before
+running. The Worker also hashes the exact UTF-8 strings it receives, and the runner
+checks that the result retains all 120 uniform member-order labels, team identity,
+K, metric and the declared dataset.
+
+Native and Chromium answers share the Rust scoring model. When both are `Complete`,
+their ordered canonical Top-K must agree. Shared returned teams must have compatible
+exact rational score and payoff certificates, even if either run is incomplete.
+This establishes cross-runtime consistency for the declared cases; independent
+enumeration and native-law tests remain separate correctness evidence.
+
+Every run uploads three kinds of artifacts:
+
+- `browser-search-inputs`: the exact input bundle, source/build receipt, native
+  executable and web WASM package, stored in a tar archive to preserve executable
+  permissions.
+- `browser-results-<shard>`: every original answer, per-runtime report, stdout/stderr,
+  incremental coverage report and Markdown summary, including failures.
+- `browser-search-summary`: the combined coverage and completion table. Missing
+  shards count as unexecuted; they cannot silently reduce the denominator.
+
+The 20-second goal uses the browser runner's `processWallMs`: from the Node
+`page.evaluate` invocation through the final Worker response. It includes input
+transport, Worker creation, WASM initialization, dataset/`DeckSolver` construction
+and recommendation. It excludes host fixture reads, HTTP server/browser startup
+and browser installation. Native `processWallMs` runs from native process spawn
+through exit, including input reads, dataset construction and output persistence;
+it excludes benchmark runner startup and result validation. These two timing
+boundaries are recorded explicitly rather than presenting search-only time as
+end-to-end latency.
+
+The summary separates `browserProvenWithinBudget60s` and
+`nativeProvenWithinBudget60s` from `browserProvenWithin20sEndToEnd` and
+`nativeProvenWithin20sEndToEnd`. `targetMet` requires every planned Chromium case to
+be `Complete`, proven and at most 20,000 ms end to end. The original 60,000 ms
+requests remain unchanged. The `contractsPassed` and `canonicalTopKCompared`
+fields report separate execution and cross-runtime checks. A green smoke check
+does not establish the 20-second goal or full-matrix completion. `TimedOut`,
+`RefinementRequired`, slower complete responses, missing jobs and external runner
+errors do not meet the goal. Reports and artifacts are retained for 14 days.
+
+The orchestration can also be used on a host with Chromium and Playwright installed:
+
+```sh
+node tools/search-harness/browser-ci.cjs plan all
+node tools/search-harness/browser-ci.cjs bundle work/full48-inputs/benchmark.json work/browser-bundle
+# The bundle must also contain the same-source bin/profile_case and web pkg/ files.
+node tools/search-harness/browser-ci.cjs receipt . work/browser-bundle
+node tools/search-harness/browser-ci.cjs run work/browser-bundle/inputs/full48/benchmark.json \
+  work/browser-bundle work/full48-check --expected-cases 48 --cases all \
+  --require-complete all --require-target true
+```
+
+The receipt command requires a clean tracked source tree and records the installed
+Rust and wasm-bindgen versions. Harness-only tests cover byte-preserving packaging,
+case coverage, unchanged request limits, incomplete results, failed runtimes and
+missing shards without launching a browser or solver.
+
 ## Mock rosters
 
 ```sh

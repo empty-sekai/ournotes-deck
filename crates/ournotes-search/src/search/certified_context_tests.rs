@@ -121,6 +121,59 @@ fn input_with_order_skills(order_skills: bool) -> (Master, LuckSkills, FiniteSee
 }
 
 #[test]
+fn terminal_payoff_certificates_keep_mapping_identity_and_raw_score_evidence_separate() {
+    use ournotes_sim::live::certified::F64Interval;
+    use ournotes_sim::live::full::{LuckExactBudget, LuckTerminalPayoffSession};
+    let (master, skills, input) = input();
+    let mut session = LuckTerminalPayoffSession::new(
+        &master,
+        &skills,
+        &input.notes,
+        &input.events,
+        input.params,
+        input.gekisou.as_ref().unwrap(),
+        &input.play,
+        &input.delta_times,
+    );
+    for (map, wrong, constant) in [
+        (PayoffMap::ScoreAtLeast { threshold: 0 }, PayoffMap::ScoreAtLeast { threshold: 1 }, 1),
+        (PayoffMap::CappedScore { threshold: 0 }, PayoffMap::CappedScore { threshold: 1 }, 0),
+        (
+            PayoffMap::ScoreAndLifeAtLeast { threshold: 0, min_final_life: 0 },
+            PayoffMap::ScoreAndLifeAtLeast { threshold: 0, min_final_life: 1 },
+            1,
+        ),
+    ] {
+        let attempt = session
+            .payoff(&input.performers, map.terminal_payoff().unwrap(), &mut LuckExactBudget::default(), || false)
+            .unwrap();
+        let result = attempt.payoff.unwrap();
+        assert_eq!(result.exact_constant(), Some(constant));
+        let mean = F64Interval::new(f64::from(i32::MIN), f64::from(i32::MAX)).unwrap();
+        let mut row = OrderScoreInterval {
+            order: [0, 1, 2, 3, 4],
+            evaluated: true,
+            mean,
+            support: (i32::MIN, i32::MAX),
+            exact_mean: None,
+            final_life: None,
+            tails: Default::default(),
+            refined_payoff: None,
+        };
+        assert!(refine_order_with_terminal_payoff(&mut row, &wrong, &result).is_err());
+        assert!(row.refined_payoff.is_none(), "a mapping mismatch is atomic");
+        refine_order_with_terminal_payoff(&mut row, &map, &result).unwrap();
+        assert_eq!(
+            row.refined_payoff.as_ref().unwrap().exact,
+            Some(super::expectation::ExactExpectation { numerator: i128::from(constant), denominator: 1 })
+        );
+        assert_eq!(row.mean, mean);
+        assert_eq!(row.support, (i32::MIN, i32::MAX));
+        assert!(row.exact_mean.is_none() && row.final_life.is_none());
+    }
+}
+
+#[test]
 fn best_order_cancellation_keeps_one_evaluated_order_and_all_pending_caps() {
     let (master, _, mut input) = input();
     input.gekisou = None;

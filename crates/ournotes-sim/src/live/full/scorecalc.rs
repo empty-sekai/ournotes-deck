@@ -622,6 +622,53 @@ impl IncrementalCalculator {
         self.calculate_with_inputs(t, NoteInputs::Recorded(combos))
     }
 
+    /// Retained storage for a private, unobserved recorded replay. Vector capacities include the complete
+    /// native frame histories. The immutable integer-map estimate includes bucket/control-table allowance;
+    /// this is a scratch-budget estimate, not a process RSS measurement.
+    pub(super) fn recorded_storage_bytes(&self) -> Option<usize> {
+        fn vector<T>(values: &Vec<T>) -> usize {
+            values.capacity().saturating_mul(std::mem::size_of::<T>())
+        }
+        fn nested<T>(values: &Option<Vec<Option<Vec<T>>>>) -> usize {
+            values.as_ref().map_or(0, |rows| {
+                rows.iter().flatten().fold(vector(rows), |bytes, row| bytes.saturating_add(vector(row)))
+            })
+        }
+        if self.bounds_trace.is_some()
+            || self.bounds_record_only.is_some()
+            || self.program.is_some()
+            || self.minimum_score_up.is_some()
+            || self.calc.luck_weight.is_some()
+        {
+            return None;
+        }
+        let mut bytes = std::mem::size_of::<Self>()
+            .saturating_add(vector(&self.notes))
+            .saturating_add(vector(&self.factors))
+            .saturating_add(vector(&self.diffs))
+            .saturating_add(vector(&self.fixed))
+            .saturating_add(vector(&self.order_f))
+            .saturating_add(vector(&self.order_n));
+        for row in &self.notes {
+            bytes = bytes.saturating_add(vector(row));
+        }
+        for row in &self.factors {
+            bytes = bytes.saturating_add(vector(row));
+        }
+        bytes = bytes.saturating_add(
+            self.calc
+                .note_factor_percent
+                .capacity()
+                .saturating_add(self.calc.judgement_score_factor_percent.capacity())
+                .saturating_mul(64)
+                .saturating_add(1024),
+        );
+        if let Some(table) = &self.calc.combo_table {
+            bytes = bytes.saturating_add(nested(&table.thresholds)).saturating_add(nested(&table.cumulatives));
+        }
+        Some(bytes)
+    }
+
     fn calculate_with_inputs(&mut self, t: i32, inputs: NoteInputs<'_>) -> Result<i32, Error> {
         let g = get_frame(t);
         let mut to = if g < 0 { 0 } else { g };

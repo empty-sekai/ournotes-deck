@@ -1,14 +1,15 @@
 //! Pre-construction identities inside one immutable, fully admitted family preparation.
 //!
-//! This is intentionally narrower than general recorder admission. The native constructor reads a
-//! Performer's character only through Factory's member-target predicates, then retains the compiled
-//! checkers rather than the Performer. Known character-blind sources therefore have exactly the same
-//! initialized model and Plan after erasing character_id. Every other input field and source order stays.
+//! The native constructor reads member attributes through Factory's target predicates, then retains the
+//! compiled checkers rather than the Performer. The closed source/condition proof excludes cumulative and
+//! unknown consumers. Its whole-deck union of referenced target fields permits erasing only unread attributes
+//! in this private key. All source identities, levels, order and every potentially read attribute remain exact;
+//! the original performers still construct every uncached native model and all 120 labels remain present.
 use super::*;
 use std::fmt::Write;
 
 // Compiled recording keys start with their Debug row list; this binary prefix cannot alias that namespace.
-const PREFIX: &[u8] = b"\0family-complete-projected-input\0\x01";
+const PREFIX: &[u8] = b"\0family-complete-projected-input\0\x02";
 
 pub(super) struct InputKeys {
     physical: [Performer; SLOTS],
@@ -16,32 +17,35 @@ pub(super) struct InputKeys {
 
 impl InputKeys {
     pub(super) fn new(master: &Master, physical: &[Performer; SLOTS]) -> Option<Self> {
+        let mut reads = AttributeReads::default();
         for performer in physical {
             if performer.live_skill.is_some() || !performer.support_skills.is_empty() {
                 return None;
             }
             if let Some((id, level)) = performer.gekisou_skill {
                 master.gekisou_skill(id)?;
-                for row in master.gekisou_skill_effects.iter().filter(|row| row.skill_id == id && row.level == level) {
-                    if !character_blind_row(master, row) {
-                        return None;
-                    }
+                if !admit_rows(
+                    master,
+                    master.gekisou_skill_effects.iter().filter(|row| row.skill_id == id && row.level == level),
+                    &mut reads,
+                ) {
+                    return None;
                 }
             }
             for &(id, level) in &performer.gekisou_support_skills {
                 master.gekisou_support_skill(id)?;
-                for row in
-                    master.gekisou_support_skill_effects.iter().filter(|row| row.skill_id == id && row.level == level)
-                {
-                    if !character_blind_row(master, row) {
-                        return None;
-                    }
+                if !admit_rows(
+                    master,
+                    master.gekisou_support_skill_effects.iter().filter(|row| row.skill_id == id && row.level == level),
+                    &mut reads,
+                ) {
+                    return None;
                 }
             }
         }
         let mut physical = physical.clone();
         for performer in &mut physical {
-            performer.character_id = 0;
+            reads.erase_unread(performer);
         }
         Some(Self { physical })
     }
@@ -76,18 +80,86 @@ impl InputKeys {
             return None;
         }
         out.append(PREFIX).ok()?;
-        // Performer derives Eq and Debug from integer/optional/vector fields. Keep its complete ordered
-        // image, including empty sources and all member attributes except the one proved unread above.
+        // Performer derives Eq and Debug from integer/optional/vector fields. Keep its complete normalized
+        // ordered image, including empty sources and the exact vectors of every potentially read attribute.
         write!(&mut out, "{ordered:?}").ok()?;
         Some(out.bytes)
     }
 }
 
-fn character_blind_row(master: &Master, row: &crate::master::GekisouSkillEffectRow) -> bool {
+/// `matches_skill_target` ignores the target discriminator and ORs all active selectors. A field is retained
+/// if any referenced target can read it, even when another selector happens to match the current performers.
+/// The mask spans every source and owner because Factory's 3000/3001 predicates inspect the whole deck.
+#[derive(Default)]
+struct AttributeReads {
+    band: bool,
+    card_type: bool,
+    tags: bool,
+    live_categories: bool,
+    gekisou_categories: bool,
+    mission: bool,
+}
+
+impl AttributeReads {
+    fn include(&mut self, target: &crate::master::SkillTargetRow) -> bool {
+        // Preserve the original character-reader refusal boundary.
+        if target.character_id > 0 {
+            return false;
+        }
+        self.band |= target.band_id > 0;
+        self.card_type |= target.card_type != 0;
+        self.tags |= target.tag_id > 0;
+        self.live_categories |= target.live_skill_categories.iter().any(|&value| value != 0);
+        self.gekisou_categories |= target.gekisou_skill_categories.iter().any(|&value| value != 0);
+        self.mission |= target.gekisou_mission_type != 0;
+        true
+    }
+
+    fn erase_unread(&self, performer: &mut Performer) {
+        performer.character_id = 0;
+        if !self.band {
+            performer.band_id = 0;
+        }
+        if !self.card_type {
+            performer.card_type = 0;
+        }
+        if !self.tags {
+            performer.tag_ids.clear();
+        }
+        if !self.live_categories {
+            performer.live_skill_categories.clear();
+        }
+        if !self.gekisou_categories {
+            performer.gekisou_skill_categories.clear();
+        }
+        if !self.mission {
+            performer.gekisou_mission_type = 0;
+        }
+    }
+}
+
+fn admit_rows<'a>(
+    master: &Master,
+    rows: impl Iterator<Item = &'a crate::master::GekisouSkillEffectRow>,
+    reads: &mut AttributeReads,
+) -> bool {
+    let mut selected = false;
+    for row in rows {
+        selected = true;
+        if !admit_row(master, row, reads) {
+            return false;
+        }
+    }
+    // A missing selected level keeps the ordinary recording path, rather than authorizing an empty proof.
+    selected
+}
+
+fn admit_row(master: &Master, row: &crate::master::GekisouSkillEffectRow, reads: &mut AttributeReads) -> bool {
     // Include full selected rows, not merely the writer catalogue: otherwise an omitted conversion could
     // construct a separate LIFE model. Unknown/cumulative/conversion programs keep the original route.
     if !matches!(row.skill_effect_type, 2000 | 2005 | 11001 | 11002 | 11003 | 11005)
         || row.skill_cumulative_condition_id != 0
+        || row.skill_target_ids.iter().any(|&id| master.skill_target(id).is_none())
     {
         return false;
     }
@@ -98,30 +170,35 @@ fn character_blind_row(master: &Master, row: &crate::master::GekisouSkillEffectR
         row.effect_execute_limit_reset_condition_group,
     ]
     .into_iter()
-    .all(|group| character_blind_group(master, group))
+    .all(|group| admit_group(master, group, reads))
 }
 
-fn character_blind_group(master: &Master, group: i64) -> bool {
+fn admit_group(master: &Master, group: i64, reads: &mut AttributeReads) -> bool {
     if group == 0 {
         return true;
     }
-    master.skill_condition_sets.iter().filter(|set| set.group == group).all(|set| {
-        set.condition_ids.iter().all(|&id| {
+    let mut selected = false;
+    for set in master.skill_condition_sets.iter().filter(|set| set.group == group) {
+        selected = true;
+        for &id in &set.condition_ids {
             let Some(condition) = master.skill_condition(id) else { return false };
-            // A closed subset of Factory::one. Only 3000/3001/5000 inspect member targets, and those
-            // targets cannot use character equality here. The other kinds read music, range or chance.
+            // A closed subset of Factory::one. Only 3000/3001/5000 inspect member targets. All referenced
+            // target fields are retained conservatively even for the music/range/chance conditions.
             if !matches!(
                 condition.condition_type,
                 0 | 3000 | 3001 | 4011 | 4012 | 5000 | 7000 | 7010 | 7013 | 7020 | 7021 | 8000
             ) {
                 return false;
             }
-            condition
-                .condition_target_ids
-                .iter()
-                .all(|&id| master.skill_target(id).is_some_and(|target| target.character_id <= 0))
-        })
-    })
+            for &id in &condition.condition_target_ids {
+                let Some(target) = master.skill_target(id) else { return false };
+                if !reads.include(target) {
+                    return false;
+                }
+            }
+        }
+    }
+    selected
 }
 
 struct KeyBytes {

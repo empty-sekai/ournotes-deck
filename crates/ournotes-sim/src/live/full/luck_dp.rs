@@ -20,7 +20,8 @@ mod family;
 pub(super) mod fused;
 pub use family::{
     LuckControllerFamily, LuckFamilyBindings, LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline, LuckFamilyDomain,
-    LuckFamilyError, LuckFamilyLimits, LuckFamilyOrderLaw, LuckFamilyProfile, LuckFamilyProgram, LuckFamilyProgramKey,
+    LuckFamilyError, LuckFamilyLimits, LuckFamilyOrderLaw, LuckFamilyProfile, LuckFamilyProfileDomain,
+    LuckFamilyProfileWork, LuckFamilyProgram, LuckFamilyProgramKey,
 };
 
 mod life_recording;
@@ -31,7 +32,8 @@ mod timeline_support;
 #[cfg(test)]
 pub(crate) use score_equivalence::audit_score_fold;
 pub use score_equivalence::{
-    LuckScoreEquivalence, LuckScoreEquivalenceAttempt, LuckScoreEquivalenceDecline, certify_uniform_score_equivalence,
+    LuckScoreEquivalence, LuckScoreEquivalenceAttempt, LuckScoreEquivalenceDecline, LuckTerminalPayoff,
+    LuckTerminalPayoffAttempt, LuckTerminalPayoffBounds, LuckTerminalPayoffSession, certify_uniform_score_equivalence,
 };
 
 /// A complete nominal lottery curve and the size of its sparse computation.
@@ -1801,6 +1803,39 @@ fn prepare_recording<M: Mass>(
     ranking: Option<&[crate::replay::RankConfirmation]>,
     collect_moments: bool,
 ) -> Result<PreparedRecording<M>, Error> {
+    prepare_recording_with_context(
+        master,
+        skills,
+        notes,
+        skill_events,
+        params,
+        setup,
+        play,
+        delta_times,
+        deck,
+        probes,
+        ranking,
+        collect_moments,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_recording_with_context<M: Mass>(
+    master: &Master,
+    skills: &LuckSkills,
+    notes: &[LiveNote],
+    skill_events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    deck: &[Performer],
+    probes: Option<&[Option<usize>]>,
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+    collect_moments: bool,
+    context: Option<&super::build_context::BuildContext<'_>>,
+) -> Result<PreparedRecording<M>, Error> {
     // Initial/precomputed draws choose `next` without adding score. Each consumed result calls add_score
     // once; non-overlapping Luck ranges consume at most once per note plus one pending result per frame.
     // Thus saturation at four Criticals cannot hide a later native i32 wrap back to zero.
@@ -1828,8 +1863,25 @@ fn prepare_recording<M: Mass>(
             performer
         })
         .collect();
-    let mut model =
-        LiveModel::build(master, &reduced, notes, &[], params, Some(setup), ranking.is_some(), None, Some(skills))?;
+    let mut model = match context {
+        Some(context) => {
+            debug_assert!(std::ptr::eq(master, context.master()));
+            LiveModel::build_with_context(
+                context,
+                &reduced,
+                notes,
+                &[],
+                params,
+                Some(setup),
+                ranking.is_some(),
+                None,
+                Some(skills),
+            )?
+        }
+        None => {
+            LiveModel::build(master, &reduced, notes, &[], params, Some(setup), ranking.is_some(), None, Some(skills))?
+        }
+    };
     if let Some(ranking) = ranking {
         model.set_rank_confirmation_timeline(ranking)?;
     }

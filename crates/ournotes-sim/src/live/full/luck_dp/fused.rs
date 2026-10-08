@@ -32,6 +32,7 @@ impl Recorder {
         deck: &[Performer],
         full: &LiveModel,
         record_only: bool,
+        context: Option<&super::super::build_context::BuildContext<'_>>,
     ) -> Result<Option<Self>, Error> {
         // Keep the original record-only observer gate intact. In particular no phase-LIFE observer is
         // enabled after admission: this first route cannot consume a LIFE-dependent action at all.
@@ -52,8 +53,8 @@ impl Recorder {
                 }
             }
         }
-        let prepared = prepare_recording::<ProbabilityMass>(
-            master, skills, notes, events, params, setup, play, deltas, deck, None, None, false,
+        let prepared = prepare_recording_with_context::<ProbabilityMass>(
+            master, skills, notes, events, params, setup, play, deltas, deck, None, None, false, context,
         )?;
         if prepared.life.is_some()
             || prepared.life_deck.is_some()

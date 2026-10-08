@@ -4,6 +4,9 @@ use crate::live::full::{
     LuckExactBudget, LuckScoreEquivalenceAttempt, LuckScoreEquivalenceDecline, certify_uniform_score_equivalence,
 };
 
+#[path = "terminal_payoff_tests.rs"]
+mod terminal_payoff_tests;
+
 fn fixture_pair() -> (FamilyFixture, [Performer; 5], [Performer; 5]) {
     let mut fixture = FamilyFixture::new();
     // Match the difficult structure: active GK score probes share owners with live score producers.
@@ -531,6 +534,7 @@ fn score_equivalence_nondyadic_fold_matches_every_independent_native_timeline() 
             &input.play,
             &input.delta,
             &deck,
+            None,
         )
         .unwrap();
         let mut folded = BTreeMap::<NativeTimeline, i32>::new();
@@ -571,6 +575,7 @@ fn score_equivalence_fold_clamps_late_probe_end_to_actual_music_boundary() {
         &input.play,
         &input.delta,
         &deck,
+        None,
     )
     .unwrap();
     assert!(
@@ -633,4 +638,35 @@ fn score_equivalence_cancellation_after_native_fold_work_never_publishes_a_certi
         }
     }
     assert!(witnessed_fold, "the cancellation must happen after exact score-fold queries have run");
+}
+
+#[test]
+fn score_equivalence_shared_prefixes_reduce_queries_and_preserve_complete_capacity_fallback() {
+    let (fixture, deck, _) = active_counter_fixture();
+    let input = &fixture.input;
+    let skills = luck_skills(&input.master).unwrap();
+    let audit = |limit| {
+        crate::live::full::luck_dp::audit_score_fold(
+            &input.master,
+            &skills,
+            &input.notes,
+            &input.events,
+            input.params,
+            &input.setup,
+            &input.play,
+            &input.delta,
+            &deck,
+            limit,
+        )
+        .unwrap()
+    };
+    let shared = audit(None);
+    assert!(shared.paths.len() > 1);
+    assert!(shared.shared_queries < shared.independent_queries, "common native prefixes must execute once");
+    assert!(shared.checkpoint_peak_bytes > 0 && shared.checkpoint_peak_bytes <= 32 * 1024 * 1024);
+    let bounded = audit(Some(shared.checkpoint_peak_bytes / 2));
+    assert_eq!(bounded.paths, shared.paths, "checkpoint exhaustion must preserve every complete timeline");
+    let disabled = audit(Some(0));
+    assert_eq!(disabled.paths, shared.paths);
+    assert_eq!(disabled.shared_queries, disabled.independent_queries, "zero checkpoint capacity uses the native tape");
 }

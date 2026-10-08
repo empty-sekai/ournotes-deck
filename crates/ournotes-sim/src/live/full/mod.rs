@@ -38,6 +38,7 @@
 //! types are [`Error::Unsupported`] (4004 of Gekisou and Gekisou support skills keeps its no-op on a judged stream).
 
 mod applier_plan;
+mod build_context;
 mod combo;
 #[cfg(feature = "search-diagnostics")]
 pub use applier_plan::with_applier_plan_disabled;
@@ -60,11 +61,12 @@ mod luck_exact;
 pub use luck_dp::{
     LuckControllerFamily, LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckFamilyBindings,
     LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline, LuckFamilyDomain, LuckFamilyError, LuckFamilyLimits,
-    LuckFamilyOrderLaw, LuckFamilyProfile, LuckFamilyProgram, LuckFamilyProgramKey, LuckRangeMoments,
-    LuckRecordProfile, LuckScoreEquivalence, LuckScoreEquivalenceAttempt, LuckScoreEquivalenceDecline,
-    certify_uniform_score_equivalence, luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified,
-    luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_moments, luck_rush_dp_certified_with_ranking,
-    luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
+    LuckFamilyOrderLaw, LuckFamilyProfile, LuckFamilyProfileDomain, LuckFamilyProfileWork, LuckFamilyProgram,
+    LuckFamilyProgramKey, LuckRangeMoments, LuckRecordProfile, LuckScoreEquivalence, LuckScoreEquivalenceAttempt,
+    LuckScoreEquivalenceDecline, LuckTerminalPayoff, LuckTerminalPayoffAttempt, LuckTerminalPayoffBounds,
+    LuckTerminalPayoffSession, certify_uniform_score_equivalence, luck_has_judgement_conversion, luck_rush_dp,
+    luck_rush_dp_certified, luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_moments,
+    luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
 };
 pub use luck_exact::{
     LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactSession,
@@ -736,10 +738,12 @@ fn condition_skill(
     gate: Option<i64>,
     rows: &mut Vec<EffectRow>,
     luck: Option<&luck::SharedScript>,
+    context: Option<&build_context::BuildContext<'_>>,
 ) -> Result<CondSkill, Error> {
-    let group = |gid| match luck {
-        Some(script) => factory.luck_group(gid, k, script),
-        None => factory.group(gid, k),
+    let group = |gid| match (luck, context) {
+        (Some(script), Some(context)) => factory.luck_group_indexed(gid, k, script, Some(context)),
+        (Some(script), None) => factory.luck_group(gid, k, script),
+        (None, _) => factory.group_indexed(gid, k, context),
     };
     rs.sort_by_key(|r| r.id);
     let mut effects = Vec::with_capacity(rs.len());
@@ -906,6 +910,48 @@ impl LiveModel {
         luck: Option<luck::SharedScript>,
         lottery: Option<&LuckSkills>,
     ) -> Result<LiveModel, Error> {
+        Self::build_indexed(master, deck, notes, skill_events, params, setup, external_ranking, luck, lottery, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_with_context(
+        context: &build_context::BuildContext<'_>,
+        deck: &[Performer],
+        notes: &[LiveNote],
+        skill_events: &[(i32, i32)],
+        params: LiveParams,
+        setup: Option<&GekisouSetup>,
+        external_ranking: bool,
+        luck: Option<luck::SharedScript>,
+        lottery: Option<&LuckSkills>,
+    ) -> Result<LiveModel, Error> {
+        Self::build_indexed(
+            context.master(),
+            deck,
+            notes,
+            skill_events,
+            params,
+            setup,
+            external_ranking,
+            luck,
+            lottery,
+            Some(context),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_indexed(
+        master: &Master,
+        deck: &[Performer],
+        notes: &[LiveNote],
+        skill_events: &[(i32, i32)],
+        params: LiveParams,
+        setup: Option<&GekisouSetup>,
+        external_ranking: bool,
+        luck: Option<luck::SharedScript>,
+        lottery: Option<&LuckSkills>,
+        context: Option<&build_context::BuildContext<'_>>,
+    ) -> Result<LiveModel, Error> {
         if !matches!(params.skill_target_music_type, 0..=5 | 99) {
             return Err(Error::Input("unknown skill target music type".into()));
         }
@@ -963,15 +1009,17 @@ impl LiveModel {
         let mut live_pools = Vec::new();
         for (k, p) in deck.iter().enumerate() {
             let Some((sid, lv)) = p.live_skill else { continue };
-            let mut rs: Vec<_> =
-                master.live_skill_effects.iter().filter(|r| r.live_skill_id == sid && r.level == lv).collect();
+            let mut rs: Vec<_> = match context {
+                Some(context) => context.live_rows((sid, lv)).collect(),
+                None => master.live_skill_effects.iter().filter(|r| r.live_skill_id == sid && r.level == lv).collect(),
+            };
             rs.sort_by_key(|r| r.id);
             let mut effects = Vec::with_capacity(rs.len());
             for r in rs {
                 // `EffectLimitCount` is read only by the appliers that use it (12004, 11005, 12006 / 13005,
                 // 4000..=4003, 13001), whatever the skill type; no build-time gate exists natively.
-                let condition = factory.group(r.skill_condition_group, k)?;
-                let release = factory.group(r.skill_release_condition_group, k)?;
+                let condition = factory.group_indexed(r.skill_condition_group, k, context)?;
+                let release = factory.group_indexed(r.skill_release_condition_group, k, context)?;
                 let cumulative = factory.cumulative(r.skill_cumulative_condition_id, k)?;
                 let mut state = EffectState { execute_ms: -1, finish_ms: -1, ..Default::default() };
                 if let Some(c) = &cumulative {
@@ -1020,12 +1068,15 @@ impl LiveModel {
         let mut cond = Vec::new();
         for (k, p) in deck.iter().enumerate() {
             for &(sid, lv) in &p.support_skills {
-                let rs = master
-                    .support_skill_effects
-                    .iter()
-                    .filter(|r| r.support_skill_id == sid && r.level == lv)
-                    .map(CondRow::from)
-                    .collect();
+                let rs = match context {
+                    Some(context) => context.support_rows((sid, lv)).map(CondRow::from).collect(),
+                    None => master
+                        .support_skill_effects
+                        .iter()
+                        .filter(|r| r.support_skill_id == sid && r.level == lv)
+                        .map(CondRow::from)
+                        .collect(),
+                };
                 cond.push(condition_skill(
                     master,
                     &factory,
@@ -1036,6 +1087,7 @@ impl LiveModel {
                     None,
                     &mut rows,
                     luck.as_ref(),
+                    context,
                 )?);
             }
         }
@@ -1063,14 +1115,20 @@ impl LiveModel {
                     if gekisou_mission_group(mk)? != m {
                         continue;
                     }
-                    let rs = master
-                        .gekisou_skill_effects
-                        .iter()
-                        .filter(|r| r.skill_id == sid && r.level == lv)
-                        .filter(|r| luck.is_none() || luck::retained(r.skill_effect_type))
-                        .filter(|r| lottery.is_none_or(|l| l.related(LuckSource::Gekisou, r)))
-                        .map(CondRow::from)
-                        .collect();
+                    let retained = |r: &&GekisouSkillEffectRow| {
+                        (luck.is_none() || luck::retained(r.skill_effect_type))
+                            && lottery.is_none_or(|l| l.related(LuckSource::Gekisou, r))
+                    };
+                    let rs = match context {
+                        Some(context) => context.gekisou_rows((sid, lv)).filter(retained).map(CondRow::from).collect(),
+                        None => master
+                            .gekisou_skill_effects
+                            .iter()
+                            .filter(|r| r.skill_id == sid && r.level == lv)
+                            .filter(retained)
+                            .map(CondRow::from)
+                            .collect(),
+                    };
                     cond.push(condition_skill(
                         master,
                         &factory,
@@ -1081,6 +1139,7 @@ impl LiveModel {
                         Some(mk),
                         &mut rows,
                         luck.as_ref(),
+                        context,
                     )?);
                 }
             }
@@ -1092,14 +1151,22 @@ impl LiveModel {
                     let row = master
                         .gekisou_support_skill(sid)
                         .ok_or_else(|| Error::Master(format!("unknown Gekisou support skill {sid}")))?;
-                    let rs = master
-                        .gekisou_support_skill_effects
-                        .iter()
-                        .filter(|r| r.skill_id == sid && r.level == lv)
-                        .filter(|r| luck.is_none() || luck::retained(r.skill_effect_type))
-                        .filter(|r| lottery.is_none_or(|l| l.related(LuckSource::GekisouSupport, r)))
-                        .map(CondRow::from)
-                        .collect();
+                    let retained = |r: &&GekisouSkillEffectRow| {
+                        (luck.is_none() || luck::retained(r.skill_effect_type))
+                            && lottery.is_none_or(|l| l.related(LuckSource::GekisouSupport, r))
+                    };
+                    let rs = match context {
+                        Some(context) => {
+                            context.gekisou_support_rows((sid, lv)).filter(retained).map(CondRow::from).collect()
+                        }
+                        None => master
+                            .gekisou_support_skill_effects
+                            .iter()
+                            .filter(|r| r.skill_id == sid && r.level == lv)
+                            .filter(retained)
+                            .map(CondRow::from)
+                            .collect(),
+                    };
                     let gate = Some(row.gekisou_mission_type);
                     cond.push(condition_skill(
                         master,
@@ -1111,6 +1178,7 @@ impl LiveModel {
                         gate,
                         &mut rows,
                         luck.as_ref(),
+                        context,
                     )?);
                 }
             }

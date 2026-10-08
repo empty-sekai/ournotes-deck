@@ -1,21 +1,25 @@
 //! Uniform expected-score envelopes of an admitted fixed-member controller family.
 //!
 //! These coefficients are exclusions, never candidate values. The native family owns the complete writer-profile
-//! and original-order cover and the common terminal-query mapping. All ordinary history, rank, conversion-budget
-//! and floating-point allowances remain those of the original complete-domain envelope.
+//! and original-order cover and the common terminal-query mapping. Ordinary history, rank and conversion
+//! allowances retain their original complete-domain envelopes. Separately admitted integer probe-work evidence
+//! may tighten only the unweighted floating-point drift allowance for the actual five physical bindings.
 
 use super::*;
 use ournotes_sim::live::{
     certified::F64Interval,
-    full::{LuckFamilyBindings, LuckFamilyDomain, LuckFamilyOrderLaw, LuckFamilyProfile},
+    full::{LuckFamilyBindings, LuckFamilyOrderLaw, LuckFamilyProfile, LuckFamilyProfileDomain},
 };
 
 #[cfg(test)]
-use ournotes_sim::live::full::LuckControllerFamily;
+use ournotes_sim::live::full::{LuckControllerFamily, LuckFamilyDomain};
 
 const MAX_TEMPLATE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CURVE_REWARDS: usize = 128;
 const MAX_CURVE_REWARD_BYTES: usize = 1024 * 1024;
+
+mod drift;
+use drift::{DriftTemplate, PairWork};
 
 #[derive(Clone, Copy)]
 struct Term {
@@ -31,6 +35,7 @@ struct Pair {
     budget: f64,
     /// A contribution with a separately modelled ramp keeps its original complete upper coefficient.
     opaque: Option<f64>,
+    work: Option<PairWork>,
 }
 
 /// Immutable reward-only inputs owned by one exact compiled domain. Physical choices keep their class mapping;
@@ -46,6 +51,8 @@ pub(crate) struct ProfileRewardTemplate {
     pairs: Vec<Vec<[Pair; 5]>>,
     /// The complete-domain absolute factor-drift coefficient; never weighted by a terminal probability.
     offset: f64,
+    /// Independent unweighted command-history certificate. Unavailable data keeps `offset` unchanged.
+    drift: Option<DriftTemplate>,
     /// Only the positive per-note arithmetic chain, from additive_joint_envelope. Legacy relative drift is
     /// never accepted by this template.
     eps: f64,
@@ -78,13 +85,20 @@ pub(crate) struct FamilyProfileTable {
 pub(crate) struct FamilyProfileReward {
     pub(crate) a0: f64,
     pub(crate) mean: [Vec<f64>; 5],
+    /// The same complete 120-label coefficient sum before adding the global history-drift allowance.
+    base_a0: f64,
+    /// Maximum over all 120 original labels. Missing evidence in even one label keeps the old offset.
+    pub(crate) max_probe_runs: Option<u64>,
 }
 
-/// Reward arithmetic for one immutable joint curve, with every physical choice at all five positions. This
-/// certifies no program equivalence: only `joint_at` is reused, under the one bind call's fixed template,
-/// members and probe gate. Every original profile/order still contributes its own scalar and coverage label.
+/// Reward arithmetic for one immutable complete probability result, with every physical choice at all five
+/// positions. The Arc identity authorizes `joint_at` and original-frame probe masks under this bind call's fixed
+/// template, members, gate and lifecycle admission. It certifies no program/path equivalence; every original
+/// profile/order still contributes its own scalar, integer work maximum and coverage label.
 struct CurveRewards {
     a0: f64,
+    base_a0: f64,
+    probe_runs: Option<u64>,
     gains: [Vec<[f64; 5]>; 5],
 }
 
@@ -154,6 +168,8 @@ impl<'a> CurveRewardCache<'a> {
 struct ProfileSums {
     seen: [u64; 2],
     a0: F64Interval,
+    base_a0: F64Interval,
+    max_probe_runs: Option<u64>,
     gains: [Vec<F64Interval>; 5],
 }
 
@@ -164,7 +180,7 @@ impl ProfileSums {
             row.try_reserve_exact(count).ok()?;
             row.resize(count, F64Interval::ZERO);
         }
-        Some(Self { seen: [0; 2], a0: F64Interval::ZERO, gains })
+        Some(Self { seen: [0; 2], a0: F64Interval::ZERO, base_a0: F64Interval::ZERO, max_probe_runs: None, gains })
     }
 
     fn record(&mut self, positions: &[usize; 5]) -> Option<()> {
@@ -190,6 +206,8 @@ impl ProfileSums {
 
     fn add_curve(&mut self, positions: &[usize; 5], reward: &CurveRewards) -> Option<()> {
         self.a0 = self.a0.add(point(reward.a0)?);
+        self.base_a0 = self.base_a0.add(point(reward.base_a0)?);
+        self.max_probe_runs = self.max_probe_runs.zip(reward.probe_runs).map(|(old, runs)| old.max(runs));
         for (slot, sums) in self.gains.iter_mut().enumerate() {
             if sums.len() != reward.gains[slot].len() {
                 return None;
@@ -212,7 +230,12 @@ impl ProfileSums {
                 row.push(uniform_upper(sum)?);
             }
         }
-        Some(FamilyProfileReward { a0: uniform_upper(self.a0)?, mean })
+        Some(FamilyProfileReward {
+            a0: uniform_upper(self.a0)?,
+            mean,
+            base_a0: uniform_upper(self.base_a0)?,
+            max_probe_runs: self.max_probe_runs,
+        })
     }
 }
 
@@ -384,7 +407,7 @@ impl ProfileRewardTemplate {
                     if estimate > MAX_TEMPLATE_BYTES {
                         return Err(Refusal::Capacity);
                     }
-                    built.push(Pair { terms, budget: contribution.budget, opaque });
+                    built.push(Pair { terms, budget: contribution.budget, opaque, work: PairWork::new(contribution) });
                 }
                 rows.push(built.try_into().map_err(|_| Refusal::PositionShape)?);
             }
@@ -419,6 +442,7 @@ impl ProfileRewardTemplate {
             class_of,
             pairs,
             offset,
+            drift: DriftTemplate::new(live),
             eps,
             global,
             bytes: 0,
@@ -494,6 +518,7 @@ impl ProfileRewardTemplate {
             &profile_ids,
             family.orders(),
             family.probe_gate() == Some(MISSION_LUCK),
+            None,
             cache_entries,
             cache_bytes,
             cancelled,
@@ -505,16 +530,35 @@ impl ProfileRewardTemplate {
         Some(FamilyRewardTable { members, bindings, profiles: completed, eps: self.eps, global: self.global })
     }
 
+    #[cfg(test)]
     pub(crate) fn start_profiles(&self, members: [usize; 5], domain: &LuckFamilyDomain) -> Option<FamilyProfileTable> {
-        let count = domain.profile_count();
-        if domain.note_times() != self.times || !(1..=31).contains(&count) {
+        self.start_profile_table(members, domain.note_times(), domain.bindings()?)
+    }
+
+    pub(crate) fn start_budgeted_profiles(
+        &self,
+        members: [usize; 5],
+        domain: &LuckFamilyProfileDomain,
+    ) -> Option<FamilyProfileTable> {
+        self.start_profile_table(members, domain.note_times(), domain.bindings()?)
+    }
+
+    fn start_profile_table(
+        &self,
+        members: [usize; 5],
+        times: &[i32],
+        bindings: LuckFamilyBindings,
+    ) -> Option<FamilyProfileTable> {
+        let count = bindings.profile_count();
+        if times != self.times || !(1..=31).contains(&count) {
             return None;
         }
         let mut profiles = reserve(count)?;
         profiles.resize_with(count, || None);
-        Some(FamilyProfileTable { members, bindings: domain.bindings()?, profiles, eps: self.eps, global: self.global })
+        Some(FamilyProfileTable { members, bindings, profiles, eps: self.eps, global: self.global })
     }
 
+    #[cfg(test)]
     pub(crate) fn bind_profile(
         &self,
         members: [usize; 5],
@@ -528,11 +572,38 @@ impl ProfileRewardTemplate {
         {
             return None;
         }
+        self.bind_complete_profile(members, profile, domain.probe_gate(), cancelled)
+    }
+
+    pub(crate) fn bind_budgeted_profile(
+        &self,
+        members: [usize; 5],
+        domain: &LuckFamilyProfileDomain,
+        profile: &LuckFamilyProfile,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Option<FamilyProfileReward> {
+        if !domain.owns_profile(profile)
+            || domain.note_times() != self.times
+            || profile.orders().len() != crate::search::uniform::ORDERS
+        {
+            return None;
+        }
+        self.bind_complete_profile(members, profile, domain.probe_gate(), cancelled)
+    }
+
+    fn bind_complete_profile(
+        &self,
+        members: [usize; 5],
+        profile: &LuckFamilyProfile,
+        probe_gate: Option<i64>,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Option<FamilyProfileReward> {
         let mut bound = self.bind_laws(
             members,
             &[profile.profile()],
             profile.orders(),
-            domain.probe_gate() == Some(MISSION_LUCK),
+            probe_gate == Some(MISSION_LUCK),
+            Some(profile),
             MAX_CURVE_REWARDS,
             MAX_CURVE_REWARD_BYTES,
             cancelled,
@@ -547,6 +618,7 @@ impl ProfileRewardTemplate {
         profile_ids: &[usize],
         laws: &[LuckFamilyOrderLaw],
         probe_enabled: bool,
+        probe_profile: Option<&LuckFamilyProfile>,
         cache_entries: usize,
         cache_bytes: usize,
         cancelled: &mut impl FnMut() -> bool,
@@ -557,7 +629,9 @@ impl ProfileRewardTemplate {
         }
         let mut profiles = reserve(profile_ids.len())?;
         for _ in profile_ids {
-            profiles.push(ProfileSums::new(counts)?);
+            let mut sums = ProfileSums::new(counts)?;
+            sums.max_probe_runs = probe_profile.map(|_| 0);
+            profiles.push(sums);
         }
         let n = self.times.len();
         let mut normal: [Vec<F64Interval>; 5] = std::array::from_fn(|_| Vec::new());
@@ -568,7 +642,7 @@ impl ProfileRewardTemplate {
             prefix.resize(n + 1, F64Interval::ZERO);
         }
         let mut rewards = CurveRewardCache::new(cache_entries, cache_bytes);
-        for law in laws {
+        for (law_index, law) in laws.iter().enumerate() {
             if cancelled() {
                 return None;
             }
@@ -602,9 +676,12 @@ impl ProfileRewardTemplate {
                 }
                 probe[e + 1] = probe[e].add(kp.multiply(point(self.jp[e][0])?));
             }
+            let base_a0 = finite_nonnegative(normal[0][n].upper())?;
             let a0 = finite_nonnegative(normal[0][n].add(point(self.offset)?).upper())?;
+            let probe_runs = probe_profile.and_then(|profile| profile.order_probe_run_bound(law_index));
             if rewards.can_store(counts) {
-                let prepared = self.curve_rewards(members, a0, &normal, &probe, probe_enabled, cancelled);
+                let prepared =
+                    self.curve_rewards(members, a0, base_a0, probe_runs, &normal, &probe, probe_enabled, cancelled);
                 if cancelled() {
                     return None;
                 }
@@ -617,6 +694,8 @@ impl ProfileRewardTemplate {
                 // label still has its original direct evaluation; no cache refusal can remove a family law.
             }
             sums.a0 = sums.a0.add(point(a0)?);
+            sums.base_a0 = sums.base_a0.add(point(base_a0)?);
+            sums.max_probe_runs = sums.max_probe_runs.zip(probe_runs).map(|(old, runs)| old.max(runs));
             for slot in 0..5 {
                 let member = members[slot];
                 let position = law.positions[slot];
@@ -644,10 +723,13 @@ impl ProfileRewardTemplate {
         Some(completed)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn curve_rewards(
         &self,
         members: [usize; 5],
         a0: f64,
+        base_a0: f64,
+        probe_runs: Option<u64>,
         normal: &[Vec<F64Interval>; 5],
         probe: &[F64Interval],
         probe_enabled: bool,
@@ -669,7 +751,7 @@ impl ProfileRewardTemplate {
                 gains[slot].push(values);
             }
         }
-        Some(CurveRewards { a0, gains })
+        Some(CurveRewards { a0, base_a0, probe_runs, gains })
     }
 }
 
@@ -761,7 +843,10 @@ mod profile_mean_tests {
 
         let mut cache = CurveRewardCache::new(MAX_CURVE_REWARDS, MAX_CURVE_REWARD_BYTES);
         assert!(cache.can_store([0; 5]));
-        cache.insert(first, CurveRewards { a0: 123.0, gains: std::array::from_fn(|_| Vec::new()) });
+        cache.insert(
+            first,
+            CurveRewards { a0: 123.0, base_a0: 100.0, probe_runs: None, gains: std::array::from_fn(|_| Vec::new()) },
+        );
         assert_eq!(cache.get(shared).unwrap().a0, 123.0);
         assert!(cache.get(different).is_none());
         assert!(cache.bytes().unwrap() <= MAX_CURVE_REWARD_BYTES);

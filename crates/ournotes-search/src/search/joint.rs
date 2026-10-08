@@ -34,6 +34,7 @@ mod classes;
 mod composition;
 mod cutoff;
 mod family;
+pub(crate) use family::FamilyBoundResult;
 #[cfg(test)]
 pub(crate) use family::tests::{family_choices as reward_family_choices, fixture as reward_family_fixture};
 mod lambda;

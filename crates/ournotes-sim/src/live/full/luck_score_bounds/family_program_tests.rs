@@ -27,7 +27,18 @@ fn family_program_three_cycle_preserves_every_target_label_and_native_joint_law(
     let source_choices = family_choices(&fixture);
     // A non-self-inverse mapping catches using source->target where target->source was required.
     let target_to_source = [1, 2, 0, 3, 4];
-    let target_choices = target_to_source.map(|slot| source_choices[slot].clone());
+    let mut target_choices = target_to_source.map(|slot| source_choices[slot].clone());
+    for (owner, choices) in target_choices.iter_mut().enumerate() {
+        for choice in choices {
+            // These attributes have no consumers in any projected source of this full domain. Native target
+            // replay still receives each changed field; only its proved input identity may omit the difference.
+            choice.performer.band_id = owner as i64 + 11;
+            choice.performer.card_type = owner as i64 - 7;
+            choice.performer.tag_ids = vec![owner as i64 + 31];
+            choice.performer.live_skill_categories = vec![0, owner as i64 + 41];
+            choice.performer.gekisou_skill_categories = vec![owner as i64 + 51];
+        }
+    }
     let source = context.admit_domain(&source_choices, family_limits(), || false).unwrap().unwrap();
     let target = context.admit_domain(&target_choices, family_limits(), || false).unwrap().unwrap();
     let source_id = source.profile_for(&[Some(0), None, None, None, None]).unwrap();
@@ -139,10 +150,18 @@ fn family_program_provenance_context_capacity_and_cancellation_never_publish_par
     assert!(!program.matches(&foreign_key));
     assert!(program.transport(&foreign, &foreign_key, index, || false).is_none());
     assert!(other.profile_program_key(&source, index, 1 << 20, || false).is_none());
-    // Equal probability values cannot compensate for an unequal complete performer descriptor.
+    // An unread tag is covered by the exact input proof. A changed native source still cannot be matched
+    // merely because a particular marginal or terminal value happens to agree.
     let mut changed = choices.clone();
     for choice in &mut changed[0] {
         choice.performer.tag_ids.push(7_000_001);
+    }
+    let changed = context.admit_domain(&changed, family_limits(), || false).unwrap().unwrap();
+    let changed_key = context.profile_program_key(&changed, index, 1 << 20, || false).unwrap();
+    assert!(program.matches(&changed_key));
+    let mut changed = choices.clone();
+    for choice in &mut changed[0] {
+        choice.performer.gekisou_skill = Some((FAMILY_SCORE, 1));
     }
     let changed = context.admit_domain(&changed, family_limits(), || false).unwrap().unwrap();
     let changed_key = context.profile_program_key(&changed, index, 1 << 20, || false).unwrap();

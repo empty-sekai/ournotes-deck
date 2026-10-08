@@ -320,6 +320,8 @@ struct FamilyNativeOracle {
     scores: BTreeMap<i32, Fraction>,
     ordinary_end_times: Vec<i32>,
     paths: usize,
+    /// Largest number of actual positive probe start commands for one holder on a complete native branch.
+    maximum_probe_starts: u64,
 }
 
 fn family_native_oracle(input: &RushCase, deck: &[Performer]) -> FamilyNativeOracle {
@@ -337,6 +339,7 @@ fn family_native_oracle(input: &RushCase, deck: &[Performer]) -> FamilyNativeOra
     let mut scores = BTreeMap::<i32, Fraction>::new();
     let mut ordinary_end_times = None;
     let mut paths = 0;
+    let mut maximum_probe_starts = 0;
     let mut visits = 0;
     while let Some((prefix, mass)) = pending.pop() {
         visits += 1;
@@ -367,6 +370,19 @@ fn family_native_oracle(input: &RushCase, deck: &[Performer]) -> FamilyNativeOra
         paths += 1;
         scores.entry(native.score()).and_modify(|old| *old = old.plus(mass)).or_insert(mass);
         let trace = native.score.bounds_trace.take().unwrap();
+        for &owner in &probe_owners {
+            // This fixture gives each probe owner one positive direct probe and no ordinary score row.
+            // Count native filings, independently of every transition mask and max-plus implementation.
+            let starts = trace
+                .events
+                .iter()
+                .filter(|event| {
+                    matches!(event, BoundsEvent::Factor { command, .. }
+                    if command.owner_id == owner && command.note_mill > 0)
+                })
+                .count() as u64;
+            maximum_probe_starts = maximum_probe_starts.max(starts);
+        }
         let mut ends = Vec::new();
         for event in &trace.events {
             if let BoundsEvent::Factor { command, .. } = event
@@ -407,7 +423,7 @@ fn family_native_oracle(input: &RushCase, deck: &[Performer]) -> FamilyNativeOra
     for masses in joint.values() {
         assert_eq!(masses.iter().copied().fold(Fraction::ZERO, Fraction::plus), Fraction::ONE);
     }
-    FamilyNativeOracle { joint, scores, ordinary_end_times: ordinary_end_times.unwrap(), paths }
+    FamilyNativeOracle { joint, scores, ordinary_end_times: ordinary_end_times.unwrap(), paths, maximum_probe_starts }
 }
 
 fn assert_probability_contains(mass: Fraction, enclosure: ProbabilityMass) {
@@ -837,6 +853,9 @@ mod lazy_profile_tests;
 
 #[path = "family_program_tests.rs"]
 mod program_tests;
+
+#[path = "family_probe_runs_tests.rs"]
+mod probe_run_tests;
 
 #[path = "score_equivalence_tests.rs"]
 mod score_equivalence_tests;

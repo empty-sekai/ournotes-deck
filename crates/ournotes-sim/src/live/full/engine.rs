@@ -313,8 +313,8 @@ pub(crate) struct ConditionSkillUpdater {
 }
 
 impl ConditionSkillUpdater {
-    /// `release(e)` builds a fresh release checker for an updater of effect `e`; `gate` is the mission of a Gekisou
-    /// (support) skill.
+    /// `release(e)` builds the initial release checker of effect `e`. Each pool instance gets an independent
+    /// clone of that initial state. `gate` is the mission of a Gekisou (support) skill.
     pub(crate) fn new(
         effects: Vec<CondEffect>,
         mut release: impl FnMut(usize) -> Result<Option<Checker>, Error>,
@@ -341,6 +341,9 @@ impl ConditionSkillUpdater {
             if ef.trigger_type != ONE_SHOT && ef.trigger_type != SUSTAINED {
                 continue;
             }
+            // Duplicate effect identities have already been checked. Construct this effect's release before
+            // the next effect, then clone its untouched state; counters, overrides and sticky memo stay local.
+            let release = release(e)?;
             let mut pool = Vec::with_capacity(POOL);
             for index in 0..POOL {
                 pool.push(updaters.len());
@@ -354,7 +357,7 @@ impl ConditionSkillUpdater {
                     effect: e,
                     index,
                     state,
-                    release: release(e)?,
+                    release: release.clone(),
                     phase: ef.phase,
                     cumulative: ef.cumulative.clone(),
                 });

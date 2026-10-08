@@ -9,6 +9,17 @@ use super::*;
 use std::mem::size_of;
 use std::sync::Arc;
 
+mod packed_trace;
+use packed_trace::StoredTerminalTrace;
+
+#[cfg(test)]
+pub(super) fn test_packed_trace(trace: &BoundsTrace) -> BoundsTrace {
+    let mut original = trace.clone();
+    original.combo = ComboObserver::default();
+    let packed = packed_trace::PackedTerminalTrace::encode(&original, 32 << 20, || false).unwrap();
+    packed.decode(packed.decode_workspace_bytes(), || false).unwrap()
+}
+
 /// Outcome of preparing a cheap terminal-note bound. A declined preparation leaves the full scorer available.
 #[derive(Debug)]
 pub enum LuckRushPreparation {
@@ -55,7 +66,7 @@ pub struct LuckTerminalRush {
 /// recorder's no-score-feedback admission and a complete prefix proof that rejects every power command.
 /// The retained base has no native integer caps or score expectation: those are rebuilt at the caller's P.
 pub(super) struct TerminalRecipe {
-    trace: BoundsTrace,
+    trace: StoredTerminalTrace,
     ingredients: terminal_prefix::TerminalIngredients,
     linked: bool,
     base: LuckTerminalRush,
@@ -67,16 +78,19 @@ impl TerminalRecipe {
     }
 
     pub(super) fn allocated_bytes(&self) -> usize {
-        // ComboObserver is recording-only scratch and is reset before publication. Every retained event,
-        // probe, terminal vector and historical prefix allocation is charged; the curve is shared separately.
-        size_of::<Self>()
-            + self.trace.events.capacity() * size_of::<BoundsEvent>()
-            + self.trace.probes.capacity() * size_of::<ProbeRow>()
-            + self.trace.probe_filings.as_ref().map_or(0, |filings| filings.capacity() * size_of::<usize>())
+        // The codec retains every original event and its ordinal. Its compact event stream and full payloads
+        // are charged independently of the one decode workspace reserved by the shared program cache.
+        size_of::<Self>() + self.trace.allocated_bytes() - size_of::<StoredTerminalTrace>()
             + self.ingredients.allocated_bytes()
             - size_of::<terminal_prefix::TerminalIngredients>()
             + self.base.cache_allocation_bytes()
             - size_of::<LuckTerminalRush>()
+    }
+
+    /// Only one recipe is decoded at a time through the cache's exclusive preparation borrow. Reserve the
+    /// largest resident recipe's full native trace once, in addition to every retained compact allocation.
+    pub(super) fn decode_workspace_bytes(&self) -> usize {
+        self.trace.decode_workspace_bytes()
     }
 
     fn evaluate(
@@ -85,15 +99,16 @@ impl TerminalRecipe {
         power: i32,
         rush: i32,
         cancelled: &mut impl FnMut() -> bool,
-    ) -> Option<LuckTerminalRush> {
+    ) -> Result<Option<LuckTerminalRush>, trace_drift::Decline> {
         if cancelled() {
-            return None;
+            return Ok(None);
         }
+        let trace = self.trace.decode(self.decode_workspace_bytes(), &mut *cancelled)?;
         let mut terminal = self.base.cache_clone();
-        if !apply_kernel(calc, power, rush, &self.trace, &self.ingredients, self.linked, &mut terminal, cancelled) {
-            return None;
+        if !apply_kernel(calc, power, rush, &trace, &self.ingredients, self.linked, &mut terminal, cancelled) {
+            return Ok(None);
         }
-        (!cancelled()).then_some(terminal)
+        Ok((!cancelled()).then_some(terminal))
     }
 }
 
@@ -466,9 +481,20 @@ fn prepare_policy(
     }
     #[cfg(feature = "search-diagnostics")]
     let mut timing = Timing::default();
-    let mut model =
-        LiveModel::new_gekisou(session.master, deck, session.notes, session.events, session.params, session.setup)
-            .map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
+    let context =
+        session.build_context.get_or_insert_with(|| super::super::build_context::BuildContext::new(session.master));
+    let mut model = LiveModel::build_with_context(
+        context,
+        deck,
+        session.notes,
+        session.events,
+        session.params,
+        Some(session.setup),
+        false,
+        None,
+        None,
+    )
+    .map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
     let probe_gate =
         check_recorder(&model, session.skills).map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
     let score_rows = model.luck_score_rows(session.skills);
@@ -580,15 +606,28 @@ fn prepare_policy(
     if let Some(recipe) = recipe {
         #[cfg(feature = "search-diagnostics")]
         timing.next(Phase::Kernel);
-        let Some(terminal) = recipe.evaluate(&model.score.calc, native_power, rush, cancelled) else {
-            return Ok(None);
-        };
-        if let Some(identity) = identity
-            && curves.programs.insert_terminal(identity, native_power, &terminal, cancelled).is_none()
-        {
-            return Ok(None);
+        match recipe.evaluate(&model.score.calc, native_power, rush, cancelled) {
+            Ok(Some(terminal)) => {
+                if let Some(identity) = identity
+                    && curves.programs.insert_terminal(identity, native_power, &terminal, cancelled).is_none()
+                {
+                    return Ok(None);
+                }
+                return Ok(Some(terminal));
+            }
+            Ok(None) | Err(trace_drift::Decline::Cancelled) => return Ok(None),
+            Err(error) => {
+                // A failed optional decode leaves the fresh model untouched. Complete the original native
+                // recording below instead of returning a partial recipe or treating capacity as cancellation.
+                #[cfg(feature = "search-diagnostics")]
+                profile::record(LuckScoreProfile {
+                    terminal_capacity_refusals: u64::from(error == trace_drift::Decline::Capacity),
+                    ..Default::default()
+                });
+                #[cfg(not(feature = "search-diagnostics"))]
+                let _ = error;
+            }
         }
-        return Ok(Some(terminal));
     }
     #[cfg(feature = "search-diagnostics")]
     timing.next(Phase::Curve);
@@ -605,6 +644,7 @@ fn prepare_policy(
             deck,
             &model,
             record_only,
+            session.build_context.as_ref(),
         )
         .map_err(|error| (LuckRushDecline::ProbabilityDomain, error))?
     } else {
@@ -774,8 +814,25 @@ fn prepare_policy(
             // the complete observation history. Drop that scratch instead of silently omitting its charge.
             let mut trace = trace;
             trace.combo = ComboObserver::default();
-            let recipe = TerminalRecipe { trace, ingredients, linked, base: terminal.recipe_base() };
-            curves.programs.insert_terminal_recipe(identity, native_power, &terminal, recipe, cancelled)
+            match StoredTerminalTrace::encode(trace, capacity, &mut *cancelled) {
+                Ok(trace) => {
+                    let recipe = TerminalRecipe { trace, ingredients, linked, base: terminal.recipe_base() };
+                    curves.programs.insert_terminal_recipe(identity, native_power, &terminal, recipe, cancelled)
+                }
+                Err(trace_drift::Decline::Cancelled) => return Ok(None),
+                Err(error) => {
+                    #[cfg(feature = "search-diagnostics")]
+                    profile::record(LuckScoreProfile {
+                        terminal_capacity_refusals: u64::from(error == trace_drift::Decline::Capacity),
+                        ..Default::default()
+                    });
+                    #[cfg(not(feature = "search-diagnostics"))]
+                    let _ = error;
+                    // The completed exact-power capability does not need a recipe. Codec admission and
+                    // capacity cannot invalidate that independently completed result.
+                    curves.programs.insert_terminal(identity, native_power, &terminal, cancelled)
+                }
+            }
         } else {
             curves.programs.insert_terminal(identity, native_power, &terminal, cancelled)
         };

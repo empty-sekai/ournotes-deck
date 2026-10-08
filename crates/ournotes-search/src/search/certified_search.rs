@@ -56,6 +56,20 @@ pub enum PayoffMap {
     NativeSteps(Vec<PayoffStep>),
 }
 
+impl PayoffMap {
+    pub(super) fn terminal_payoff(&self) -> Option<ournotes_sim::live::full::LuckTerminalPayoff> {
+        use ournotes_sim::live::full::LuckTerminalPayoff;
+        Some(match *self {
+            Self::ScoreAtLeast { threshold } => LuckTerminalPayoff::ScoreAtLeast { threshold },
+            Self::CappedScore { threshold } => LuckTerminalPayoff::CappedScore { threshold },
+            Self::ScoreAndLifeAtLeast { threshold, min_final_life } => {
+                LuckTerminalPayoff::ScoreAndLifeAtLeast { threshold, min_final_life }
+            }
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PayoffRefinement {
     pub map: PayoffMap,
@@ -294,7 +308,7 @@ impl OrderScoreInterval {
         Ok(())
     }
 
-    pub fn refine_payoff(&mut self, refined: PayoffRefinement) -> Result<(), Error> {
+    pub fn refine_payoff(&mut self, mut refined: PayoffRefinement) -> Result<(), Error> {
         if let Some(exact) = refined.exact
             && !exact_in_interval(exact, refined.bounds)?
         {
@@ -311,9 +325,31 @@ impl OrderScoreInterval {
         {
             return Err(invalid("payoff refinement changes an exact value"));
         }
+        refined.exact = prior.exact.or(refined.exact);
         self.refined_payoff = Some(refined);
         Ok(())
     }
+}
+
+/// A completed controller-output law supplies only a mapped expectation enclosure. Keep the raw score
+/// evidence and exact metadata independent, and retain the original full mapping before installation.
+pub(super) fn refine_order_with_terminal_payoff(
+    order: &mut OrderScoreInterval,
+    map: &PayoffMap,
+    result: &ournotes_sim::live::full::LuckTerminalPayoffBounds,
+) -> Result<(), Error> {
+    if map.terminal_payoff() != Some(result.map()) {
+        return Err(invalid("terminal payoff refinement changes the complete mapping"));
+    }
+    let bounds = order_payoff(order, map)?
+        .bounds
+        .intersect(result.bounds())
+        .ok_or_else(|| invalid("complete terminal payoff contradicts its prior enclosure"))?;
+    order.refine_payoff(PayoffRefinement {
+        map: map.clone(),
+        bounds,
+        exact: result.exact_constant().map(|value| fraction(i128::from(value))),
+    })
 }
 
 fn exact_enclosure(value: ExactExpectation) -> Option<F64Interval> {
@@ -411,13 +447,44 @@ struct OrderPayoff {
 }
 
 fn order_payoff(order: &OrderScoreInterval, map: &PayoffMap) -> Result<OrderPayoff, Error> {
-    let plain =
-        |bounds, exact| OrderPayoff { bounds, exact, thresholds: Vec::new(), joint_life: false, truncated_at: None };
+    let mut value = unrefined_order_payoff(order, map)?;
     if let Some(refined) = &order.refined_payoff
         && &refined.map == map
     {
-        return Ok(plain(refined.bounds, refined.exact));
+        value.bounds = value
+            .bounds
+            .intersect(refined.bounds)
+            .ok_or_else(|| invalid("mapped payoff refinement contradicts current score evidence"))?;
+        if let (Some(prior), Some(next)) = (value.exact, refined.exact)
+            && compare_exact(prior, next)? != std::cmp::Ordering::Equal
+        {
+            return Err(invalid("mapped payoff refinement changes an exact value"));
+        }
+        value.exact = value.exact.or(refined.exact);
     }
+    if value.exact.is_some() {
+        value.thresholds.clear();
+        value.joint_life = false;
+        value.truncated_at = None;
+    } else {
+        // An outward mapped enclosure is still eligible for stronger numerical/exact work. In
+        // particular it must not disappear from the scheduler merely because the optional fold ran.
+        match *map {
+            PayoffMap::ScoreAtLeast { threshold } | PayoffMap::ScoreAndLifeAtLeast { threshold, .. } => {
+                if value.thresholds.is_empty() {
+                    value.thresholds.push(threshold);
+                }
+            }
+            PayoffMap::CappedScore { threshold } => value.truncated_at = Some(threshold),
+            _ => {}
+        }
+    }
+    Ok(value)
+}
+
+fn unrefined_order_payoff(order: &OrderScoreInterval, map: &PayoffMap) -> Result<OrderPayoff, Error> {
+    let plain =
+        |bounds, exact| OrderPayoff { bounds, exact, thresholds: Vec::new(), joint_life: false, truncated_at: None };
     match map {
         PayoffMap::Score | PayoffMap::BestOrderExpectedScore => Ok(plain(order.mean, order.exact_mean)),
         PayoffMap::ScoreAtLeast { threshold } | PayoffMap::ScoreAndLifeAtLeast { threshold, .. } => {
@@ -1277,5 +1344,52 @@ mod tests {
                 .unwrap();
         assert!(value.exact_payoff.is_none());
         assert!(value.refinements.iter().all(|r| r.joint_life));
+    }
+
+    #[test]
+    fn outward_mapped_refinements_keep_exact_fallback_and_independent_score_evidence() {
+        for (map, lo, hi, exact) in [
+            (PayoffMap::ScoreAtLeast { threshold: 50 }, 0.4, 0.6, ExactExpectation { numerator: 1, denominator: 2 }),
+            (PayoffMap::CappedScore { threshold: 50 }, 25.0, 30.0, fraction(25)),
+            (
+                PayoffMap::ScoreAndLifeAtLeast { threshold: 50, min_final_life: 1 },
+                0.4,
+                0.6,
+                ExactExpectation { numerator: 1, denominator: 2 },
+            ),
+        ] {
+            let mut orders = laws(50.0, (0, 100));
+            for order in &mut orders {
+                order.exact_mean = None;
+                order.final_life = Some((1, 1));
+                order
+                    .refine_payoff(PayoffRefinement {
+                        map: map.clone(),
+                        bounds: F64Interval::new(lo, hi).unwrap(),
+                        exact: None,
+                    })
+                    .unwrap();
+                assert_eq!(order.mean, F64Interval::point(50.0).unwrap());
+                assert_eq!(order.support, (0, 100));
+                assert!(order.exact_mean.is_none());
+            }
+            let partial = aggregate_orders(orders.clone(), &map).unwrap();
+            assert_eq!(partial.refinements.len(), 120, "outward mapping evidence must not hide exact work");
+            assert!(partial.exact_payoff.is_none() && partial.exact_score.is_none());
+            let expected = exact.numerator as f64 / exact.denominator as f64;
+            for order in &mut orders {
+                order
+                    .refine_payoff(PayoffRefinement {
+                        map: map.clone(),
+                        bounds: F64Interval::point(expected).unwrap(),
+                        exact: Some(exact),
+                    })
+                    .unwrap();
+            }
+            let complete = aggregate_orders(orders, &map).unwrap();
+            assert_eq!(complete.exact_payoff, Some(exact));
+            assert!(complete.refinements.is_empty());
+            assert!(complete.exact_score.is_none(), "a mapped proof cannot manufacture an exact raw score");
+        }
     }
 }

@@ -978,47 +978,82 @@ impl Factory<'_> {
         self.group_from(gid, |cid| self.one(cid, k))
     }
 
+    pub(super) fn group_indexed(
+        &self,
+        gid: i64,
+        k: usize,
+        context: Option<&super::build_context::BuildContext<'_>>,
+    ) -> Result<Option<Checker>, Error> {
+        match context {
+            Some(_) => self.group_from_indexed(gid, |cid| self.one(cid, k), context),
+            None => self.group(gid, k),
+        }
+    }
+
     pub(crate) fn luck_group(
         &self,
         gid: i64,
         k: usize,
         script: &super::luck::SharedScript,
     ) -> Result<Option<Checker>, Error> {
-        self.group_from(gid, |cid| {
-            let row = self
-                .master
-                .skill_condition(cid)
-                .ok_or_else(|| Error::Master(format!("unknown skill condition {cid}")))?;
-            match row.condition_type {
-                2000..=2004 | 4011 | 5000 | 3000 | 3001 => {
-                    let checker = Checker::Scripted {
-                        script: script.clone(),
-                        sticky: matches!(row.condition_type, 5000 | 3000 | 3001),
-                        memo: None,
-                        true_hits: if matches!(row.condition_type, 2004 | 4011) { 0 } else { 1 },
-                        life: (2000..=2003)
-                            .contains(&row.condition_type)
-                            .then(|| row.condition_values.first().map(|&v| (row.condition_type, v)))
-                            .flatten(),
-                    };
-                    Ok(Some(if row.is_positive { checker } else { Checker::Not(Box::new(checker)) }))
+        self.luck_group_indexed(gid, k, script, None)
+    }
+
+    pub(super) fn luck_group_indexed(
+        &self,
+        gid: i64,
+        k: usize,
+        script: &super::luck::SharedScript,
+        context: Option<&super::build_context::BuildContext<'_>>,
+    ) -> Result<Option<Checker>, Error> {
+        self.group_from_indexed(
+            gid,
+            |cid| {
+                let row = self
+                    .master
+                    .skill_condition(cid)
+                    .ok_or_else(|| Error::Master(format!("unknown skill condition {cid}")))?;
+                match row.condition_type {
+                    2000..=2004 | 4011 | 5000 | 3000 | 3001 => {
+                        let checker = Checker::Scripted {
+                            script: script.clone(),
+                            sticky: matches!(row.condition_type, 5000 | 3000 | 3001),
+                            memo: None,
+                            true_hits: if matches!(row.condition_type, 2004 | 4011) { 0 } else { 1 },
+                            life: (2000..=2003)
+                                .contains(&row.condition_type)
+                                .then(|| row.condition_values.first().map(|&v| (row.condition_type, v)))
+                                .flatten(),
+                        };
+                        Ok(Some(if row.is_positive { checker } else { Checker::Not(Box::new(checker)) }))
+                    }
+                    0 | 7000 | 7010 | 7013 | 7020 | 7021 => self.one(cid, k),
+                    ty => Err(Error::Unsupported(format!("LUCK replay condition {ty}"))),
                 }
-                0 | 7000 | 7010 | 7013 | 7020 | 7021 => self.one(cid, k),
-                ty => Err(Error::Unsupported(format!("LUCK replay condition {ty}"))),
-            }
-        })
+            },
+            context,
+        )
     }
 
     fn group_from(
         &self,
         gid: i64,
+        one: impl FnMut(i64) -> Result<Option<Checker>, Error>,
+    ) -> Result<Option<Checker>, Error> {
+        self.group_from_indexed(gid, one, None)
+    }
+
+    fn group_from_indexed(
+        &self,
+        gid: i64,
         mut one: impl FnMut(i64) -> Result<Option<Checker>, Error>,
+        context: Option<&super::build_context::BuildContext<'_>>,
     ) -> Result<Option<Checker>, Error> {
         if gid == 0 {
             return Ok(None);
         }
         let mut ors = Vec::new();
-        for s in self.master.skill_condition_sets.iter().filter(|s| s.group == gid) {
+        let mut append = |s: &crate::master::SkillConditionSetRow| -> Result<(), Error> {
             let mut items = Vec::new();
             for &cid in &s.condition_ids {
                 if let Some(c) = one(cid)? {
@@ -1032,6 +1067,17 @@ impl Factory<'_> {
                     let resettable = items.iter().map(Checker::count_resettable).collect();
                     ors.push(Checker::And { items, resettable });
                 }
+            }
+            Ok(())
+        };
+        if let Some(context) = context {
+            debug_assert!(std::ptr::eq(self.master, context.master()));
+            for set in context.condition_sets(gid) {
+                append(set)?;
+            }
+        } else {
+            for set in self.master.skill_condition_sets.iter().filter(|set| set.group == gid) {
+                append(set)?;
             }
         }
         Ok(match ors.len() {

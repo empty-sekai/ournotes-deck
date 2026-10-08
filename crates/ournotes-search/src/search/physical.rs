@@ -1677,6 +1677,27 @@ fn joint_rec(
                 joint.bonus_unavailable[depth] += 1;
             }
         }
+        if depth == 5 && e.certified.is_some() && matches!(e.metric, Metric::Score) && e.family.enabled() {
+            let mut family = std::mem::take(&mut e.family);
+            let result = family.cached_leaf_upper(e.pool, domain, bounds, p, orders, &mut || e.expired());
+            e.family = family;
+            e.tel.joint.luck_family = e.family.stats().clone();
+            match result {
+                family_nodes::FamilyNodeOutcome::Upper(cap) => {
+                    let module = e.tel.joint.modules.entry("luckFamilyLeaf").or_default();
+                    module.checks += 1;
+                    if cap < threshold || (exact_ties && cap == threshold && power < i64::from(cutoff_power)) {
+                        module.pruned += 1;
+                        return Ok(true);
+                    }
+                }
+                family_nodes::FamilyNodeOutcome::Unavailable => {}
+                family_nodes::FamilyNodeOutcome::Stopped => {
+                    e.unexplored_node(p, depth, domain, bounds, orders)?;
+                    return Ok(false);
+                }
+            }
+        }
         if depth == 4 && e.certified.is_some() && matches!(e.metric, Metric::Score) && e.family.enabled() {
             // All five members of each considered family are fixed, while its completed table covers every
             // allowed Snap. The exact depth-four suffix then applies the four actual bindings and the remaining

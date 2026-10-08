@@ -591,6 +591,18 @@ fn family_node_masks_and_real_depth_four_suffix_bound_every_native_descendant() 
     assert!(checked_masks > 0 && strictly_tightened > 0 && prune_witnesses > 0);
 
     let mut cache = FamilyNodeCache::new(Some(&context), 16, 32 * 1024 * 1024, 6);
+    assert_eq!(
+        cache.cached_leaf_upper(
+            &pool,
+            &domain,
+            &bounds,
+            &oracles[0].physical,
+            &crate::search::uniform::MEAN_ORDERS,
+            &mut || false,
+        ),
+        FamilyNodeOutcome::Unavailable,
+        "a missing completed table must never be a zero cap or start new native work"
+    );
     let mut checked_nodes = 0;
     let mut checked_descendants = 0;
     // Include every original suffix boundary, not a chosen convenient member slice.
@@ -652,6 +664,70 @@ fn family_node_masks_and_real_depth_four_suffix_bound_every_native_descendant() 
     assert!(checked_descendants >= 62);
     assert_eq!(cache.stats().prepared_families, 2);
     assert!(cache.stats().family_hits > 0);
+    let builds = cache.stats().profile_native_builds;
+    let reservations = cache.stats().reserved_profile_order_work;
+    let frames = cache.stats().reserved_profile_frame_work;
+    for oracle in &oracles {
+        let result = cache.cached_leaf_upper(
+            &pool,
+            &domain,
+            &bounds,
+            &oracle.physical,
+            &crate::search::uniform::MEAN_ORDERS,
+            &mut || false,
+        );
+        let FamilyNodeOutcome::Upper(cap) = result else { panic!("complete leaf profile missing: {result:?}") };
+        assert!(oracle.sum_of_order_means.at_most_integer(cap), "singleton cap omitted its native law");
+        let mut permuted = oracle.physical;
+        permuted.members.swap(0, 4);
+        permuted.snaps.swap(0, 4);
+        assert_eq!(
+            cache.cached_leaf_upper(
+                &pool,
+                &domain,
+                &bounds,
+                &permuted,
+                &crate::search::uniform::MEAN_ORDERS,
+                &mut || false,
+            ),
+            result,
+            "complete physical bindings retain the full uniform order mean under nonleader layout changes"
+        );
+    }
+    assert_eq!(cache.stats().bounded_leaves, (2 * oracles.len()) as u64);
+    assert_eq!(cache.stats().profile_native_builds, builds);
+    assert_eq!(cache.stats().reserved_profile_order_work, reservations);
+    assert_eq!(cache.stats().reserved_profile_frame_work, frames);
+    assert_eq!(
+        cache.cached_leaf_upper(&pool, &domain, &bounds, &oracles[0].physical, &[], &mut || false),
+        FamilyNodeOutcome::Unavailable,
+        "a partial order list cannot use the uniform complete-profile certificate"
+    );
+    let other_bounds =
+        JointBounds::compile(&pool, &request, &domain, &Metric::Score, None, &SimulationInput::default()).unwrap();
+    assert_eq!(
+        cache.cached_leaf_upper(
+            &pool,
+            &domain,
+            &other_bounds,
+            &oracles[0].physical,
+            &crate::search::uniform::MEAN_ORDERS,
+            &mut || false,
+        ),
+        FamilyNodeOutcome::Unavailable,
+        "a newly compiled reward scope cannot consume a previous scope's table"
+    );
+    assert_eq!(
+        cache.cached_leaf_upper(
+            &pool,
+            &domain,
+            &bounds,
+            &oracles[0].physical,
+            &crate::search::uniform::MEAN_ORDERS,
+            &mut || true,
+        ),
+        FamilyNodeOutcome::Stopped
+    );
 }
 
 #[test]
