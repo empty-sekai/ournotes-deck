@@ -247,6 +247,16 @@ pub(super) fn identify_basis(
     let verified_jobs = rows.iter().filter(|row| row.get("verification").is_some()).count();
     let verification_complete = !verification_requested
         || (verified_jobs == jobs.len() && rows.iter().all(|row| row["verification"]["status"] == "success"));
+    let stats = json!({"requestedJobs":jobs.len(),"compiledJobs":compiled,"basisTermReferences":term_references,
+        "uniquePrograms":responses.len(),"exactTermAliases":aliases,"propagationCalls":propagations,
+        "reconstructedJobs":reconstructions,"compileMs":compile_ms,"propagationMs":propagation_ms,
+        "mixtureMs":mixture_ms,"verificationCalls":verification_calls,"verifiedJobs":verified_jobs,"verificationMs":verification_ms,
+        "identityBudgetBytes":identity_limit,"programBudgetBytes":program_limit,"responseBudgetBytes":response_limit,
+        "retainedIdentityBytes":registry.bytes,"retainedResponseBytes":response_bytes,
+        "responseIndexBytes":responses.capacity() * std::mem::size_of::<Option<Arc<LuckTableMinimumTermResponse>>>(),
+        "responseArcCounterBytes":responses.iter().filter(|response| response.is_some()).count() * 2 * std::mem::size_of::<usize>(),
+        "compiledProgramPeakBytes":program_peak,"temporaryIdentityPeakBytes":identity_peak,
+        "fingerprintWorkspacePeakBytes":fingerprint_peak,"elapsedMs":began.elapsed().as_secs_f64()*1000.0});
     json!({"format":"ournotes-deck.luck-response-basis/1",
         "identificationComplete":identification_complete,"probabilityComplete":propagation_complete,
         "complete":identification_complete && missing_selected.is_empty() && (!options.propagate || propagation_complete) && verification_complete,
@@ -256,14 +266,5 @@ pub(super) fn identify_basis(
         "missingSelectedPrograms":missing_selected,"jobs":rows,"programs":programs,
         "verificationRequested":verification_requested,"verificationComplete":verification_complete,
         "memoryScope":"Separate allowances for retained identities, one compiled basis and native response payloads. Response-index capacity and Arc counters are reported separately and excluded from the response payload allowance. Inputs, returned JSON and native DP workspace are not a total RSS bound.",
-        "stats":{"requestedJobs":jobs.len(),"compiledJobs":compiled,"basisTermReferences":term_references,
-            "uniquePrograms":responses.len(),"exactTermAliases":aliases,"propagationCalls":propagations,
-            "reconstructedJobs":reconstructions,"compileMs":compile_ms,"propagationMs":propagation_ms,
-            "mixtureMs":mixture_ms,"verificationCalls":verification_calls,"verifiedJobs":verified_jobs,"verificationMs":verification_ms,
-            "identityBudgetBytes":identity_limit,"programBudgetBytes":program_limit,"responseBudgetBytes":response_limit,
-            "retainedIdentityBytes":registry.bytes,"retainedResponseBytes":response_bytes,
-            "responseIndexBytes":responses.capacity() * std::mem::size_of::<Option<Arc<LuckTableMinimumTermResponse>>>(),
-            "responseArcCounterBytes":responses.iter().filter(|response| response.is_some()).count() * 2 * std::mem::size_of::<usize>(),
-            "compiledProgramPeakBytes":program_peak,"temporaryIdentityPeakBytes":identity_peak,
-            "fingerprintWorkspacePeakBytes":fingerprint_peak,"elapsedMs":began.elapsed().as_secs_f64()*1000.0}})
+        "stats":stats})
 }
