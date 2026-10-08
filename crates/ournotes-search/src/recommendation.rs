@@ -10,8 +10,8 @@ use crate::clock::Instant;
 use crate::search::Constraints;
 use crate::search::physical::ProgressHook;
 use crate::types::{
-    Aggregation, Execution, ExitReason, Fraction, FractionInterval, Limits, MAX_K, Metric, Optimality, PlayPolicy,
-    RecommendationOutcome, RecommendationRequest, RecommendedDeck, Scene, SimulationInput, Strategy,
+    Aggregation, Execution, ExitReason, Fraction, FractionInterval, Limits, MAX_K, MaximumModel, Metric, Optimality,
+    PlayPolicy, RecommendationOutcome, RecommendationRequest, RecommendedDeck, Scene, SimulationInput, Strategy,
 };
 use ournotes_sim::Error;
 use ournotes_sim::account::{AccountInput, Exclusions, Issue};
@@ -962,6 +962,9 @@ pub struct AnswerResult {
     pub metric: Option<Value>,
     /// How random outcomes are valued, independently of the declared play conditions.
     pub aggregation: Aggregation,
+    /// The domain of a Maximum proof, including the limits of its order certificate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum_model: Option<MaximumModel>,
     /// The actual stopping reason, present only in the final answer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_reason: Option<ExitReason>,
@@ -1377,6 +1380,7 @@ fn result_of(
         goal: parsed.goal.clone(),
         metric: parsed.metric.clone(),
         aggregation: parsed.search.aggregation,
+        maximum_model: outcome.maximum_model,
         exit_reason: is_final.then_some(outcome.exit_reason),
         phase: if is_final { "done" } else { "search" },
         elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
@@ -1539,10 +1543,14 @@ pub fn capabilities() -> Value {
         "goals": goals.iter().map(|k| k.name()).collect::<Vec<_>>(),
         "metrics": metrics,
         "defaultAggregation": "expected",
+        "maximumModel": MaximumModel::for_execution(true),
+        "maximumModels": goals.iter().filter(|kind| !kind.gekisou())
+            .map(|kind| (kind.name(), MaximumModel::for_execution(kind.live())))
+            .collect::<std::collections::BTreeMap<_, _>>(),
         "aggregations": {"expected": metrics, "maximum": maximum_metrics},
         "aggregationLaw": {
             "expected": "expected payoff over the 120 equally likely performance orders and the declared lottery law",
-            "maximum": "maximum reachable payoff over performance orders and lottery outcomes, with the same declared play conditions",
+            "maximum": "maximum payoff over all performance orders and independent native draw support, with the same declared play conditions; whole-sequence root-seed realizability is not established",
         },
         "accuracy": {"great": true, "just": true},
         "play": {"completeStream":true,"field":"goal.play","mutuallyExclusiveWith":"goal.accuracy",
@@ -1733,6 +1741,7 @@ mod tests {
             result_identity: "team",
             metric: Metric::Score,
             aggregation: Aggregation::Expected,
+            maximum_model: None,
             player_goal: None,
             strategy: Strategy::Exhaustive,
             probability_law: Value::Null,

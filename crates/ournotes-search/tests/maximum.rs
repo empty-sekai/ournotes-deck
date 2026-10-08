@@ -79,6 +79,14 @@ fn maximum_bounds_preserve_full_team_and_snap_ranking() {
     let expected = deterministic(Aggregation::Expected);
     let maximum = deterministic(Aggregation::Maximum);
     assert_eq!(maximum.completion, Completion::Complete);
+    assert!(serde_json::to_value(&expected).unwrap().get("maximumModel").is_none());
+    assert_eq!(
+        serde_json::to_value(maximum.maximum_model).unwrap(),
+        serde_json::json!({
+            "kind":"deterministic", "performanceOrders":1,
+            "rootSeedRealizability":"notApplicable", "bestOrderCertificate":"notApplicable"
+        })
+    );
     for (expected, maximum) in expected.results.iter().zip(&maximum.results) {
         assert_eq!(maximum.members, expected.members);
         assert_eq!(maximum.snaps, expected.snaps);

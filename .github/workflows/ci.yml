@@ -41,6 +41,34 @@ jobs:
           toolchain: "1.88.0"
       - run: cargo check --all-targets
 
+  account-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install exact WASM binding tool
+        run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      - name: Export synthetic native account references
+        env:
+          OURNOTES_ACCOUNT_CORPUS: ${{ github.workspace }}/work/account-corpus
+        run: cargo test --release --locked --test adapter_fixture_export export_account_transport_corpus -- --ignored --exact
+      - name: Build production recommendation WASM
+        run: cargo build --release --locked --target wasm32-unknown-unknown --manifest-path wasm/recommend/Cargo.toml
+      - name: Bind and compare exact native and WASM account semantics
+        run: |
+          wasm-bindgen --target nodejs --out-dir work/account-bindings wasm/recommend/target/wasm32-unknown-unknown/release/ournotes_recommend_wasm.wasm
+          node tools/search-harness/account-wasm.cjs work/account-bindings/ournotes_recommend_wasm.js work/account-corpus work/account-wasm-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: account-wasm-report
+          path: work/account-wasm-report.json
+          if-no-files-found: error
+
   synthetic-correctness:
     runs-on: ubuntu-latest
     steps:

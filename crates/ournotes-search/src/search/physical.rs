@@ -546,7 +546,7 @@ impl Engine<'_, '_> {
         };
         let live = matches!(self.request.objective.inner(), Objective::LiveScore { .. });
         let probability_law = if live && self.aggregation == Aggregation::Maximum {
-            serde_json::json!({"kind":"reachableOutcomes","orders":ORDERS,"lottery":"nominalSupport"})
+            serde_json::json!({"kind":"independentNativeDrawSupport","orders":ORDERS,"lottery":"nominalSupport","rootSeedRealizability":"notEstablished"})
         } else if live {
             let lottery = if self.certified.is_some() {
                 "certifiedNativeLotteryIntervals"
@@ -578,11 +578,14 @@ impl Engine<'_, '_> {
             },
             metric: self.metric.clone(),
             aggregation: self.aggregation,
+            maximum_model: (self.aggregation == Aggregation::Maximum).then(|| MaximumModel::for_execution(live)),
             player_goal: None,
             strategy: strategy.clone(),
             probability_law,
-            proof_scope: if self.aggregation == Aggregation::Maximum {
-                "maximum reachable terminal payoff under declared master, roster, judgement, clock and nominal random-outcome inputs"
+            proof_scope: if self.aggregation == Aggregation::Maximum && live {
+                "maximum terminal payoff under declared master, roster, judgement and clock inputs, all performance orders and independent native draw support; whole-sequence native root-seed realizability is not established"
+            } else if self.aggregation == Aggregation::Maximum {
+                "maximum deterministic terminal payoff under declared master, roster and execution inputs"
             } else {
                 "conditional on declared master, roster and complete judgement/clock inputs, with the five members performing in a uniformly random order; client counters are not server reward authority"
             },

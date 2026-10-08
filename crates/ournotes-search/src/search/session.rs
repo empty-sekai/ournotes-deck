@@ -90,6 +90,8 @@ pub struct SessionProgress {
     pub optimality: Optimality,
     pub metric: Metric,
     pub aggregation: Aggregation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum_model: Option<MaximumModel>,
     pub player_goal: GoalDescription,
     pub resolved_context: serde_json::Value,
     pub proof_scope: &'static str,
@@ -510,6 +512,8 @@ impl<'m> SearchSession<'m> {
             metric: self.request.metric.clone(),
             aggregation: self.request.aggregation,
             player_goal: self.prepared.context.player_goal.clone(),
+            maximum_model: (self.request.aggregation == Aggregation::Maximum)
+                .then(|| MaximumModel::for_execution(false)),
             resolved_context: self.prepared.context.resolved_context.clone(),
             proof_scope: "conditional exhaustive physical Top-K under the declared deterministic model, fixed eligible cultivation and v1 tie; no full-account, current-native or browser performance certificate",
             results: self

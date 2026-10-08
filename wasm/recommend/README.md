@@ -24,9 +24,12 @@ original request/answer/progress shapes; account inputs use the new formats belo
 - Answer: `ournotes-deck.account-recommendation/1`, with `status`, `missing`, `errors`, `final`, and `result`.
 - `capabilities()` returns JSON text identifying formats, supported pairs, and explicit limitations.
 
-Set request `aggregation` to `maximum` to rank by the highest reachable payoff while keeping the same play
-conditions. Omission selects `expected`. Read `capabilities.aggregations` before enabling the choice; progress
-and final answers echo `result.aggregation`. Maximum results expose the best order without probability statistics.
+Set request `aggregation` to `maximum` to rank by the highest payoff in the declared independent skill-draw
+support while keeping the same play conditions. Omission selects `expected`. Read `capabilities.aggregations`
+and `capabilities.maximumModels` before enabling the choice; progress and final answers echo `result.aggregation`
+and, for Maximum, `result.maximumModel`. Live Maximum reports `rootSeedRealizability:"notEstablished"`:
+`bestOrder` gives a performance order and terminal values without a common-root-seed replay certificate.
+Power/Skip use the deterministic model. Maximum results omit probability statistics.
 
 `recommend` is synchronous. Use a dedicated Worker and terminate it to cancel. Callback exceptions are ignored.
 An input error is a structured answer, not a trap. Only a proven result may be called optimal. Explicit unsupported

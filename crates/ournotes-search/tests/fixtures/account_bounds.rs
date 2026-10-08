@@ -30,6 +30,7 @@ fn fixture() -> (Parsed, RecommendationOutcome) {
         result_identity: "team",
         metric: Metric::Score,
         aggregation: crate::types::Aggregation::Expected,
+        maximum_model: None,
         player_goal: None,
         strategy: Strategy::BranchAndBound,
         probability_law: json!({"kind":"uniformMemberOrder","orders":120,"lottery":"certifiedNativeLotteryIntervals"}),

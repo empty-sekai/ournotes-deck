@@ -168,7 +168,7 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
             }
         });
         if r.aggregation == Aggregation::Maximum {
-            assumptions.push("maximize over all performance orders with each Snap paired to its member, and all positive-probability nominal random paths");
+            assumptions.push("maximize over all performance orders with each Snap paired to its member, and independent native draw support; the stream base seed is not a constraint and whole-sequence root-seed realizability is not established");
         } else {
             assumptions.push("the five members perform in a uniformly random order; paired snaps follow their members");
             assumptions.push(

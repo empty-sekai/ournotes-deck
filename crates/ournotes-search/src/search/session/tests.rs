@@ -204,6 +204,31 @@ fn finish(session: &mut SearchSession, work: u64) -> SessionProgress {
 }
 
 #[test]
+fn maximum_session_keeps_deterministic_model_while_yielding_and_after_exhaustion() {
+    let (data, snapshot) = fixture(5, 0);
+    for metric in [Metric::Power, Metric::Score] {
+        let mut request = request(metric);
+        request.aggregation = Aggregation::Maximum;
+        let resolved = resolve(&data, &snapshot, &request);
+        let mut session = resolved.start_search_session(&data, &request, binding()).unwrap();
+        let initial = session.progress(&binding()).unwrap();
+        assert_eq!(initial.status, SessionStatus::Running);
+        assert_eq!(initial.maximum_model, Some(MaximumModel::for_execution(false)));
+        assert_eq!(
+            serde_json::to_value(&initial).unwrap()["maximumModel"],
+            json!({
+                "kind":"deterministic", "performanceOrders":1,
+                "rootSeedRealizability":"notApplicable", "bestOrderCertificate":"notApplicable"
+            })
+        );
+        let completed = finish(&mut session, u64::MAX);
+        assert_eq!(completed.status, SessionStatus::Exhausted);
+        assert_eq!(completed.optimality, Optimality::Proven);
+        assert_eq!(completed.maximum_model, initial.maximum_model);
+    }
+}
+
+#[test]
 fn independent_oracle_matches_four_goals_and_every_step_boundary() {
     let (data, snapshot) = fixture(5, 2);
     for metric in [
