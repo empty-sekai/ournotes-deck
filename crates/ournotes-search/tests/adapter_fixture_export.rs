@@ -2345,6 +2345,65 @@ fn account_maximum_can_choose_a_different_team_from_expected_score() {
 }
 
 #[test]
+fn maximum_gekisou_requests_are_unsupported_in_account_and_snapshot_apis() {
+    use ournotes_search::{engine, handler, recommendation::Status, types::Aggregation};
+    let (data, account) = account_recommendation_fixture();
+    for kind in ["missionLive", "battleLive", "arenaLive"] {
+        let goal = if kind == "arenaLive" {
+            json!({"kind":kind,"arenaMusicId":80,"difficulty":"expert"})
+        } else {
+            json!({"kind":kind,"musicId":10,"difficulty":"expert"})
+        };
+        let mut request = account_request(goal);
+        request["aggregation"] = json!("maximum");
+        let answer = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
+        assert!(matches!(answer.status, Status::Failed));
+        assert!(answer.result.is_none());
+        assert!(answer.errors.iter().any(|issue| issue.path == "aggregation" && issue.code == "unsupported"));
+        request["aggregation"] = json!("expected");
+        let answer = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
+        assert!(matches!(answer.status, Status::Ok), "{:?}", answer.errors);
+    }
+    let mut synth = synthetic_master(6, 2, 5);
+    set_column(&mut synth, "MasterLiveMusic", &mut |row| {
+        for field in ["_gekisouMission1", "_gekisouMission2", "_gekisouMission3"] {
+            row[field] = json!(0);
+        }
+    });
+    extend_table(
+        &mut synth,
+        "MasterMemberCardLevelLimit",
+        (1..=5)
+            .flat_map(|rarity| {
+                (1..=5).map(
+                    move |awake| json!({"_id":rarity*10+awake,"_rarity":rarity,"_awakeCount":awake,"_limitLevel":100}),
+                )
+            })
+            .collect(),
+    );
+    let data = DeckData::from_json(&data_document(&synth, 6, 2, 5).to_string()).unwrap();
+    let roster = Roster::from_json(&roster_document(6, 2, 5).to_string()).unwrap();
+    let snapshot = snapshot_document(data.sha256.as_deref().unwrap(), 6, 2, 5);
+    for scene in ["mission", "battle", "arena"] {
+        let mut request = joint_request(scene, true, json!({"kind":"score"}));
+        request.aggregation = Aggregation::Maximum;
+        assert!(matches!(handler::build_card_pool(&data, &roster, &request), Err(ournotes_sim::Error::Unsupported(_))));
+        let mut wire = joint_request_json(scene, true, json!({"kind":"score"}));
+        wire["aggregation"] = json!("maximum");
+        let answer = engine::recommend_snapshot(&data, &snapshot.to_string(), &wire.to_string(), None);
+        assert_eq!(
+            answer.status,
+            engine::SnapshotStatus::Failed,
+            "errors={:?}; missing={:?}",
+            answer.errors,
+            answer.missing
+        );
+        assert!(answer.result.is_none());
+        assert!(answer.errors.iter().any(|issue| issue.code == "unsupported"));
+    }
+}
+
+#[test]
 fn account_aggregation_rejects_unknown_values_and_keeps_timeout_unproven() {
     use ournotes_search::{engine, recommendation::Status};
     let (data, account) = account_recommendation_fixture();
@@ -2604,6 +2663,9 @@ fn export_account_transport_corpus() {
     assert_eq!(requests.len(), 49, "46 scene/metric pairs plus accuracy and two explicit patterns");
     let maximum_requests: Vec<_> = requests
         .iter()
+        .filter(|(_, request)| {
+            !matches!(request["goal"]["kind"].as_str(), Some("missionLive" | "battleLive" | "arenaLive"))
+        })
         .map(|(name, request)| {
             let mut request = request.clone();
             request["aggregation"] = json!("maximum");
@@ -2612,6 +2674,7 @@ fn export_account_transport_corpus() {
         .collect();
     let maximum_coverage: Vec<_> = coverage
         .iter()
+        .filter(|case| !matches!(case["scene"].as_str(), Some("mission" | "battle" | "arena" | "missionLive")))
         .map(|case| {
             let mut case = case.clone();
             case["name"] = json!(format!("{}-maximum", case["name"].as_str().unwrap()));
@@ -2619,9 +2682,11 @@ fn export_account_transport_corpus() {
             case
         })
         .collect();
+    assert_eq!(maximum_requests.len(), 27);
+    assert_eq!(maximum_coverage.len(), maximum_requests.len());
     requests.extend(maximum_requests);
     coverage.extend(maximum_coverage);
-    assert_eq!(requests.len(), 98, "both aggregations cover every scene, metric and play case");
+    assert_eq!(requests.len(), 76, "Expected covers every scene; Maximum covers non-Gekisou scenes");
     let mut names = BTreeSet::new();
     for (name, request) in requests {
         assert!(names.insert(name.clone()), "duplicate corpus identity");
@@ -2689,8 +2754,6 @@ mod correctness_matrix;
 
 #[path = "fixtures/maximum_deck_payoff.rs"]
 mod maximum_deck_payoff;
-#[path = "fixtures/maximum_luck_payoff.rs"]
-mod maximum_luck_payoff;
 #[path = "fixtures/maximum_matrix.rs"]
 mod maximum_matrix;
 #[path = "fixtures/maximum_power_cap.rs"]

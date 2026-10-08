@@ -923,6 +923,11 @@ pub(crate) fn solve_physical_impl(
     origin: Instant,
     progress: Option<ProgressHook<'_>>,
 ) -> Result<RecommendationOutcome, Error> {
+    if aggregation == Aggregation::Maximum
+        && matches!(request.objective.inner(), Objective::LiveScore { gekisou: Some(_), .. })
+    {
+        return Err(Error::Unsupported("maximum aggregation is unavailable for Gekisou lives".into()));
+    }
     reject_unsupported_lifecycle(network, simulation.live_finished_from_frame)?;
     let start = Instant::now();
     let mut limits = limits.clone();

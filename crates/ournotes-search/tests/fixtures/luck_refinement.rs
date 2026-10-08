@@ -60,7 +60,10 @@ fn probability_range_settles_the_k1_and_k12_certain_event_witnesses() {
 #[test]
 fn maximum_support_remains_exact_when_an_unused_skill_has_no_score_ceiling() {
     use ournotes_search::types::{Aggregation, Metric};
-    let (mut data, roster, mut request) = inputs(1, 1, 64);
+    let (mut data, roster, _) = inputs(1, 1, 64);
+    let mut request = joint_request("free", false, json!({"kind":"score"}));
+    request.k = 1;
+    request.limits.cache_entries = 64;
     request.metric = Metric::Score;
     request.aggregation = Aggregation::Maximum;
     request.constraints.no_snaps = true;

@@ -51,7 +51,7 @@ fn request(data: &DeckData, scene: &str) -> RecommendationRequest {
 #[test]
 fn maximum_item_ranking_materializes_full_scores_and_order_ties() {
     let (data, roster) = fixture();
-    for scene in ["free", "battle"] {
+    for scene in ["free"] {
         let mut current = request(&data, scene);
         current.strategy = Strategy::Exhaustive;
         current.k = 100;
@@ -89,7 +89,7 @@ fn maximum_item_ranking_materializes_full_scores_and_order_ties() {
 #[test]
 fn maximum_item_stop_bounds_keep_single_payoff_units() {
     let (data, roster) = fixture();
-    let mut current = request(&data, "battle");
+    let mut current = request(&data, "free");
     current.k = 5;
     current.limits.max_candidates = Some(2);
     let maximum = engine::recommend(&data, &roster, &current).unwrap();

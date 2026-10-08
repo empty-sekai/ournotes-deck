@@ -184,6 +184,9 @@ pub fn build_card_pool<'m>(
     roster: &Roster,
     r: &RecommendationRequest,
 ) -> Result<BuiltProblem<'m>, Error> {
+    if r.aggregation == Aggregation::Maximum && matches!(r.execution, Execution::Live { gekisou: true, .. }) {
+        return Err(Error::Unsupported("maximum aggregation is unavailable for Gekisou lives".into()));
+    }
     // Explicitly unavailable in the unchanged current numerical core.
     reject_unsupported_lifecycle(r.network_confirmations.as_deref(), r.simulation.live_finished_from_frame)?;
 

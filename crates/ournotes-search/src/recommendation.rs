@@ -466,6 +466,10 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
         issues.add("goal.kind", "input", format!("{} is not one of {}", g.kind, names.join(", ")));
         return None;
     };
+    if aggregation == Aggregation::Maximum && kind.gekisou() {
+        issues.add("aggregation", "unsupported", "maximum aggregation is unavailable for Gekisou lives");
+        return None;
+    }
     for (name, present) in [
         ("musicId", g.music_id.is_some()),
         ("arenaMusicId", g.arena_music_id.is_some()),
@@ -1508,12 +1512,16 @@ pub fn capabilities() -> Value {
         .filter(|k| k.metrics().iter().any(|m| support(*k, m) != Support::Unsupported))
         .collect();
     let mut metrics = serde_json::Map::new();
+    let mut maximum_metrics = serde_json::Map::new();
     let mut event_ids = serde_json::Map::new();
     for kind in &goals {
         metrics.insert(
             kind.name().into(),
             json!(kind.metrics().iter().filter(|m| support(*kind, m) != Support::Unsupported).collect::<Vec<_>>()),
         );
+        if !kind.gekisou() {
+            maximum_metrics.insert(kind.name().into(), metrics.get(kind.name()).unwrap().clone());
+        }
         event_ids.insert(kind.name().into(), kind.reads_event_ids());
     }
     let support_by_goal: std::collections::BTreeMap<_, _> = GoalKind::ALL
@@ -1531,7 +1539,7 @@ pub fn capabilities() -> Value {
         "goals": goals.iter().map(|k| k.name()).collect::<Vec<_>>(),
         "metrics": metrics,
         "defaultAggregation": "expected",
-        "aggregations": {"expected": metrics, "maximum": metrics},
+        "aggregations": {"expected": metrics, "maximum": maximum_metrics},
         "aggregationLaw": {
             "expected": "expected payoff over the 120 equally likely performance orders and the declared lottery law",
             "maximum": "maximum reachable payoff over performance orders and lottery outcomes, with the same declared play conditions",
@@ -1797,7 +1805,13 @@ mod tests {
         let value = capabilities();
         assert_eq!(value["defaultAggregation"], "expected");
         assert_eq!(value["aggregations"]["expected"], value["metrics"]);
-        assert_eq!(value["aggregations"]["maximum"], value["metrics"]);
+        for kind in GoalKind::ALL {
+            if kind.gekisou() {
+                assert!(value["aggregations"]["maximum"].get(kind.name()).is_none());
+            } else {
+                assert_eq!(value["aggregations"]["maximum"][kind.name()], value["metrics"][kind.name()]);
+            }
+        }
         assert_eq!(value["aggregationTieBreak"]["maximum"][0], "maximumPayoff");
         assert_eq!(value["support"]["battleLive"]["score"], "proven");
         assert_eq!(value["support"]["arenaLive"]["eventPoints"], "proven");

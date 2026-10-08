@@ -13,6 +13,8 @@ The optional top-level `aggregation` is `expected` (the default) or `maximum`. I
 while preserving the card pool, song, accuracy or complete play, room, event context and constraints. `expected`
 values each team's mean payoff over random performance orders and lottery outcomes; `maximum` values its highest
 reachable payoff over those same outcomes. For deterministic power and skip, both aggregations give the same value.
+Maximum is available for Free Live, Challenge Live, Skip and Power. Gekisou lives (Mission Live, Battle Live and
+Arena Live) support Expected aggregation; Maximum requests for these modes return an unsupported error.
 For example, adding `"aggregation":"maximum"` to the request above searches for the highest reachable score under
 its declared accuracy. It does not change that accuracy to a perfect play. Unknown aggregation names are input errors.
 
