@@ -245,6 +245,12 @@ impl<'a> SnapLive<'a> {
                     combo_triggers::ComboTriggers::compile(master, &g, &entries, &env.count_reach, bonus);
             }
             env.gkf = Some(Rc::new(g));
+        } else {
+            // Ordinary judgement counters read the same clock and entry stream without any mission gate.
+            // Keep the actual Gekisou schedule absent: an empty range timeline supplies only the shared
+            // count/start-time evidence, including backdated notes and the first two frames' open lower bound.
+            let ordinary = Schedule { states: vec![Vec::new(); frames.len()], ranges: Vec::new() };
+            env.gkf = Some(Rc::new(GkFrames::new(&ordinary, &frames, &entries)));
         }
         let fire: Vec<usize> = setup
             .events

@@ -73,7 +73,8 @@ pub(super) struct Env<'a> {
     /// With Gekisou on: the missions of the ranges, whether some range completes in the play, and whether some
     /// reachable judgement is a Miss or a Bad.
     pub(super) gk: Option<GkEnv>,
-    /// With Gekisou on: the per-frame facts the windows of Gekisou rows read.
+    /// Shared frame/count evidence. Without Gekisou, the range timeline is empty and supplies only ordinary
+    /// judgement-counter timing; presence of this field does not imply an active Gekisou model.
     pub(super) gkf: Option<Rc<GkFrames>>,
     pub(super) rush_cache: RefCell<HashMap<GkWindowKey, Option<Rc<rush::RushSpec>>>>,
     /// The windows of Gekisou rows by (trigger, trigger type, gate, activation time bits, release).

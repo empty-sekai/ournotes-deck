@@ -455,6 +455,45 @@ caller-proved fine-cap decomposition. These upper-only interfaces supply neither
 nor a candidate value. The separately checked `terminal_summary(power)` can instead supply a complete score
 expectation enclosure, as described below. External ranking and unknown terminal mappings retain full scoring.
 
+An optional shared recording pass produces the complete ordinary score history and the nominal probability
+transcript during the same native playback. The existing reduced-model constructor and compiler still establish
+the initial controller templates, lottery machine, action plan and probe flags before any frame runs. A private
+read-only observer then extracts probability inputs after both original skill phases and the second score query,
+immediately before the controller consumes the frame's notes and pending lotteries. It reads each factor at the
+original note chart time through the native binary32 filing order. It does not recompute, sort or commute those
+factor additions. The ordinary playback path uses a compile-time empty observer.
+
+This route requires the existing structural recorder admission, solo rank, only LUCK ranges, an action plan
+that never reads LIFE, and a complete conversion check proving every declared judgement unchanged. Each observed
+native result must also match that declared note and judgement. Expanded conditional-effect identities must be
+unique across the full model: ordinary effects share native applier registries with retained lottery writers,
+including the native wrapping ID expansion. Unproved identities, LIFE-dependent actions, changing conversions
+and other unsupported inputs retain the original separate recorder. The structural observer gate is unchanged.
+
+Both routes use the same transcript field extraction and complete transcript key. Every original frame is
+observed before the existing quiet-frame compression; initial controller state is never taken from a model
+that has already played. A transcript becomes available to the existing curve cache only after all declared
+frames complete, the native draw count remains zero, and every range reaches FINISH. Probability propagation,
+outward summation order and the complete cache identity remain unchanged. The shared path does not use or fill
+the compiled-recording shortcut cache; that cache remains available to the separate recorder. No new retained
+cache is introduced.
+
+The five growing transcript arrays have a one MiB temporary capacity guard. Initial machine, templates,
+compiled actions and range metadata remain separate input-dependent temporary storage. Capacity refusal or a
+native error discards the partial recording and returns the existing unavailable result; cancellation returns
+`Stopped`. A fallback starts its own fresh model and never repeats playback on a partially advanced recorder.
+Diagnostic `fusedRecordings` counts completed shared native recordings, `fusedFrames` includes frames attempted
+before interruption, and `fusedRefusals` counts declined optional admissions. These counters do not confer any
+completion or score-law authority.
+
+The [shared recording regressions](../crates/ournotes-sim/src/live/full/luck_dp/fused_tests.rs) compare complete
+transcript words for all 120 orders against the independently stepped reduced recorder, including multiple
+non-dyadic same-owner gauge writers, phase changes, multiple notes per frame, Miss actions and FINISH. They
+compare every probability endpoint and terminal-capability field bit for bit, exercise zero cache capacity,
+and reject changed judgements, LIFE actions, wrapped effect identities and partial/cancelled recordings. A
+large valid native frame exercises the actual temporary capacity guard and verifies that an earlier complete
+cache entry survives the refusal.
+
 `LuckTerminalRush::probe_gate()` grants `Some(2)` only for held direct probes under the completed recorder's
 common LUCK gate. `weighted_note_upper` changes only the native Rush multiplier. `weighted_note_bucket_upper`
 can additionally weight matched ideal probe amplitudes in all four joint classes. Without that gate authority,
@@ -527,7 +566,8 @@ when available and otherwise calls the existing factor-history scorer. Cancellat
 never becomes a successful fallback. A caller that already prepared an order reuses its complete summary, or
 uses the original scorer after refusal, without repeating a successful preparation.
 
-Preparation and full scoring share one session's recorder cache. Every unfinished order retains its previous
+Separate probability recording and full scoring retain one session's recorder cache; the shared native route
+reuses the completed transcript cache described above. Every unfinished order retains its previous
 cap, and `UpperOnly` can return only after the whole 120-order cap sum proves exclusion. It is distinct from a
 complete evaluation and from cancellation. Preparing 120 upper-only capabilities does not complete an
 evaluation. In contrast, 120 complete terminal summaries can supply the full uniform expected-score enclosure

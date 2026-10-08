@@ -279,6 +279,20 @@ impl LuckTerminalRush {
 }
 
 impl LuckScoreSession<'_> {
+    #[cfg(test)]
+    pub(crate) fn test_rush_cap_preparation_unfused(
+        &mut self,
+        deck: &[Performer],
+        curves: Option<&mut LuckDpCache>,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> LuckRushPreparation {
+        match prepare_policy(self, deck, curves, &mut cancelled, false) {
+            Ok(Some(value)) => LuckRushPreparation::Ready(value),
+            Ok(None) => LuckRushPreparation::Stopped,
+            Err((reason, error)) => LuckRushPreparation::Unavailable { reason, error },
+        }
+    }
+
     /// Complete a native expected-score enclosure with the terminal kernel when its full history proof is
     /// available, otherwise run the factor-history evaluator. Cancellation never becomes a fallback result.
     /// Callers that already prepared this deck may reuse `LuckTerminalRush::terminal_summary` directly and use
@@ -401,6 +415,16 @@ fn prepare(
     deck: &[Performer],
     curves: Option<&mut LuckDpCache>,
     cancelled: &mut impl FnMut() -> bool,
+) -> PreparationResult {
+    prepare_policy(session, deck, curves, cancelled, true)
+}
+
+fn prepare_policy(
+    session: &mut LuckScoreSession<'_>,
+    deck: &[Performer],
+    curves: Option<&mut LuckDpCache>,
+    cancelled: &mut impl FnMut() -> bool,
+    allow_fused: bool,
 ) -> PreparationResult {
     if cancelled() {
         return Ok(None);
@@ -541,8 +565,8 @@ fn prepare(
     }
     #[cfg(feature = "search-diagnostics")]
     timing.next(Phase::Curve);
-    let Some(probability) = curves
-        .certified_cancellable(
+    let mut fused = if allow_fused {
+        super::super::luck_dp::fused::Recorder::prepare(
             session.master,
             session.skills,
             session.notes,
@@ -552,14 +576,41 @@ fn prepare(
             session.play,
             session.delta_times,
             deck,
-            None,
-            None,
-            Some(&mut session.recordings),
-            cancelled,
+            &model,
+            record_only,
         )
         .map_err(|error| (LuckRushDecline::ProbabilityDomain, error))?
-    else {
-        return Ok(None);
+    } else {
+        None
+    };
+    #[cfg(feature = "search-diagnostics")]
+    if fused.is_none() {
+        timing.value.fused_refusals += 1;
+    }
+    let mut probability = if fused.is_none() {
+        let Some(probability) = curves
+            .certified_cancellable(
+                session.master,
+                session.skills,
+                session.notes,
+                session.events,
+                session.params,
+                session.setup,
+                session.play,
+                session.delta_times,
+                deck,
+                None,
+                None,
+                Some(&mut session.recordings),
+                cancelled,
+            )
+            .map_err(|error| (LuckRushDecline::ProbabilityDomain, error))?
+        else {
+            return Ok(None);
+        };
+        Some(probability)
+    } else {
+        None
     };
     #[cfg(feature = "search-diagnostics")]
     timing.next(Phase::Recorder);
@@ -568,9 +619,31 @@ fn prepare(
         if index.is_multiple_of(64) && cancelled() {
             return Ok(None);
         }
-        model
-            .frame_timed(frame.time_ms, &frame.judged, delta)
-            .map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
+        if let Some(recording) = &mut fused {
+            #[cfg(feature = "search-diagnostics")]
+            {
+                timing.value.fused_frames += 1;
+            }
+            let mut observer_failed = false;
+            model
+                .frame_timed_observed(frame.time_ms, &frame.judged, delta, &mut |model, _, results| {
+                    let result = recording.observe(model, frame, delta, results);
+                    observer_failed = result.is_err();
+                    result
+                })
+                .map_err(|error| {
+                    let decline = if observer_failed {
+                        LuckRushDecline::ProbabilityDomain
+                    } else {
+                        LuckRushDecline::RecorderAdmission
+                    };
+                    (decline, error)
+                })?;
+        } else {
+            model
+                .frame_timed(frame.time_ms, &frame.judged, delta)
+                .map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
+        }
     }
     if cancelled() {
         return Ok(None);
@@ -584,6 +657,20 @@ fn prepare(
     if model.gk.as_ref().is_none_or(|g| g.ctrl.states.iter().any(|state| state.state != gekisou::S_FINISH)) {
         return Err(declined(LuckRushDecline::UnfinishedRanges, "terminal query precedes a range FINISH"));
     }
+    if let Some(recording) = fused {
+        #[cfg(feature = "search-diagnostics")]
+        {
+            timing.value.fused_recordings += 1;
+            timing.next(Phase::Curve);
+        }
+        probability = curves
+            .certified_fused(recording, &model, cancelled)
+            .map_err(|error| (LuckRushDecline::ProbabilityDomain, error))?;
+        if probability.is_none() {
+            return Ok(None);
+        }
+    }
+    let probability = probability.expect("complete original or fused probability recorder");
     let trace = model.score.bounds_trace.take().expect("bounds recorder enabled");
     let query_limit = (session.play.frames.len() as u64)
         .checked_mul(2)

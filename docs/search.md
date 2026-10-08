@@ -558,13 +558,37 @@ all when an extension row of the snap class has a trigger other than the perform
 position has two events (a restart does not remove the first factor). A Snap score row triggered by its performer's
 own skill event, without a release checker, starts at the event frame and uses the same bound without extension.
 A release checker skips the first elapsed-time check and can retain an untimed factor indefinitely; such a row
-uses the general conservative envelope. Ordinary Snap rows with another trigger also count over the whole live,
-five concurrent executions at once. Live skill rows of one
+uses the general conservative envelope. Ordinary Snap rows with another trigger retain every possible lifetime
+positive factor filing unless a complete count/window certificate is available. The five-instance updater pool
+bounds processing-time concurrency: delayed judgements can backdate recycled starts and create more than five
+overlapping historical factors at a note's chart time. Live skill rows of one
 member with the same effect type and duration whose conditions are one condition each, negations of each other, cannot
 both start at one event: both are checked in the same phase of the frame, before any effect of that phase applies, and
 repeated life queries at one time give one value (probability and count conditions, which change with each check, are
 excluded). When the position has at most one event such a pair counts once with the larger factors. Every factor value
 is non-negative, so a window that is too wide only raises the bound.
+
+Ordinary count triggers use shared play-frame and judgement-stream evidence in both Free and Gekisou modes.
+Free supplies an empty range timeline; its actual Gekisou model remains absent. The evidence includes every
+declared processing frame, entry order, and conservative start timestamp, including the first two frames'
+unrestricted lower endpoint. Mission-specific gates remain closed without ranges.
+
+For a one-shot fixed score factor, a positive judgement counter in every trigger alternative bounds lifetime
+starts by the complete reachable target counts divided by each threshold. Duplicate targets keep their native
+multiplicity. Alternatives add their budgets; conditions, resets, execution limits and updater availability
+can only remove starts. A stronger time-window certificate requires one positive nonconsecutive `1030`
+checker, no release checker, and the same target multiplicity under every reachable final judgement of each
+entry. Its counter residue then determines every possible hit frame. Several threshold crossings in one frame
+still start at most one updater. Each hit retains its own backdated start window and conservative native timer
+end; recycled starts are never limited by pool size.
+
+The score-frame sweep uses closed endpoints and preserves music-length clamps. A reachable conversion that
+changes target multiplicity, composite or consecutive triggers, releases, and unsupported lifecycle inputs
+retain their previous conservative envelopes. Counter predicates compare original `i64` targets; only the
+judgement-factor applier uses its native `i32` narrowing. The
+[Free native regressions](../crates/ournotes-search/src/search/snaps/generic_factor_overlap_tests.rs) exercise
+real production envelope construction against independent native scoring, including delayed historical overlap,
+same-frame hits, residue across Miss, conversion-driven starts and wide target identities.
 
 Float margin. `eps` covers `2e-6` for the per-note chain (as without snap skills), `2^-22` for the score-up sum,
 `2^-19` for the factor after the floor, and the drift of the running factor state, a binary32 sum. Each float

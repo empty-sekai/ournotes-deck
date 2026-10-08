@@ -229,7 +229,9 @@ fn combo_ramp(env: &Env, r: &Row) -> Option<(i64, i64, Rc<Vec<f64>>)> {
     None
 }
 
-/// Per play frame, what the gates and the triggers of Gekisou rows read, from the ranges' schedule.
+/// Shared play-frame and judgement-counter facts, plus mission gates from the optional ranges' schedule.
+/// An empty range timeline keeps mission-specific gates closed while ordinary triggers read the same clock,
+/// entry order and conservative start timestamps as they do with Gekisou enabled.
 #[derive(Debug)]
 pub(super) struct GkFrames {
     pub(super) times: Vec<i32>,

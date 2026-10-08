@@ -1656,6 +1656,18 @@ impl LiveModel {
 
     /// Plays one frame at music time `t` with delta time `dt` in seconds.
     pub fn frame_timed(&mut self, t: i32, judged: &[JudgedNote], dt: f32) -> Result<(), Error> {
+        self.frame_timed_observed(t, judged, dt, &mut |_, _, _| Ok(()))
+    }
+
+    /// Private static observer for an admitted recording. The ordinary path monomorphizes an empty
+    /// closure; no optional observer field or branch is added to ordinary playback.
+    fn frame_timed_observed(
+        &mut self,
+        t: i32,
+        judged: &[JudgedNote],
+        dt: f32,
+        observe: &mut impl FnMut(&LiveModel, i32, &[(LiveNote, i32)]) -> Result<(), Error>,
+    ) -> Result<(), Error> {
         if self.raw_pending.is_some() {
             return Err(Error::Input("raw frame is open".into()));
         }
@@ -1675,7 +1687,7 @@ impl LiveModel {
             results.push((n, conv));
             self.judged.push((n.note_id, conv, n.time_ms));
         }
-        let finished = self.finish_frame_results(t, &results, &[]);
+        let finished = self.finish_frame_results_observed(t, &results, &[], observe);
         self.scratch.results = results;
         finished
     }
@@ -1846,6 +1858,16 @@ impl LiveModel {
         t: i32,
         results: &[(LiveNote, i32)],
         raw: &[RawJudgedNote],
+    ) -> Result<(), Error> {
+        self.finish_frame_results_observed(t, results, raw, &mut |_, _, _| Ok(()))
+    }
+
+    fn finish_frame_results_observed(
+        &mut self,
+        t: i32,
+        results: &[(LiveNote, i32)],
+        raw: &[RawJudgedNote],
+        observe: &mut impl FnMut(&LiveModel, i32, &[(LiveNote, i32)]) -> Result<(), Error>,
     ) -> Result<(), Error> {
         let frame_rank_confirmation = self.frame_rank_confirmation.take();
         // LiveExecutor.OnUpdate (Assist level) runs after FT, before UpdateCurrentFrameParameters.
@@ -2028,6 +2050,7 @@ impl LiveModel {
         let info = self.gk.as_ref().map(|g| &g.ctrl as &dyn GekisouComboInfo);
         self.score.calculate(t, &self.combo, info)?;
         self.frame_score = self.score.score;
+        observe(self, t, results)?;
         if self.gk.is_some() {
             self.gekisou_after(t, results)?;
         }

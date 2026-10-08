@@ -17,6 +17,7 @@ use crate::live::certified::ProbabilityMass;
 use crate::num::{FxHashMap, floor_to_i32};
 
 mod family;
+pub(super) mod fused;
 pub use family::{
     LuckControllerFamily, LuckFamilyBindings, LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline, LuckFamilyDomain,
     LuckFamilyError, LuckFamilyLimits, LuckFamilyOrderLaw, LuckFamilyProfile, LuckFamilyProgram, LuckFamilyProgramKey,
@@ -1693,30 +1694,7 @@ fn record_frame<M: Mass>(
     previous_frame: i32,
     out: &mut Transcript<M>,
 ) -> Result<(), Error> {
-    if frame.time_ms <= previous_frame || !delta.is_finite() || delta < 0.0 {
-        return Err(Error::Input("LUCK DP needs increasing frames and finite nonnegative deltas".into()));
-    }
-    let mut judged = Vec::with_capacity(frame.judged.len());
-    let mut previous_note = previous_frame;
-    for judgement in &frame.judged {
-        let note = note_map
-            .get(&judgement.note_id)
-            .ok_or_else(|| Error::Input(format!("unknown note {}", judgement.note_id)))?;
-        if note.time_ms <= previous_frame
-            || note.time_ms > frame.time_ms
-            || note.time_ms < previous_note
-            || judgement.judgement_time_ms != note.time_ms
-        {
-            return Err(Error::Unsupported(
-                "LUCK DP requires notes in their first chart-time frame, in chart-time order".into(),
-            ));
-        }
-        if luck::luck_judgement_class(judgement.judgement).is_none() {
-            return Err(Error::Unsupported(format!("LUCK DP judgement {}", judgement.judgement)));
-        }
-        previous_note = note.time_ms;
-        judged.push((note.note_id, note.note_operate_type, note.time_ms, judgement.judgement));
-    }
+    let mut judged = declared_judgements(|id| note_map.get(&id).copied(), frame, delta, previous_frame)?;
     let phase_life = if let Some(cached) = cached_life {
         cached.next(&mut judged)?
     } else if let Some(life) = life {
@@ -1735,7 +1713,62 @@ fn record_frame<M: Mass>(
         recording.observe(phase_life, &frame.judged, &judged);
     }
     timed(|p| &mut p.before_ms, || record_before(model, frame.time_ms, delta))?;
-    let controller = &model.gk.as_ref().expect("Gekisou checked").ctrl;
+    append_frame(
+        &model.gk.as_ref().expect("Gekisou checked").ctrl,
+        actions,
+        ranges,
+        &judged,
+        phase_life,
+        frame.time_ms,
+        out,
+    )?;
+    timed(|p| &mut p.after_ms, || record_after(model, frame.time_ms, &judged))
+}
+
+fn declared_judgements<'a>(
+    note_at: impl Fn(i32) -> Option<&'a LiveNote>,
+    frame: &PlayFrame,
+    delta: f32,
+    previous_frame: i32,
+) -> Result<Vec<gekisou::GkNote>, Error> {
+    if frame.time_ms <= previous_frame || !delta.is_finite() || delta < 0.0 {
+        return Err(Error::Input("LUCK DP needs increasing frames and finite nonnegative deltas".into()));
+    }
+    let mut judged = Vec::with_capacity(frame.judged.len());
+    let mut previous_note = previous_frame;
+    for judgement in &frame.judged {
+        let note =
+            note_at(judgement.note_id).ok_or_else(|| Error::Input(format!("unknown note {}", judgement.note_id)))?;
+        if note.time_ms <= previous_frame
+            || note.time_ms > frame.time_ms
+            || note.time_ms < previous_note
+            || judgement.judgement_time_ms != note.time_ms
+        {
+            return Err(Error::Unsupported(
+                "LUCK DP requires notes in their first chart-time frame, in chart-time order".into(),
+            ));
+        }
+        if luck::luck_judgement_class(judgement.judgement).is_none() {
+            return Err(Error::Unsupported(format!("LUCK DP judgement {}", judgement.judgement)));
+        }
+        previous_note = note.time_ms;
+        judged.push((note.note_id, note.note_operate_type, note.time_ms, judgement.judgement));
+    }
+    Ok(judged)
+}
+
+/// Shared exact field extraction after the native skill phases and before controller.update.
+/// Both recording routes preserve note chart times, native binary32 factor accumulation and action order.
+#[allow(clippy::too_many_arguments)]
+fn append_frame<M: Mass>(
+    controller: &gekisou::Controller,
+    actions: &[(i64, Action<M>, Option<Checker>)],
+    ranges: &[(i32, i32, i64)],
+    judged: &[gekisou::GkNote],
+    phase_life: [i32; 2],
+    time_ms: i32,
+    out: &mut Transcript<M>,
+) -> Result<(), Error> {
     let states = |range: usize| controller.states[range].state;
     let updates = &controller.state_updates;
     let current = controller.current_playing_index;
@@ -1761,7 +1794,7 @@ fn record_frame<M: Mass>(
         // an EARLIER chart time. That needs overlapping historical span state, outside this prototype.
         return Err(Error::Unsupported("LUCK DP: another range starts in a Luck finish frame".into()));
     }
-    for &(_, note_type, note_time, judgement) in &judged {
+    for &(_, note_type, note_time, judgement) in judged {
         for (range, &(begin, end, mission)) in ranges.iter().enumerate() {
             if mission == M_LUCK && begin <= note_time && note_time <= end {
                 let (buff, speed) = controller.dp_factors_at(note_time);
@@ -1790,11 +1823,11 @@ fn record_frame<M: Mass>(
     }
     for (range, state) in controller.states.iter().enumerate() {
         if ranges[range].2 == M_LUCK && state.state == S_PLAYING {
-            out.pending.push((range, controller.dp_factors_at(frame.time_ms).0));
+            out.pending.push((range, controller.dp_factors_at(time_ms).0));
         }
     }
     let recorded = Frame {
-        time_ms: frame.time_ms,
+        time_ms,
         repeat: 1,
         start,
         complete,
@@ -1807,7 +1840,7 @@ fn record_frame<M: Mass>(
         pending: out.pending.len(),
     };
     out.push_frame(recorded);
-    timed(|p| &mut p.after_ms, || record_after(model, frame.time_ms, &judged))
+    Ok(())
 }
 
 /// Propagate the lottery-state distribution through a transcript.
@@ -2973,6 +3006,10 @@ mod tests {
             luck::luck_rush_samples(&master, &skills, &notes, params, &setup, &play, &delta, &deck, None, &[0, 1, 7])
                 .unwrap();
         assert_eq!(dp.steps, samples);
+    }
+
+    mod fused_tests {
+        include!("luck_dp/fused_tests.rs");
     }
 
     mod recording_cache_tests {

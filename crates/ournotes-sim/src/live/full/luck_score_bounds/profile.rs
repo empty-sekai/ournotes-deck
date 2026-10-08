@@ -15,6 +15,12 @@ pub struct LuckScoreProfile {
     pub recorder_trace_only_runs: u64,
     pub recorder_trace_only_queries: u64,
     pub recorder_trace_only_active_queries: u64,
+    /// Complete native score recordings that also produced the nominal probability transcript.
+    pub fused_recordings: u64,
+    /// Original frames observed in that shared pass, including work before an error or cancellation.
+    pub fused_frames: u64,
+    /// Optional shared-pass admissions declined before retaining a probability transcript.
+    pub fused_refusals: u64,
     pub bound_replay_ms: f64,
     pub factor_replay_ms: f64,
     pub combo_history_ms: f64,
@@ -81,6 +87,9 @@ pub(super) fn record(value: LuckScoreProfile) {
         total.recorder_trace_only_runs += value.recorder_trace_only_runs;
         total.recorder_trace_only_queries += value.recorder_trace_only_queries;
         total.recorder_trace_only_active_queries += value.recorder_trace_only_active_queries;
+        total.fused_recordings += value.fused_recordings;
+        total.fused_frames += value.fused_frames;
+        total.fused_refusals += value.fused_refusals;
         total.bound_replay_ms += value.bound_replay_ms;
         total.factor_replay_ms += value.factor_replay_ms;
         total.combo_history_ms += value.combo_history_ms;
