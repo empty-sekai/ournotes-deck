@@ -113,6 +113,9 @@ pub(crate) enum Checker {
     SameMemberLiveSkill(i32),
     /// One draw of the skill random stream below the rate.
     Probability(f32),
+    /// A score-only probability evaluated by an explicit nominal event script. Ordinary seeded lives
+    /// never construct this checker; each conditional recording retains the complete updater state.
+    ConditionedProbability(f32),
     /// A fixed answer (member targets are decided when the checker is built; score rank up never fires).
     Fixed(bool),
     /// Every `n` judged notes whose judgement is a target; the trigger time is the chart time of the note that
@@ -412,6 +415,7 @@ impl Checker {
                 };
                 Ok((result, 0))
             }
+            Checker::ConditionedProbability(rate) => Ok((ctx.random.nominal_skill_probability(*rate)?, 0)),
             Checker::Fixed(ok) => Ok((*ok, *ok as i64)),
             Checker::NoteJudgementMatch { kind, targets, override_ms } => {
                 *override_ms = None;

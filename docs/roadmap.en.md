@@ -6,7 +6,6 @@ Only unfinished work is listed; finished items are removed.
 
 ## In progress
 
-- An exact expectation over LUCK range lotteries, using their probabilities; LUCK charts are unsupported until then.
 - Exact proofs within a time budget on every objective and scene: tighter interior bounds on Gekisou charts, cheaper exact leaf evaluation (performance orders sharing their common start), and initial decks from a fast heuristic.
 - Tighter bounds on Gekisou charts (bonus bounds on combo charts).
 
@@ -34,6 +33,7 @@ The real rank depends on the other players in the room, so the parameter is the 
 
 - A compact search data layout: dense small card indices in column-oriented tables, bit sets for used characters and Snaps, fixed-size packed tables of power and per-position gain for each member and Snap, and precomputed prefix sums so interior nodes look values up instead of recomputing them.
 - nnnotes produces chart-only data in advance, bound to the model and data identity, with an error on mismatch.
+- Optional fallback: multi-Worker parallel search for requests whose budget remains difficult to meet after single-threaded bound, pruning and exact evaluation optimizations. Configure concurrency for the device's resources, partition the search domain, distribute tasks dynamically and share certified Top-K lower bounds supported by distinct legal candidates, preserving the complete candidate domain, canonical ties and completion proofs.
 - Joint chart and deck search; requirements below.
 
 ## Joint chart and deck search

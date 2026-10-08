@@ -135,15 +135,18 @@ fn probe_enclosures_cover_declared_music_boundary() {
 }
 
 #[test]
-fn terminal_support_retains_clamped_probe_commands() {
+fn terminal_law_retains_clamped_probe_commands() {
     for value in [-8000, 8000] {
         let (master, deck, notes, params, setup, play, delta) = fixture(value, 1000);
         let mut model = LiveModel::new_gekisou(&master, &deck, &notes, &[], params, &setup).unwrap();
         let native = model.run_timed(&play, &delta).unwrap();
         let mut session = LuckExactSession::new(&master, &notes, &[], params, &setup, &play, &delta, None, 0).unwrap();
-        let support = session.support(&deck, &mut LuckExactBudget::default(), None, || false).unwrap();
-        assert_eq!(support.decline, None);
-        assert_eq!(support.outcomes, [(native, model.current_life())]);
+        let attempt = session.law(&deck, &mut LuckExactBudget::default(), || false).unwrap();
+        assert_eq!(attempt.decline, None);
+        let law = attempt.law.unwrap();
+        let atoms = law.atoms();
+        assert_eq!(atoms.len(), 1);
+        assert_eq!((atoms[0].score, atoms[0].final_life), (native, model.current_life()));
     }
 }
 
@@ -219,6 +222,7 @@ fn probe_boundary_guard_requires_every_late_transition_to_stay_off_and_all_nativ
     let mut curve = LuckDpCertifiedResult {
         rush_filings: Vec::new(),
         probe_transitions: vec![2, 4, 1, 1],
+        range_moments: Vec::new(),
         steps: Vec::new(),
         probes: vec![true],
         peak_states: 1,
@@ -236,33 +240,42 @@ fn probe_boundary_guard_requires_every_late_transition_to_stay_off_and_all_nativ
         has_luck: true,
         rush_before: None,
     };
-    assert!(check_probe_music_boundary(&play, &curve, 200, true, &trace).is_ok());
+    let frame_times: Vec<_> = play.frames.iter().map(|frame| frame.time_ms).collect();
+    assert!(check_probe_music_boundary(&frame_times, &curve, 200, true, &trace).is_ok());
     for mask in 0..=16 {
         curve.probe_transitions[3] = mask;
-        assert_eq!(check_probe_music_boundary(&play, &curve, 200, true, &trace).is_ok(), mask == 1, "mask={mask}");
+        assert_eq!(
+            check_probe_music_boundary(&frame_times, &curve, 200, true, &trace).is_ok(),
+            mask == 1,
+            "mask={mask}"
+        );
     }
     curve.probe_transitions[3] = 1;
     curve.probe_transitions[0] = 0;
-    assert!(check_probe_music_boundary(&play, &curve, 200, true, &trace).is_err());
+    assert!(check_probe_music_boundary(&frame_times, &curve, 200, true, &trace).is_err());
     curve.probe_transitions[0] = 2;
-    assert!(check_probe_music_boundary(&play, &curve, 200, false, &trace).is_err());
+    assert!(check_probe_music_boundary(&frame_times, &curve, 200, false, &trace).is_err());
     curve.probe_transitions.pop();
-    assert!(check_probe_music_boundary(&play, &curve, 200, true, &trace).is_err());
+    assert!(check_probe_music_boundary(&frame_times, &curve, 200, true, &trace).is_err());
     curve.probe_transitions.push(1);
     trace.events.pop();
-    assert!(check_probe_music_boundary(&play, &curve, 200, true, &trace).is_err());
+    assert!(check_probe_music_boundary(&frame_times, &curve, 200, true, &trace).is_err());
     trace.events.push(BoundsEvent::Probe { frame: 0, time_ms: 200 });
-    assert!(check_probe_music_boundary(&play, &curve, 200, true, &trace).is_err());
+    assert!(check_probe_music_boundary(&frame_times, &curve, 200, true, &trace).is_err());
     trace.events.pop();
     trace.events.push(BoundsEvent::Probe { frame: get_frame(200) as usize, time_ms: 200 });
     trace.events.push(BoundsEvent::Probe { frame: get_frame(200) as usize, time_ms: 200 });
-    assert!(check_probe_music_boundary(&play, &curve, 200, true, &trace).is_err());
+    assert!(check_probe_music_boundary(&frame_times, &curve, 200, true, &trace).is_err());
     // An absent probe set has no probe lifetime to invert; ordinary commands keep their own admission.
     trace.probes.clear();
-    assert!(check_probe_music_boundary(&play, &curve, 200, false, &trace).is_ok());
+    assert!(check_probe_music_boundary(&frame_times, &curve, 200, false, &trace).is_ok());
     let ending = LivePlay { frames: play.frames[..3].to_vec(), base_seed: 0 };
     trace.probes.push(ProbeRow { owner: 1, value: 0.1 });
-    assert!(check_probe_music_boundary(&ending, &curve, 200, false, &trace).is_ok());
+    let ending_times: Vec<_> = ending.frames.iter().map(|frame| frame.time_ms).collect();
+    assert!(check_probe_music_boundary(&ending_times, &curve, 200, false, &trace).is_ok());
+    // A nonpositive music length leaves native end times unclamped.
+    assert!(check_probe_music_boundary(&frame_times, &curve, 0, false, &trace).is_ok());
+    assert!(check_probe_music_boundary(&frame_times, &curve, -1, false, &trace).is_ok());
 }
 
 #[test]
@@ -318,4 +331,71 @@ fn probe_boundary_guard_refuses_mixed_phases_even_when_the_tail_is_physically_in
         luck_score_bounds(&master, &deck, &notes, &[], params, &setup, &play, &delta),
         Err(Error::Unsupported(_))
     ));
+}
+
+#[test]
+fn conditioned_score_recordings_share_the_music_boundary_guard() {
+    for music_length in [1000, 2100, 2400] {
+        let (mut master, mut deck, notes, params, setup, play, delta) = fixture(8000, music_length);
+        master.skill_conditions.push(
+            serde_json::from_value(json!({
+                "_id":2,"_conditionType":4011,"_conditionValues":[25],"_conditionTargetIDs":[],"_isPositive":true
+            }))
+            .unwrap(),
+        );
+        master.skill_condition_sets.push(
+            serde_json::from_value(json!({
+                "_id":2,"_group":2,"_conditionIds":[2]
+            }))
+            .unwrap(),
+        );
+        master.live_skill_effects.push(
+            serde_json::from_value(json!({
+                "_id":10,"_liveSkillID":10,"_level":1,
+                "_skillConditionGroup":2,"_skillReleaseConditionGroup":0,"_skillTargetIDs":[],
+                "_skillEffectType":2000,"_activationTimeSecond":1.0,"_effectValue":2000,
+                "_maxEffectValue":0,"_effectLimitCount":1,"_skillCumulativeConditionID":0,
+                "_effectExecuteLimitCount":0,"_effectExecuteLimitResetConditionGroup":0
+            }))
+            .unwrap(),
+        );
+        master.reindex().unwrap();
+        deck[0].live_skill = Some((10, 1));
+        let events = [(0, 700)];
+        let skills = luck_skills(&master).unwrap();
+        let curve = super::super::luck_rush_dp_certified_with_moments(
+            &master, &skills, &notes, &events, params, &setup, &play, &delta, &deck, None, None,
+        )
+        .unwrap();
+        let result = super::super::nominal_score_expectation_for_chart(
+            &master,
+            &skills,
+            &deck,
+            &notes,
+            &events,
+            params,
+            &setup,
+            &play,
+            &delta,
+            None,
+            std::sync::Arc::new(curve),
+        );
+        if music_length == 1000 {
+            assert!(matches!(result, Err(Error::Unsupported(reason)) if reason.contains("certified inactive tail")));
+            continue;
+        }
+        let bounds = result.unwrap();
+        let mut scores = Vec::new();
+        for rate in [0, 100] {
+            let mut fixed = master.clone();
+            fixed.skill_conditions.iter_mut().find(|condition| condition.id == 2).unwrap().condition_values =
+                vec![rate];
+            let mut native = LiveModel::new_gekisou(&fixed, &deck, &notes, &events, params, &setup).unwrap();
+            let score = native.run_timed(&play, &delta).unwrap();
+            assert!(bounds.final_support.lower <= score && score <= bounds.final_support.upper);
+            scores.push(score);
+        }
+        let expected = 0.75 * f64::from(scores[0]) + 0.25 * f64::from(scores[1]);
+        assert!(bounds.final_mean.lower <= expected && expected <= bounds.final_mean.upper);
+    }
 }

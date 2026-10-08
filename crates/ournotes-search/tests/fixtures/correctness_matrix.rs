@@ -314,6 +314,46 @@ fn deterministic_scene_objective_matrix_matches_the_independent_domain() {
 }
 
 #[test]
+fn score_and_pt_growth_length_matrix_matches_the_independent_domain() {
+    let mut cases = 0;
+    for skewed in [false, true] {
+        for long in [false, true] {
+            let (document, roster) = super::score_paths::inputs(5, 1, 5, skewed, long, false);
+            let data = DeckData::from_json(&document.to_string()).unwrap();
+            let roster = Roster::from_json(&roster.to_string()).unwrap();
+            for metric in [json!({"kind":"score"}), json!({"kind":"clientEventPoints","eventId":EVENT_ID})] {
+                let mut request = super::score_paths::request(metric, false);
+                if skewed {
+                    super::score_paths::rank_skewed(&mut request, long);
+                }
+                let mut request: RecommendationRequest = serde_json::from_value(request).unwrap();
+                request.constraints.leader = Some(3);
+                let oracle = exact_oracle(&data, &roster, &request, 6);
+                let name = format!("skewed={skewed} long={long} {:?}", request.metric);
+                verify_searches(&data, &roster, &request, &oracle, &name);
+                assert!(oracle.iter().all(|row| row.score_interval.is_none()));
+                let first = engine::recommend(&data, &roster, &request).unwrap();
+                let second = engine::recommend(&data, &roster, &request).unwrap();
+                assert_eq!(first.completion, Completion::Complete, "{name}");
+                assert_eq!(second.results, first.results, "{name}: repeat results");
+                assert_eq!(second.telemetry.nodes, first.telemetry.nodes, "{name}: repeat nodes");
+                assert_eq!(
+                    second.telemetry.leaves.simulations, first.telemetry.leaves.simulations,
+                    "{name}: repeat complete simulations"
+                );
+                assert_eq!(
+                    second.telemetry.leaves.visited, first.telemetry.leaves.visited,
+                    "{name}: repeat physical candidates"
+                );
+                cases += 1;
+            }
+        }
+    }
+    assert_eq!(cases, 8);
+    eprintln!("growth/length matrix: {cases} cases, 48 physical candidates, 5760 oracle order outcomes");
+}
+
+#[test]
 fn constraints_and_ties_preserve_the_independent_canonical_topk() {
     let (mut data, roster) = fixture(6, 2, 5, false);
     for effect in &mut data.master.leader_skill_effects {

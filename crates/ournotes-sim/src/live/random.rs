@@ -2,6 +2,7 @@
 //! four-stream wrapper the live draws from.
 
 use crate::error::Error;
+use crate::live::certified::ProbabilityMass;
 use crate::num::{trunc_f64_to_i32, trunc_f64_to_i64};
 
 const MBIG: i32 = i32::MAX;
@@ -134,6 +135,16 @@ pub struct LiveRandom {
     draws: u64,
     /// Optional independent nominal LUCK path. Native seeded execution never installs one.
     nominal: Option<NominalScript>,
+    /// Independent semantic SKILL outcomes for a conditionally deterministic score recording.
+    nominal_skill: Option<NominalSkillScript>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NominalSkillScript {
+    prefix: Vec<bool>,
+    cursor: usize,
+    handled_draws: u64,
+    branch_rate: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -161,6 +172,7 @@ impl LiveRandom {
             streams: std::array::from_fn(|i| NetRandom::new(Self::derive_sub_seed(base_seed, i as i32))),
             draws: 0,
             nominal: None,
+            nominal_skill: None,
         }
     }
 
@@ -219,6 +231,60 @@ impl LiveRandom {
             vec![(1, 2, 0), (1, 2, 1)]
         };
         self.nominal_lottery(weights).map(|result| Some(result != 0))
+    }
+
+    pub(crate) fn with_nominal_skill_prefix() -> Self {
+        let mut random = Self::new(0);
+        random.nominal_skill =
+            Some(NominalSkillScript { prefix: Vec::new(), cursor: 0, handled_draws: 0, branch_rate: None });
+        random
+    }
+
+    pub(crate) fn extend_nominal_skill_prefix(&mut self, prefix: Vec<bool>) -> Result<(), Error> {
+        let script = self.nominal_skill.as_mut().ok_or_else(|| Error::Domain("missing nominal skill script".into()))?;
+        if script.branch_rate.is_some() || !prefix.starts_with(&script.prefix) {
+            return Err(Error::Domain("nominal skill continuation must extend a settled checkpoint".into()));
+        }
+        script.prefix = prefix;
+        Ok(())
+    }
+
+    pub(crate) fn nominal_skill_branch(&self) -> Option<ProbabilityMass> {
+        self.nominal_skill
+            .as_ref()?
+            .branch_rate
+            .map(|bits| ProbabilityMass::from_f32(f32::from_bits(bits)).expect("nontrivial native probability"))
+    }
+
+    pub(crate) fn nominal_skill_covers_draws(&self) -> bool {
+        self.nominal_skill.as_ref().is_some_and(|script| script.handled_draws == self.draws)
+    }
+
+    pub(crate) fn nominal_skill_prefix_consumed(&self) -> bool {
+        self.nominal_skill
+            .as_ref()
+            .is_some_and(|script| script.cursor == script.prefix.len() && script.branch_rate.is_none())
+    }
+
+    /// One nominal event at the original SKILL comparison, including deterministic rates. The event
+    /// partition uses the exact binary32 rate, independently conditional on all previous checks.
+    pub(crate) fn nominal_skill_probability(&mut self, rate: f32) -> Result<bool, Error> {
+        let script = self.nominal_skill.as_mut().ok_or_else(|| Error::Domain("missing nominal skill script".into()))?;
+        self.draws = self.draws.checked_add(1).ok_or_else(|| Error::Capacity("skill draw counter overflow".into()))?;
+        script.handled_draws =
+            script.handled_draws.checked_add(1).ok_or_else(|| Error::Capacity("skill draw counter overflow".into()))?;
+        if rate.is_nan() || rate <= 0.0 {
+            return Ok(false);
+        }
+        if rate >= 1.0 {
+            return Ok(true);
+        }
+        let Some(&hit) = script.prefix.get(script.cursor) else {
+            script.branch_rate = Some(rate.to_bits());
+            return Err(Error::Unsupported("nominal skill recording requires another outcome branch".into()));
+        };
+        script.cursor += 1;
+        Ok(hit)
     }
 
     /// Extend the selected outcomes while preserving the checkpoint's consumed draws and cursor.
@@ -353,6 +419,46 @@ mod nominal_tests {
         let before = seeded.clone();
         assert_eq!(seeded.support_probability(0.5).unwrap(), None);
         assert_eq!(seeded, before);
+    }
+
+    #[test]
+    fn skill_events_keep_boundary_draws_and_checkpoint_prefixes() {
+        let mut random = LiveRandom::with_nominal_skill_prefix();
+        random.extend_nominal_skill_prefix(vec![false]).unwrap();
+        assert!(!random.nominal_skill_probability(-0.5).unwrap());
+        assert!(!random.nominal_skill_probability(0.0).unwrap());
+        assert!(random.nominal_skill_probability(1.0).unwrap());
+        assert!(random.nominal_skill_probability(2.0).unwrap());
+        assert!(!random.nominal_skill_probability(0.01).unwrap());
+        assert!(random.nominal_skill_prefix_consumed());
+        assert_eq!(random.draws(), 5);
+        let checkpoint = random.clone();
+        random.extend_nominal_skill_prefix(vec![false, true]).unwrap();
+        assert!(random.nominal_skill_probability(0.25).unwrap());
+        assert!(random.nominal_skill_prefix_consumed() && random.nominal_skill_covers_draws());
+        assert_eq!(checkpoint.draws(), 5);
+        assert!(random.extend_nominal_skill_prefix(vec![true]).is_err());
+        assert!(random.nominal_skill_probability(0.75).is_err());
+        assert_eq!(random.nominal_skill_branch().unwrap(), ProbabilityMass::from_f32(0.75).unwrap());
+        assert!(random.nominal_skill_covers_draws());
+        assert!(random.extend_nominal_skill_prefix(vec![false, true, false]).is_err());
+    }
+
+    #[test]
+    fn skill_events_retain_small_positive_masses_and_refuse_unhandled_draws() {
+        let mut random = LiveRandom::with_nominal_skill_prefix();
+        let tiny = f32::from_bits(1);
+        assert!(random.nominal_skill_probability(tiny).is_err());
+        let hit = random.nominal_skill_branch().unwrap();
+        assert!(hit.interval().upper() > 0.0);
+        assert_eq!(hit.interval().lower(), f64::from(tiny));
+        assert!(hit.merge_disjoint(hit.complement()).interval().contains(1.0));
+        assert!(random.nominal_skill_covers_draws());
+        let mut unhandled = LiveRandom::with_nominal_skill_prefix();
+        unhandled.value(SKILL);
+        assert!(unhandled.nominal_skill_probability(0.5).is_err());
+        assert!(!unhandled.nominal_skill_covers_draws());
+        assert!(LiveRandom::new(0).nominal_skill_probability(0.5).is_err());
     }
 
     #[test]

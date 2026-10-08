@@ -185,6 +185,7 @@ returned cardinality when the physical domain contains fewer candidates.
 | Family | Cases | Physical candidates | Coverage |
 |---|---:|---:|---|
 | Scene and objective | 36 | 216 | Free, COMBO Mission, Battle, Arena; theoretical play and a complete mixed-judgement stream; expected score, score-target probability, capped score, client event PT, and score with terminal life |
+| Growth and length | 8 | 48 | Low member growth with strong skills; band-rank skew and delayed range ranks 1, 3, 5; 12-note and 256-note charts; score and client event PT; deterministic repeated nodes and completed simulations |
 | Constraints and ties | 8 | 152 | Same-character alternatives, every eligible leader, member requirements and exclusions, Snap exclusions, optional unique Snap bindings, empty domains, and canonical ties |
 | Nominal LUCK | 11 | 55 | Expected score, score-target probability, capped score, client event PT, terminal-life probability, equivalent leader programs, and certified ranking |
 
@@ -193,9 +194,9 @@ combinations, chooses each eligible leader, and enumerates every injective
 optional Snap assignment. The fixed evaluator supplies each team's 120 order
 outcomes. Separate aggregation and rational comparison code establishes the full
 canonical ranking, which both exhaustive and branch-and-bound search reproduce.
-The matrix checks 44,160 oracle order outcomes. With `search-diagnostics`, each
+The matrix checks 49,920 oracle order outcomes. With `search-diagnostics`, each
 candidate also supplies witnesses for five joint prefixes, eleven composition
-and team prefixes, and all 120 per-order caps: 5,888 prefix checks and 44,160
+and team prefixes, and all 120 per-order caps: 6,656 prefix checks and 49,920
 order-cap checks in total.
 
 The scene fixtures include recovery and judgement conversion, COMBO ranges,
@@ -212,6 +213,52 @@ constant-payoff cases also check exact probability or capped-score values.
 
 The matrix establishes search enumeration, ranking, and bound contracts under
 the shared fixed-deck model. Its model inputs and charts are synthetic.
+
+### Score-path corpus
+
+```sh
+export OURNOTES_SCORE_PATH_OUT=work/score-paths
+cargo test --release --locked --test adapter_fixture_export export_score_path_matrix -- --ignored
+python3 tools/search-harness/run.py run \
+  --binary tools/search-harness/target/release/ournotes-search-harness \
+  --suite work/score-paths/suite.json --out work/score-path-results
+```
+
+The exporter crosses low member growth with strong skills or band-rank-skewed
+growth, 12-note or 256-note charts, and LUCK or lottery-free play.
+The first range spans 150–700 ms in the short chart and 150–400 ms in the long
+chart. Subsequent ranges use Just and COMBO missions and start after the first
+range's completion delay. All inputs include their complete optional Snap domain.
+The low-growth family uses Solo Mission. The skewed family uses Battle with
+delayed range confirmations at ranks 1, 3, and 5 and a declared room-score policy.
+
+`suite.json` contains eight lottery-free score/PT cases, each with 60 physical
+teams and K = 5. The existing independent oracle, cap audits, and `run.py compare`
+apply to these cases. `matrix.json` also lists bounded nominal-LUCK cases and
+eight larger PT requests with 13,600 physical teams, K = 5, and a 60-second
+request budget. Those entries include owned snapshots and the exact dataset
+identity for the existing `profile_case` and `benchmark_case` binaries. They are
+ordinary search requests; their reported completion determines whether their
+returned ranking is certified.
+
+The harness's deterministic oracle requires exact payoff fractions. General
+nominal-LUCK interval results use the nominal LUCK integration matrix and the
+separate exact-law tests. A deterministic oracle report does not certify the
+nominal-LUCK cases or the larger domain.
+
+`export_score_path_tier_matrix` writes a separate corpus to
+`OURNOTES_SCORE_PATH_TIER_OUT`. It retains these physical domains, requests,
+charts, and cultivation profiles and supplies explicit PT-tier controls.
+The short and long Mission score thresholds are `[0,450000,550000,650000]` and
+`[0,600000,650000,700000]`; Battle retains `[0,300000,450000,600000]` under its
+declared room-score policy. Per-member card event-point additions range from
+100 to 500 in the table's 10,000-scale bonus units. The existing event power
+and item effects retain their specified values. Its own `suite.json` and
+`matrix.json` use `tiers-` case names.
+
+The ordinary integration tests also fixed-evaluate decks using three Snaps on
+the four growth/length combinations with nominal LUCK and require complete certified
+score intervals.
 
 ### Exported corpus
 

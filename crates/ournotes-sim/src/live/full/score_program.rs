@@ -423,6 +423,8 @@ impl Kernel {
             event.to_bits(),
         ]
     }
+    // Keep optional recording work behind its call boundary in the score calculator.
+    #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn capture(
         calc: &LiveScoreCalculator,
@@ -625,11 +627,13 @@ impl Recorder {
     pub(super) fn add_note(&mut self, frame: usize) {
         self.notes[frame].push(None);
     }
+    #[inline(never)]
     pub(super) fn execute_note(&mut self, frame: usize, index: usize, kernel: Kernel) {
         let note = self.push(Node::Note(kernel));
         self.notes[frame][index] = Some(note);
         self.score = self.push(Node::Add(self.score, note));
     }
+    #[inline(never)]
     pub(super) fn undo(&mut self, frame: usize) {
         for index in 0..self.notes[frame].len() {
             if let Some(note) = self.notes[frame][index] {
@@ -654,6 +658,7 @@ impl Recorder {
         self.pending = Some(self.push(Node::RankPercent(range, pct)));
         Ok(())
     }
+    #[inline(never)]
     pub(super) fn file_fixed(&mut self, frame: i32) -> Result<(), Error> {
         let value = self.pending.take().ok_or_else(|| Error::Game("score program is missing fixed score".into()))?;
         self.fixed.push((frame, value));
