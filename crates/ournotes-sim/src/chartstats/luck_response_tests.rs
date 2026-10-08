@@ -45,11 +45,14 @@ fn luck_response_lossless_random_lookup_preserves_fields_bits_and_all_keys_with_
     let table = table();
     let limits = ResponseLimits::default();
     let bytes = table.encode(Quantization::Lossless, limits).unwrap();
+    assert_eq!(&bytes[..MAGIC.len()], b"ONLRSP02");
     let archive = ResponseArchive::open(&bytes, limits).unwrap();
     assert_eq!(archive.context(), &table.context);
     assert_eq!(archive.keys().len(), 3);
     assert_eq!(archive.find(&key(0)).unwrap().blob, archive.find(&key(3)).unwrap().blob);
     for entry in &table.entries {
+        let index = archive.key_index(&entry.key).unwrap();
+        assert_eq!(archive.keys().nth(index), Some(&entry.key));
         let decoded = archive.lookup(&entry.key).unwrap().unwrap();
         assert!(decoded.allocated_bytes().unwrap() <= limits.max_decoded_bytes);
         assert_eq!(decoded, entry.response);
@@ -178,6 +181,9 @@ fn luck_response_rejects_truncation_corruption_aliasing_invalid_intervals_and_un
     let mut bad = bytes.clone();
     bad[0] ^= 1;
     assert!(ResponseArchive::open(&bad, limits).is_err());
+    let mut old_format = bytes.clone();
+    old_format[..MAGIC.len()].copy_from_slice(b"ONLRSP01");
+    assert!(ResponseArchive::open(&old_format, limits).is_err());
     let archive = ResponseArchive::open(&bytes, limits).unwrap();
     let blob = archive.find(&key(0)).unwrap().blob.clone();
     let mut bad = bytes.clone();
@@ -191,7 +197,7 @@ fn luck_response_rejects_truncation_corruption_aliasing_invalid_intervals_and_un
     }
     assert!(bad_table.encode(Quantization::Lossless, limits).is_err());
     // Mutating an offset cannot point a payload into the header, even when its length remains in bounds.
-    let mut reader = Reader { bytes: &bytes, at: 9 };
+    let mut reader = Reader { bytes: &bytes, at: MAGIC.len() + 1 };
     for _ in 0..2 {
         let len = reader.count(limits.max_string_bytes).unwrap();
         reader.take(len).unwrap();
@@ -215,4 +221,67 @@ fn luck_response_rejects_truncation_corruption_aliasing_invalid_intervals_and_un
     payload.var(u64::MAX).unwrap();
     assert!(decode_response(&payload.bytes, Quantization::Lossless, limits).is_err());
     assert!(Reader { bytes: &[255; 10], at: 0 }.var().is_err());
+}
+
+#[test]
+fn luck_response_paired_endpoint_encoding_and_checked_quantized_widths() {
+    let limits = ResponseLimits::default();
+    let original = curve();
+    let payload =
+        encode_response(&Response::Success { curve: original.clone() }, Quantization::Lossless, limits).unwrap();
+    let mut reader = Reader { bytes: &payload, at: 0 };
+    assert_eq!(reader.byte().unwrap(), 1);
+    assert_eq!(reader.var().unwrap(), original.peak_states as u64);
+    assert_eq!(reader.var().unwrap(), original.transitions);
+    assert_eq!(reader.var().unwrap(), original.steps.len() as u64);
+    for _ in &original.steps {
+        reader.signed().unwrap();
+    }
+    let mut previous_lower = [0u64; 4];
+    for (step, run) in [(&original.steps[0], 2), (&original.steps[2], 1)] {
+        assert_eq!(reader.var().unwrap(), run);
+        for (bounds, old_lower) in step.buckets.iter().zip(&mut previous_lower) {
+            let [lower, upper] = bounds.map(f64::to_bits);
+            assert_eq!(reader.var().unwrap(), lower ^ *old_lower);
+            assert_eq!(reader.var().unwrap(), upper ^ lower);
+            *old_lower = lower;
+        }
+    }
+    // A complete single-row payload distinguishes width arithmetic/grid rejection from truncation.
+    let quantized_payload = |lower: u64, width: u64| {
+        let mut out = Writer::new(256);
+        out.put(&[1]).unwrap();
+        out.var(0).unwrap(); // Peak states.
+        out.var(0).unwrap(); // Transitions.
+        out.var(1).unwrap(); // One step.
+        out.signed(0).unwrap();
+        out.var(1).unwrap(); // One-row run.
+        out.var(lower).unwrap();
+        out.var(width).unwrap();
+        for _ in 0..3 {
+            out.var(0).unwrap();
+            out.var(0).unwrap();
+        }
+        for _ in 0..3 {
+            out.var(0).unwrap(); // Empty masks, probes and moments.
+        }
+        out.bytes
+    };
+    for mode in [Quantization::U16, Quantization::U24, Quantization::U32] {
+        let grid = 1u64 << mode.tag();
+        for (lower, width) in [(0, grid), (grid - 1, 1), (grid, 0)] {
+            let Response::Success { curve } = decode_response(&quantized_payload(lower, width), mode, limits).unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(curve.steps[0].buckets[0], [lower as f64 / grid as f64, (lower + width) as f64 / grid as f64]);
+        }
+        for (lower, width, error) in [
+            (1, u64::MAX, "quantized interval width overflow"),
+            (grid, 1, "quantized endpoint exceeds one"),
+            (grid + 1, 0, "quantized endpoint exceeds one"),
+        ] {
+            assert_eq!(decode_response(&quantized_payload(lower, width), mode, limits).unwrap_err(), invalid(error));
+        }
+    }
 }

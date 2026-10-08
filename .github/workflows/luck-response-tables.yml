@@ -1,0 +1,122 @@
+name: Incremental real-chart LUCK response tables
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Declared real inputs to generate; no search request is reduced
+        type: choice
+        options: [newcomer-combinations, full48-singles]
+        default: newcomer-combinations
+        required: true
+      batch_size:
+        description: Completed entries per resumable native invocation
+        type: choice
+        options: ['128', '8', '1']
+        default: '128'
+        required: true
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/luck-response-tables.yml'
+      - 'tools/luck-tables/**'
+      - 'tools/search-harness/src/bin/luck_response*'
+      - 'tools/search-harness/src/bin/luck_response/**'
+      - 'tools/search-harness/fixtures/full48/**'
+      - 'crates/**'
+      - 'Cargo.lock'
+      - 'tools/search-harness/Cargo.lock'
+  pull_request:
+    paths:
+      - '.github/workflows/luck-response-tables.yml'
+      - 'tools/luck-tables/**'
+      - 'tools/search-harness/src/bin/luck_response*'
+      - 'tools/search-harness/src/bin/luck_response/**'
+      - 'tools/search-harness/fixtures/full48/**'
+      - 'crates/**'
+      - 'Cargo.lock'
+      - 'tools/search-harness/Cargo.lock'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: luck-response-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      CARGO_TERM_COLOR: always
+      SCOPE: ${{ inputs.scope || 'full48-singles' }}
+      BATCH_SIZE: ${{ inputs.batch_size || '128' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check incremental storage and declared-input contracts
+        run: python3 -m unittest discover -s tools/luck-tables -p 'test_*.py'
+      - uses: actions/cache@v4
+        with:
+          path: work/dataset-cache
+          key: luck-response-data-${{ hashFiles('tools/search-harness/fixtures/full48/source.json') }}
+      - uses: actions/cache/restore@v4
+        id: response-cache
+        with:
+          path: work/luck-response-store
+          key: luck-response-v1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            luck-response-v1-${{ runner.os }}-
+      - name: Build the same-source native planner and generator
+        run: cargo build --release --locked --manifest-path tools/search-harness/Cargo.toml --bin benchmark_prepare --bin luck_response
+      - name: Materialize every original request without changing the pin
+        run: python3 tools/search-harness/matrix.py prepare --suite full48 --cases all --no-build --cache-dir work/dataset-cache --out work/full48-inputs
+      - name: Resolve complete native dependencies and only declared entries
+        run: |
+          args=()
+          if [[ "$SCOPE" == newcomer-combinations ]]; then
+            args+=(--cases short-newcomer-score,long-newcomer-score --combinations tools/luck-tables/newcomer-combinations.json)
+          fi
+          python3 tools/luck-tables/pipeline.py plan work/full48-inputs/benchmark.json \
+            --generator tools/search-harness/target/release/luck_response \
+            --source . --output work/luck-response-plan.json "${args[@]}"
+      - name: Generate missing DP entries and preserve refusal states
+        run: |
+          python3 tools/luck-tables/pipeline.py run work/luck-response-plan.json \
+            --generator tools/search-harness/target/release/luck_response \
+            --store work/luck-response-store --batch-size "$BATCH_SIZE"
+      - name: Consolidate complete contexts for random-access lookup without DP
+        run: |
+          python3 tools/luck-tables/pipeline.py compact work/luck-response-plan.json \
+            --generator tools/search-harness/target/release/luck_response \
+            --store work/luck-response-store --output work/luck-response-compact
+      - name: Save completed objects even when another entry failed
+        if: always() && steps.response-cache.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: work/luck-response-store
+          key: luck-response-v1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Preserve source plan, completed tables, and unresolved entries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luck-response-${{ inputs.scope || 'full48-singles' }}
+          path: |
+            work/luck-response-plan.json
+            work/luck-response-store/index.json
+            work/luck-response-store/run-receipt.json
+            work/luck-response-store/objects/
+            work/luck-response-store/reports/
+            work/luck-response-store/blobs/
+            work/luck-response-store/contexts/
+            work/luck-response-compact/
+            work/full48-inputs/preparation-receipt.json
+          if-no-files-found: warn
+          retention-days: 30

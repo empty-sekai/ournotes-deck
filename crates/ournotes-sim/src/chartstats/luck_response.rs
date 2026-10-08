@@ -3,6 +3,12 @@
 //! A fingerprint is supplied by the producer; this codec cannot establish that it names the correct native
 //! inputs or that generation completed. Successful decoding proves only structural validity. Quantization
 //! encloses the stored probability endpoints, not a mean score, and never authorizes a cache admission.
+//!
+//! The `ONLRSP02` binary format pairs each bucket's endpoints within a probability run. Lossless runs
+//! store the lower binary64 bits XOR the previous run's lower bits (initially zero), then the upper bits
+//! XOR the current lower bits. Quantized runs store the lower grid word and the nonnegative interval
+//! width. Time deltas, row RLE, masks, moments and indexed whole-payload sharing are unchanged. Earlier
+//! format identifiers are rejected; JSON inspection types do not depend on the binary format version.
 
 use crate::live::full::{LuckDpCertifiedResult, LuckSkillKey, LuckSource};
 use serde::{Deserialize, Serialize};
@@ -11,7 +17,7 @@ use std::fmt;
 use std::mem::size_of;
 use std::ops::Range;
 
-const MAGIC: &[u8; 8] = b"ONLRSP01";
+const MAGIC: &[u8; 8] = b"ONLRSP02";
 
 /// Lowercase SHA-256 of caller-supplied descriptor bytes. Hashing supplies identity, not semantic authority.
 pub fn response_fingerprint(bytes: &[u8]) -> String {
@@ -434,7 +440,7 @@ fn encode_response(response: &Response, mode: Quantization, limits: ResponseLimi
         previous = time;
     }
     let mut at = 0;
-    let mut previous_words = [0u64; 8];
+    let mut previous_lower = [0u64; 4];
     while at < curve.steps.len() {
         let words = bucket_words(&curve.steps[at].buckets, mode)?;
         let mut end = at + 1;
@@ -442,9 +448,16 @@ fn encode_response(response: &Response, mode: Quantization, limits: ResponseLimi
             end += 1;
         }
         out.var((end - at) as u64)?;
-        for (word, old) in words.into_iter().zip(&mut previous_words) {
-            out.var(if mode == Quantization::Lossless { word ^ *old } else { word })?;
-            *old = word;
+        for (pair, old_lower) in words.chunks_exact(2).zip(&mut previous_lower) {
+            let (lower, upper) = (pair[0], pair[1]);
+            if mode == Quantization::Lossless {
+                out.var(lower ^ *old_lower)?;
+                out.var(upper ^ lower)?;
+                *old_lower = lower;
+            } else {
+                out.var(lower)?;
+                out.var(upper.checked_sub(lower).ok_or_else(|| invalid("negative quantized interval width"))?)?;
+            }
         }
         at = end;
     }
@@ -679,8 +692,14 @@ impl<'a> ResponseArchive<'a> {
         self.find(key).map(|entry| entry.blob.len())
     }
 
+    /// Position in this archive's sorted key index, without decoding a response. The position is local
+    /// to this archive and can index a caller's bounded usage bitmap.
+    pub fn key_index(&self, key: &EntryKey) -> Option<usize> {
+        self.entries.binary_search_by(|entry| entry.key.cmp(key)).ok()
+    }
+
     fn find(&self, key: &EntryKey) -> Option<&IndexEntry> {
-        self.entries.binary_search_by(|entry| entry.key.cmp(key)).ok().map(|index| &self.entries[index])
+        self.key_index(key).map(|index| &self.entries[index])
     }
 
     pub fn lookup(&self, key: &EntryKey) -> Result<Option<Response>, ResponseError> {
@@ -725,26 +744,30 @@ fn decode_response(bytes: &[u8], mode: Quantization, limits: ResponseLimits) -> 
         previous = time;
     }
     let mut at = 0;
-    let mut previous_words = [0u64; 8];
+    let mut previous_lower = [0u64; 4];
     while at < count {
         let run = input.count(count - at)?;
         if run == 0 {
             return Err(invalid("empty probability run"));
         }
         let mut buckets = [[0.0; 2]; 4];
-        for (index, old) in previous_words.iter_mut().enumerate() {
-            let word = input.var()?;
-            let value = if mode == Quantization::Lossless {
-                *old ^= word;
-                f64::from_bits(*old)
+        for (bounds, old_lower) in buckets.iter_mut().zip(&mut previous_lower) {
+            let first = input.var()?;
+            let second = input.var()?;
+            *bounds = if mode == Quantization::Lossless {
+                let lower = first ^ *old_lower;
+                let upper = second ^ lower;
+                *old_lower = lower;
+                [f64::from_bits(lower), f64::from_bits(upper)]
             } else {
+                let lower = first;
+                let upper = lower.checked_add(second).ok_or_else(|| invalid("quantized interval width overflow"))?;
                 let grid = 1u64 << mode.tag();
-                if word > grid {
+                if lower > grid || upper > grid {
                     return Err(invalid("quantized endpoint exceeds one"));
                 }
-                word as f64 / grid as f64
+                [lower as f64 / grid as f64, upper as f64 / grid as f64]
             };
-            buckets[index / 2][index % 2] = value;
         }
         for bounds in buckets {
             validate_interval(bounds, true)?;

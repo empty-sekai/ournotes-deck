@@ -8,7 +8,7 @@ use super::uniform::{self, MEAN_ORDERS, ORDERS};
 mod cutoff;
 pub use cutoff::audit_cutoff;
 mod luck_response;
-pub use luck_response::{LuckResponseSpec, generate_luck_response};
+pub use luck_response::{LuckResponseSpec, ResponseDeck, generate_luck_response, predict_luck_response};
 
 /// Harness-only schedules; never part of the player recommendation request.
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]

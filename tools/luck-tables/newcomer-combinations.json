@@ -1,0 +1,13 @@
+{
+  "format": "ournotes-deck.luck-response-combinations/1",
+  "groups": [
+    {
+      "cases": ["short-newcomer-score", "long-newcomer-score"],
+      "positionSubsets": {
+        "skill": {"source": "gekisou", "id": 7, "level": 1, "matched": null},
+        "positions": [0, 1, 2, 3, 4],
+        "copies": [0, 1, 2, 3]
+      }
+    }
+  ]
+}

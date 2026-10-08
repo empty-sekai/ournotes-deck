@@ -2,7 +2,7 @@
 use ournotes_search::{
     handler,
     owned_snapshot::{GoalDependencies, OwnedSnapshot},
-    search::diagnostics::{LuckResponseSpec, generate_luck_response},
+    search::diagnostics::{LuckResponseSpec, ResponseDeck, generate_luck_response, predict_luck_response},
     types::RecommendationRequest,
 };
 use ournotes_sim::{
@@ -111,13 +111,19 @@ fn write_json(path: impl AsRef<Path>, value: &impl serde::Serialize) -> Result<(
     Ok(())
 }
 
-fn generate(args: &[String]) -> Result<()> {
-    let data = DeckData::from_path(&args[0])?;
-    let roster_text = fs::read_to_string(&args[1])?;
-    let request_text = fs::read_to_string(&args[2])?;
-    let spec_text = fs::read_to_string(&args[3])?;
+fn basename(path: &str) -> String {
+    Path::new(path).file_name().unwrap_or_default().to_string_lossy().into_owned()
+}
+
+fn load_inputs(
+    data_path: &str,
+    roster_path: &str,
+    request_path: &str,
+) -> Result<(DeckData, Roster, RecommendationRequest, Value)> {
+    let data = DeckData::from_path(data_path)?;
+    let roster_text = fs::read_to_string(roster_path)?;
+    let request_text = fs::read_to_string(request_path)?;
     let request: RecommendationRequest = serde_json::from_str(&request_text)?;
-    let spec: LuckResponseSpec = serde_json::from_str(&spec_text)?;
     let roster = if let Ok(snapshot) = OwnedSnapshot::from_json(&roster_text) {
         let resolution = snapshot.resolve_data(
             &data,
@@ -132,36 +138,80 @@ fn generate(args: &[String]) -> Result<()> {
     } else {
         Roster::from_json(&roster_text)?
     };
+    let provenance = json!({"datasetSha256":data.sha256,"inputs":{
+        "data":basename(data_path),"roster":basename(roster_path),"request":basename(request_path),
+        "rosterSha256":response_fingerprint(roster_text.as_bytes()),
+        "requestSha256":response_fingerprint(request_text.as_bytes())}});
+    Ok((data, roster, request, provenance))
+}
+
+fn generate(args: &[String]) -> Result<()> {
+    let (data, roster, request, provenance) = load_inputs(&args[0], &args[1], &args[2])?;
+    let spec_text = fs::read_to_string(&args[3])?;
+    let spec: LuckResponseSpec = serde_json::from_str(&spec_text)?;
     let built = handler::build_card_pool(&data, &roster, &request)?;
     let mut output = generate_luck_response(&built, &spec)?;
-    output["provenance"]["datasetSha256"] = json!(data.sha256);
-    output["provenance"]["inputs"] = json!({
-        "data":args[0],"roster":args[1],"request":args[2],"spec":args[3],
-        "rosterSha256":response_fingerprint(roster_text.as_bytes()),
-        "requestSha256":response_fingerprint(request_text.as_bytes()),
-        "specSha256":response_fingerprint(spec_text.as_bytes())});
+    for (key, value) in provenance.as_object().expect("input provenance object") {
+        output["provenance"][key] = value.clone();
+    }
+    output["provenance"]["inputs"]["spec"] = json!(basename(&args[3]));
+    output["provenance"]["inputs"]["specSha256"] = json!(response_fingerprint(spec_text.as_bytes()));
+    // Preserve every completed job before optional packing. One archive failure cannot erase its DP output.
+    write_json(&args[4], &output)?;
     if output["mode"] == "generate" {
         let table: ResponseTable = serde_json::from_value(output["table"].clone())?;
         let mut archives = Vec::new();
         for name in ["lossless", "u16", "u24", "u32"] {
-            let began = Instant::now();
-            let bytes = table.encode(mode(name)?, ResponseLimits::default())?;
-            let encode_ms = began.elapsed().as_secs_f64() * 1000.0;
-            let mut metadata = inspect(&table, &bytes)?;
             let path = format!("{}.{}.onlrsp", args[4], name);
-            fs::write(&path, bytes)?;
-            metadata["path"] = json!(path);
-            metadata["encodeMs"] = json!(encode_ms);
-            archives.push(metadata);
+            let packed = (|| -> Result<Value> {
+                let began = Instant::now();
+                let bytes = table.encode(mode(name)?, ResponseLimits::default())?;
+                let encode_ms = began.elapsed().as_secs_f64() * 1000.0;
+                let mut metadata = inspect(&table, &bytes)?;
+                fs::write(&path, bytes)?;
+                metadata["path"] = json!(path);
+                metadata["encodeMs"] = json!(encode_ms);
+                metadata["status"] = json!("success");
+                Ok(metadata)
+            })();
+            archives.push(
+                packed.unwrap_or_else(
+                    |error| json!({"mode":name,"path":path,"status":"error","error":error.to_string()}),
+                ),
+            );
+            output["archives"] = json!(archives);
+            write_json(&args[4], &output)?;
         }
-        output["archives"] = json!(archives);
     }
-    write_json(&args[4], &output)
+    Ok(())
+}
+
+fn predict(args: &[String]) -> Result<()> {
+    let began = Instant::now();
+    let read = Instant::now();
+    let bytes = fs::read(&args[0])?;
+    let read_ms = read.elapsed().as_secs_f64() * 1000.0;
+    let open = Instant::now();
+    let archive = ResponseArchive::open(&bytes, ResponseLimits::default())?;
+    let open_ms = open.elapsed().as_secs_f64() * 1000.0;
+    let (data, roster, request, mut provenance) = load_inputs(&args[1], &args[2], &args[3])?;
+    let deck_text = fs::read_to_string(&args[4])?;
+    let decks: Vec<ResponseDeck> = serde_json::from_str(&deck_text)?;
+    provenance["inputs"]["decks"] = json!(basename(&args[4]));
+    provenance["inputs"]["decksSha256"] = json!(response_fingerprint(deck_text.as_bytes()));
+    let built = handler::build_card_pool(&data, &roster, &request)?;
+    let mut output = predict_luck_response(&built, &archive, &decks)?;
+    output["archive"] = json!({"name":basename(&args[0]),"sha256":response_fingerprint(&bytes),
+        "bytes":bytes.len(),"readMs":read_ms,"openMs":open_ms,"indexBytes":archive.index_bytes()});
+    output["provenance"] = provenance;
+    output["totalElapsedMs"] = json!(began.elapsed().as_secs_f64() * 1000.0);
+    write_json(&args[5], &output)
 }
 
 fn run() -> Result<()> {
     let args: Vec<_> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("predict") if args.len() == 7 => predict(&args[1..]),
         Some("pack") if args.len() == 4 => {
             let table = table(&args[1])?;
             let bytes = table.encode(mode(&args[2])?, ResponseLimits::default())?;
@@ -189,6 +239,7 @@ fn run() -> Result<()> {
         }
         _ if args.len() == 5 => generate(&args),
         _ => Err("luck_response DATA SNAPSHOT_OR_ROSTER REQUEST SPEC OUTPUT\n\
+            luck_response predict ARCHIVE DATA SNAPSHOT_OR_ROSTER REQUEST DECKS OUTPUT\n\
             luck_response pack GENERATION_JSON lossless|u16|u24|u32 ARCHIVE\n\
             luck_response unpack ARCHIVE OUTPUT\n\
             luck_response verify GENERATION_JSON ARCHIVE OUTPUT"

@@ -1,7 +1,8 @@
 //! Offline inspection data from the real resolved request. No result grants search admission or a score proof.
 use super::{BuiltProblem, Error, LuckInput, luck_input};
 use ournotes_sim::chartstats::luck_response::{
-    EntryKey, Response, ResponseContext, ResponseCurve, ResponseEntry, ResponseTable, response_fingerprint,
+    EntryKey, Response, ResponseArchive, ResponseContext, ResponseCurve, ResponseEntry, ResponseTable,
+    response_fingerprint,
 };
 use ournotes_sim::chartstats::{luck_neutral, luck_table_dp_certified_cached, luck_table_steps, luck_table_validate};
 use ournotes_sim::live::full::{
@@ -70,6 +71,25 @@ pub struct LuckResponseSpec {
 
 fn fingerprint(value: &Value) -> String {
     response_fingerprint(&serde_json::to_vec(value).expect("JSON dependency value"))
+}
+
+fn response_context(shared: &str, entries: BTreeMap<String, String>) -> ResponseContext {
+    ResponseContext {
+        fingerprint: fingerprint(&json!({"shared":shared,"entries":entries})),
+        algorithm_version: format!("{ALGORITHM}/{}", ournotes_sim::SOURCE_SHA256),
+    }
+}
+
+fn validate_entries(
+    master: &Master,
+    skills: &LuckSkills,
+    neutral: Option<(i64, i64)>,
+    entries: &EntryKey,
+) -> Result<(), Error> {
+    if entries.iter().any(|(key, _)| !skills.chain.contains(key)) {
+        return Err(Error::Input("response entry is outside the LUCK chain catalogue".into()));
+    }
+    luck_table_validate(master, skills, neutral, entries)
 }
 
 fn first_deck(built: &BuiltProblem<'_>) -> Result<ResponseDeck, Error> {
@@ -206,7 +226,7 @@ fn dependencies(master: &Master, input: &LuckInput, skills: &LuckSkills, neutral
             "luckBasePoints":format!("{:?}",master.gekisou_luck_base_points),
             "luckBonusLots":format!("{:?}",master.gekisou_luck_bonus_lots),
             "rankingBonuses":format!("{:?}",master.gekisou_ranking_score_bonuses)},
-        "catalogue":{"skills":skills,"rowShapes":rows},"neutral":neutral,
+        "catalogue":{"shapes":skills.shapes,"rowShapes":rows},"neutral":neutral,
         "probes":source_dependencies(master,&probes)
     })
 }
@@ -280,6 +300,18 @@ fn lookup_weights(curve: &ResponseCurve, shapes: usize) -> Result<Vec<(i32, Vec<
         .collect())
 }
 
+fn score_lookup(
+    master: &Master,
+    input: &super::super::expectation::FiniteSeedContext,
+    skills: &LuckSkills,
+    performers: &[Performer; 5],
+    curve: &ResponseCurve,
+) -> Result<i32, Error> {
+    let mut model = input.model(master, performers)?;
+    model.set_luck_weights(skills, lookup_weights(curve, skills.shapes.len())?)?;
+    model.run_with_random(&input.play, &input.delta_times, LiveRandom::new(0))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn scoring(
     master: &Master,
@@ -320,11 +352,7 @@ fn scoring(
         let weighted = model.run_with_random(&input.play, &input.delta_times, LiveRandom::new(0))?;
         let (lookup, lookup_error) = match basis {
             None => (None, None),
-            Some(curve) => match (|| -> Result<i32, Error> {
-                let mut model = input.model(master, performers)?;
-                model.set_luck_weights(skills, lookup_weights(curve, skills.shapes.len())?)?;
-                model.run_with_random(&input.play, &input.delta_times, LiveRandom::new(0))
-            })() {
+            Some(curve) => match score_lookup(master, input, skills, performers, curve) {
                 Ok(score) => (Some(score), None),
                 Err(error) => (None, Some(error.to_string())),
             },
@@ -382,26 +410,20 @@ pub fn generate_luck_response(built: &BuiltProblem<'_>, spec: &LuckResponseSpec)
     let skills = luck_skills(master)?;
     let neutral = luck_neutral(master, &skills);
     for job in &spec.jobs {
-        if job.entries.iter().any(|(key, _)| !skills.chain.contains(key)) {
-            return Err(Error::Input(format!("job {} contains a key outside the LUCK chain catalogue", job.name)));
-        }
         // The native holder is authoritative for formation compatibility and all positional limits.
         // This constructs no LiveModel and performs no recording, propagation or simulation.
-        luck_table_validate(master, &skills, neutral, &job.entries)?;
+        validate_entries(master, &skills, neutral, &job.entries)?;
     }
     let shared = dependencies(master, &input, &skills, neutral);
     let shared_fingerprint = fingerprint(&shared);
     let job_dependencies: Vec<_> = spec.jobs.iter().map(|job| source_dependencies(master, &job.entries)).collect();
-    let archive_dependencies: BTreeMap<_, _> = spec
+    let mut archive_dependencies: BTreeMap<_, _> = spec
         .jobs
         .iter()
         .zip(&job_dependencies)
         .map(|(job, deps)| (serde_json::to_string(&job.entries).expect("entry JSON"), fingerprint(deps)))
         .collect();
-    let context = ResponseContext {
-        fingerprint: fingerprint(&json!({"shared":shared_fingerprint,"entries":archive_dependencies})),
-        algorithm_version: format!("{ALGORITHM}/{}", ournotes_sim::SOURCE_SHA256),
-    };
+    let mut context = response_context(&shared_fingerprint, archive_dependencies.clone());
     let mut table = ResponseTable { context: context.clone(), entries: Vec::new() };
     // Existing request-sized allowance, with an explicit zero-cache experiment. No process-global cache.
     let capacity = spec.cache_bytes.unwrap_or_else(|| spec.cache_entries.saturating_mul(8192)).min(32 << 20);
@@ -483,6 +505,14 @@ pub fn generate_luck_response(built: &BuiltProblem<'_>, spec: &LuckResponseSpec)
         report["cacheAfter"] = json!(cache.stats());
         jobs.push(report);
     }
+    if matches!(spec.mode, ResponseMode::Generate) {
+        // Only encoded entries bind the archive. Capacity/error jobs remain in the report and are retryable.
+        let stored: BTreeSet<_> =
+            table.entries.iter().map(|entry| serde_json::to_string(&entry.key).expect("entry JSON")).collect();
+        archive_dependencies.retain(|key, _| stored.contains(key));
+        context = response_context(&shared_fingerprint, archive_dependencies);
+        table.context = context.clone();
+    }
     let mut validations = Vec::new();
     if matches!(spec.mode, ResponseMode::Generate) {
         for deck in &spec.validation_decks {
@@ -555,8 +585,153 @@ pub fn generate_luck_response(built: &BuiltProblem<'_>, spec: &LuckResponseSpec)
     Ok(json!({"format":"ournotes-deck.luck-response-generation/1","kind":"isolatedRealSkillKernelProbability",
         "scope":"Independent nominal lottery response on the resolved real chart. Not full native score expectation, finite-seed mean, program equivalence, admission or ranking certificate.",
         "mode":spec.mode,"context":context,"sharedFingerprint":shared_fingerprint,"dependencyDescriptor":shared,
-        "provenance":{"contextDeck":anchor,"contextDeckPower":anchor_power},"jobs":jobs,"table":table,
+        "capabilities":{"chain":skills.chain},"provenance":{"contextDeck":anchor,"contextDeckPower":anchor_power},"jobs":jobs,"table":table,
         "validationDecks":validations,"cacheEntriesCompatibilityEstimateBytes":8192,"cacheBytes":capacity,"cacheStats":cache.stats(),"archives":[],
+        "elapsedMs":started.elapsed().as_secs_f64()*1000.0}))
+}
+
+/// Read an archive as an explicitly approximate score predictor. Context identity is checked before any
+/// payload is decoded. Each lookup owns at most one response; no decoded table or native DP cache is built.
+/// A source-key match is not a proof that the original deck's LIFE/conversion inputs equal isolated holders.
+pub fn predict_luck_response(
+    built: &BuiltProblem<'_>,
+    archive: &ResponseArchive<'_>,
+    decks: &[ResponseDeck],
+) -> Result<Value, Error> {
+    let started = Instant::now();
+    let master = built.pool.master;
+    let expected = (|| -> Result<_, Error> {
+        let anchor = first_deck(built)?;
+        let input = luck_input(built, anchor.members, anchor.snaps)?;
+        let skills = luck_skills(master)?;
+        let neutral = luck_neutral(master, &skills);
+        let shared = fingerprint(&dependencies(master, &input, &skills, neutral));
+        let mut entries = BTreeMap::new();
+        for key in archive.keys() {
+            validate_entries(master, &skills, neutral, key)?;
+            entries.insert(
+                serde_json::to_string(key).expect("entry JSON"),
+                fingerprint(&source_dependencies(master, key)),
+            );
+        }
+        let context = response_context(&shared, entries);
+        Ok((skills, shared, context))
+    })();
+    let (skills, shared, expected) = match expected {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(json!({"format":"ournotes-deck.luck-response-prediction/1",
+            "status":"contextMismatch","reason":error.to_string(),"archiveContext":archive.context(),
+            "isScorePrediction":true,"nativeExpectationProven":false,"rankingProven":false,
+            "ordersScored":0,"elapsedMs":started.elapsed().as_secs_f64()*1000.0}));
+        }
+    };
+    if archive.context() != &expected {
+        return Ok(json!({"format":"ournotes-deck.luck-response-prediction/1","status":"contextMismatch",
+            "reason":"resolved native context or selected source dependencies differ",
+            "archiveContext":archive.context(),"expectedContext":expected,"sharedFingerprint":shared,
+            "isScorePrediction":true,"nativeExpectationProven":false,"rankingProven":false,
+            "ordersScored":0,"elapsedMs":started.elapsed().as_secs_f64()*1000.0}));
+    }
+    let context_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let mut used = vec![false; archive.keys().len()];
+    let (mut decode_calls, mut decoded_peak, mut orders_scored) = (0usize, 0usize, 0usize);
+    let (mut decode_ms, mut score_ms) = (0f64, 0f64);
+    let mut results = Vec::with_capacity(decks.len());
+    let mut complete = true;
+    for deck in decks {
+        let began = Instant::now();
+        let input = luck_input(built, deck.members, deck.snaps);
+        let mut orders = Vec::with_capacity(120);
+        let (mut sum, mut success) = (0i64, 0usize);
+        for (ordinal, order) in super::super::uniform::all_orders().into_iter().enumerate() {
+            let mut row = json!({"ordinal":ordinal,"order":order,"scoreAtLookup":null});
+            let prepared = (|| -> Result<_, Error> {
+                let (input, _) = input.as_ref().map_err(Clone::clone)?;
+                let performers = order.map(|slot| input.performers[slot].clone());
+                let key = actual_entries(master, &skills, &performers)?;
+                Ok((input, performers, key))
+            })();
+            match prepared {
+                Err(error) => {
+                    row["status"] = json!(error_status(&error));
+                    row["error"] = json!(error.to_string());
+                }
+                Ok((input, performers, key)) => {
+                    row["entries"] = json!(key);
+                    if let Some(index) = archive.key_index(&key) {
+                        decode_calls += 1;
+                        let began = Instant::now();
+                        let response = archive.lookup(&key);
+                        let elapsed = began.elapsed().as_secs_f64() * 1000.0;
+                        decode_ms += elapsed;
+                        row["decodeMs"] = json!(elapsed);
+                        match response {
+                            Err(error) => {
+                                row["status"] = json!("decodeError");
+                                row["error"] = json!(error.to_string());
+                            }
+                            Ok(None) => {
+                                row["status"] = json!("missing");
+                            }
+                            Ok(Some(response)) => {
+                                used[index] = true;
+                                let bytes = response
+                                    .allocated_bytes()
+                                    .ok_or_else(|| Error::Capacity("decoded response byte count overflow".into()))?;
+                                decoded_peak = decoded_peak.max(bytes);
+                                row["decodedBytes"] = json!(bytes);
+                                match response {
+                                    Response::Unsupported { reason } => {
+                                        row["status"] = json!("unsupported");
+                                        row["error"] = json!(reason);
+                                    }
+                                    Response::Success { curve } => {
+                                        let began = Instant::now();
+                                        let score = score_lookup(master, input, &skills, &performers, &curve);
+                                        let elapsed = began.elapsed().as_secs_f64() * 1000.0;
+                                        score_ms += elapsed;
+                                        row["scoreMs"] = json!(elapsed);
+                                        match score {
+                                            Ok(score) => {
+                                                row["status"] = json!("success");
+                                                row["scoreAtLookup"] = json!(score);
+                                                sum += i64::from(score);
+                                                success += 1;
+                                                orders_scored += 1;
+                                            }
+                                            Err(error) => {
+                                                row["status"] = json!(error_status(&error));
+                                                row["error"] = json!(error.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        row["status"] = json!("missing");
+                    }
+                }
+            }
+            orders.push(row);
+        }
+        let all = success == 120;
+        complete &= all;
+        results.push(json!({"name":deck.name,"members":deck.members,"snaps":deck.snaps,
+            "status":if all {"success"} else {"partial"},"orders":orders,"ordersScored":success,
+            "uniform120ProxySum":all.then_some(sum),"uniform120ProxyMean":all.then_some(sum as f64 / 120.0),
+            "elapsedMs":began.elapsed().as_secs_f64()*1000.0}));
+    }
+    Ok(json!({"format":"ournotes-deck.luck-response-prediction/1","status":if complete {"success"} else {"partial"},
+        "isScorePrediction":true,"nativeExpectationProven":false,"rankingProven":false,
+        "scope":"Archive identity validates isolated real-skill response data. Native weighted score replay is a predictor; full-deck probability equivalence and expected score are not certified.",
+        "context":expected,"sharedFingerprint":shared,"quantization":archive.quantization(),"decks":results,
+        "ordersScored":orders_scored,"contextMs":context_ms,"decodeMs":decode_ms,"scoreMs":score_ms,
+        "decodeCalls":decode_calls,"uniqueKeysDecoded":used.iter().filter(|&&value|value).count(),
+        "decodedCacheEntries":0,"decodedCacheBytes":0,"decodedPeakBytes":decoded_peak,
+        "archiveIndexBytes":archive.index_bytes(),"uniqueKeyTrackerBytes":used.capacity()*std::mem::size_of::<bool>(),
+        "memoryScope":"Decoded response ownership only; encoded bytes, archive index, native model and weight replay storage are separate.",
         "elapsedMs":started.elapsed().as_secs_f64()*1000.0}))
 }
 
@@ -593,5 +768,40 @@ mod tests {
         assert_eq!(spec.mc_runs, 0);
         assert_eq!(spec.score_samples, 0);
         assert!(spec.validation_decks.is_empty());
+    }
+
+    #[test]
+    fn response_context_binds_every_stored_source_and_shared_input() {
+        let entries =
+            BTreeMap::from([("first-key".into(), "source-a".into()), ("second-key".into(), "source-b".into())]);
+        let expected = response_context("chart-and-master", entries.clone());
+        let reversed = entries.iter().rev().map(|(key, value)| (key.clone(), value.clone())).collect();
+        assert_eq!(expected, response_context("chart-and-master", reversed));
+        assert_ne!(expected, response_context("changed-chart", entries.clone()));
+        let mut changed = entries.clone();
+        changed.insert("second-key".into(), "changed-source".into());
+        assert_ne!(expected, response_context("chart-and-master", changed));
+        let mut missing = entries;
+        missing.remove("second-key");
+        assert_ne!(expected, response_context("chart-and-master", missing));
+    }
+
+    #[test]
+    fn response_lookup_weights_keep_joint_terms_and_refuse_unobserved_shapes() {
+        let mut curve = ResponseCurve {
+            steps: vec![ResponseStep {
+                time_ms: 17,
+                buckets: [[0.125, 0.125], [0.25, 0.25], [0.375, 0.375], [0.25, 0.25]],
+            }],
+            probe_transitions: vec![],
+            probes: vec![true, true],
+            range_moments: vec![],
+            peak_states: 1,
+            transitions: 1,
+        };
+        assert_eq!(lookup_weights(&curve, 2).unwrap(), vec![(17, vec![0.625, 0.5, 0.25, 0.5, 0.25])]);
+        assert!(lookup_weights(&curve, 1).is_err());
+        curve.probes[1] = false;
+        assert!(lookup_weights(&curve, 2).is_err());
     }
 }
