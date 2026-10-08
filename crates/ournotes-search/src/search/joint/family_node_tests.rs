@@ -623,6 +623,7 @@ fn family_node_masks_and_real_depth_four_suffix_bound_every_native_descendant() 
                 physical,
                 start,
                 &crate::search::uniform::MEAN_ORDERS,
+                None,
                 &mut curves,
                 &mut || false,
             );
@@ -651,6 +652,7 @@ fn family_node_masks_and_real_depth_four_suffix_bound_every_native_descendant() 
                     &stale,
                     start,
                     &crate::search::uniform::MEAN_ORDERS,
+                    None,
                     &mut curves,
                     &mut || false
                 ),
@@ -764,6 +766,7 @@ fn family_node_disabled_cache_capacity_profile_budget_and_cancellation_keep_real
                 &physical,
                 0,
                 &crate::search::uniform::MEAN_ORDERS,
+                None,
                 &mut curves,
                 &mut || false
             ),
@@ -781,6 +784,7 @@ fn family_node_disabled_cache_capacity_profile_budget_and_cancellation_keep_real
             &physical,
             0,
             &crate::search::uniform::MEAN_ORDERS,
+            None,
             &mut curves,
             &mut || true
         ),
@@ -795,6 +799,7 @@ fn family_node_disabled_cache_capacity_profile_budget_and_cancellation_keep_real
             &physical,
             0,
             &crate::search::uniform::MEAN_ORDERS,
+            None,
             &mut curves,
             &mut || {
                 polls.set(polls.get() + 1);
@@ -811,6 +816,7 @@ fn family_node_disabled_cache_capacity_profile_budget_and_cancellation_keep_real
         &physical,
         0,
         &crate::search::uniform::MEAN_ORDERS,
+        None,
         &mut curves,
         &mut || false,
     );
@@ -826,6 +832,7 @@ fn family_node_disabled_cache_capacity_profile_budget_and_cancellation_keep_real
             &physical,
             0,
             &crate::search::uniform::MEAN_ORDERS,
+            None,
             &mut cached_curves,
             &mut || false
         ),
@@ -840,6 +847,7 @@ fn family_node_disabled_cache_capacity_profile_budget_and_cancellation_keep_real
             &physical,
             0,
             &[([0, 1, 2, 3, 4], 1)],
+            None,
             &mut cached_curves,
             &mut || false
         ),
@@ -860,6 +868,7 @@ fn family_node_disabled_cache_capacity_profile_budget_and_cancellation_keep_real
                 &physical,
                 0,
                 &crate::search::uniform::MEAN_ORDERS,
+                None,
                 &mut cached_curves,
                 &mut || false
             ),
@@ -922,6 +931,7 @@ fn one_refused_member_family_prevents_a_partial_depth_four_cap() {
                 &physical,
                 0,
                 &crate::search::uniform::MEAN_ORDERS,
+                None,
                 &mut curves,
                 &mut || false
             ),

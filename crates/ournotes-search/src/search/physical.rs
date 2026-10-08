@@ -1727,8 +1727,21 @@ fn joint_rec(
             let mut family = std::mem::take(&mut e.family);
             let mut curves = std::mem::take(&mut e.certified.as_mut().expect("certified family node").luck_curves);
             let pool = e.pool;
-            let result =
-                family.upper_at_depth_four(pool, domain, bounds, p, start, orders, &mut curves, &mut || e.expired());
+            let cutoff = family_nodes::FamilyPruneCutoff {
+                score: threshold,
+                power_allows_equal: exact_ties && power < i64::from(cutoff_power),
+            };
+            let result = family.upper_at_depth_four(
+                pool,
+                domain,
+                bounds,
+                p,
+                start,
+                orders,
+                Some(cutoff),
+                &mut curves,
+                &mut || e.expired(),
+            );
             e.tel.caches.luck_curves.record(curves.stats());
             e.certified.as_mut().expect("certified family node").luck_curves = curves;
             e.family = family;

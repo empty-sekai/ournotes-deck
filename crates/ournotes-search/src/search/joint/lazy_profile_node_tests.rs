@@ -99,6 +99,7 @@ fn lazy_profile_node_unknown_profiles_refuse_the_whole_mask_and_completed_subset
         &physical,
         0,
         &crate::search::uniform::MEAN_ORDERS,
+        None,
         &mut curves,
         &mut || false,
     );
@@ -127,6 +128,7 @@ fn lazy_profile_node_unknown_profiles_refuse_the_whole_mask_and_completed_subset
             &physical,
             0,
             &crate::search::uniform::MEAN_ORDERS,
+            None,
             &mut curves,
             &mut || false
         ),
@@ -353,6 +355,7 @@ fn budgeted_profile_nodes_cover_every_legal_suffix_with_only_required_native_pro
         &physical,
         0,
         &crate::search::uniform::MEAN_ORDERS,
+        None,
         &mut curves,
         &mut || false,
     );
@@ -375,6 +378,7 @@ fn budgeted_profile_nodes_cover_every_legal_suffix_with_only_required_native_pro
             &physical,
             0,
             &crate::search::uniform::MEAN_ORDERS,
+            None,
             &mut curves,
             &mut || false,
         ),
@@ -394,6 +398,7 @@ fn budgeted_profile_nodes_cover_every_legal_suffix_with_only_required_native_pro
             &physical,
             0,
             &crate::search::uniform::MEAN_ORDERS,
+            None,
             &mut curves,
             &mut || false,
         ),

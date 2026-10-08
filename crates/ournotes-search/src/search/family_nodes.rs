@@ -28,6 +28,20 @@ pub(crate) enum FamilyNodeOutcome {
     Stopped,
 }
 
+/// The caller's already proved cutoff for this whole physical prefix. A family cap that cannot meet it
+/// makes the optional maximum unable to prune, even if every remaining family were prepared successfully.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FamilyPruneCutoff {
+    pub(crate) score: i128,
+    pub(crate) power_allows_equal: bool,
+}
+
+impl FamilyPruneCutoff {
+    fn excludes(self, upper: i128) -> bool {
+        upper < self.score || (upper == self.score && self.power_allows_equal)
+    }
+}
+
 #[cfg(test)]
 #[path = "family_cache_tests.rs"]
 mod cache_tests;
@@ -76,6 +90,9 @@ pub(crate) struct FamilyNodeStats {
     pub(crate) context_ms: f64,
     pub(crate) checks: u64,
     pub(crate) bounded_nodes: u64,
+    /// A completed subfamily cap made this optional maximum unable to prune at the current cutoff.
+    /// The remaining subfamilies were not prepared and no partial whole-node upper was published.
+    pub(crate) non_pruning_exits: u64,
     /// Singleton physical bindings checked against already retained complete profile coefficients.
     pub(crate) leaf_checks: u64,
     pub(crate) bounded_leaves: u64,
@@ -684,6 +701,7 @@ impl<'a> FamilyNodeCache<'a> {
         physical: &PhysicalDeck,
         start: usize,
         orders: &[([usize; 5], u128)],
+        cutoff: Option<FamilyPruneCutoff>,
         curves: &mut LuckDpCache,
         cancelled: &mut impl FnMut() -> bool,
     ) -> FamilyNodeOutcome {
@@ -775,6 +793,17 @@ impl<'a> FamilyNodeCache<'a> {
             }
             let Some(cap) = cap else { return FamilyNodeOutcome::Unavailable };
             self.stats.record_bound(&cap);
+            if cutoff.is_some_and(|cutoff| !cutoff.excludes(cap.upper)) {
+                // max(caps) cannot satisfy this caller's pruning inequality once any completed cap fails it.
+                // This is a decision to stop optional work, not a lower bound on the actual descendant score.
+                // In particular the partial maximum must never escape as a whole-node exclusion certificate.
+                if cancelled() {
+                    self.stats.stopped += 1;
+                    return FamilyNodeOutcome::Stopped;
+                }
+                self.stats.non_pruning_exits += 1;
+                return FamilyNodeOutcome::Unavailable;
+            }
             upper = upper.max(cap.upper);
         }
         if cancelled() {

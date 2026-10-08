@@ -92,3 +92,180 @@ fn family_cache_keeps_hot_families_and_reused_programs_under_cold_pressure() {
     cache.remember(members, Some(rebuilt));
     assert_eq!(cache.cached_leaf_upper(&pool, &domain, &bounds, &physical, orders, &mut || false), expected);
 }
+
+#[test]
+fn family_node_cutoff_keeps_partial_covers_unavailable_and_preserves_strict_and_power_ties() {
+    let (master, owned, request) = reward_family_fixture();
+    let pool = Pool::new(&master, &owned).unwrap();
+    let domain = CandidateDomain::build(&pool, &request.constraints).unwrap();
+    let bounds =
+        JointBounds::compile(&pool, &request, &domain, &Metric::Score, None, &SimulationInput::default()).unwrap();
+    let physical = PhysicalDeck { members: [1, 2, 0, 3, 4], snaps: [None; 5] };
+    let input = expectation::context(&pool, &physical, &request.objective).unwrap();
+    let skills = luck_skills(&master).unwrap();
+    let context = LuckFamilyContext::new(
+        &master,
+        &skills,
+        &input.notes,
+        &input.events,
+        input.params,
+        input.gekisou.as_ref().unwrap(),
+        &input.play,
+        &input.delta_times,
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+    let orders = &crate::search::uniform::MEAN_ORDERS;
+    let mut curves = LuckDpCache::new(8 << 20);
+    let mut reference = FamilyNodeCache::new(Some(&context), 16, 8 << 20, 6);
+    let complete =
+        reference.upper_at_depth_four(&pool, &domain, &bounds, &physical, 0, orders, None, &mut curves, &mut || false);
+    let FamilyNodeOutcome::Upper(complete_upper) = complete else { panic!("{complete:?}") };
+    assert!(complete_upper > 0);
+    assert_eq!(reference.stats.admitted_families, 2, "both legal last members belong to the node");
+
+    let mut partial = FamilyNodeCache::new(Some(&context), 16, 8 << 20, 6);
+    assert_eq!(
+        partial.upper_at_depth_four(
+            &pool,
+            &domain,
+            &bounds,
+            &physical,
+            0,
+            orders,
+            Some(FamilyPruneCutoff { score: 0, power_allows_equal: false }),
+            &mut curves,
+            &mut || false,
+        ),
+        FamilyNodeOutcome::Unavailable,
+        "an abandoned cover must not expose its partial maximum as a whole-node upper"
+    );
+    assert_eq!(partial.stats.admitted_families, 1, "the second complete native admission is unnecessary here");
+    assert_eq!(partial.stats.non_pruning_exits, 1);
+    assert_eq!(partial.stats.bounded_nodes, 0);
+    assert_eq!(partial.stats.order_laws, partial.stats.profiles * 120);
+    assert!(matches!(
+        partial.cached_leaf_upper(&pool, &domain, &bounds, &physical, orders, &mut || false),
+        FamilyNodeOutcome::Upper(_)
+    ));
+    assert_eq!(
+        partial.upper_at_depth_four(
+            &pool,
+            &domain,
+            &bounds,
+            &physical,
+            0,
+            orders,
+            Some(FamilyPruneCutoff { score: 0, power_allows_equal: true }),
+            &mut curves,
+            &mut || false,
+        ),
+        FamilyNodeOutcome::Unavailable,
+        "an upper strictly above the score cutoff remains unusable even with a power certificate"
+    );
+    assert_eq!(partial.stats.admitted_families, 1);
+    let mut unprepared = physical;
+    unprepared.members[SLOTS[4]] = 5;
+    assert_eq!(
+        partial.cached_leaf_upper(&pool, &domain, &bounds, &unprepared, orders, &mut || false),
+        FamilyNodeOutcome::Unavailable,
+        "the omitted member family has no implicit cached leaf certificate"
+    );
+    // A later useful query completes the missing family. Previously completed labels and work remain valid.
+    assert_eq!(
+        partial.upper_at_depth_four(
+            &pool,
+            &domain,
+            &bounds,
+            &physical,
+            0,
+            orders,
+            Some(FamilyPruneCutoff { score: complete_upper + 1, power_allows_equal: false }),
+            &mut curves,
+            &mut || false,
+        ),
+        complete
+    );
+    assert_eq!(partial.stats.admitted_families, 2);
+    assert_eq!(partial.stats.profiles, reference.stats.profiles);
+    assert_eq!(partial.stats.order_laws, reference.stats.order_laws);
+    assert_eq!(partial.stats.bounded_nodes, 1);
+    let builds = partial.stats.profile_native_builds;
+    let reservations = partial.stats.reserved_profile_frame_work;
+
+    for (power_allows_equal, expected) in [(false, FamilyNodeOutcome::Unavailable), (true, complete)] {
+        assert_eq!(
+            partial.upper_at_depth_four(
+                &pool,
+                &domain,
+                &bounds,
+                &physical,
+                0,
+                orders,
+                Some(FamilyPruneCutoff { score: complete_upper, power_allows_equal }),
+                &mut curves,
+                &mut || false,
+            ),
+            expected,
+            "only the caller's existing strict power certificate permits an equal-score prune"
+        );
+    }
+    assert_eq!(partial.stats.profile_native_builds, builds);
+    assert_eq!(partial.stats.reserved_profile_frame_work, reservations);
+    assert!(partial.stats.peak_entries <= 16 && partial.stats.peak_bytes <= 8 << 20);
+    let mut polls = 0;
+    assert_eq!(
+        partial.upper_at_depth_four(
+            &pool,
+            &domain,
+            &bounds,
+            &physical,
+            0,
+            orders,
+            Some(FamilyPruneCutoff { score: 0, power_allows_equal: false }),
+            &mut curves,
+            &mut || {
+                polls += 1;
+                false
+            },
+        ),
+        FamilyNodeOutcome::Unavailable
+    );
+    let exits = partial.stats.non_pruning_exits;
+    let mut cancelled_polls = 0;
+    assert_eq!(
+        partial.upper_at_depth_four(
+            &pool,
+            &domain,
+            &bounds,
+            &physical,
+            0,
+            orders,
+            Some(FamilyPruneCutoff { score: 0, power_allows_equal: false }),
+            &mut curves,
+            &mut || {
+                cancelled_polls += 1;
+                cancelled_polls == polls
+            },
+        ),
+        FamilyNodeOutcome::Stopped,
+        "cancellation after complete-family work has priority over the optional-work exit"
+    );
+    assert_eq!(partial.stats.non_pruning_exits, exits);
+    assert_eq!(
+        partial.upper_at_depth_four(
+            &pool,
+            &domain,
+            &bounds,
+            &physical,
+            0,
+            orders,
+            Some(FamilyPruneCutoff { score: i128::MIN, power_allows_equal: false }),
+            &mut curves,
+            &mut || true,
+        ),
+        FamilyNodeOutcome::Stopped,
+        "cancellation cannot be converted into an optional-cap refusal"
+    );
+}
