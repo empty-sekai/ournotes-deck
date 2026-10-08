@@ -80,17 +80,24 @@ impl TerminalRecipe {
     pub(super) fn allocated_bytes(&self) -> usize {
         // The codec retains every original event and its ordinal. Its compact event stream and full payloads
         // are charged independently of the one decode workspace reserved by the shared program cache.
-        size_of::<Self>() + self.trace.allocated_bytes() - size_of::<StoredTerminalTrace>()
-            + self.ingredients.allocated_bytes()
-            - size_of::<terminal_prefix::TerminalIngredients>()
-            + self.base.cache_allocation_bytes()
-            - size_of::<LuckTerminalRush>()
+        Self::non_trace_bytes(&self.ingredients, &self.base).saturating_add(self.trace.allocated_bytes())
+    }
+
+    fn non_trace_bytes(ingredients: &terminal_prefix::TerminalIngredients, base: &LuckTerminalRush) -> usize {
+        (size_of::<Self>() - size_of::<StoredTerminalTrace>())
+            .saturating_add(ingredients.allocated_bytes() - size_of::<terminal_prefix::TerminalIngredients>())
+            .saturating_add(base.cache_allocation_bytes() - size_of::<LuckTerminalRush>())
     }
 
     /// Only one recipe is decoded at a time through the cache's exclusive preparation borrow. Reserve the
     /// largest resident recipe's full native trace once, in addition to every retained compact allocation.
     pub(super) fn decode_workspace_bytes(&self) -> usize {
         self.trace.decode_workspace_bytes()
+    }
+
+    #[cfg(test)]
+    pub(super) fn original_allocated_bytes(&self) -> usize {
+        Self::non_trace_bytes(&self.ingredients, &self.base) + self.trace.original_allocated_bytes()
     }
 
     fn evaluate(
@@ -814,9 +821,17 @@ fn prepare_policy(
             // the complete observation history. Drop that scratch instead of silently omitting its charge.
             let mut trace = trace;
             trace.combo = ComboObserver::default();
-            match StoredTerminalTrace::encode(trace, capacity, &mut *cancelled) {
+            let base = terminal.recipe_base();
+            let trace_room = curves
+                .programs
+                .terminal_recipe_room(&identity, &terminal)
+                .saturating_sub(TerminalRecipe::non_trace_bytes(&ingredients, &base));
+            // Choose a format within the complete entry's remaining allowance, including the decode
+            // workspace. Otherwise a packed trace can fit by itself while its full entry does not,
+            // needlessly discarding an original-format recipe that would have remained reusable.
+            match StoredTerminalTrace::encode(trace, trace_room, &mut *cancelled) {
                 Ok(trace) => {
-                    let recipe = TerminalRecipe { trace, ingredients, linked, base: terminal.recipe_base() };
+                    let recipe = TerminalRecipe { trace, ingredients, linked, base };
                     curves.programs.insert_terminal_recipe(identity, native_power, &terminal, recipe, cancelled)
                 }
                 Err(trace_drift::Decline::Cancelled) => return Ok(None),

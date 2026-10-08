@@ -1,9 +1,10 @@
 //! Uniform expected-score envelopes of an admitted fixed-member controller family.
 //!
 //! These coefficients are exclusions, never candidate values. The native family owns the complete writer-profile
-//! and original-order cover and the common terminal-query mapping. Ordinary history, rank and conversion
-//! allowances retain their original complete-domain envelopes. Separately admitted integer probe-work evidence
-//! may tighten only the unweighted floating-point drift allowance for the actual five physical bindings.
+//! and original-order cover and the common terminal-query mapping. Ordinary history, Rush magnitude and
+//! conversion allowances retain their original complete-domain envelopes. A separate historical-query
+//! capability may weight only the direct probe's ideal rank contribution. Integer probe-work evidence may
+//! tighten the unweighted floating-point drift allowance for the actual five physical bindings.
 
 use super::*;
 use ournotes_sim::live::{
@@ -89,6 +90,11 @@ pub(crate) struct FamilyProfileReward {
     base_a0: f64,
     /// Maximum over all 120 original labels. Missing evidence in even one label keeps the old offset.
     pub(crate) max_probe_runs: Option<u64>,
+    /// Original labels with a separate historical-query probe certificate; unknown labels kept the old bound.
+    pub(crate) rank_probe_history_ready_orders: usize,
+    /// Diagnostic upper-coefficient reduction for a unit probe covering every note, averaged over all 120 labels.
+    /// This is neither an actual binding's saved score nor native work avoided.
+    pub(crate) mean_unit_probe_history_reduction: f64,
 }
 
 /// Reward arithmetic for one immutable complete probability result, with every physical choice at all five
@@ -99,6 +105,8 @@ struct CurveRewards {
     a0: f64,
     base_a0: f64,
     probe_runs: Option<u64>,
+    rank_probe_history_ready: bool,
+    unit_probe_history_reduction: f64,
     gains: [Vec<[f64; 5]>; 5],
 }
 
@@ -170,6 +178,8 @@ struct ProfileSums {
     a0: F64Interval,
     base_a0: F64Interval,
     max_probe_runs: Option<u64>,
+    rank_probe_history_ready_orders: usize,
+    unit_probe_history_reduction: F64Interval,
     gains: [Vec<F64Interval>; 5],
 }
 
@@ -180,7 +190,15 @@ impl ProfileSums {
             row.try_reserve_exact(count).ok()?;
             row.resize(count, F64Interval::ZERO);
         }
-        Some(Self { seen: [0; 2], a0: F64Interval::ZERO, base_a0: F64Interval::ZERO, max_probe_runs: None, gains })
+        Some(Self {
+            seen: [0; 2],
+            a0: F64Interval::ZERO,
+            base_a0: F64Interval::ZERO,
+            max_probe_runs: None,
+            rank_probe_history_ready_orders: 0,
+            unit_probe_history_reduction: F64Interval::ZERO,
+            gains,
+        })
     }
 
     fn record(&mut self, positions: &[usize; 5]) -> Option<()> {
@@ -208,6 +226,9 @@ impl ProfileSums {
         self.a0 = self.a0.add(point(reward.a0)?);
         self.base_a0 = self.base_a0.add(point(reward.base_a0)?);
         self.max_probe_runs = self.max_probe_runs.zip(reward.probe_runs).map(|(old, runs)| old.max(runs));
+        self.rank_probe_history_ready_orders += usize::from(reward.rank_probe_history_ready);
+        self.unit_probe_history_reduction =
+            self.unit_probe_history_reduction.add(point(reward.unit_probe_history_reduction)?);
         for (slot, sums) in self.gains.iter_mut().enumerate() {
             if sums.len() != reward.gains[slot].len() {
                 return None;
@@ -235,6 +256,8 @@ impl ProfileSums {
             mean,
             base_a0: uniform_upper(self.base_a0)?,
             max_probe_runs: self.max_probe_runs,
+            rank_probe_history_ready_orders: self.rank_probe_history_ready_orders,
+            mean_unit_probe_history_reduction: uniform_upper(self.unit_probe_history_reduction)?,
         })
     }
 }
@@ -292,6 +315,25 @@ fn pair_reward(
         }
     }
     finite_nonnegative(gain.upper().max(0.0))
+}
+
+/// Both complete arithmetic envelopes remain available. The explicit minimum preserves the original cap
+/// even if outward prefix subtraction happens to be a few ulps wider after a negligible probability change.
+fn pair_reward_with_history(
+    row: &Pair,
+    normal: &[Vec<F64Interval>; 5],
+    probe: &[F64Interval],
+    original_probe: Option<&[F64Interval]>,
+    probe_enabled: bool,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Option<f64> {
+    let gain = pair_reward(row, normal, probe, probe_enabled, cancelled)?;
+    if probe_enabled && row.opaque.is_none() && row.terms.iter().any(|term| term.probe) {
+        if let Some(original) = original_probe {
+            return Some(gain.min(pair_reward(row, normal, original, true, cancelled)?));
+        }
+    }
+    Some(gain)
 }
 
 impl ProfileRewardTemplate {
@@ -637,6 +679,8 @@ impl ProfileRewardTemplate {
         let mut normal: [Vec<F64Interval>; 5] = std::array::from_fn(|_| Vec::new());
         let mut probe = reserve(n + 1)?;
         probe.resize(n + 1, F64Interval::ZERO);
+        let mut original_probe = reserve(n + 1)?;
+        original_probe.resize(n + 1, F64Interval::ZERO);
         for prefix in &mut normal {
             prefix.try_reserve_exact(n + 1).ok()?;
             prefix.resize(n + 1, F64Interval::ZERO);
@@ -656,32 +700,67 @@ impl ProfileRewardTemplate {
                 row[0] = F64Interval::ZERO;
             }
             probe[0] = F64Interval::ZERO;
+            original_probe[0] = F64Interval::ZERO;
+            let probe_certificates = probe_profile.and_then(|profile| profile.order_probe_certificates(law_index));
+            let probe_runs = probe_certificates.map(|(runs, _)| runs);
+            let rank_probe_history_ready = probe_enabled && probe_certificates.is_some_and(|(_, ready)| ready);
             for e in 0..n {
                 if e.is_multiple_of(64) && cancelled() {
                     return None;
                 }
                 let mut weighted = F64Interval::ZERO;
                 let mut weighted_probe = F64Interval::ZERO;
+                let mut probe_mass = F64Interval::ZERO;
                 for (bucket, mass) in law.joint_at(self.times[e]).into_iter().enumerate() {
                     let term = mass.interval().multiply(point(self.terminal[e][usize::from(bucket & 2 != 0)])?);
                     weighted = weighted.add(term);
                     if bucket & 1 != 0 {
                         weighted_probe = weighted_probe.add(term);
+                        probe_mass = probe_mass.add(mass.interval());
                     }
                 }
                 let k = point(self.history[e])?.add(weighted).multiply(point(self.z[e])?);
-                let kp = point(self.history[e])?.add(weighted_probe).multiply(point(self.z[e])?);
+                let history = point(self.history[e])?;
+                // Only a historical QUERY/FILING capability permits this probability factor. The Rush
+                // multiplier inside `history` stays unconditional; ordinary history and the complete
+                // native error offset remain independent of this terminal/direct-probe probability.
+                let probe_history = if rank_probe_history_ready {
+                    history.multiply(probe_mass).intersect(F64Interval::new(0.0, self.history[e]).ok()?)?
+                } else {
+                    history
+                };
+                let kp = probe_history.add(weighted_probe).multiply(point(self.z[e])?);
+                let original_kp = history.add(weighted_probe).multiply(point(self.z[e])?);
                 for (j, prefix) in normal.iter_mut().enumerate() {
                     prefix[e + 1] = prefix[e].add(k.multiply(point(self.jp[e][j])?));
                 }
                 probe[e + 1] = probe[e].add(kp.multiply(point(self.jp[e][0])?));
+                original_probe[e + 1] = original_probe[e].add(original_kp.multiply(point(self.jp[e][0])?));
             }
             let base_a0 = finite_nonnegative(normal[0][n].upper())?;
             let a0 = finite_nonnegative(normal[0][n].add(point(self.offset)?).upper())?;
-            let probe_runs = probe_profile.and_then(|profile| profile.order_probe_run_bound(law_index));
+            let unit_probe_history_reduction = if rank_probe_history_ready {
+                // Compare the two actually used upper endpoints, not overlapping interval widths: an
+                // unchanged envelope must not register a positive diagnostic discount from roundoff alone.
+                finite_nonnegative((original_probe[n].upper() - probe[n].upper()).max(0.0))?
+            } else {
+                0.0
+            };
+            let original = rank_probe_history_ready.then_some(original_probe.as_slice());
             if rewards.can_store(counts) {
-                let prepared =
-                    self.curve_rewards(members, a0, base_a0, probe_runs, &normal, &probe, probe_enabled, cancelled);
+                let prepared = self.curve_rewards(
+                    members,
+                    a0,
+                    base_a0,
+                    probe_runs,
+                    rank_probe_history_ready,
+                    unit_probe_history_reduction,
+                    &normal,
+                    &probe,
+                    original,
+                    probe_enabled,
+                    cancelled,
+                );
                 if cancelled() {
                     return None;
                 }
@@ -696,12 +775,15 @@ impl ProfileRewardTemplate {
             sums.a0 = sums.a0.add(point(a0)?);
             sums.base_a0 = sums.base_a0.add(point(base_a0)?);
             sums.max_probe_runs = sums.max_probe_runs.zip(probe_runs).map(|(old, runs)| old.max(runs));
+            sums.rank_probe_history_ready_orders += usize::from(rank_probe_history_ready);
+            sums.unit_probe_history_reduction =
+                sums.unit_probe_history_reduction.add(point(unit_probe_history_reduction)?);
             for slot in 0..5 {
                 let member = members[slot];
                 let position = law.positions[slot];
                 for (choice, &class) in self.class_of[member].iter().enumerate() {
                     let row = self.pairs.get(member)?.get(class)?.get(position)?;
-                    let gain = pair_reward(row, &normal, &probe, probe_enabled, cancelled)?;
+                    let gain = pair_reward_with_history(row, &normal, &probe, original, probe_enabled, cancelled)?;
                     sums.gains[slot][choice] = sums.gains[slot][choice].add(point(gain)?);
                 }
             }
@@ -730,8 +812,11 @@ impl ProfileRewardTemplate {
         a0: f64,
         base_a0: f64,
         probe_runs: Option<u64>,
+        rank_probe_history_ready: bool,
+        unit_probe_history_reduction: f64,
         normal: &[Vec<F64Interval>; 5],
         probe: &[F64Interval],
+        original_probe: Option<&[F64Interval]>,
         probe_enabled: bool,
         cancelled: &mut impl FnMut() -> bool,
     ) -> Option<CurveRewards> {
@@ -746,12 +831,12 @@ impl ProfileRewardTemplate {
                 let rows = self.pairs.get(member)?.get(class)?;
                 let mut values = [0.0; 5];
                 for (value, row) in values.iter_mut().zip(rows) {
-                    *value = pair_reward(row, normal, probe, probe_enabled, cancelled)?;
+                    *value = pair_reward_with_history(row, normal, probe, original_probe, probe_enabled, cancelled)?;
                 }
                 gains[slot].push(values);
             }
         }
-        Some(CurveRewards { a0, base_a0, probe_runs, gains })
+        Some(CurveRewards { a0, base_a0, probe_runs, rank_probe_history_ready, unit_probe_history_reduction, gains })
     }
 }
 
@@ -845,7 +930,14 @@ mod profile_mean_tests {
         assert!(cache.can_store([0; 5]));
         cache.insert(
             first,
-            CurveRewards { a0: 123.0, base_a0: 100.0, probe_runs: None, gains: std::array::from_fn(|_| Vec::new()) },
+            CurveRewards {
+                a0: 123.0,
+                base_a0: 100.0,
+                probe_runs: None,
+                rank_probe_history_ready: false,
+                unit_probe_history_reduction: 0.0,
+                gains: std::array::from_fn(|_| Vec::new()),
+            },
         );
         assert_eq!(cache.get(shared).unwrap().a0, 123.0);
         assert!(cache.get(different).is_none());

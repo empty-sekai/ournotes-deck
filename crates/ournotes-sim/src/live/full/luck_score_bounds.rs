@@ -32,6 +32,17 @@ mod replay;
 pub use profile::{LuckScoreProfile, take_luck_score_profile};
 pub(super) use program::ProgramCache;
 
+/// Geometry-only adapter for the family recorder. This proves adjacent stored-prefix cancellation,
+/// including complete fixed-rank identity/coefficient snapshots; it supplies no filing readiness or law.
+/// Cancellation is distinct from a structural refusal of this optional tighter envelope.
+pub(super) fn rank_history_structure_ready(trace: &BoundsTrace, cancelled: &mut impl FnMut() -> bool) -> Option<bool> {
+    match rank_trace::compile(trace, cancelled) {
+        Ok(Some(_)) => Some(true),
+        Ok(None) => None,
+        Err(_) => Some(false),
+    }
+}
+
 #[cfg(feature = "search-diagnostics")]
 pub(super) fn record_trace_only_query(first: bool, active: bool) {
     profile::record_trace_only_query(first, active);

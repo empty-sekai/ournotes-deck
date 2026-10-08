@@ -41,6 +41,8 @@ mod lambda;
 mod point_route;
 mod prefix_character;
 mod prefix_resource;
+#[cfg(test)]
+mod raw_pass_tests;
 mod relax_tables;
 mod resource;
 mod split_tables;
@@ -1814,7 +1816,10 @@ impl JointBounds {
     /// at their lowered caps and the others at their caps so far; true when it stopped so, or when `below` holds
     /// for the sum of all lowered caps. A cap only goes down, so the sum of the lowered caps is at most any such
     /// partial sum and the answer is the one of the complete sum when `below` holds for every smaller sum too.
-    /// `computed` counts the orders whose raw and fine caps it computed.
+    /// Best-order selection instead tests the maximum of all caps, scaled by the unchanged order denominator.
+    /// Every available constant-cost raw cap is applied before any per-note fine cap. Each unfinished order
+    /// retains its own bound throughout both passes; no order or probability mass is removed.
+    /// `computed` counts the orders whose fine caps it computed.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn tighten_order_caps_until(
         &self,
@@ -1838,6 +1843,12 @@ impl JointBounds {
                 if let Some(raw) = self.raw_upper(domain, p, power, positions) {
                     *cap = (*cap).min(raw);
                 }
+            }
+            if below(maximum(caps)) {
+                return true;
+            }
+            for (index, positions) in orders.iter().enumerate() {
+                let cap = &mut caps[index];
                 *cap = (*cap).min(self.fine_upper(domain, p, power, positions, scratch).expect("compiled fine bound"));
                 *computed += 1;
                 // Every unfinished order retains its previous cap. A small sum or a completed promising
@@ -1857,11 +1868,18 @@ impl JointBounds {
             return below(sum);
         }
         for (positions, cap) in orders.iter().zip(caps.iter_mut()) {
-            let mut lowered = *cap;
             if let Some(raw) = self.raw_upper(domain, p, power, positions) {
-                lowered = lowered.min(raw);
+                let lowered = (*cap).min(raw);
+                sum -= *cap - lowered;
+                *cap = lowered;
             }
-            lowered = lowered.min(self.fine_upper(domain, p, power, positions, scratch).expect("compiled fine bound"));
+        }
+        if below(sum) {
+            return true;
+        }
+        for (positions, cap) in orders.iter().zip(caps.iter_mut()) {
+            let lowered =
+                (*cap).min(self.fine_upper(domain, p, power, positions, scratch).expect("compiled fine bound"));
             *computed += 1;
             sum -= *cap - lowered;
             *cap = lowered;

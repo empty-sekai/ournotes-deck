@@ -205,6 +205,22 @@ fn packed_terminal_trace_capacity_refusals_preserve_the_original_recipe_format()
 }
 
 #[test]
+fn packed_terminal_trace_format_boundary_charges_the_storage_enum_and_complete_workspace() {
+    let original = clock_trace();
+    let packed = StoredTerminalTrace::encode(clock_trace(), usize::MAX, || false).unwrap();
+    assert!(matches!(packed, StoredTerminalTrace::Packed(_)));
+    let total = packed.allocated_bytes() + packed.decode_workspace_bytes();
+    let fits = StoredTerminalTrace::encode(clock_trace(), total, || false).unwrap();
+    assert!(matches!(fits, StoredTerminalTrace::Packed(_)));
+    assert_eq!(fits.allocated_bytes() + fits.decode_workspace_bytes(), total);
+    same_trace(&original, &fits.decode(fits.decode_workspace_bytes(), || false).unwrap());
+    let raw = StoredTerminalTrace::encode(clock_trace(), total - 1, || false).unwrap();
+    assert!(matches!(raw, StoredTerminalTrace::Original(_)));
+    assert_eq!(raw.decode_workspace_bytes(), 0);
+    same_trace(&original, &raw.decode(0, || false).unwrap());
+}
+
+#[test]
 fn packed_terminal_trace_rejects_nondefault_recording_scratch_instead_of_silently_dropping_it() {
     for field in 0..8 {
         let mut original = complete_fields();

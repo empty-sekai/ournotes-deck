@@ -102,6 +102,14 @@ pub(crate) struct FamilyNodeStats {
     pub(crate) probe_run_profiles: u64,
     pub(crate) probe_run_unavailable: u64,
     pub(crate) maximum_probe_runs: u64,
+    /// Admitted original labels accumulated only when a complete profile reward is published. Labels may
+    /// repeat across physical member families, writer bindings or rebuilt profiles; coefficient hits add none.
+    pub(crate) rank_probe_history_ready_labels: u64,
+    /// Completed profile rewards with a positive mean reduction of the full-chart unit-probe upper coefficient.
+    /// This does not count actual binding prunes or score savings.
+    pub(crate) rank_probe_history_discounted_profiles: u64,
+    /// Maximum profile mean upper-coefficient reduction for a unit probe covering every note, not saved score.
+    pub(crate) maximum_mean_unit_probe_history_reduction: f64,
     /// Complete-mask binding checks, including repeated coefficient-table hits.
     pub(crate) binding_drift_checks: u64,
     pub(crate) binding_drift_tightened: u64,
@@ -581,6 +589,11 @@ impl<'a> FamilyNodeCache<'a> {
             } else {
                 self.stats.probe_run_unavailable += 1;
             }
+            self.stats.rank_probe_history_ready_labels += reward.rank_probe_history_ready_orders as u64;
+            self.stats.rank_probe_history_discounted_profiles +=
+                u64::from(reward.mean_unit_probe_history_reduction > 0.0);
+            self.stats.maximum_mean_unit_probe_history_reduction =
+                self.stats.maximum_mean_unit_probe_history_reduction.max(reward.mean_unit_probe_history_reduction);
             state.table.profiles[profile] = Some(reward);
         }
         if cancelled() {

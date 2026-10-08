@@ -170,7 +170,15 @@ impl Engine<'_, '_> {
                 let mut upper_work = telemetry::LotteryUpper::default();
                 let mut completed_orders = 0u64;
                 let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
-                let complete_terminal = matches!(self.metric, Metric::Score);
+                // This call certifies raw score mean/support/LIFE. Nonlinear objectives apply their
+                // existing order_payoff bounds below and still require the final mapped-payoff proof.
+                let complete_terminal = matches!(
+                    self.metric,
+                    Metric::Score
+                        | Metric::ScoreAtLeast { .. }
+                        | Metric::CappedScore { .. }
+                        | Metric::ScoreAndLifeAtLeast { .. }
+                );
                 let result = crate::search::certified_search::evaluate_luck_context_bounded_policy(
                     master,
                     &skills,

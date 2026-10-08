@@ -107,6 +107,10 @@ fn lazy_profile_node_unknown_profiles_refuse_the_whole_mask_and_completed_subset
     assert_eq!(cache.stats().prepared_families, 2);
     assert_eq!(cache.stats().profiles, 4);
     assert_eq!(cache.stats().order_laws, 4 * 120);
+    assert_eq!(cache.stats().rank_probe_history_ready_labels, 4 * 120);
+    assert_eq!(cache.stats().rank_probe_history_discounted_profiles, 4);
+    let history_reduction = cache.stats().maximum_mean_unit_probe_history_reduction;
+    assert!(history_reduction > 0.0);
     assert!(cache.stats().peak_entries <= 16 && cache.stats().peak_bytes <= 8 << 20);
     for oracle in oracles.iter().filter(|oracle| same_prefix(&physical, &oracle.physical)) {
         assert!(oracle.sum_of_order_means.at_most_integer(node_cap));
@@ -126,6 +130,13 @@ fn lazy_profile_node_unknown_profiles_refuse_the_whole_mask_and_completed_subset
     );
     assert_eq!(cache.stats().profiles, 4);
     assert!(cache.stats().profile_hits >= 4);
+    assert_eq!(cache.stats().rank_probe_history_ready_labels, 4 * 120, "cache hits do not recount completed labels");
+    assert_eq!(cache.stats().rank_probe_history_discounted_profiles, 4);
+    assert_eq!(cache.stats().maximum_mean_unit_probe_history_reduction, history_reduction);
+    let telemetry = serde_json::to_value(cache.stats()).unwrap();
+    assert_eq!(telemetry["rankProbeHistoryReadyLabels"], 4 * 120);
+    assert_eq!(telemetry["rankProbeHistoryDiscountedProfiles"], 4);
+    assert_eq!(telemetry["maximumMeanUnitProbeHistoryReduction"], history_reduction);
 }
 
 #[test]
@@ -155,6 +166,7 @@ fn profile_probe_runs_tighten_actual_bindings_while_covering_every_native_descen
     let mut curves = LuckDpCache::new(8 << 20);
     let oracles = native_candidates(&pool, &request, &domain);
     let mut tightened = 0;
+    let mut history_tightened = 0;
     let mut checked = 0;
     let mut by_profile = BTreeMap::<(usize, usize), std::collections::BTreeSet<u64>>::new();
     for last in [4, 5] {
@@ -169,6 +181,19 @@ fn profile_probe_runs_tighten_actual_bindings_while_covering_every_native_descen
             let profile = context.prepare_profile(&admitted, id, Some(&mut curves), || false).unwrap().unwrap();
             let reward = scope.bind_profile(members, &admitted, &profile, &mut || false).unwrap();
             assert!(reward.max_probe_runs.is_some());
+            assert_eq!(reward.rank_probe_history_ready_orders, 120);
+            assert!(reward.mean_unit_probe_history_reduction > 0.0, "nontrivial historical probability discount");
+            assert_eq!(
+                reward.a0.to_bits(),
+                old.profiles[id].a0.to_bits(),
+                "ordinary base and native error are unweighted"
+            );
+            for (row, original) in reward.mean.iter().zip(&old.profiles[id].mean) {
+                for (&value, &before) in row.iter().zip(original) {
+                    assert!(value <= before);
+                    history_tightened += usize::from(value < before);
+                }
+            }
             table.profiles[id] = Some(reward);
         }
         for oracle in oracles.iter().filter(|oracle| oracle.physical.members == members) {
@@ -184,9 +209,16 @@ fn profile_probe_runs_tighten_actual_bindings_while_covering_every_native_descen
             let id = admitted.profile_for(&physical.snaps).unwrap();
             by_profile.entry((last, id)).or_default().insert(result.maximum_binding_offset_reduction.to_bits());
 
-            // Losing optional transition evidence restores exactly the old budget, including its a0/rounding.
+            // Removing integer work evidence restores its old drift budget, while the separately certified
+            // historical probe coefficients remain valid. Restoring those coefficients as well gives the
+            // complete original envelope bit-for-bit; neither refinement can mask missing native coverage.
             let run_bound = table.profiles[id].as_mut().unwrap().max_probe_runs.take();
+            let history_only = bounds.family_profiles_upper(&domain, physical, &table, &last_choice).unwrap();
+            assert!(result.upper <= history_only && history_only <= old_cap);
+            assert!(oracle.sum_of_order_means.at_most_integer(history_only));
+            let mean = std::mem::replace(&mut table.profiles[id].as_mut().unwrap().mean, old.profiles[id].mean.clone());
             assert_eq!(bounds.family_profiles_upper(&domain, physical, &table, &last_choice), Some(old_cap));
+            table.profiles[id].as_mut().unwrap().mean = mean;
             table.profiles[id].as_mut().unwrap().max_probe_runs = run_bound;
             checked += oracle.order_means.len();
         }
@@ -200,6 +232,7 @@ fn profile_probe_runs_tighten_actual_bindings_while_covering_every_native_descen
     }
     assert_eq!(checked, 62 * 120);
     assert!(tightened > 0);
+    assert!(history_tightened > 0, "some actual physical reward rows have strictly smaller history bounds");
     assert!(by_profile.values().any(|values| values.len() > 1), "ordinary bindings keep distinct work budgets");
 }
 

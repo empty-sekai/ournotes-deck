@@ -199,6 +199,21 @@ impl ProgramCache {
         (self.allocated_bytes(), self.entries.iter().map(|entry| entry.value.decode_workspace_bytes()).collect())
     }
 
+    #[cfg(test)]
+    pub(in super::super) fn test_reserve_empty_slots(&mut self, slots: usize) {
+        assert!(self.entries.is_empty());
+        self.entries.try_reserve_exact(slots).unwrap();
+    }
+
+    #[cfg(test)]
+    pub(in super::super) fn test_recipe_format_limits(&self, terminal: &LuckTerminalRush) -> (usize, usize) {
+        assert_eq!(self.entries.len(), 1);
+        let entry = &self.entries[0];
+        let Value::TerminalRecipe { recipe, .. } = &entry.value else { panic!("complete recipe") };
+        let fixed = self.terminal_entry_bytes(entry.identity.as_ref().unwrap(), terminal) + ARC_HEADER_BYTES;
+        (fixed + recipe.original_allocated_bytes(), fixed + recipe.allocated_bytes() + recipe.decode_workspace_bytes())
+    }
+
     pub(in super::super) fn limit(&mut self, capacity: usize) {
         if self.capacity == capacity {
             return;
@@ -322,7 +337,7 @@ impl ProgramCache {
     }
 
     fn terminal_entry_bytes(&self, identity: &Identity, terminal: &LuckTerminalRush) -> usize {
-        size_of::<Entry>()
+        self.entries.capacity().max(1) * size_of::<Entry>()
             + identity.model.capacity()
             + size_of::<Scope>()
             + identity.scope.bytes.capacity()
@@ -330,6 +345,29 @@ impl ProgramCache {
             + terminal.cache_allocation_bytes()
             + ARC_HEADER_BYTES
             + curve_bytes(terminal.cache_curve())
+    }
+
+    /// Bytes available to the recipe and its one decode workspace after charging the complete identity,
+    /// scope, probability curve, exact-power result and recipe Arc header. Format selection must use this
+    /// allowance; the shared FIFO's final actual-capacity ledger still decides whole-cache admission.
+    pub(super) fn terminal_recipe_room(&mut self, identity: &Identity, terminal: &LuckTerminalRush) -> usize {
+        if self.capacity == 0 || self.terminal_entry_bytes(identity, terminal) > self.capacity {
+            return 0;
+        }
+        // Measure the actual queue allocation before selecting the trace representation. In particular,
+        // spare Entry slots remain allocated after FIFO eviction and cannot be spent a second time here.
+        // Reserve exactly one next slot; at the fixed entry limit insertion first removes the oldest one.
+        if self.entries.len() < MAX_ENTRIES && self.entries.try_reserve_exact(1).is_err() {
+            return 0;
+        }
+        while self.allocated_bytes() > self.capacity {
+            self.entries.pop_front();
+            self.stats.evictions += 1;
+            if self.entries.is_empty() {
+                self.entries.shrink_to_fit();
+            }
+        }
+        self.capacity.saturating_sub(self.terminal_entry_bytes(identity, terminal)).saturating_sub(ARC_HEADER_BYTES)
     }
 
     /// A recipe and its most recent exact-power result occupy one entry in the existing FIFO. Both share
@@ -411,6 +449,11 @@ impl ProgramCache {
         while self.entries.len() >= MAX_ENTRIES {
             self.entries.pop_front();
             self.stats.evictions += 1;
+        }
+        // Match the measured queue reservation used by terminal format selection, including an empty
+        // queue. Ordinary push growth can leave uncharged spare slots at an otherwise exact byte boundary.
+        if self.entries.try_reserve_exact(1).is_err() {
+            return;
         }
         self.entries.push_back(Entry { identity, recorded, value });
         while self.allocated_bytes() > self.capacity {

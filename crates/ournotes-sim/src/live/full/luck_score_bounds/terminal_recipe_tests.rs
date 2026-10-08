@@ -246,3 +246,50 @@ fn terminal_recipes_reserve_one_actual_decode_workspace_inside_the_existing_cach
     assert!(remaining < total);
     assert!(cache.stats().program_evictions > before.program_evictions);
 }
+
+#[test]
+fn terminal_recipe_whole_entry_boundary_keeps_original_trace_and_charges_spare_queue_slots() {
+    let base = four_bucket_case(2400, 2, false);
+    let mut next = base.clone();
+    next.params.total_power += 1;
+    let reference = next.ready(None);
+    for slots in [1, 8] {
+        let mut measured = LuckDpCache::new(8 << 20);
+        measured.programs.test_reserve_empty_slots(slots);
+        let terminal = base.ready(Some(&mut measured));
+        assert!(measured.programs.test_workspace_accounting().1[0] > 0);
+        let (original_limit, packed_limit) = measured.programs.test_recipe_format_limits(&terminal);
+        // LuckDpCache's public byte allowance is rounded down to whole u64 words. Align both sides
+        // explicitly, so these exercise actual entry limits rather than a conversion artefact.
+        let original_limit = original_limit.div_ceil(8) * 8;
+        let below_packed = (packed_limit - 1) / 8 * 8;
+        assert!(original_limit <= below_packed);
+        for capacity in [original_limit, below_packed] {
+            let mut cache = LuckDpCache::new(capacity);
+            cache.programs.test_reserve_empty_slots(slots);
+            assert_same_terminal(&base, &base.ready(Some(&mut cache)), &terminal);
+            let (allocated, workspaces) = cache.programs.test_workspace_accounting();
+            assert_eq!(workspaces, vec![0], "the complete original recipe must remain resident");
+            assert!(allocated <= capacity);
+            let before = cache.stats();
+            assert_same_terminal(&next, &next.ready(Some(&mut cache)), &reference);
+            assert_eq!(cache.stats().terminal_recipe_hits, before.terminal_recipe_hits + 1);
+            assert_eq!(cache.stats().terminal_builds, before.terminal_builds);
+            assert!(cache.programs.test_workspace_accounting().0 <= capacity);
+        }
+        // If neither full representation fits, retain only the completed exact-power certificate;
+        // an old recipe or its numeric caps must never be supplied for a different requested power.
+        let capacity = original_limit - 8;
+        let mut cache = LuckDpCache::new(capacity);
+        cache.programs.test_reserve_empty_slots(slots);
+        assert_same_terminal(&base, &base.ready(Some(&mut cache)), &terminal);
+        let before = cache.stats();
+        assert_same_terminal(&base, &base.ready(Some(&mut cache)), &terminal);
+        assert_eq!(cache.stats().terminal_hits, before.terminal_hits + 1);
+        assert_same_terminal(&next, &next.ready(Some(&mut cache)), &reference);
+        assert_eq!(cache.stats().terminal_recipe_hits, before.terminal_recipe_hits);
+        assert_eq!(cache.stats().terminal_builds, before.terminal_builds + 1);
+        assert!(cache.programs.test_workspace_accounting().0 <= capacity);
+    }
+    assert_native_expectation(&next, &reference);
+}

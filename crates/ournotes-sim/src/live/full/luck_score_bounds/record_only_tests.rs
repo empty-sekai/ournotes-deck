@@ -28,30 +28,24 @@ fn assert_trace_equal(left: &BoundsTrace, right: &BoundsTrace) {
     assert_eq!(left.events.len(), right.events.len());
     for (ordinal, (left, right)) in left.events.iter().zip(&right.events).enumerate() {
         match (left, right) {
-            (
-                BoundsEvent::Note { frame: a, index: b, note: c },
-                BoundsEvent::Note { frame: x, index: y, note: z },
-            ) => {
+            (BoundsEvent::Note { frame: a, index: b, note: c }, BoundsEvent::Note { frame: x, index: y, note: z }) => {
                 assert_eq!((a, b, c.bounds_identity()), (x, y, z.bounds_identity()), "event {ordinal}");
                 // Notes are copied at filing, before any execution. Their private added/factor diagnostics
                 // are constructor zeros in both traces; include them in the complete equality check.
                 assert_eq!(format!("{c:?}"), format!("{z:?}"), "event {ordinal}");
             }
-            (
-                BoundsEvent::Factor { frame: a, command: b },
-                BoundsEvent::Factor { frame: x, command: y },
-            ) => assert_eq!((a, b), (x, y), "event {ordinal}"),
+            (BoundsEvent::Factor { frame: a, command: b }, BoundsEvent::Factor { frame: x, command: y }) => {
+                assert_eq!((a, b), (x, y), "event {ordinal}")
+            }
             (BoundsEvent::Potential { frame: a }, BoundsEvent::Potential { frame: x }) => {
                 assert_eq!(a, x, "event {ordinal}");
             }
-            (
-                BoundsEvent::Probe { frame: a, time_ms: b },
-                BoundsEvent::Probe { frame: x, time_ms: y },
-            ) => assert_eq!((a, b), (x, y), "event {ordinal}"),
-            (
-                BoundsEvent::Query { time_ms: a, to: b },
-                BoundsEvent::Query { time_ms: x, to: y },
-            ) => assert_eq!((a, b), (x, y), "event {ordinal}"),
+            (BoundsEvent::Probe { frame: a, time_ms: b }, BoundsEvent::Probe { frame: x, time_ms: y }) => {
+                assert_eq!((a, b), (x, y), "event {ordinal}")
+            }
+            (BoundsEvent::Query { time_ms: a, to: b }, BoundsEvent::Query { time_ms: x, to: y }) => {
+                assert_eq!((a, b), (x, y), "event {ordinal}")
+            }
             (
                 BoundsEvent::Combo { frame: a, index: b, ordinary: c, gekisou: d },
                 BoundsEvent::Combo { frame: x, index: y, ordinary: z, gekisou: w },
@@ -142,51 +136,89 @@ fn record_only_matches_complete_short_long_and_late_native_traces() {
 fn record_only_keeps_conversion_life_conditions_and_next_frame_rank_triggers() {
     let mut input = four_bucket_case(2400, 2, false);
     input.master.live_judgement_timings.push(crate::master::LiveJudgementTimingRow {
-        id: 6, assist_level: 0, judgement_priority: 0, note_judgement_type: 1,
-        note_simulate_judgement: 6, before_ms: 0, after_ms: 0,
+        id: 6,
+        assist_level: 0,
+        judgement_priority: 0,
+        note_judgement_type: 1,
+        note_simulate_judgement: 6,
+        before_ms: 0,
+        after_ms: 0,
     });
     input.master.judgement_parameters.push(crate::master::JudgementParameterRow {
-        id: 6, note_simulate_judgement: 6, score_percent: 137, damage: 250,
+        id: 6,
+        note_simulate_judgement: 6,
+        score_percent: 137,
+        damage: 250,
     });
     input.master.skill_targets.push(crate::master::SkillTargetRow {
-        id: 920, skill_target_type: 4, judgement: 5, ..Default::default()
+        id: 920,
+        skill_target_type: 4,
+        judgement: 5,
+        ..Default::default()
     });
     input.master.live_skill_effects.push(crate::master::LiveSkillEffectRow {
-        id: 920, live_skill_id: 903, level: 1, skill_effect_type: 12006, effect_value: 6,
-        effect_limit_count: 1, skill_target_ids: vec![920], activation_time_second: 0.5,
+        id: 920,
+        live_skill_id: 903,
+        level: 1,
+        skill_effect_type: 12006,
+        effect_value: 6,
+        effect_limit_count: 1,
+        skill_target_ids: vec![920],
+        activation_time_second: 0.5,
         ..Default::default()
     });
     for (id, kind, values) in [(930, 2002, vec![900]), (931, 7012, vec![1])] {
         input.master.skill_conditions.push(crate::master::SkillConditionRow {
-            id, condition_type: kind, condition_values: values,
-            condition_target_ids: Vec::new(), is_positive: true,
+            id,
+            condition_type: kind,
+            condition_values: values,
+            condition_target_ids: Vec::new(),
+            is_positive: true,
         });
         input.master.skill_condition_sets.push(crate::master::SkillConditionSetRow {
-            id, group: id, condition_ids: vec![id],
+            id,
+            group: id,
+            condition_ids: vec![id],
         });
     }
     input.master.support_skill_effects.push(crate::master::SupportSkillEffectRow {
-        id: 930, support_skill_id: 930, level: 1, skill_trigger_type: ONE_SHOT,
-        skill_trigger_condition_group: 930, skill_effect_type: 3001, effect_value: 125,
+        id: 930,
+        support_skill_id: 930,
+        level: 1,
+        skill_trigger_type: ONE_SHOT,
+        skill_trigger_condition_group: 930,
+        skill_effect_type: 3001,
+        effect_value: 125,
         ..Default::default()
     });
     input.master.support_skill_effects.push(crate::master::SupportSkillEffectRow {
-        id: 931, support_skill_id: 930, level: 1, skill_trigger_type: ONE_SHOT,
-        skill_trigger_condition_group: 931, skill_effect_type: 2000, effect_value: 7531,
-        activation_time_second: 0.45, ..Default::default()
+        id: 931,
+        support_skill_id: 930,
+        level: 1,
+        skill_trigger_type: ONE_SHOT,
+        skill_trigger_condition_group: 931,
+        skill_effect_type: 2000,
+        effect_value: 7531,
+        activation_time_second: 0.45,
+        ..Default::default()
     });
     input.deck[0].support_skills.push((930, 1));
     input.master.reindex().unwrap();
     let trace = compare_recorders(&input);
-    let notes: Vec<_> = trace.events.iter().filter_map(|event| {
-        if let BoundsEvent::Note { note, .. } = event { Some(note) } else { None }
-    }).collect();
+    let notes: Vec<_> = trace
+        .events
+        .iter()
+        .filter_map(|event| if let BoundsEvent::Note { note, .. } = event { Some(note) } else { None })
+        .collect();
     assert!(notes.iter().any(|note| note.score_type == crate::live::score::JUST));
     assert!(notes.iter().any(|note| note.score_type == crate::live::score::PERFECT));
     assert!(notes.iter().any(|note| note.life < 1000), "converted note damage must be retained");
-    assert!(trace.events.iter().any(|event| matches!(event,
-        BoundsEvent::Factor { command, .. } if command.note_mill == 75310
-    )), "the rank-1 confirmation must reach its later score-up trigger");
+    assert!(
+        trace.events.iter().any(|event| matches!(event,
+            BoundsEvent::Factor { command, .. } if command.note_mill == 75310
+        )),
+        "the rank-1 confirmation must reach its later score-up trigger"
+    );
 }
 
 #[test]
@@ -200,7 +232,10 @@ fn record_only_keeps_changing_gekisou_combo_observations() {
         .into_iter()
         .enumerate()
         .map(|(index, (kind, count, bonus))| crate::master::ComboScoreBonusRow {
-            id: index as i64 + 1, combo_bonus_type: kind, required_combo_count: count, bonus_factor: bonus,
+            id: index as i64 + 1,
+            combo_bonus_type: kind,
+            required_combo_count: count,
+            bonus_factor: bonus,
         })
         .collect();
     input.notes.insert(1, LiveNote { note_id: 99, note_operate_type: 1, judgement_type: 1, time_ms: 280 });
@@ -332,15 +367,20 @@ fn record_only_refuses_free_no_luck_and_external_ranking_paths() {
     assert!(model.score() > 0);
     let skills = luck_skills(&input.master).unwrap();
     let mut external = LiveModel::new_gekisou_external(
-        &input.master, &input.deck, &input.notes, &input.events, input.params, &input.setup,
-    ).unwrap();
+        &input.master,
+        &input.deck,
+        &input.notes,
+        &input.events,
+        input.params,
+        &input.setup,
+    )
+    .unwrap();
     let gate = check_recorder(&external, &skills).unwrap();
     external.set_luck_weights(&skills, Vec::new()).unwrap();
     external.score.begin_bounds(Vec::new(), true);
     external.score.certify_bounds_filings(gate);
     assert!(!external.try_enable_bounds_record_only());
 }
-
 
 #[cfg(feature = "search-diagnostics")]
 #[test]
@@ -395,8 +435,15 @@ fn record_only_diagnostics_keep_partial_work_after_cancellation() {
         } else {
             let skills = luck_skills(&input.master).unwrap();
             let mut session = LuckScoreSession::new(
-                &input.master, &skills, &input.notes, &input.events, input.params,
-                &input.setup, &input.play, &input.delta, None,
+                &input.master,
+                &skills,
+                &input.notes,
+                &input.events,
+                input.params,
+                &input.setup,
+                &input.play,
+                &input.delta,
+                None,
             );
             assert!(session.summary(&input.deck, None, &mut stop).unwrap().is_none());
         }

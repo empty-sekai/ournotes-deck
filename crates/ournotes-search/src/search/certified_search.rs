@@ -965,7 +965,8 @@ pub(super) fn evaluate_luck_context_bounded(
     )
 }
 
-/// A nonlinear request retains its established score-law provider for subsequent payoff refinement.
+/// Select only the complete raw-score summary provider. Nonlinear maps still consume their original
+/// support/first-moment bounds and subsequent mapped-payoff or complete-law refinements.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn evaluate_luck_context_bounded_policy(
     master: &ournotes_sim::master::Master,

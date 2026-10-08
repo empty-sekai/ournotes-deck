@@ -1058,7 +1058,17 @@ impl Engine<'_, '_> {
                 &input,
                 &PayoffMap::Score,
                 Some(&mut curves),
-                !fresh_summary && matches!(self.metric, Metric::Score | Metric::BestOrderExpectedScore),
+                // Only initial raw-score materialization may use the completed terminal summary.
+                // A fresh refinement still runs its independent full factor-history enclosure.
+                !fresh_summary
+                    && matches!(
+                        self.metric,
+                        Metric::Score
+                            | Metric::BestOrderExpectedScore
+                            | Metric::ScoreAtLeast { .. }
+                            | Metric::CappedScore { .. }
+                            | Metric::ScoreAndLifeAtLeast { .. }
+                    ),
                 (&(0..ORDERS).collect::<Vec<_>>(), false, |event| {
                     if matches!(event, crate::search::certified_search::LuckContextEvent::Scored { .. }) {
                         completed_orders += 1;

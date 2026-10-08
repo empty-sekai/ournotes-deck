@@ -74,7 +74,11 @@ impl StoredTerminalTrace {
         capacity: usize,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Self, Decline> {
-        let value = match PackedTerminalTrace::encode(&trace, capacity, &mut cancelled) {
+        // The caller's allowance covers this enum plus every allocation and the single native decode
+        // workspace. PackedTerminalTrace's own ledger does not include the enum's larger inline storage.
+        let packed_capacity =
+            capacity.saturating_sub(size_of::<Self>().saturating_sub(size_of::<PackedTerminalTrace>()));
+        let value = match PackedTerminalTrace::encode(&trace, packed_capacity, &mut cancelled) {
             Ok(packed)
                 if packed.allocated_bytes() - size_of::<PackedTerminalTrace>()
                     < trace_bytes(&trace)? - size_of::<BoundsTrace>() =>
@@ -101,6 +105,14 @@ impl StoredTerminalTrace {
         match self {
             Self::Original(_) => 0,
             Self::Packed(trace) => trace.decode_workspace_bytes(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn original_allocated_bytes(&self) -> usize {
+        match self {
+            Self::Original(_) => self.allocated_bytes(),
+            Self::Packed(trace) => size_of::<Self>() + trace.decode_workspace_bytes() - size_of::<BoundsTrace>(),
         }
     }
 

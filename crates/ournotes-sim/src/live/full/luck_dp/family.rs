@@ -24,6 +24,7 @@ const MAX_CONTEXT_FRAMES: usize = 100_000;
 mod input_reuse;
 mod probe_runs;
 mod profiles;
+mod rank_history;
 use profiles::AdmittedFamilyInputs;
 pub use profiles::{
     LuckFamilyDomain, LuckFamilyProfile, LuckFamilyProfileDomain, LuckFamilyProfileWork, LuckFamilyProgram,
@@ -142,6 +143,9 @@ struct DomainTerminalMapping {
     frame_work: u64,
     /// All original frames from here on occur strictly after the positive music finish clamp.
     first_late_frame: usize,
+    /// Historical rank-query geometry only. Full physical probe lifecycle/phase and complete order
+    /// evidence are still required before this may condition any actual probe-score contribution.
+    rank_probe_history: Option<rank_history::Geometry>,
 }
 
 /// One immutable request context. The master, selected skill catalogue, declared frame stream, deltas and setup
@@ -700,6 +704,10 @@ impl<'a> LuckFamilyContext<'a> {
         {
             return Err(fail(LuckFamilyDecline::TerminalMapping, "terminal query has incomplete native filings"));
         }
+        let Some(rank_probe_history) = rank_history::build(&trace, play, setup, params.music_length_ms, &mut cancelled)
+        else {
+            return Ok(None);
+        };
         let mut times = reserve(filed.len())?;
         times.extend(filed.into_iter().map(|(_, time)| time));
         times.sort_unstable();
@@ -721,6 +729,7 @@ impl<'a> LuckFamilyContext<'a> {
             last_luck_note,
             frame_work: play.frames.len() as u64,
             first_late_frame: play.frames.partition_point(|frame| frame.time_ms <= params.music_length_ms),
+            rank_probe_history,
         });
         if cancelled() {
             return Ok(None);

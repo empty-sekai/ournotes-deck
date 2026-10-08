@@ -120,6 +120,7 @@ fn profile_probe_runs_refuse_unproved_phase_and_late_lifetime_without_refusing_c
         let profile = context.prepare_profile(&domain, 0, None, || false).unwrap().unwrap();
         assert_eq!(profile.orders().len(), 120, "the original full law capability remains available");
         assert!(profile.orders().iter().enumerate().all(|(index, _)| profile.order_probe_run_bound(index).is_none()));
+        assert!((0..120).all(|index| !profile.order_rank_probe_history_ready(index)));
     }
 }
 
@@ -265,4 +266,8 @@ fn profile_probe_runs_inspect_unrequested_reward_pairs_before_granting_common_ph
     let profile = context.prepare_profile(&domain, absent, None, || false).unwrap().unwrap();
     assert_eq!(profile.orders().len(), 120);
     assert!((0..120).all(|order| profile.order_probe_run_bound(order).is_none()));
+    assert!(
+        (0..120).all(|order| !profile.order_rank_probe_history_ready(order)),
+        "an unrequested physical reward pair still blocks historical probability weighting"
+    );
 }

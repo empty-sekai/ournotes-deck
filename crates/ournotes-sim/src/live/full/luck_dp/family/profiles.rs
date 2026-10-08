@@ -185,6 +185,21 @@ impl LuckFamilyProfile {
         )
     }
 
+    /// The direct untimed LUCK probe's ideal command prefix at every historical rank note agrees with
+    /// its chart-time class in this complete original order. This certifies only that probe contribution:
+    /// ordinary factors, Rush magnitude, native roundoff and integer rank arithmetic keep their own bounds.
+    /// Geometry without complete physical phase/lifecycle admission or an entire closed order returns false.
+    pub fn order_rank_probe_history_ready(&self, order: usize) -> bool {
+        self.order_probe_certificates(order).is_some_and(|(_, ready)| ready)
+    }
+
+    /// The two independent optional probe certificates, with one scan of the complete original clock.
+    /// The first value is a relaxed maximum start count; the second additionally requires every historical
+    /// rank query's ideal probe prefix to match its chart-time class. Neither value is a probability law.
+    pub fn order_probe_certificates(&self, order: usize) -> Option<(u64, bool)> {
+        self.order_probe_run_bound(order).map(|runs| (runs, self.mapping.rank_probe_history.is_some()))
+    }
+
     pub fn retained_bytes(&self) -> usize {
         self.bytes
     }

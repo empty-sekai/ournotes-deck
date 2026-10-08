@@ -370,9 +370,13 @@ member holds a probe, because complete program admission establishes its control
 reward rows preserves the complete member fields and their native mission/support-selection metadata.
 
 After complete pair-domain admission, an optional input identity can reuse a finished curve before rebuilding
-the projected native model. A closed source/checker dependency proof must show that character identity is
-unread before that one field is normalized. The ordered performers retain every other field and source;
-unknown, cumulative or conversion programs keep the original construction path. These complete input keys
+the projected native model. A closed source/checker dependency proof takes the union of attribute reads across
+every selected source and owner in the projected deck. It can normalize only unread character, band, card-type,
+tag, category and mission fields in this private key. The proof follows the native target predicates' OR
+semantics and their exact positive/nonzero selector rules; a selector is retained even when another selector
+already matches the current deck. Character-reading, unknown, cumulative or conversion programs keep the
+original construction path. All selected source IDs, levels, source-vector order and potentially read fields
+remain exact. Uncached recording still constructs the original physical performers. These complete input keys
 share the existing per-family recorder-key storage, its 128-entry/1 MiB limits and the configured curve
 allowance. A hit still registers the original physical profile and labelled order independently.
 
@@ -385,7 +389,7 @@ after its own 120 original labels complete. Unrequested profiles remain explicit
 still checks every pair: an unrequested LIFE dependency, conversion or unsupported writer refuses the domain.
 
 A completed profile may also supply a complete canonical probability program. Its key retains the full
-projected Performer multiset and immutable context; character normalization requires the same closed
+projected Performer multiset and immutable context; normalization of unread fields requires the same closed
 dependency proof. Each key also records its originating admitted domain, exact profile and fixed slot
 bijection. Constructing a program requires that key's own completed profile, with all 120 unique labels.
 
@@ -406,8 +410,9 @@ bounds the node. Coefficients from incompatible writer owners are never combined
 after every profile needed by that node has completed all 120 orders. Required-profile discovery and the final
 upper use the same complete physical-binding enumeration. If any legal last choice lacks its profile, the
 entire optional node bound is unavailable. For two physical writers, a fixed depth-four prefix needs at most
-three profiles for each possible final member. Existing all-history rank, conversion, additive drift and unclassified-window
-allowances remain unweighted. The result is an upper only for Score; it supplies neither per-path support nor
+three profiles for each possible final member. Ordinary historical rank, conversion, additive drift and
+unclassified-window allowances remain unweighted. The separate direct-probe history capability described
+below can tighten only its admitted historical contribution. The result is an upper only for Score; it supplies neither per-path support nor
 the expectation of a nonlinear payoff.
 
 Within one reward-template binding, labels that reference the very same immutable joint-probability object
@@ -437,6 +442,13 @@ Complete probability programs share this same entry and byte allowance with admi
 coefficients. Their collection additionally uses at most 1 MiB and at most 63 entries, leaving an entry for
 a domain within the configured limit. Keys, all 120 curve references, container capacities, mappings and
 distinct retained curve allocations are counted; shared allocations within this collection are counted once.
+
+Admission and derived coefficient entries share a recency sequence with complete probability programs. A
+program becomes protected against scans of derived entries only after a successful complete transport has
+demonstrated reuse. Cold programs and derived entries compete by recency. The separate 63-entry/1 MiB program
+limit can still evict the oldest program, so protection never expands a budget or prevents new programs from
+being admitted. Rebuilding a derived table can reuse a retained program without repeating native profile work;
+any new native attempt still consumes the original admitted domain's cumulative reservation.
 
 A successful complete-family capability requires complete coverage within every limit. Capacity failure, unsupported input or a
 local work budget produces an unavailable optional bound; cancellation produces a stopped preparation.
@@ -632,6 +644,19 @@ not refuse another power. Cancellation cannot publish an unfinished recipe or re
 Recipes share the same FIFO, 128-entry limit and total byte allowance with replay programs and exact-power
 terminal certificates; complete trace, prefix, probability and container capacities are included. Zero
 capacity leaves the independent recording path available.
+
+Completed recipes may retain a lossless compact trace. Query, readiness, potential-filing and probe records
+use fixed tags and exact integer/bit payloads; ordinary commands, frozen note commands, rank identities and
+their original order remain complete. Decoding reconstructs the original trace for the unchanged terminal
+kernel. This representation performs no event coalescing, score approximation or arithmetic reassociation.
+An unsupported representation, unprofitable encoding or insufficient entry capacity retains the original
+trace when it fits, otherwise the completed exact-power certificate can still be cached independently.
+
+The same 32 MiB ledger accounts for all retained recipes and the largest active decode workspace among
+resident recipes. Cache access is exclusive and one decoded trace is dropped before another result is
+installed, so the workspace is reserved once at its maximum, without summing mutually exclusive decodes.
+Actual vector capacities, enum and entry storage, identities, probabilities and recipe payloads remain
+accounted. Decode allocation failure or cancellation cannot publish a partial trace or a score certificate.
 
 ## Reusing factor histories at another power
 
@@ -922,6 +947,13 @@ An unresolved nonconstant enclosure preserves the threshold/truncation metadata 
 No score-law equality class is merged by a payoff-only certificate. Cancellation, unsupported emission order,
 capacity refusal and exhausted work preserve all earlier certificates and the original completion state.
 
+The initial candidate evaluation for these objectives can also use a complete raw-score terminal summary.
+That summary provides the score mean, native integer support and deterministic LIFE required by the existing
+per-order payoff bounds. A mean is never substituted for the expectation of a nonlinear payoff. Optional
+terminal-summary refusal uses factor-history replay; a requested fresh summary refinement still executes
+that separate replay enclosure. Final mapped-payoff and full-law refinements retain their own budgets and
+complete-order requirements.
+
 ## Profile command bounds and leaf reuse
 
 A completed controller profile can additionally bound the number of direct probe activations. Its original
@@ -938,6 +970,40 @@ reset or limit lifecycles retain their existing allowances. Per-position maxima 
 the original floating-point error derivation is recomputed from those conservative command counts. This
 unweighted error allowance remains separate from expected score coefficients. The smaller independently
 valid bound is used; no probability scales away a possible arithmetic history.
+
+### Historical direct-probe rewards
+
+A further capability can use the complete controller law for the direct probe's historical rank contribution.
+For an included note, let `H` be its nonnegative historical coefficient with the full allowed Rush multiplier,
+and let `p` be the complete law's probability that the direct probe is active at that note's chart time.
+When the native historical query has the same ideal signed probe prefix as that chart-time class, `H * p`
+bounds the expected probe contribution. Ordinary reward coefficients keep `H`; the historical Rush magnitude,
+native floating-point drift and integer rank allowances retain their independent envelopes.
+
+An empty-reward recording establishes only original clock and rank-query geometry. The full physical pair
+domain must separately establish a direct positive 7021 effect, an untimed sustained lifecycle, fixed
+predicates, a common native phase and paired inverse filings. The geometry check verifies every original
+frame and Ready event, both adjacent rank-query identities, and complete cancellation of prior fixed-rank
+identities and coefficients. Every note in their native closed-frame difference must already have filed.
+Every possible later probe timestamp, including an inverse clamped to music length, must be strictly later
+than each included note. A later note sharing the end query's ceil frame is a refusal even if the note is
+present by the final query.
+
+Only complete order laws with the admitted initial, terminal and music-boundary probe states can use this
+witness. Missing geometry or lifecycle evidence retains the unconditional historical coefficient. Every
+physical probe reward keeps the smaller of the complete conditional and unconditional arithmetic envelopes.
+The original 120 labels contribute in the same outward summation order.
+
+`rankProbeHistoryReadyLabels` counts ready labels in successfully bound complete profiles; a newly bound
+profile can repeat a law used by another physical family or writer binding, and rebuilding an evicted profile
+counts its new publication. Each published profile can have zero through 120 ready labels; unavailable labels
+retain their original historical coefficient within the complete average. `rankProbeHistoryDiscountedProfiles` counts such
+profiles with a positive coefficient reduction. `maximumMeanUnitProbeHistoryReduction` is the largest mean
+reduction for a unit-amplitude probe covering the chart, rather than a physical team's saved score. Cache
+hits on completed coefficient tables do not recount these profiles. A transported controller program still
+counts the new physical reward binding it publishes. Native nominal-tree tests compare actual signed probe filings
+at both historical queries and the terminal query over all original labels; descendant tests independently
+check both the historical-only and combined upper bounds.
 
 The completed coefficient table also bounds individual physical leaves. A depth-four node may stay open
 because one remaining binding is strong, while another child can be excluded using its own singleton cap.

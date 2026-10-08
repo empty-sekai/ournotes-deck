@@ -857,5 +857,8 @@ mod program_tests;
 #[path = "family_probe_runs_tests.rs"]
 mod probe_run_tests;
 
+#[path = "family_rank_history_tests.rs"]
+mod rank_history_tests;
+
 #[path = "score_equivalence_tests.rs"]
 mod score_equivalence_tests;
