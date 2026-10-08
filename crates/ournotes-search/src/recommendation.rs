@@ -556,12 +556,14 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
             accuracy = Some(Accuracy { great_fraction, just_fraction });
         }
     }
-    let rank = matches!(kind, GoalKind::BattleLive | GoalKind::ArenaLive).then(|| g.rank.unwrap_or(1));
-    if let Some(r) = rank
-        && r != 1
-    {
-        issues.add("goal.rank", "unsupported", format!("rank {r}: only rank 1 on completion is currently offered"));
-    }
+    let rank = matches!(kind, GoalKind::BattleLive | GoalKind::ArenaLive).then(|| g.rank.unwrap_or(1)).filter(|r| {
+        if (1..=5).contains(r) {
+            true
+        } else {
+            issues.add("goal.rank", "input", "rank must be in 1..=5");
+            false
+        }
+    });
 
     if let Some(room) = &w.room {
         if !matches!(kind, GoalKind::BattleLive | GoalKind::ArenaLive) {
@@ -873,8 +875,8 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
                 .map(|range| ournotes_sim::replay::RankConfirmation {
                     frame: 0,
                     range,
-                    rank: rank.clamp(1, 5) as i32,
-                    percent: factors[range][rank.clamp(1, 5) as usize - 1],
+                    rank: rank as i32,
+                    percent: factors[range][rank as usize - 1],
                 })
                 .collect(),
         )
@@ -1492,9 +1494,10 @@ pub fn capabilities() -> Value {
         "scoreAndLife": {"requiresCompleteJudgementStream":true,"survivalProbability":false},
         "skip": {"musicIdOrChallengeMusicId":true,"mutuallyExclusive":true,
             "challengeMetrics":["score","scoreAtLeast","cappedScore","eventPoints","eventItems"]},
-        "ranks": [1],
+        "ranks": [1, 2, 3, 4, 5],
+        "rankDefault": 1,
         "rankConfirmation": "onCompletion",
-        "rankAssumption": "player-declared rank 1 for each completed Battle/Arena range; native network frame snapshots",
+        "rankAssumption": "one player-declared rank for every completed Battle/Arena range; native network frame snapshots",
         "eventIds": event_ids,
         "luckMissions": true,
         "provenGoals": goals.iter().map(|k| k.name()).collect::<Vec<_>>(),
@@ -1742,6 +1745,8 @@ mod tests {
         let value = capabilities();
         assert_eq!(value["support"]["battleLive"]["score"], "proven");
         assert_eq!(value["support"]["arenaLive"]["eventPoints"], "proven");
+        assert_eq!(value["ranks"], json!([1, 2, 3, 4, 5]));
+        assert_eq!(value["rankDefault"], 1);
         assert_eq!(value["rankConfirmation"], "onCompletion");
         assert_eq!(value["support"]["freeLive"]["score"], "proven");
         assert_eq!(value["luckMissions"], true);

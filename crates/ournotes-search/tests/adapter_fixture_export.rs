@@ -2966,17 +2966,95 @@ fn account_answers_distinguish_missing_invalid_and_unsupported_without_zero_fill
     assert!(matches!(answer.status, Status::Invalid));
     assert!(answer.errors.iter().any(|i| i.code == "server_mismatch"));
     account["server"] = json!("jp");
-    let mut battle = account_request(json!({"kind":"battleLive","musicId":10,"difficulty":"expert","rank":2}));
-    battle["room"] = json!({"players":5,"othersAverageScore":null});
-    let answer = engine::recommend_account(&data, &account.to_string(), &battle.to_string(), None);
-    assert!(matches!(answer.status, Status::Failed));
-    assert!(answer.errors.iter().any(|i| i.code == "unsupported"));
-    assert!(!answer.errors.iter().any(|i| i.code == "parse"));
+    for rank in [0, 6] {
+        let mut battle = account_request(json!({"kind":"battleLive","musicId":10,"difficulty":"expert","rank":rank}));
+        battle["room"] = json!({"players":5,"othersAverageScore":null});
+        let answer = engine::recommend_account(&data, &account.to_string(), &battle.to_string(), None);
+        assert!(matches!(answer.status, Status::Invalid));
+        assert!(answer.errors.iter().any(|i| i.path == "goal.rank" && i.code == "input"));
+        assert!(!answer.errors.iter().any(|i| i.code == "parse"));
+    }
     data.master.character_ranks[0].exp = None;
     let answer = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
     assert!(
         answer.errors.iter().any(|i| i.code == "unsupported_master" && i.message.contains("MasterCharacterRank._exp"))
     );
+}
+
+#[test]
+fn account_gekisou_ranks_match_explicit_network_confirmations() {
+    use ournotes_search::{account::BoundAccount, engine, recommendation::Status, search::Completion};
+    use ournotes_sim::{account::Goal, live::full::gekisou_rank_factors, scenario::Scenario};
+
+    let (mut data, account) = account_recommendation_fixture();
+    data.master.gekisou_ranking_score_bonuses = data
+        .master
+        .gekisou_ranking_score_bonuses
+        .iter()
+        .flat_map(|row| {
+            (1..=5).map(move |rank| {
+                let mut row = row.clone();
+                row.id = row.id * 10 + rank;
+                row.rank = rank;
+                row.score_bonus_percent = row.count * 10 + row.mission_pattern * 5 + (6 - rank) * 7;
+                row
+            })
+        })
+        .collect();
+    let account_json = account.to_string();
+    let bound = BoundAccount::resolve(&data, &account_json, Goal::GekisouLive).unwrap();
+    for rank in 1..=5 {
+        // Both facades share the rank grammar; exercise both native scenario mappings.
+        let (mode, id, scenario, goal) = if rank % 2 == 1 {
+            (
+                "battle",
+                10,
+                Scenario::Battle(10),
+                json!({"kind":"battleLive","musicId":10,"difficulty":"expert","rank":rank}),
+            )
+        } else {
+            (
+                "arena",
+                80,
+                Scenario::Arena(80),
+                json!({"kind":"arenaLive","arenaMusicId":80,"difficulty":"expert","rank":rank}),
+            )
+        };
+        let mut request = account_request(goal);
+        request["k"] = json!(1);
+        request["constraints"] = json!({"leader":3,"includeMembers":[1,2,3,4,5],"noSnaps":true});
+        if rank == 1 {
+            request["goal"].as_object_mut().unwrap().remove("rank");
+        }
+        let answer = engine::recommend_account(&data, &account_json, &request.to_string(), None);
+        assert!(matches!(answer.status, Status::Ok), "{mode} {rank}: {:?}", answer.errors);
+        let result = answer.result.unwrap();
+        assert!(result.optimality.proven);
+        assert_eq!(result.goal["rank"], rank);
+        assert_eq!(result.goal["rankConfirmation"], "onCompletion");
+        assert_eq!(result.teams.len(), 1);
+
+        let factors =
+            gekisou_rank_factors(&data.master, &scenario.resolve(&data.master).unwrap().gekisou_missions).unwrap();
+        let mut native = joint_request_json(mode, true, json!({"kind":"score"}));
+        native["scenario"]["musicId"] = json!(id);
+        native["context"] =
+            json!({"powerSnapshot":{"eventIds":[],"capturedJstTicks":null},"resultClock":null,"eventPayoff":null});
+        native["constraints"] = request["constraints"].clone();
+        native["k"] = json!(1);
+        native["networkConfirmations"] = json!(
+            (0..data.data_chart(SCORE_ID).unwrap().fevers.len())
+                .map(|range| json!({"frame":0,"range":range,"rank":rank,"percent":factors[range][rank as usize - 1]}))
+                .collect::<Vec<_>>()
+        );
+        let native =
+            bound.evaluate_fixed(&serde_json::from_value(native).unwrap(), [1, 2, 3, 4, 5], [None; 5]).unwrap();
+        assert_eq!(native.completion, Completion::Complete);
+        assert_eq!(native.results.len(), 1);
+        assert_eq!(result.teams[0].value.as_ref().unwrap().exact, native.results[0].expected_score, "{mode} {rank}");
+        assert_eq!(result.teams[0].layout.members, native.results[0].members);
+        assert_eq!(result.teams[0].layout.snaps, native.results[0].snaps);
+    }
 }
 
 #[test]

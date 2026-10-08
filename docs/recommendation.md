@@ -11,8 +11,18 @@ See [account input](account-input.md) for the account envelope.
 The goal grammar includes `power`, `skip`, `freeLive`, `missionLive`, `battleLive`, `arenaLive`, and `challengeLive`.
 `capabilities()` reports which goal/metric pairs this build actually computes, plus the unsupported pairs.
 A supported pair can still reject an unsupported skill or lifecycle, and support is not a latency guarantee.
-Battle/Arena use the declared room policy and native rank-1 confirmation on range completion. Custom ranks remain
-unsupported. LUCK uses certified score laws over the native lottery probabilities; a rank is proved only by separated
+Battle/Arena use the declared room policy and `goal.rank`, an integer from 1 to 5 (default 1), for every Gekisou range.
+Each rank is confirmed on range completion (`onCompletion`), with its percentage read from Master and native network
+frame snapshots used for scoring. The declared rank is an input assumption, not a predicted placement or a search
+decision. Progress and final results echo it under `result.goal.rank` and `result.goal.rankConfirmation`.
+For example, `goal:{"kind":"battleLive","musicId":10,"difficulty":"expert","rank":3}` declares third place
+in every range; Arena uses `kind:"arenaLive"` and `arenaMusicId`.
+The confirmed rank also participates in rank-dependent skill conditions, so the selected rank can change skill
+behavior as well as the range bonus. Compare teams within the same declared scenario.
+`goal.rank` is independent of the final multiplayer score rank in `eventContext.multiplayerRanks`, which participates
+in event settlement. The lower-level search request exposes per-range `networkConfirmations` directly.
+
+LUCK uses certified score laws over the native lottery probabilities; a team rank is proved only by separated
 bounds or a verified equal-program certificate. An overlapping frontier remains `RefinementRequired` and unproven.
 
 The default live metric `score` averages all 120 member performance orders. Snaps stay paired with their members. Nonleader layout is

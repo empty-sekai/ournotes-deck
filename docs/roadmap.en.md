@@ -9,25 +9,12 @@ Only unfinished work is listed; finished items are removed.
 - Exact proofs within a time budget on every objective and scene: tighter interior bounds on Gekisou charts, cheaper exact leaf evaluation (performance orders sharing their common start), and initial decks from a fast heuristic.
 - Tighter bounds on Gekisou charts (bonus bounds on combo charts).
 
-## Gekisou rank parameter
+## Per-range Gekisou assumptions
 
-Every Gekisou range is currently scored as first place. The rank will become a request parameter. The rank bonus is the range score times a percentage that differs a lot by rank in JP data (for one mission pattern, +250% for first and +100% for fourth and fifth). The rank changes how much in-range scoring weighs, so it changes the optimal deck.
+- Per-range rank declarations in the account recommendation facade.
+- A declared rank distribution, folded into the expectation together with member order and lotteries.
 
-What changes:
-
-- Simulator: the range rank bonus and the confirmed rank fed to the "reach rank N or better" skill condition (7012) use the requested rank.
-- Bounds: the per-range rank percentages use the same rank. The handling of condition 7012 in the bounds needs its own check.
-- Results and caches: the rank is part of the request identity.
-- Validation: finite-domain oracles for several ranks, comparing Top-K with exhaustive search.
-- Consistency with the multiplayer rank input of Gekisou PT (`multiplayerRanks`).
-
-Steps:
-
-1. One rank for all Gekisou ranges, matching the chart page's rank option.
-2. One rank per range.
-3. A rank distribution, folded into the expectation together with the member order and lotteries.
-
-The real rank depends on the other players in the room, so the parameter is the player's declared assumption and the result says so.
+Results must identify these assumptions separately from the final multiplayer score rank used for event settlement.
 
 ## Later
 
