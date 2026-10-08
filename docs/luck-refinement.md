@@ -407,6 +407,15 @@ and conversion checks, every physical choice, work guard and cancellation poll. 
 single-Performer comparison scratch must fit the existing admission allowance; otherwise preparation follows
 the original path. It cannot carry a partial success into a later domain or authorize a profile or order law.
 
+The same admission can temporarily index the immutable source tables used by those original constructors.
+The four skill tables are indexed by source ID and level, and condition sets by group. Each bounded index
+stores every original row ordinal in `(key, ordinal)` order, so lookups preserve the original row order and
+duplicates. It does not validate or compile a row ahead of the native Factory. Every pair still constructs
+fresh runtime pools and checkers, with the original error priority. Actual vector capacities and inline
+storage must fit the existing allowance after the working set and projection proof are accounted for.
+Insufficient space, arithmetic overflow or allocation failure uses ordinary construction. The index is
+dropped at the end of that admission; it introduces no additional cache or candidate-domain restriction.
+
 A completed profile may also supply a complete canonical probability program. Its key retains the complete
 proved controller descriptors, their multiplicities, support-enable gates and immutable context; every
 normalization requires the closed dependency proof above. Each key also records its originating admitted domain, exact profile and fixed slot
@@ -433,6 +442,28 @@ three profiles for each possible final member. Ordinary historical rank, convers
 unclassified-window allowances remain unweighted. The separate direct-probe history capability described
 below can tighten only its admitted historical contribution. The result is an upper only for Score; it supplies neither per-path support nor
 the expectation of a nonlinear payoff.
+
+For a current Score cutoff `T`, search can stop this optional preparation as soon as one completed
+subfamily cap cannot satisfy the whole-node pruning inequality. If the node cap would be
+`U = max(U_1, ..., U_n)`, a completed `U_i >= T` makes `U < T` impossible. When the existing whole-node
+power certificate permits an equal-score prune, the stopping condition is instead `U_i > T`.
+The function returns unavailable, never the partial maximum as a node upper. It preserves already
+completed profile tables, checks cancellation before returning, and continues ordinary physical traversal.
+`nonPruningExits` counts these optional-work exits separately from completed node bounds. A subsequent
+query may finish the remaining cover. Skipped preparation can reduce later leaf-cache hits, so its net
+runtime effect requires measurement; the score cutoff and canonical tie rules are unchanged.
+
+A legal depth-five leaf first checks the retained table without preparing anything. On a miss, it may
+admit its fixed five-member family under the same original physical-pair checks and prepare only the
+profile required by that leaf's actual Snap binding. That profile still completes all 120 original labels.
+The original binding-to-owner mapping computes its cap; it supplies no certificate for an unrequested
+profile or another physical binding. Canonical member reordering carries each Snap with its owner and
+keeps the leader fixed. The retained reward-template identity, original profile work limits, shared cache
+allowance and curve-cache setting still apply. Disabled caches, unsupported input and exhausted capacity
+or work use the ordinary scorer. Completed evidence and all reserved order/frame work are retained before
+reporting cancellation or refusal, so a retry cannot restart the same profile with a fresh allowance.
+`leafPreparationAttempts` records these cold attempts separately from the single leaf check and any
+successfully published leaf cap. This makes the cost of leaf preparation visible in real-request results.
 
 Within one reward-template binding, labels that reference the very same immutable joint-probability object
 can reuse its reward arithmetic. A bounded temporary table retains that curve's base coefficient and every

@@ -1,248 +1,318 @@
-# Real-chart search benchmark status
+# LUCK Gekisou real-chart search benchmark status
 
-**The 20-second end-to-end complete-ranking target is not met.** Public source
-[`21954072ce7c8a0b66b564dc2a1b96bd2519ad98`](https://github.com/empty-sekai/ournotes-deck/commit/21954072ce7c8a0b66b564dc2a1b96bd2519ad98)
-completes **12 of the original 48 real-chart requests** in native and actual Chromium Worker execution;
-**36 time out in each runtime**. All 12 completed requests finish within 20 seconds. The completed set is
-unchanged from `4f30cc845eb4df78e82cf05c233c8a20c386be00`: zero newly completed requests and zero lost completions.
-No real LUCK score request completes, and all three long no-LUCK controls still time out.
-This evidence does not resolve [issue #37](https://github.com/empty-sekai/ournotes-deck/issues/37).
+**The LUCK Gekisou target is not met: 0 of 18 original LUCK Score requests complete, and only 3 of 36
+LUCK requests complete overall.** Public source
+[`d06fe6cb975cbfb9d7d5c57576f62346a77c01f2`](https://github.com/empty-sekai/ournotes-deck/commit/d06fe6cb975cbfb9d7d5c57576f62346a77c01f2)
+has the same result in native and actual Chromium Worker execution. The other 33 LUCK requests time out
+at their original 60-second limit and remain unproven. The three completed requests are veteran
+`clientEventPoints` cases that already completed at source `21954072`; there are **zero newly completed
+LUCK requests**. All three finish within 20 seconds. This evidence does not resolve
+[issue #37](https://github.com/empty-sekai/ournotes-deck/issues/37).
 
-The public [real-chart CI run](https://github.com/empty-sekai/ournotes-deck/actions/runs/37779863844) contains one serial execution per request and runtime.
-The [compact evidence receipt](search-benchmark-evidence.json) retains every request's unrounded timings,
-input hashes, original answer hashes, completion states and cross-runtime/version comparisons.
-The previous complete 64-case report, including its historical synthetic results and correctness-job
-limitations, is preserved unchanged in [the source-specific archive](search-benchmark-history-4f30cc.md).
-Synthetic performance is excluded from the current target result.
+The [public real-chart CI run](https://github.com/empty-sekai/ournotes-deck/actions/runs/37792504759)
+has finished all 49 planned requests in both runtimes. Its broader total is 12 Complete / 37 TimedOut per
+runtime: 36 LUCK requests, 12 original Free/no-LUCK controls and one separately qualified Issue #9
+reproduction without LUCK. The completed controls do not count as progress on the LUCK target. The
+49-case completion/20-second target gate fails, while execution and result contracts pass.
 
-## Original PR inputs and measurement scope
+The [current compact evidence receipt](search-benchmark-evidence.json) preserves every original input
+triple, answer hash, unrounded time, completion state and cross-runtime/version comparison. It also
+records the LUCK classification per request. The previous
+[21954072 evidence receipt](search-benchmark-evidence-21954072.json) is archived byte for byte; the older
+complete 64-case report remains in [its source-specific archive](search-benchmark-history-4f30cc.md).
+Synthetic performance is not used as evidence for the LUCK target.
 
-The matrix is the original [PR #40](https://github.com/empty-sekai/ournotes-deck/pull/40)
+## Original inputs and the verified LUCK subset
+
+The 48-request matrix is the original [PR #40](https://github.com/empty-sekai/ournotes-deck/pull/40)
 [fixture at `9372d432e43f600d62950c88766126fc9ea21a98`](https://github.com/empty-sekai/ournotes-deck/tree/9372d432e43f600d62950c88766126fc9ea21a98/tools/search-harness/fixtures/full48).
 Its six fixture files and two preparation/materialization source files were checked byte for byte against
 that Git commit. All 48 materialized requests were reconstructed from the original templates and existing
-native preparation streams without rerunning or replacing preparation. Across both source revisions and
-both runtimes, all **192 data/snapshot/request SHA-256 triples** match those unchanged inputs. Complete
+native preparation streams without rerunning or replacing preparation. Across both compared sources and
+both runtimes, all **192 data/snapshot/request SHA-256 triples** match the unchanged inputs. Complete
 snapshot and legacy-roster cultivation and ownership values match the three published profiles.
 
-“Real-chart” means the published game charts, cards, skills and scoring tables. The three inventories are
+LUCK membership is checked from each original request's `execution.gekisou`, `execution.scoreId` and
+`scenario.musicId`, the pinned `MasterLiveMusic` mission fields, the corresponding `MasterLiveMusicScore`
+row, and all three actual chart fever intervals. A request is included only when Gekisou is enabled and
+at least one active mission is `2` (LUCK). Case names are not used for classification. Six enabled charts
+produce 36 LUCK requests: four charts have missions `[2, 2, 2]`, and two have `[1, 2, 3]`. Free requests
+using a LUCK chart have Gekisou disabled and are excluded. The no-LUCK controls have `[3, 3, 3]` or
+`[1, 1, 1]`; the reported Battle request has `[3, 3, 3]`.
+
+“Real-chart” means published game charts, cards, skills and scoring tables. The PR #40 inventories are
 **fixed hypothetical inventories, not player-account exports**: newcomer has 20 members / 12 Snaps,
-midcore 23 / 19, and veteran 44 / 42. The eight distinct score IDs are `10000203`, `10002003`, `10006103`,
-`10007003`, `10009203`, `10009303`, `10010503` and `10010703`. The matrix includes 18 LUCK score requests,
-18 nonlinear requests and 12 Free/no-LUCK controls.
+midcore 23 / 19, and veteran 44 / 42. The eight distinct original score IDs are `10000203`, `10002003`,
+`10006103`, `10007003`, `10009203`, `10009303`, `10010503` and `10010703`.
 
 The dataset is pinned TW game data, master version `0947498bc108756b2cc388d4c971105e`, 3,860,477 bytes,
 SHA-256 `de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf`.
 The [source pin](../tools/search-harness/fixtures/full48/source.json) identifies the immutable public dataset
-and replay manifest. Each original request retains **K = 3, 60,000 ms, 1,024 cache entries, no candidate cap,
-empty hard constraints, all legal members/leaders/paired Snaps and all 120 uniform performer orders**.
-The 90-second external Worker watchdog does not enlarge the request's search allowance.
+and replay manifest. Every original PR #40 request retains **K = 3, 60,000 ms, 1,024 cache entries, no
+candidate cap, empty hard constraints, all legal members/leaders/paired Snaps and all 120 uniform
+performer orders**. The 90-second external Worker watchdog does not enlarge the search allowance.
+
+The new input receipt has a different hash because it adds an `evidence` field containing four source and
+preparation file digests. Removing only that field reproduces the old receipt bytes exactly. The bundled
+manifest is unchanged; all 192 original data/snapshot/request/roster file references, comprising 39 unique
+blobs, were compared byte for byte with the original materialization. Preparation output and specs also
+match exactly. The receipt records the preparation binary identity; that binary was not included in the
+input bundle and preparation was not re-executed by this audit.
 
 Native end-to-end time runs from process spawn through exit, including startup, input reads, dataset
-construction, recommendation and output persistence. Chromium time runs from the host's page invocation
+construction, recommendation and output persistence. Chromium time runs from the host page invocation
 through the final Worker response, including input transport, Worker creation, WASM initialization,
 dataset/solver construction and recommendation. Browser installation/launch, server startup and host
-fixture reads are outside that scope. The target is complete/proven within 20 seconds of these intervals,
-not merely a fast inner search phase.
+fixture reads are outside that scope. The target requires a complete/proven canonical ranking within
+20 seconds of these intervals, not just a fast inner search phase.
 
-## Completion and compatibility
+## LUCK completion and correctness evidence
 
-| Inventory | Requests | Native complete / timeout | Chromium complete / timeout | Complete within 20 s, each runtime | Newly completed |
+| LUCK objective | Original requests | Native complete / timeout | Chromium complete / timeout | Complete within 20 s, each runtime | Newly completed |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Newcomer | 16 | 3 / 13 | 3 / 13 | 3 | 0 |
-| Midcore | 16 | 3 / 13 | 3 / 13 | 3 | 0 |
-| Veteran | 16 | 6 / 10 | 6 / 10 | 6 | 0 |
-| **Total** | **48** | **12 / 36** | **12 / 36** | **12** | **0** |
+| Score | 18 | 0 / 18 | 0 / 18 | 0 | 0 |
+| Score at least threshold | 4 | 0 / 4 | 0 / 4 | 0 | 0 |
+| Capped Score | 5 | 0 / 5 | 0 / 5 | 0 | 0 |
+| Score and final life at least thresholds | 4 | 0 / 4 | 0 / 4 | 0 | 0 |
+| Client event points | 5 | 3 / 2 | 3 / 2 | 3 | 0 |
+| **All LUCK** | **36** | **3 / 33** | **3 / 33** | **3** | **0** |
 
-All 48 planned cases executed in both runtimes and passed transport/result contracts. All 12 pairs of
-complete results have identical ordered canonical Top-K members, paired Snaps and power. For all 48
-cross-runtime comparisons, the exact rational score/payoff certificates of shared returned teams are
-compatible. The 36 unfinished requests remain unproven; compatible partial answers are not a complete
-ranking. Across revisions, all 96 same-runtime comparisons are compatible and all 24 complete-result
-semantic projection hashes are unchanged.
+Newcomer and midcore each have 12 LUCK requests and zero completions. Veteran has 12 LUCK requests,
+three completions and nine timeouts. All three completed cases are the already-complete
+`short-veteran-pt`, `dense-veteran-pt` and `mixed-long-veteran-pt`.
 
-The audit checked all 192 original answer hashes against the per-case and top-level reports. These are
-archive integrity and compatibility checks, not an independent exhaustive ranking or game-client oracle.
-Small independent nominal-law/ranking correctness tests remain separate evidence; synthetic throughput
-is not a substitute for these real-chart completion results. At the measured public source, the standard
-test jobs were blocked by a Clippy `collapsible_if` failure; independent correctness, MSRV and diagnostic
-checks passed. Later local fixes do not establish a green CI run for a different source.
+All 48 original PR #40 cases executed in both runtimes and passed transport/result contracts. All 12
+complete native/Chromium pairs, including the three LUCK pairs, have identical ordered canonical Top-K
+members, paired Snaps and power. All 48 cross-runtime comparisons have compatible exact rational
+score/payoff certificates for shared returned teams. Across revisions, all 96 same-runtime comparisons
+are compatible and all 24 complete-result semantic projection hashes are unchanged. Both the 12-case
+full-matrix completed set and its three-case LUCK subset are unchanged from `21954072`.
 
-## Every original real-chart request
+The audit checked all 192 original answer hashes and reports, passing 25,625 checks. The reported request
+has a separate 895-check audit, with two timed-out runtime results and compatible exact scores/payoffs
+for four shared returned teams. The combined 49-case report matches its four original shard reports.
+These are integrity and compatibility checks, not an independent exhaustive ranking or game-client
+oracle. An unfinished compatible answer is not a certified global Top-K.
 
-Times below are end-to-end seconds rounded to three decimals. The evidence receipt retains the original
-millisecond values. Every timeout is listed; a value near 60 seconds is a stopped request, not the time
-needed to finish its complete proof.
+The separate [standard CI run](https://github.com/empty-sekai/ournotes-deck/actions/runs/37792504732)
+at this measured source is not green. Its [test job](https://github.com/empty-sekai/ournotes-deck/actions/runs/37792504732/job/113363306851)
+stopped at two Clippy diagnostics: `type_complexity` in `family_rank_rush_history_tests.rs` and
+`collapsible_if` in `search/snaps/profile_mean.rs`. The test step therefore did not run. Independent
+correctness, MSRV and diagnostic jobs passed. Later source-specific local lint fixes and correctness
+checks do not retroactively change this CI outcome. Independent nominal-law/ranking correctness tests
+remain useful separately from performance; synthetic throughput does not establish the LUCK target.
 
-### Newcomer
+## Every original LUCK request
 
-| Request | Native status | Native seconds | Chromium status | Chromium seconds |
-| --- | --- | ---: | --- | ---: |
-| `short-newcomer-score` | TimedOut | 60.047 | TimedOut | 60.703 |
-| `long-newcomer-score` | TimedOut | 60.046 | TimedOut | 60.726 |
-| `mixed-short-newcomer-score` | TimedOut | 60.048 | TimedOut | 60.707 |
-| `sparse-newcomer-score` | TimedOut | 60.044 | TimedOut | 60.705 |
-| `dense-newcomer-score` | TimedOut | 60.047 | TimedOut | 60.711 |
-| `mixed-long-newcomer-score` | TimedOut | 60.048 | TimedOut | 60.737 |
-| `short-newcomer-probability` | TimedOut | 60.045 | TimedOut | 60.721 |
-| `long-newcomer-life` | TimedOut | 60.046 | TimedOut | 60.741 |
-| `mixed-short-newcomer-pt` | TimedOut | 60.045 | TimedOut | 60.718 |
-| `sparse-newcomer-capped` | TimedOut | 60.044 | TimedOut | 60.716 |
-| `dense-newcomer-probability` | TimedOut | 60.047 | TimedOut | 60.736 |
-| `mixed-long-newcomer-life` | TimedOut | 60.045 | TimedOut | 60.734 |
-| `free-short-newcomer` | Complete | 0.389 | Complete | 1.364 |
-| `free-long-newcomer` | Complete | 0.730 | Complete | 1.899 |
-| `no-luck-short-newcomer` | Complete | 1.096 | Complete | 2.446 |
-| `no-luck-long-newcomer` | TimedOut | 60.049 | TimedOut | 60.725 |
+Times are end-to-end seconds rounded to three decimals. The receipt retains original millisecond values
+and exact request thresholds. Every timeout remains listed: its elapsed time is censored by the request
+limit and is not a complete-proof time.
 
-### Midcore
+### Newcomer LUCK
 
 | Request | Native status | Native seconds | Chromium status | Chromium seconds |
 | --- | --- | ---: | --- | ---: |
-| `short-midcore-score` | TimedOut | 60.057 | TimedOut | 60.965 |
-| `long-midcore-score` | TimedOut | 60.053 | TimedOut | 60.945 |
-| `mixed-short-midcore-score` | TimedOut | 60.058 | TimedOut | 60.972 |
-| `sparse-midcore-score` | TimedOut | 60.053 | TimedOut | 60.938 |
-| `dense-midcore-score` | TimedOut | 60.058 | TimedOut | 60.940 |
-| `mixed-long-midcore-score` | TimedOut | 60.054 | TimedOut | 60.950 |
-| `short-midcore-capped` | TimedOut | 60.057 | TimedOut | 60.929 |
-| `long-midcore-probability` | TimedOut | 60.053 | TimedOut | 60.936 |
-| `mixed-short-midcore-life` | TimedOut | 60.059 | TimedOut | 60.966 |
-| `sparse-midcore-pt` | TimedOut | 60.056 | TimedOut | 60.946 |
-| `dense-midcore-capped` | TimedOut | 60.057 | TimedOut | 60.934 |
-| `mixed-long-midcore-capped` | TimedOut | 60.053 | TimedOut | 60.957 |
-| `free-short-midcore` | Complete | 0.787 | Complete | 2.173 |
-| `free-long-midcore` | Complete | 0.965 | Complete | 2.493 |
-| `no-luck-short-midcore` | Complete | 5.119 | Complete | 8.724 |
-| `no-luck-long-midcore` | TimedOut | 60.062 | TimedOut | 60.993 |
+| `short-newcomer-score` | TimedOut | 60.059 | TimedOut | 60.939 |
+| `long-newcomer-score` | TimedOut | 60.056 | TimedOut | 60.940 |
+| `mixed-short-newcomer-score` | TimedOut | 60.059 | TimedOut | 60.931 |
+| `sparse-newcomer-score` | TimedOut | 60.055 | TimedOut | 60.923 |
+| `dense-newcomer-score` | TimedOut | 60.060 | TimedOut | 60.927 |
+| `mixed-long-newcomer-score` | TimedOut | 60.057 | TimedOut | 60.968 |
+| `short-newcomer-probability` | TimedOut | 60.060 | TimedOut | 60.951 |
+| `long-newcomer-life` | TimedOut | 60.054 | TimedOut | 60.951 |
+| `mixed-short-newcomer-pt` | TimedOut | 60.059 | TimedOut | 60.915 |
+| `sparse-newcomer-capped` | TimedOut | 60.054 | TimedOut | 60.930 |
+| `dense-newcomer-probability` | TimedOut | 60.059 | TimedOut | 60.925 |
+| `mixed-long-newcomer-life` | TimedOut | 60.056 | TimedOut | 60.961 |
 
-### Veteran
+### Midcore LUCK
 
 | Request | Native status | Native seconds | Chromium status | Chromium seconds |
 | --- | --- | ---: | --- | ---: |
-| `short-veteran-score` | TimedOut | 60.041 | TimedOut | 60.543 |
-| `long-veteran-score` | TimedOut | 60.035 | TimedOut | 60.559 |
-| `mixed-short-veteran-score` | TimedOut | 60.048 | TimedOut | 60.554 |
-| `sparse-veteran-score` | TimedOut | 60.035 | TimedOut | 60.546 |
-| `dense-veteran-score` | TimedOut | 60.035 | TimedOut | 60.521 |
-| `mixed-long-veteran-score` | TimedOut | 60.047 | TimedOut | 60.552 |
-| `short-veteran-pt` | Complete | 4.026 | Complete | 5.453 |
-| `long-veteran-capped` | TimedOut | 60.034 | TimedOut | 60.524 |
-| `mixed-short-veteran-probability` | TimedOut | 60.045 | TimedOut | 60.566 |
-| `sparse-veteran-life` | TimedOut | 60.033 | TimedOut | 60.553 |
-| `dense-veteran-pt` | Complete | 6.690 | Complete | 7.971 |
-| `mixed-long-veteran-pt` | Complete | 5.256 | Complete | 6.602 |
-| `free-short-veteran` | Complete | 0.307 | Complete | 1.059 |
-| `free-long-veteran` | Complete | 0.595 | Complete | 1.558 |
-| `no-luck-short-veteran` | Complete | 2.366 | Complete | 4.038 |
-| `no-luck-long-veteran` | TimedOut | 60.044 | TimedOut | 60.546 |
+| `short-midcore-score` | TimedOut | 60.058 | TimedOut | 60.936 |
+| `long-midcore-score` | TimedOut | 60.056 | TimedOut | 60.928 |
+| `mixed-short-midcore-score` | TimedOut | 60.062 | TimedOut | 60.935 |
+| `sparse-midcore-score` | TimedOut | 60.054 | TimedOut | 60.923 |
+| `dense-midcore-score` | TimedOut | 60.060 | TimedOut | 60.924 |
+| `mixed-long-midcore-score` | TimedOut | 60.056 | TimedOut | 60.933 |
+| `short-midcore-capped` | TimedOut | 60.059 | TimedOut | 60.943 |
+| `long-midcore-probability` | TimedOut | 60.055 | TimedOut | 60.915 |
+| `mixed-short-midcore-life` | TimedOut | 60.062 | TimedOut | 60.948 |
+| `sparse-midcore-pt` | TimedOut | 60.055 | TimedOut | 60.930 |
+| `dense-midcore-capped` | TimedOut | 60.060 | TimedOut | 60.940 |
+| `mixed-long-midcore-capped` | TimedOut | 60.056 | TimedOut | 60.944 |
 
-## Platform differences and observed bottlenecks
+### Veteran LUCK
 
-Each request has only one observation per runtime and source. Newcomer changed from AMD EPYC 9V74 to
-Intel Xeon Platinum 8573C; veteran changed from Intel Xeon Platinum 8573C to AMD EPYC 9V45. Midcore used
-AMD EPYC 7763 in both runs. In particular, the lower veteran PT timings cannot be presented as an
-algorithmic speedup: their visited/node counts are unchanged and the CPU changed. Timeout duration is
-censored by the request limit and supplies no completed speedup ratio.
+| Request | Native status | Native seconds | Chromium status | Chromium seconds |
+| --- | --- | ---: | --- | ---: |
+| `short-veteran-score` | TimedOut | 60.049 | TimedOut | 60.692 |
+| `long-veteran-score` | TimedOut | 60.045 | TimedOut | 60.727 |
+| `mixed-short-veteran-score` | TimedOut | 60.061 | TimedOut | 60.716 |
+| `sparse-veteran-score` | TimedOut | 60.047 | TimedOut | 60.723 |
+| `dense-veteran-score` | TimedOut | 60.050 | TimedOut | 60.734 |
+| `mixed-long-veteran-score` | TimedOut | 60.056 | TimedOut | 60.717 |
+| `short-veteran-pt` | Complete | 5.638 | Complete | 7.547 |
+| `long-veteran-capped` | TimedOut | 60.045 | TimedOut | 60.704 |
+| `mixed-short-veteran-probability` | TimedOut | 60.056 | TimedOut | 60.715 |
+| `sparse-veteran-life` | TimedOut | 60.044 | TimedOut | 60.727 |
+| `dense-veteran-pt` | Complete | 8.961 | Complete | 10.680 |
+| `mixed-long-veteran-pt` | Complete | 7.049 | Complete | 9.106 |
 
-For the short LUCK score requests, the native terminal upper-bound stage still consumes 49.494 seconds
-(newcomer), 50.195 seconds (midcore) and 54.231 seconds (veteran). Terminal-recipe hits/builds are respectively
-0/7,394, 8/6,314 and 0/11,357. Repeated recording and terminal scoring remain major costs.
+## Auxiliary original controls
 
-For the long no-LUCK requests, newcomer fine-order bounds fall from 395,087 to 245,285 and midcore from
-214,441 to 134,019, but native simulation still takes 45.807 and 47.155 seconds. Their prefix-sharing trees
-execute 86.68 million and 72.61 million native frames. More candidates fit into the same unfinished
-request; this has not produced a completed ranking. These deterministic cases require improvements
-outside probability propagation as well.
+The 12 original Free/no-LUCK controls have nine Complete and three TimedOut results in each runtime.
+All nine completions finish within 20 seconds and were already complete at the baseline. These controls
+check retained behavior outside LUCK; they do not improve the LUCK completion count.
 
-## Original reported request from issue #9 / PR #10
+| Request | Native status | Native seconds | Chromium status | Chromium seconds |
+| --- | --- | ---: | --- | ---: |
+| `free-short-newcomer` | Complete | 0.356 | Complete | 1.541 |
+| `free-short-midcore` | Complete | 0.620 | Complete | 1.942 |
+| `free-short-veteran` | Complete | 0.366 | Complete | 1.311 |
+| `free-long-newcomer` | Complete | 0.695 | Complete | 2.031 |
+| `free-long-midcore` | Complete | 0.846 | Complete | 2.442 |
+| `free-long-veteran` | Complete | 0.754 | Complete | 1.915 |
+| `no-luck-short-newcomer` | Complete | 1.120 | Complete | 2.731 |
+| `no-luck-short-midcore` | Complete | 4.936 | Complete | 8.371 |
+| `no-luck-short-veteran` | Complete | 7.514 | Complete | 11.554 |
+| `no-luck-long-newcomer` | TimedOut | 60.064 | TimedOut | 60.955 |
+| `no-luck-long-midcore` | TimedOut | 60.059 | TimedOut | 60.954 |
+| `no-luck-long-veteran` | TimedOut | 60.056 | TimedOut | 60.737 |
 
-[Issue #9](https://github.com/empty-sekai/ournotes-deck/issues/9) supplies an original request and a complete
+## Original reported request from Issue #9 / PR #10
+
+[Issue #9](https://github.com/empty-sekai/ournotes-deck/issues/9) provides the original request and complete
 15-member / 35-Snap roster for real `scoreId = 10001002`, `musicId = 100010`, Battle with Gekisou enabled,
-theoretical-best play and three declared frame-zero rank-1 confirmations at 250%. The request keeps
-**K = 5, 60,000 ms, 2,048 cache entries, no candidate cap and empty constraints**. The issue itself describes
-the roster as synthetic, not a player account. This is an externally reported request on a real game chart.
-[PR #10](https://github.com/empty-sekai/ournotes-deck/pull/10) reports that the corrected request still returns
-`TimedOut` under the declared limit; it does not publish a complete-ranking time.
+theoretical-best play and three declared frame-zero rank-1 confirmations at 250%. Its pinned music row
+has missions `[3, 3, 3]`: **this is not a LUCK request**. It retains **K = 5, 60,000 ms, 2,048 cache entries,
+no candidate cap, empty constraints and the full legal domain**. The author describes the reproduction
+roster as synthetic, not a player account; the harness preserves that reported roster rather than
+generating a replacement. [PR #10](https://github.com/empty-sekai/ournotes-deck/pull/10) says the corrected
+request still timed out under its declared limit.
 
-The original request and roster values are unchanged in the local reproduction. It uses the same explicitly
-pinned TW dataset described above, which contains the requested 390-note chart and validates the roster.
-The report did not supply its original JP/international dataset bytes or hash, so this is a reproduction on
-that identified TW version, not a claim of exact historical dataset equivalence. The other mentioned
-score ID, `10001001`, has no published matching roster and is not invented as another benchmark case.
+The original request and roster values are preserved. A strict native projection audit compares all
+members, Snaps, eligible leaders, cultivation and power fields before materialization; this audit performs
+no search and supplies no ranking certificate. The report supplied neither original JP/international
+dataset bytes nor a dataset hash. This reproduction explicitly selects the same pinned TW dataset above,
+including the requested 390-note chart, without claiming exact historical dataset equivalence. The other
+mentioned score ID, `10001001`, has no published matching roster and is not invented as another case.
 
-A local CLI run of source `712d7255822137e5b59cc8c15514cfc45d56d2ad`,
-tree `9baa5ec96e82d0b84e0c085a1c2088e0b68ed9ee`, exits normally with **`TimedOut`, unproven, in
-60.1077 seconds end to end**. It visits 672 candidates and performs 15,079 native
-order simulations; native simulation accounts for 57.719 seconds. The exact CLI, input and output hashes
-are recorded in the evidence receipt. This single failed local run is separate from the 48-case public CI
-matrix and is not an optimization success. The reported-request CI suite is now configured, with a native
-strict projection audit of the complete original roster before materialization. The default full performance
-suite contains the unchanged 48 PR #40 requests plus this original request. No completed public CI run of
-that 49-request suite is claimed here.
+The public 49-request run is complete and includes this original request in both runtimes:
 
-## Subsequent local runs on the original inputs
-
-The [local evidence receipt](search-benchmark-local-evidence.json) records two further serial native
-measurements, both on AMD EPYC 9V74 / Linux x86_64 with Rust 1.88.0. These are selected original requests,
-not another full-matrix result. Every original input triple, candidate domain, order set and request budget
-is unchanged. Each public commit below has the exact Git tree of its frozen local build; the receipt retains
-both identities, executable hashes, unrounded times, original answer hashes and relevant telemetry.
-
-At source [`167cad21939e206000e67fe8428c6883be7aa1cb`](https://github.com/empty-sekai/ournotes-deck/commit/167cad21939e206000e67fe8428c6883be7aa1cb),
-the original reported request and nine selected PR #40 requests produce two complete/proven controls and
-eight timeouts. Both completed canonical Top-K results match source `21954072`; they are existing
-completions, not newly solved cases. The reported request's strict native audit preserves all 15 members,
-35 Snaps, all 15 eligible leaders, full cultivation, power fields and original request bytes. The input
-conversion performs no search and provides no ranking certificate.
-
-| Original request | Completion | Proven | End-to-end seconds |
+| Runtime | Completion | Optimality | End-to-end seconds |
 | --- | --- | --- | ---: |
-| `issue9-battle-original` | TimedOut | No | 60.077 |
-| `short-newcomer-score` | TimedOut | No | 60.060 |
-| `short-midcore-score` | TimedOut | No | 60.064 |
-| `short-veteran-score` | TimedOut | No | 60.059 |
-| `long-newcomer-score` | TimedOut | No | 60.051 |
-| `short-newcomer-probability` | TimedOut | No | 60.067 |
-| `sparse-newcomer-capped` | TimedOut | No | 60.051 |
-| `free-short-veteran` | Complete | Yes | 0.403 |
-| `no-luck-short-midcore` | Complete | Yes | 4.389 |
-| `no-luck-long-newcomer` | TimedOut | No | 60.058 |
+| Native | TimedOut | unproven | 60.052 |
+| Chromium Worker | TimedOut | unproven | 60.766 |
 
-Source [`19813c2d3b4033bac9839c2f5e3a750dca33ca05`](https://github.com/empty-sekai/ournotes-deck/commit/19813c2d3b4033bac9839c2f5e3a750dca33ca05)
-then removes identities of fully filtered bonus sources from the private, fully admitted controller key.
-It preserves retained source order, every potentially read attribute, and the native main-presence gate
-that controls support construction. Twenty-four related correctness checks pass, including original
-native controller construction/transcripts, complete joint-law comparisons and all 120 order labels.
-The same four original LUCK score requests were rerun; all four still time out and remain unproven.
+These two timed-out results are included in the full 49-case totals. The original input hashes, strict
+projection proof, output hashes and provenance limitations are retained in the current CI evidence receipt.
 
-| Original request | Completion | End-to-end seconds | Search nodes | Visited candidates |
+## Subsequent local LUCK measurements and remaining work
+
+The [local evidence receipt](search-benchmark-local-evidence.json) preserves earlier source-separated
+native runs on the unchanged original inputs. Selected local measurements do not replace the complete
+source-specific Chromium evidence above. They use AMD EPYC 9V74 / Linux x86_64 and Rust 1.88.0; all
+original input bytes, candidate domains, 120 labels, cache limits and request budgets remain unchanged.
+
+At source [`59105bb0938300aeb1b105938f1e3f138294cf04`](https://github.com/empty-sekai/ournotes-deck/commit/59105bb0938300aeb1b105938f1e3f138294cf04),
+tree `39b4e311c40c8c1d5fbb34266dbc089a4b0c7a35`, three selected original LUCK Score requests still time out
+and remain unproven:
+
+| Original LUCK request | Completion | End-to-end seconds | Search nodes | Visited candidates |
 | --- | --- | ---: | ---: | ---: |
-| `short-newcomer-score` | TimedOut | 60.059 | 5,346 | 14 |
-| `short-midcore-score` | TimedOut | 60.117 | 533 | 56 |
-| `short-veteran-score` | TimedOut | 60.062 | 69 | 63 |
-| `long-newcomer-score` | TimedOut | 60.057 | 747 | 46 |
+| `short-newcomer-score` | TimedOut | 60.054 | 9,807 | 14 |
+| `short-midcore-score` | TimedOut | 60.050 | 763 | 63 |
+| `long-newcomer-score` | TimedOut | 60.050 | 856 | 49 |
 
-For short newcomer, native profile builds fall from 1,724 to 7, completed-program hits increase from
-2,181 to 6,367, and search nodes increase from 1,411 to 5,346. However, complete-family preparation still
-takes 43.701 seconds, compared with 43.279 seconds before: 6,374 admitted families still repeat full
-physical-pair checks and reduced controller preparation. Only 14 candidates are visited in either run.
-This identifies a removed source of repeated work and a remaining bottleneck; it is not a complete-ranking
-speedup. All 55 shared returned candidates across the four comparisons have compatible score and payoff
-intervals; none of those pairs supplies an exact-point equality certificate. Their canonical global ranks
-are unresolved. Every unsuccessful result remains in the receipt.
+Short newcomer spends 41.188 seconds in family preparation and reaches only 14 physical candidates.
+Earlier controller reuse removed many repeated native program builds but did not remove repeated
+whole-family admission and preparation costs. A larger visited-node count within an unfinished request
+is not a complete-ranking speedup.
 
-These local runs do not replace the complete source-specific Chromium evidence above. The new 49-request
-native/Chromium workflow must finish before its full-matrix result can be reported.
+One further native measurement at source
+[`8ad653fd1328cb71ebfb7c4ae939a44a1cc9bfbd`](https://github.com/empty-sekai/ournotes-deck/commit/8ad653fd1328cb71ebfb7c4ae939a44a1cc9bfbd),
+tree `854203b9956e27baec2affcbd0cd2675444802c8`, gives the same unresolved LUCK result:
+
+| Original LUCK request | Completion | Optimality | End-to-end seconds | Search nodes | Visited candidates | Family preparation seconds |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| `short-newcomer-score` | TimedOut | unproven | 60.075000 | 9,086 | 14 | 41.046630 |
+
+Its original answer SHA-256 is `5d23e60e6ef9c1c25bb678e44dfeb3e9668120949b0cbb95e01c3d3f5b8aec40`. The unrounded end-to-end time is
+`60074.999892` ms; family preparation is `41,046.629659` ms. This is the baseline before the
+subsequent family-index and cutoff-short-circuit changes.
+
+The source-index change alone, at
+[`db80818ca23040ce2e5c2babfc5261aaf7eb9b1b`](https://github.com/empty-sekai/ournotes-deck/commit/db80818ca23040ce2e5c2babfc5261aaf7eb9b1b),
+tree `56b5c6d50932f87c3f790f6d652b8b4eb5feab52`, also leaves that original request TimedOut/unproven:
+60.057584 seconds end to end, 10,282 nodes and 14 visited candidates. Family preparation takes
+41.517477 seconds for 11,083 admitted families, versus 41.046630 seconds for 10,262 at the preceding
+source. These unfinished observations do not establish a complete-request speedup.
+
+Adding the cutoff short circuit, at
+[`a8c8f994c477beffe08f22ffa80d29ca7aadf6a8`](https://github.com/empty-sekai/ournotes-deck/commit/a8c8f994c477beffe08f22ffa80d29ca7aadf6a8),
+tree `ddbfd2320d9249878425851e508e0c46abfb8e81`, still completes **none of the four unchanged original
+LUCK Score requests**:
+
+| Original LUCK request | Completion | End-to-end seconds | Search nodes | Visited candidates | Family preparation seconds | Simulation seconds |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `short-newcomer-score` | TimedOut / unproven | 60.065716 | 303 | 67 | 0.997665 | 58.691552 |
+| `short-midcore-score` | TimedOut / unproven | 60.067311 | 99 | 68 | 1.898025 | 57.886857 |
+| `short-veteran-score` | TimedOut / unproven | 60.057374 | 68 | 65 | 2.903370 | 56.859586 |
+| `long-newcomer-score` | TimedOut / unproven | 60.053924 | 54 | 49 | 0.193255 | 59.635666 |
+
+The reduced preparation time does not translate into completed ranking. Short newcomer records only
+94 available leaf caps in 156 checks, compared with 648 in 648 before the short circuit; its simulation
+time grows from about 12 seconds to 59 seconds. Stopping optional node preparation can leave later
+leaves without a retained profile cap, exposing expensive terminal evaluation. All four timeouts are
+retained in the local evidence. The artifact audit checks 2,461 contracts and 135 shared candidate
+observations with compatible score/payoff intervals; it does not certify a global Top-K for these
+unfinished requests.
+
+The subsequent source
+[`2dd416de8906f837ccfd3b5417460d26f4869158`](https://github.com/empty-sekai/ournotes-deck/commit/2dd416de8906f837ccfd3b5417460d26f4869158),
+tree `9f82758b56ce470dfd72b8c1d9fb74539447d472`, adds on-demand preparation for a legal cold leaf.
+It retains the original complete physical-pair admission, prepares only the actual binding's required
+profile over all 120 labels, and keeps other profiles unknown. Seven targeted checks pass, including
+zero-cache, exact binding/owner remapping, budget retention and cancellation. The independent native
+canonical-ranking oracle also passes for all 62 physical descendants and all 120 orders per descendant,
+including cache enabled/disabled and truthful candidate-limit interruption. Default Clippy also passes;
+the native-fixture Clippy run is interrupted and has no passing result at this source. These are
+correctness and static-analysis checks. **No source-matched real-request performance result is available for this leaf change**, so the
+four timed-out measurements above must not be attributed to it or treated as improved completion.
+
+The same six-request local run at `59105bb0` also contains three non-LUCK controls: the original Issue #9
+request completes/proves its ranking in 4.437 seconds, `free-short-veteran` in 0.401 seconds, and
+`no-luck-short-midcore` in 4.387 seconds. The latter two were already-complete controls. The Issue #9
+result is a useful separate regression result for cumulative-score history bounds, but **it is not a LUCK
+breakthrough and is not a result of the public `d06fe6cb` CI run**.
+
+## Platform differences and observed LUCK costs
+
+Each request has one observation per source and runtime. From the `21954072` baseline to `d06fe6cb`,
+newcomer changes from Intel Xeon Platinum 8573C to AMD EPYC 7763; veteran changes from AMD EPYC 9V45 to
+AMD EPYC 9V74. Midcore uses AMD EPYC 7763 in both runs. CPU changes, multiple source changes and single
+observations prevent attributing elapsed-time ratios to one algorithm. Timeout durations are censored,
+so no completed speedup ratio is computed for them.
+
+On public `d06fe6cb`, short newcomer visits only 14 candidates, while short midcore and short veteran
+visit 56 and 77. Their native terminal-upper stage consumes 10.558, 51.147 and 54.148 seconds respectively;
+terminal-recipe hits/builds are 0/1,656, 59/6,534 and 102/8,528. The later local short-newcomer measurements
+above identify a different dominant cost: roughly 41 seconds of family preparation even after controller
+program reuse. Both repeated complete-family preparation and per-candidate terminal recording/scoring
+remain measured bottlenecks. None of these unfinished results proves the complete LUCK ranking.
 
 ## Public artifacts
 
-These three downloaded real-chart shard archives and their root reports were SHA-256 verified. Each
-belongs to the public source and workflow linked above; the receipt also records report, input-receipt
-and manifest hashes. No unverified aggregate archive is needed for this result.
+All six archives below were downloaded and SHA-256 verified. The full49 aggregate's runs match the four
+original result shards; its execution/contracts gate passes and completion target fails. The compact
+receipt records the root report, input-receipt, manifest, original answer and source hashes.
 
 | Artifact | SHA-256 |
 | --- | --- |
-| [Newcomer](https://github.com/empty-sekai/ournotes-deck/actions/runs/37779863844/artifacts/11552564726) | `d43f3840586d0c5ea1e0f6f665ebca059411c0ed674e33e8c4371f5ba24e08c3` |
-| [Midcore](https://github.com/empty-sekai/ournotes-deck/actions/runs/37779863844/artifacts/11553371943) | `6109aa237d3eb86949af6e81f76a187a573f3ebeb6e7af3e0a9964bccf7775e2` |
-| [Veteran](https://github.com/empty-sekai/ournotes-deck/actions/runs/37779863844/artifacts/11553417742) | `097c3404a8c5d3280dca2266cd2bd75aed7c6a9b4e08d56b02a2b848deb929eb` |
+| [full48-newcomer](https://github.com/empty-sekai/ournotes-deck/actions/runs/37792504759/artifacts/11559670264) | `b054966e6a774506f2515edfa128ef9ea4aa185296870a3d3235deb8db717e3a` |
+| [full48-midcore](https://github.com/empty-sekai/ournotes-deck/actions/runs/37792504759/artifacts/11558527722) | `3415b4f02d8cb90c1ebc95b8fa0e7c34d59282d04a6bf067d265b638611a2111` |
+| [full48-veteran](https://github.com/empty-sekai/ournotes-deck/actions/runs/37792504759/artifacts/11558706262) | `bfb4a91bb59537ea7e438881bc87d45c92ee3e4c2dea97db772d0a872a205c51` |
+| [reported](https://github.com/empty-sekai/ournotes-deck/actions/runs/37792504759/artifacts/11558245402) | `c4459622638e4d611bed49a3f847edb311985f2fb52761b07eaa8c543a5ced68` |
+| [summary](https://github.com/empty-sekai/ournotes-deck/actions/runs/37792504759/artifacts/11559066017) | `0c9eaff080b77eb1f8cb3e1117e969914bca54323d52baf14c4eaab7f6ea55ab` |
+| [inputs](https://github.com/empty-sekai/ournotes-deck/actions/runs/37792504759/artifacts/11557406340) | `95de27351d49829cad49ec4787a8840f454f54eb22cfd760baec0d8607c91e1c` |
