@@ -695,8 +695,9 @@ fn prepare_policy(
             "the completed recorder frame clock differs from the probability recording",
         ));
     }
-    check_probe_music_boundary(&frame_times, &probability, model.music_length_ms, probe_phase_bound, &trace)
-        .map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
+    let probe_lifetime_bound =
+        check_probe_music_boundary(&frame_times, &probability, model.music_length_ms, probe_phase_bound, &trace)
+            .is_ok();
     let query_limit = (session.play.frames.len() as u64)
         .checked_mul(2)
         .and_then(|value| value.checked_add(2 * session.setup.fevers.len() as u64))
@@ -707,6 +708,11 @@ fn prepare_policy(
     let Some(mut terminal) = terminal_notes(&trace, &probability, cancelled)? else {
         return Ok(None);
     };
+    // A backdated probe end can disagree with the chart-time probe bit. The independent native envelope
+    // still covers its signed filings; only the conditional probe permission must be withheld.
+    if !probe_lifetime_bound {
+        terminal.probe_gate = None;
+    }
     terminal.exact_final_life = Some(model.current_life());
     #[cfg(feature = "search-diagnostics")]
     timing.next(Phase::Factors);
