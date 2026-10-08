@@ -457,6 +457,8 @@ mod tests {
 
     fn curve() -> Arc<LuckDpCertifiedResult> {
         Arc::new(LuckDpCertifiedResult {
+            probe_transitions: Vec::new(),
+            range_moments: Vec::new(),
             steps: vec![(
                 40,
                 [ProbabilityMass::ONE, ProbabilityMass::ZERO, ProbabilityMass::ZERO, ProbabilityMass::ZERO],

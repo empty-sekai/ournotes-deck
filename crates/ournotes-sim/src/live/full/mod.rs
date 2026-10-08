@@ -59,22 +59,27 @@ mod luck_dp;
 mod luck_exact;
 pub use luck_dp::{
     LuckControllerFamily, LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckFamilyChoice,
-    LuckFamilyContext, LuckFamilyDecline, LuckFamilyError, LuckFamilyLimits, LuckFamilyOrderLaw, LuckRecordProfile,
-    luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified, luck_rush_dp_certified_with_events,
-    luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
+    LuckFamilyContext, LuckFamilyDecline, LuckFamilyError, LuckFamilyLimits, LuckFamilyOrderLaw, LuckRangeMoments,
+    LuckRecordProfile, luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified,
+    luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_moments, luck_rush_dp_certified_with_ranking,
+    luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
 };
 pub use luck_exact::{
     LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactSession,
     LuckExactStats, luck_exact_law_with_ranking,
 };
 mod luck_score_bounds;
+pub(crate) use luck_score_bounds::luck_score_expectation_for_chart;
+mod nominal_expectation;
 pub use luck_score_bounds::{
-    LuckRushDecline, LuckRushPreparation, LuckScoreBounds, LuckScoreSession, LuckScoreSummary, LuckTerminalRush,
-    luck_score_bounds, luck_score_bounds_with_ranking, luck_score_summary_with_curves, luck_score_summary_with_ranking,
-    prepare_lottery_free,
+    LuckRangeScoreBounds, LuckRushDecline, LuckRushPreparation, LuckScoreBounds, LuckScoreExpectation,
+    LuckScoreSession, LuckScoreSummary, LuckTerminalRush, RealBounds, luck_score_bounds,
+    luck_score_bounds_with_ranking, luck_score_expectation, luck_score_expectation_with_curves,
+    luck_score_summary_with_curves, luck_score_summary_with_ranking, prepare_lottery_free,
 };
 #[cfg(feature = "search-diagnostics")]
 pub use luck_score_bounds::{LuckScoreProfile, take_luck_score_profile};
+pub(crate) use nominal_expectation::{has_nominal_score_probabilities, nominal_score_expectation_for_chart};
 mod orders;
 #[cfg(feature = "search-diagnostics")]
 #[doc(hidden)]
@@ -1989,35 +1994,12 @@ impl LiveModel {
         if let Some(trace) = &self.score.bounds_trace
             && !trace.probes.is_empty()
         {
-            let possible = if let Some(gate) = trace.filing_gate {
-                let gk_view = self.gk.as_ref().map(|g| GkView {
-                    ctrl: &g.ctrl,
-                    prev_lots: &g.prev_lots,
-                    prev_lot_ms: g.prev_lot_ms,
-                });
-                let ctx = CheckCtx {
-                    life: &mut self.life,
-                    random: &mut self.random,
-                    frame_time: t,
-                    current_combo: self.current_combo,
-                    judged: &self.judged,
-                    events: &self.frame_events,
-                    gk: gk_view,
-                    prev_confirmed_rank: frame_rank_confirmation,
-                };
-                // The admitted ordinary appliers cannot change the range machine during either skill phase.
-                // Use the same gate as the updater; uncertainty keeps the unrestricted schedule. An untimed
-                // sustained instance is frozen while its gate is closed, so do not force its probe class off.
-                engine::mission_gate_open(gate, &ctx).unwrap_or(true)
-            } else {
-                true
-            };
-            if possible {
-                self.score.bounds_potential_skills(t);
-                // An untimed sustained score-up that ends at or after the music length files its end there.
-                if self.music_length_ms > 0 && self.music_length_ms < t {
-                    self.score.bounds_potential_skills(self.music_length_ms);
-                }
+            // Preserve every original skill boundary, including closed mission gates. The lifecycle
+            // certificate binds these optional filings to the complete native frame clock.
+            self.score.bounds_potential_skills(t);
+            // An untimed sustained score-up that ends at or after the music length files its end there.
+            if self.music_length_ms > 0 && self.music_length_ms < t {
+                self.score.bounds_potential_skills(self.music_length_ms);
             }
         }
         let info = self.gk.as_ref().map(|g| &g.ctrl as &dyn GekisouComboInfo);
@@ -2092,8 +2074,10 @@ impl LiveModel {
                     let info = Some(&gk.ctrl as &dyn GekisouComboInfo);
                     let s0 = self.score.calculate(r.start_ms, &self.combo, info)?;
                     gk.program_rank_snapshots[idx].0 = self.score.program_snapshot();
+                    gk.rank_snapshot_queries[idx].0 = self.score.bounds_last_query();
                     let s1 = self.score.calculate(r.end_ms, &self.combo, info)?;
                     gk.program_rank_snapshots[idx].1 = self.score.program_snapshot();
+                    gk.rank_snapshot_queries[idx].1 = self.score.bounds_last_query();
                     gk.ctrl.states[idx].start_score = s0;
                     gk.ctrl.states[idx].end_score = s1;
                 }
@@ -2115,10 +2099,8 @@ impl LiveModel {
                 self.score.add_fixed(gk.ctrl.ranges[idx].end_ms, bonus);
                 let (start, end) = gk.program_rank_snapshots[idx];
                 self.score.record_rank_bonus(start, end, pct)?;
-                if !gk.solo_score_queries {
-                    let (start, end) = gk.rank_snapshot_queries[idx];
-                    self.score.bounds_rank(idx, gk.ctrl.ranges[idx].end_ms, pct, start, end);
-                }
+                let (start, end) = gk.rank_snapshot_queries[idx];
+                self.score.bounds_rank(idx, gk.ctrl.ranges[idx].end_ms, pct, start, end);
                 gk.rank_bonus.push((idx, rank, bonus, pct));
                 gk.rank_applications.push((self.trace.len(), idx));
                 self.prev_confirmed_rank = Some(rank);

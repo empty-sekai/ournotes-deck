@@ -1024,6 +1024,7 @@ impl<'a> LuckFamilyContext<'a> {
             &projected,
             None,
             None,
+            false,
         )
         .map_err(|e| source_error(LuckFamilyDecline::ProbabilityDomain, e))?;
         if prepared.life.is_some() || prepared.life_deck.is_some() {
