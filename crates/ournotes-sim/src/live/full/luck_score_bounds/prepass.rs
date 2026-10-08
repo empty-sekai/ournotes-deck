@@ -419,6 +419,31 @@ fn prepare(
     prepare_policy(session, deck, curves, cancelled, true)
 }
 
+fn separate_probability(
+    session: &mut LuckScoreSession<'_>,
+    deck: &[Performer],
+    curves: &mut LuckDpCache,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<Arc<LuckDpCertifiedResult>>, (LuckRushDecline, Error)> {
+    curves
+        .certified_cancellable(
+            session.master,
+            session.skills,
+            session.notes,
+            session.events,
+            session.params,
+            session.setup,
+            session.play,
+            session.delta_times,
+            deck,
+            None,
+            None,
+            Some(&mut session.recordings),
+            cancelled,
+        )
+        .map_err(|error| (LuckRushDecline::ProbabilityDomain, error))
+}
+
 fn prepare_policy(
     session: &mut LuckScoreSession<'_>,
     deck: &[Performer],
@@ -588,24 +613,7 @@ fn prepare_policy(
         timing.value.fused_refusals += 1;
     }
     let mut probability = if fused.is_none() {
-        let Some(probability) = curves
-            .certified_cancellable(
-                session.master,
-                session.skills,
-                session.notes,
-                session.events,
-                session.params,
-                session.setup,
-                session.play,
-                session.delta_times,
-                deck,
-                None,
-                None,
-                Some(&mut session.recordings),
-                cancelled,
-            )
-            .map_err(|error| (LuckRushDecline::ProbabilityDomain, error))?
-        else {
+        let Some(probability) = separate_probability(session, deck, curves, cancelled)? else {
             return Ok(None);
         };
         Some(probability)
@@ -625,20 +633,27 @@ fn prepare_policy(
                 timing.value.fused_frames += 1;
             }
             let mut observer_failed = false;
-            model
-                .frame_timed_observed(frame.time_ms, &frame.judged, delta, &mut |model, _, results| {
-                    let result = recording.observe(model, frame, delta, results);
-                    observer_failed = result.is_err();
-                    result
-                })
-                .map_err(|error| {
-                    let decline = if observer_failed {
-                        LuckRushDecline::ProbabilityDomain
-                    } else {
-                        LuckRushDecline::RecorderAdmission
-                    };
-                    (decline, error)
-                })?;
+            let result = model.frame_timed_observed(frame.time_ms, &frame.judged, delta, &mut |model, _, results| {
+                let result = recording.observe(model, frame, delta, results);
+                observer_failed = result.is_err();
+                result
+            });
+            if let Err(error) = result {
+                if observer_failed {
+                    return Err((LuckRushDecline::ProbabilityDomain, error));
+                }
+                // The separate route completes the reduced DP before any full score frames. A native
+                // controller error can precede the observer and still belong to that probability domain.
+                // Recover the original error precedence only on failure, using a fresh reduced model.
+                drop(fused);
+                drop(model);
+                #[cfg(feature = "search-diagnostics")]
+                timing.next(Phase::Curve);
+                return match separate_probability(session, deck, curves, cancelled)? {
+                    Some(_) => Err((LuckRushDecline::RecorderAdmission, error)),
+                    None => Ok(None),
+                };
+            }
         } else {
             model
                 .frame_timed(frame.time_ms, &frame.judged, delta)

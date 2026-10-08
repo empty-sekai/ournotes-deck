@@ -482,6 +482,11 @@ The five growing transcript arrays have a one MiB temporary capacity guard. Init
 compiled actions and range metadata remain separate input-dependent temporary storage. Capacity refusal or a
 native error discards the partial recording and returns the existing unavailable result; cancellation returns
 `Stopped`. A fallback starts its own fresh model and never repeats playback on a partially advanced recorder.
+For a native failure outside the observer, the partial full model is released before the original separate
+probability evaluator restores the old error priority: a reduced-model failure retains its probability-domain
+reason and error, while a completed probability law leaves the full recorder's admission error. Only this
+failure path repeats probability recording. It uses the original cancellation callback and cache limits;
+a complete probability result may be retained, but no partial transcript or terminal score is published.
 Diagnostic `fusedRecordings` counts completed shared native recordings, `fusedFrames` includes frames attempted
 before interruption, and `fusedRefusals` counts declined optional admissions. These counters do not confer any
 completion or score-law authority.
@@ -492,7 +497,8 @@ non-dyadic same-owner gauge writers, phase changes, multiple notes per frame, Mi
 compare every probability endpoint and terminal-capability field bit for bit, exercise zero cache capacity,
 and reject changed judgements, LIFE actions, wrapped effect identities and partial/cancelled recordings. A
 large valid native frame exercises the actual temporary capacity guard and verifies that an earlier complete
-cache entry survives the refusal.
+cache entry survives the refusal. Failure comparisons also cover overlapping ranges, malformed frame/note
+inputs, ordinary-only pool exhaustion, original error payload priority and cancellation during the cold replay.
 
 `LuckTerminalRush::probe_gate()` grants `Some(2)` only for held direct probes under the completed recorder's
 common LUCK gate. `weighted_note_upper` changes only the native Rush multiplier. `weighted_note_bucket_upper`

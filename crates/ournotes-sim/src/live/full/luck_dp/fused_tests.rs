@@ -1,6 +1,8 @@
 // Differential tests against the original, independently stepped reduced native recorder.
 use super::*;
-use crate::live::full::luck_score_bounds::{LuckRushPreparation, LuckTerminalRush, ProbeRow, check_recorder};
+use crate::live::full::luck_score_bounds::{
+    LuckRushDecline, LuckRushPreparation, LuckTerminalRush, ProbeRow, check_recorder,
+};
 
 #[derive(Clone)]
 struct Input {
@@ -175,7 +177,12 @@ impl Input {
         self.master.reindex().unwrap();
     }
 
-    fn terminal(&self, fused: bool, cache: &mut LuckDpCache) -> LuckTerminalRush {
+    fn preparation(
+        &self,
+        fused: bool,
+        cache: &mut LuckDpCache,
+        cancelled: impl FnMut() -> bool,
+    ) -> LuckRushPreparation {
         let skills = luck_skills(&self.master).unwrap();
         let mut session = LuckScoreSession::new(
             &self.master,
@@ -188,12 +195,15 @@ impl Input {
             &self.delta,
             None,
         );
-        let result = if fused {
-            session.rush_cap_preparation(&self.deck, Some(cache), || false)
+        if fused {
+            session.rush_cap_preparation(&self.deck, Some(cache), cancelled)
         } else {
-            session.test_rush_cap_preparation_unfused(&self.deck, Some(cache), || false)
-        };
-        match result {
+            session.test_rush_cap_preparation_unfused(&self.deck, Some(cache), cancelled)
+        }
+    }
+
+    fn terminal(&self, fused: bool, cache: &mut LuckDpCache) -> LuckTerminalRush {
+        match self.preparation(fused, cache, || false) {
             LuckRushPreparation::Ready(terminal) => terminal,
             other => panic!("complete fixture must retain terminal capabilities: {other:?}"),
         }
@@ -401,6 +411,162 @@ fn fused_prepass_keeps_every_terminal_endpoint_and_scope_bit_identical_to_two_pa
             assert_eq!(fused_cache.stats().program_compilations, 0);
         }
     }
+}
+
+fn unavailable(result: LuckRushPreparation) -> (LuckRushDecline, Error) {
+    match result {
+        LuckRushPreparation::Unavailable { reason, error } => (reason, error),
+        other => panic!("the invalid input must be refused: {other:?}"),
+    }
+}
+
+fn ordinary_pool_exhaustion() -> Input {
+    let mut input = Input::new();
+    for row in &mut input.master.live_skill_effects {
+        if row.live_skill_id == 9510 {
+            row.activation_time_second = 10.0;
+        }
+    }
+    input.events = (0..6).map(|frame| (0, frame * 100)).collect();
+    input.master.reindex().unwrap();
+    input
+}
+
+/// Observe the real failing native frame, independently of the prepass's error classification.
+fn first_fused_frame_error(input: &Input) -> (Error, bool) {
+    let (mut full, mut recording) = input.start(true).unwrap().expect("the test must enter fused recording");
+    for (frame, &delta) in input.play.frames.iter().zip(&input.delta) {
+        let mut observed = false;
+        let result = full.frame_timed_observed(frame.time_ms, &frame.judged, delta, &mut |model, _, results| {
+            observed = true;
+            recording.observe(model, frame, delta, results)
+        });
+        if let Err(error) = result {
+            return (error, observed);
+        }
+    }
+    panic!("the native frame sequence unexpectedly completed");
+}
+
+#[test]
+fn fused_prepass_preserves_two_pass_failure_precedence_before_and_inside_the_observer() {
+    let mut cases = Vec::new();
+    let mut overlap = Input::new();
+    overlap.setup.fevers.push((150, 260));
+    cases.push((
+        "overlapping LUCK ranges",
+        overlap,
+        Error::Unsupported("LUCK coefficient: a luck range starts during a rush".into()),
+        false,
+    ));
+    let mut unknown = Input::new();
+    unknown.play.frames[2].judged[0].note_id = i32::MAX;
+    cases.push(("unknown note", unknown.clone(), Error::Input(format!("unknown note {}", i32::MAX)), false));
+    let mut negative_delta = Input::new();
+    negative_delta.delta[2] = -0.1;
+    cases.push((
+        "negative delta",
+        negative_delta,
+        Error::Input("LUCK DP needs increasing frames and finite nonnegative deltas".into()),
+        true,
+    ));
+    let mut late_time = Input::new();
+    late_time.play.frames[2].judged[0].judgement_time_ms += 1;
+    cases.push((
+        "non-chart judgement time",
+        late_time,
+        Error::Unsupported("LUCK DP requires notes in their first chart-time frame, in chart-time order".into()),
+        true,
+    ));
+    for (label, input, error, observed) in &cases {
+        assert_eq!(first_fused_frame_error(input), (error.clone(), *observed), "{label}");
+        for capacity in [0, 1 << 20] {
+            for fused in [false, true] {
+                let mut cache = LuckDpCache::new(capacity);
+                assert_eq!(
+                    unavailable(input.preparation(fused, &mut cache, || false)),
+                    (LuckRushDecline::ProbabilityDomain, error.clone()),
+                    "{label}, fused={fused}, capacity={capacity}",
+                );
+                assert!(cache.entries.is_empty(), "{label}: failed DP cannot publish a partial curve");
+                assert_eq!(cache.stats().recording_peak_entries, 0);
+                assert_eq!(cache.stats().shared_recording_peak_entries, 0);
+                assert_eq!(cache.stats().program_peak_entries, 0);
+            }
+        }
+    }
+
+    // The full model sees the missing note first. The earlier reduced pass rejects the repeated frame
+    // before looking up that note, so compatibility includes the original error payload, not just its tag.
+    unknown.play.frames[2].time_ms = unknown.play.frames[1].time_ms;
+    assert_eq!(first_fused_frame_error(&unknown), (Error::Input(format!("unknown note {}", i32::MAX)), false));
+    for fused in [false, true] {
+        let mut cache = LuckDpCache::new(1 << 20);
+        assert_eq!(
+            unavailable(unknown.preparation(fused, &mut cache, || false)),
+            (
+                LuckRushDecline::ProbabilityDomain,
+                Error::Input("LUCK DP needs increasing frames and finite nonnegative deltas".into()),
+            ),
+        );
+        assert!(cache.entries.is_empty());
+    }
+
+    // Ordinary live rows and their event-triggered pool are absent from the reduced controller. A
+    // successful DP followed by the sixth overlapping ordinary activation is still RecorderAdmission.
+    let ordinary = ordinary_pool_exhaustion();
+    let error = Error::Game("live skill pool is empty".into());
+    assert_eq!(first_fused_frame_error(&ordinary), (error.clone(), false));
+    assert!(ordinary.reduced().key().is_some());
+    for capacity in [0, 1 << 20] {
+        for fused in [false, true] {
+            let mut cache = LuckDpCache::new(capacity);
+            assert_eq!(
+                unavailable(ordinary.preparation(fused, &mut cache, || false)),
+                (LuckRushDecline::RecorderAdmission, error.clone()),
+            );
+            assert!(cache.stats().transitions > 0, "the original complete DP must precede the ordinary refusal");
+            assert_eq!(cache.stats().program_peak_entries, 0);
+            assert_eq!(cache.stats().terminal_builds, 0);
+            assert_eq!(cache.entries.is_empty(), capacity == 0);
+        }
+    }
+}
+
+#[test]
+fn fused_prepass_cold_failure_replay_keeps_cancellation_and_complete_cache_boundaries() {
+    let input = ordinary_pool_exhaustion();
+    let mut baseline_cache = LuckDpCache::new(1 << 20);
+    let mut checks = 0usize;
+    let expected = unavailable(input.preparation(true, &mut baseline_cache, || {
+        checks += 1;
+        false
+    }));
+    assert_eq!(expected, (LuckRushDecline::RecorderAdmission, Error::Game("live skill pool is empty".into())));
+    assert!(checks > 1 && baseline_cache.stats().transitions > 0 && !baseline_cache.entries.is_empty());
+
+    // The final uncancelled poll is the reduced DP's last publication barrier. Work observed here can
+    // only come from the cold replay: the fused full recording already failed before curve propagation.
+    let mut cache = LuckDpCache::new(1 << 20);
+    let mut seen = 0usize;
+    let stopped = input.preparation(true, &mut cache, || {
+        seen += 1;
+        seen >= checks
+    });
+    assert!(matches!(stopped, LuckRushPreparation::Stopped), "{stopped:?}");
+    assert_eq!(seen, checks);
+    assert!(cache.stats().transitions > 0, "cancellation must occur inside the cold probability replay");
+    assert!(cache.entries.is_empty());
+    assert_eq!(cache.words, 0);
+    assert_eq!(cache.stats().recording_peak_entries, 0);
+    assert_eq!(cache.stats().shared_recording_peak_entries, 0);
+    assert_eq!(cache.stats().program_peak_entries, 0);
+    assert_eq!(cache.stats().terminal_builds, 0);
+
+    assert_eq!(unavailable(input.preparation(true, &mut cache, || false)), expected);
+    assert!(!cache.entries.is_empty(), "resuming may publish the complete reduced curve only");
+    assert_eq!(cache.stats().program_peak_entries, 0);
+    assert_eq!(cache.stats().terminal_builds, 0);
 }
 
 #[test]
