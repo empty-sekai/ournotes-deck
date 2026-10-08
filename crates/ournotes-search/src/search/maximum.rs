@@ -5,7 +5,7 @@ use crate::search::certified_search::PayoffMap;
 use crate::search::expectation::ExactExpectation;
 use crate::search::joint::{JointBounds, MaximumIdPrefixes, SLOTS};
 use ournotes_sim::live::full::{
-    LiveModel, LuckExactBudget, LuckExactDecline, LuckExactSession, LuckScoreSession, LuckScoreSummary,
+    LiveModel, LuckExactBudget, LuckExactDecline, LuckExactSession, LuckMaximumSession, LuckMaximumSupport,
     MaximumOrdersOutcome, Settled,
 };
 use ournotes_sim::live::random::LiveRandom;
@@ -170,7 +170,7 @@ impl Engine<'_, '_> {
         physical: &PhysicalDeck,
         power: i32,
         witnesses: &[(i32, i32)],
-        summary: Option<&LuckScoreSummary>,
+        summary: Option<&LuckMaximumSupport>,
     ) -> bool {
         if matches!(
             self.metric,
@@ -264,7 +264,7 @@ impl Engine<'_, '_> {
         };
         let skills = input.gekisou.as_ref().and_then(|_| ournotes_sim::live::full::luck_skills(master).ok());
         let mut score_bounds = input.gekisou.as_ref().zip(skills.as_ref()).map(|(setup, skills)| {
-            LuckScoreSession::new(
+            LuckMaximumSession::new(
                 master,
                 skills,
                 &input.notes,
@@ -297,7 +297,7 @@ impl Engine<'_, '_> {
             let mut score_summary = None;
             if let Some(bounds) = &mut score_bounds {
                 // Optional bounds are used only to close the search when a simulated path attains them.
-                if let Ok(Some(summary)) = bounds.summary(&performers, None, || self.expired()) {
+                if let Ok(Some(summary)) = bounds.support(&performers, || self.expired()) {
                     ceiling = Some(ceiling.map_or(summary.final_support.upper, |c| c.min(summary.final_support.upper)));
                     score_summary = Some(summary);
                 }

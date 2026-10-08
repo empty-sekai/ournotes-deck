@@ -58,10 +58,11 @@ mod luck;
 mod luck_dp;
 mod luck_exact;
 pub use luck_dp::{
-    LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckRangeMoments, LuckRecordProfile,
-    LuckRushFrameSupport, luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified,
+    LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckDpSupportResult, LuckRangeMoments,
+    LuckRecordProfile, LuckRushFrameSupport, luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified,
     luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_moments, luck_rush_dp_certified_with_ranking,
-    luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
+    luck_rush_dp_support_with_ranking, luck_rush_dp_support_with_ranking_cancellable, luck_rush_dp_with_events,
+    luck_rush_dp_with_ranking, take_luck_record_profile,
 };
 pub use luck_exact::{
     LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactSession,
@@ -71,9 +72,10 @@ mod luck_score_bounds;
 pub(crate) use luck_score_bounds::luck_score_expectation_for_chart;
 mod nominal_expectation;
 pub use luck_score_bounds::{
-    LuckRangeScoreBounds, LuckScoreBounds, LuckScoreExpectation, LuckScoreSession, LuckScoreSummary, RealBounds,
-    luck_score_bounds, luck_score_bounds_with_ranking, luck_score_expectation, luck_score_expectation_with_curves,
-    luck_score_summary_with_curves, luck_score_summary_with_ranking, prepare_lottery_free,
+    LuckMaximumSession, LuckMaximumSupport, LuckRangeScoreBounds, LuckScoreBounds, LuckScoreExpectation,
+    LuckScoreSession, LuckScoreSummary, RealBounds, luck_score_bounds, luck_score_bounds_with_ranking,
+    luck_score_expectation, luck_score_expectation_with_curves, luck_score_summary_with_curves,
+    luck_score_summary_with_ranking, prepare_lottery_free,
 };
 #[cfg(feature = "search-diagnostics")]
 pub use luck_score_bounds::{LuckScoreProfile, take_luck_score_profile};

@@ -11,6 +11,9 @@ use crate::live::certified::{F32Interval, F64Interval, I32Interval, ProbabilityM
 use crate::live::score::get_luck_factor_percent;
 use serde::Serialize;
 
+mod maximum_support;
+#[cfg(test)]
+mod maximum_support_tests;
 #[cfg(test)]
 mod owner_order_tests;
 #[cfg(test)]
@@ -18,6 +21,8 @@ mod probe_lifecycle_tests;
 #[cfg(feature = "search-diagnostics")]
 mod profile;
 mod replay;
+use maximum_support::{ComputedBounds, CurveSupport, ScoreCurve};
+pub use maximum_support::{LuckMaximumSession, LuckMaximumSupport};
 #[cfg(feature = "search-diagnostics")]
 pub use profile::{LuckScoreProfile, take_luck_score_profile};
 
@@ -513,7 +518,7 @@ pub(super) fn bind_probe_phase(model: &LiveModel, skills: &LuckSkills) -> bool {
 /// Certify that tail against the complete native frame clock and its normal/clamped observer schedule.
 fn check_probe_music_boundary(
     frame_times: &[i32],
-    curve: &LuckDpCertifiedResult,
+    curve: &impl CurveSupport,
     music_length_ms: i32,
     phase_bound: bool,
     trace: &BoundsTrace,
@@ -523,12 +528,12 @@ fn check_probe_music_boundary(
     }
     let unsupported = || refuse("score probe lifetimes beyond music end need a certified inactive tail");
     if !phase_bound
-        || curve.probe_transitions.len() != frame_times.len()
-        || curve.probe_transitions.iter().any(|&mask| !(1..=15).contains(&mask))
+        || curve.probe_transitions().len() != frame_times.len()
+        || curve.probe_transitions().iter().any(|&mask| !(1..=15).contains(&mask))
         || frame_times.windows(2).any(|times| times[0] >= times[1])
         || frame_times
             .iter()
-            .zip(&curve.probe_transitions)
+            .zip(curve.probe_transitions())
             .any(|(&time, &mask)| time > music_length_ms && mask != 0b0001)
     {
         return Err(unsupported());
@@ -587,7 +592,17 @@ struct QueryParts {
 /// the parts of every query. The frames that no query after `start` up to `end` executed again hold the same notes
 /// with the same native values in both snapshots, which cancel exactly: only the notes of the later frames are
 /// enclosed, on each side. Without the notes of both snapshots both whole note sums are enclosed separately.
+#[cfg(test)]
 fn snapshot_difference(
+    start: Option<usize>,
+    end: usize,
+    queries: &[QueryParts],
+    fixed: &[(i32, u8, F64Interval, I32Interval)],
+) -> Result<(F64Interval, I32Interval), Error> {
+    snapshot_difference_mode::<true>(start, end, queries, fixed)
+}
+
+fn snapshot_difference_mode<const EXPECTATION: bool>(
     start: Option<usize>,
     end: usize,
     queries: &[QueryParts],
@@ -603,7 +618,11 @@ fn snapshot_difference(
         notes.iter().filter(|&&(frame, _, _)| frame > kept).fold(
             (F64Interval::ZERO, 0i64, 0i64),
             |(mean, lower, upper), &(_, support, note_mean)| {
-                (mean.add(note_mean), lower + i64::from(support.lower()), upper + i64::from(support.upper()))
+                (
+                    if EXPECTATION { mean.add(note_mean) } else { F64Interval::ZERO },
+                    lower + i64::from(support.lower()),
+                    upper + i64::from(support.upper()),
+                )
             },
         )
     };
@@ -611,12 +630,20 @@ fn snapshot_difference(
         (Some(kept), Some(a), Some(b)) => {
             let (a_mean, a_lower, a_upper) = later(a, kept);
             let (b_mean, b_lower, b_upper) = later(b, kept);
-            (b_mean.subtract(a_mean), b_lower - a_upper, b_upper - a_lower)
+            (
+                if EXPECTATION { b_mean.subtract(a_mean) } else { F64Interval::ZERO },
+                b_lower - a_upper,
+                b_upper - a_lower,
+            )
         }
         _ => {
             let a_support = start.map_or(I32Interval::point(0), |v| v.note_support);
             (
-                end.note_mean.subtract(start.map_or(F64Interval::ZERO, |v| v.note_mean)),
+                if EXPECTATION {
+                    end.note_mean.subtract(start.map_or(F64Interval::ZERO, |v| v.note_mean))
+                } else {
+                    F64Interval::ZERO
+                },
                 i64::from(end.note_support.lower()) - i64::from(a_support.upper()),
                 i64::from(end.note_support.upper()) - i64::from(a_support.lower()),
             )
@@ -629,7 +656,9 @@ fn snapshot_difference(
         if coefficient == 0 {
             continue;
         }
-        mean = mean.add(bonus_mean.scale_integer(i128::from(coefficient)));
+        if EXPECTATION {
+            mean = mean.add(bonus_mean.scale_integer(i128::from(coefficient)));
+        }
         let x = coefficient * i64::from(bonus_support.lower());
         let y = coefficient * i64::from(bonus_support.upper());
         lower += x.min(y);
@@ -642,17 +671,17 @@ fn snapshot_difference(
 /// different historical filing and retains full support. The curve's note-time masses are not used here.
 fn rush_filing_at(
     play: &LivePlay,
-    curve: &LuckDpCertifiedResult,
+    curve: &impl CurveSupport,
     point: RushPoint,
     time_ms: i32,
     music_length_ms: i32,
     bound: bool,
 ) -> Option<bool> {
-    if !bound || time_ms < 0 || time_ms >= music_length_ms || curve.rush_filings.len() != play.frames.len() {
+    if !bound || time_ms < 0 || time_ms >= music_length_ms || curve.rush_filings().len() != play.frames.len() {
         return None;
     }
     let frame = play.frames.get(point.play_frame)?;
-    let support = curve.rush_filings.get(point.play_frame)?;
+    let support = curve.rush_filings().get(point.play_frame)?;
     if support.judged.len() != frame.judged.len() {
         return None;
     }
@@ -668,16 +697,17 @@ fn rush_filing_at(
 
 fn probe_transition_at(
     play: &LivePlay,
-    curve: &LuckDpCertifiedResult,
+    curve: &impl CurveSupport,
     time_ms: i32,
     music_length_ms: i32,
     phase_bound: bool,
 ) -> Option<u8> {
-    if !phase_bound || time_ms >= music_length_ms || time_ms < 0 || curve.probe_transitions.len() != play.frames.len() {
+    if !phase_bound || time_ms >= music_length_ms || time_ms < 0 || curve.probe_transitions().len() != play.frames.len()
+    {
         return None;
     }
     let Ok(index) = play.frames.binary_search_by_key(&time_ms, |frame| frame.time_ms) else { return None };
-    match curve.probe_transitions[index] {
+    match curve.probe_transitions()[index] {
         mask @ 1..=15 => Some(mask),
         _ => None,
     }
@@ -1133,6 +1163,46 @@ fn luck_score_bounds_internal(
     counterfactual_solo: bool,
     probability: Option<std::sync::Arc<LuckDpCertifiedResult>>,
 ) -> Result<Option<LuckScoreBounds>, Error> {
+    Ok(score_bounds_mode::<true>(
+        master,
+        skills,
+        deck,
+        notes,
+        events,
+        params,
+        setup,
+        play,
+        delta_times,
+        ranking,
+        details,
+        curves,
+        recordings,
+        cancelled,
+        counterfactual_solo,
+        probability,
+    )?
+    .map(ComputedBounds::expected))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn score_bounds_mode<const EXPECTATION: bool>(
+    master: &Master,
+    skills: &LuckSkills,
+    deck: &[Performer],
+    notes: &[LiveNote],
+    events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+    details: bool,
+    curves: Option<&mut LuckDpCache>,
+    recordings: Option<&mut luck_dp::RecordingCache>,
+    cancelled: &mut impl FnMut() -> bool,
+    counterfactual_solo: bool,
+    probability: Option<std::sync::Arc<LuckDpCertifiedResult>>,
+) -> Result<Option<ComputedBounds>, Error> {
     if cancelled() {
         return Ok(None);
     }
@@ -1162,11 +1232,42 @@ fn luck_score_bounds_internal(
     // machine/gauge/points. check_recorder excludes any other stochastic writer and direct-7021 probes remain
     // false. Consequently these draws cannot reach score, judgements, life or fixed rank arrivals; this is a
     // deterministic score law even when native.draws() > 0. It is not a fixed-seed approximation.
-    let collect_moments = details || counterfactual_solo;
-    let probability = if let Some(probability) = probability {
-        probability
+    let collect_moments = EXPECTATION && (details || counterfactual_solo);
+    let probability = if !EXPECTATION {
+        let support = if !has_luck {
+            luck_dp::LuckDpSupportResult {
+                rush_filings: Vec::new(),
+                probe_transitions: vec![1; play.frames.len()],
+                steps: Vec::new(),
+                probes: vec![false; skills.shapes.len()],
+                peak_states: 1,
+                transitions: 0,
+            }
+        } else {
+            let Some(support) = luck_dp::luck_rush_dp_support_with_ranking_cancellable(
+                master,
+                skills,
+                notes,
+                events,
+                params,
+                setup,
+                play,
+                delta_times,
+                deck,
+                None,
+                ranking,
+                cancelled,
+            )?
+            else {
+                return Ok(None);
+            };
+            support
+        };
+        ScoreCurve::Support(support)
+    } else if let Some(probability) = probability {
+        ScoreCurve::Expected(probability)
     } else if !has_luck {
-        std::sync::Arc::new(LuckDpCertifiedResult {
+        ScoreCurve::Expected(std::sync::Arc::new(LuckDpCertifiedResult {
             rush_filings: Vec::new(),
             probe_transitions: vec![1; play.frames.len()],
             steps: Vec::new(),
@@ -1178,7 +1279,7 @@ fn luck_score_bounds_internal(
             },
             peak_states: 1,
             transitions: 0,
-        })
+        }))
     } else {
         let mut empty = LuckDpCache::new(0);
         let curves = curves.unwrap_or(&mut empty);
@@ -1201,7 +1302,7 @@ fn luck_score_bounds_internal(
         else {
             return Ok(None);
         };
-        probability
+        ScoreCurve::Expected(probability)
     };
     #[cfg(feature = "search-diagnostics")]
     let curve_dp_ms = phase_start.elapsed().as_secs_f64() * 1e3;
@@ -1253,7 +1354,7 @@ fn luck_score_bounds_internal(
     if model.random.draws() != 0 {
         return Err(refuse("the supposedly deterministic recorder consumed random draws"));
     }
-    let result = complete_bounds_recording(
+    let result = complete_recording_mode::<EXPECTATION>(
         model,
         calc,
         rush_percent,
@@ -1281,7 +1382,7 @@ fn luck_score_bounds_internal(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn complete_bounds_recording(
-    mut model: LiveModel,
+    model: LiveModel,
     calc: LiveScoreCalculator,
     rush_percent: i32,
     probability: std::sync::Arc<LuckDpCertifiedResult>,
@@ -1294,6 +1395,38 @@ pub(super) fn complete_bounds_recording(
     bind_rush: bool,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<LuckScoreBounds>, Error> {
+    Ok(complete_recording_mode::<true>(
+        model,
+        calc,
+        rush_percent,
+        ScoreCurve::Expected(probability),
+        play,
+        probe_phase_bound,
+        ranges_len,
+        rank_queries,
+        details,
+        has_luck,
+        bind_rush,
+        cancelled,
+    )?
+    .map(ComputedBounds::expected))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete_recording_mode<const EXPECTATION: bool>(
+    mut model: LiveModel,
+    calc: LiveScoreCalculator,
+    rush_percent: i32,
+    probability: ScoreCurve,
+    play: &LivePlay,
+    probe_phase_bound: bool,
+    ranges_len: usize,
+    rank_queries: bool,
+    details: bool,
+    has_luck: bool,
+    bind_rush: bool,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<ComputedBounds>, Error> {
     if model.gk.as_ref().is_none_or(|g| g.ctrl.states.iter().any(|state| state.state != gekisou::S_FINISH)) {
         return Err(refuse("terminal query precedes a range FINISH"));
     }
@@ -1338,6 +1471,7 @@ pub(super) fn complete_bounds_recording(
         .flatten()
         .collect();
     let mut query_means = Vec::<F64Interval>::new();
+    let mut query_count = 0usize;
     let mut query_supports = Vec::<I32Interval>::new();
     let mut query_parts = Vec::<QueryParts>::new();
     let mut ranges = Vec::new();
@@ -1430,31 +1564,43 @@ pub(super) fn complete_bounds_recording(
                 // Network FEVER_START may snapshot the initial zero before any score calculation.
                 // Both snapshots refer to the very same filed bonus values. Cancel their integer
                 // coefficients before enclosing the remaining difference; never assume independence.
-                let (mean, support) = snapshot_difference(*start, end, &query_parts, &fixed)?;
+                let (mean, support) = snapshot_difference_mode::<EXPECTATION>(*start, end, &query_parts, &fixed)?;
                 let x = i128::from(support.lower()) * i128::from(*percent) / 100;
                 let y = i128::from(support.upper()) * i128::from(*percent) / 100;
                 let bonus_support = I32Interval::new(
                     i32::try_from(x.min(y)).map_err(|_| refuse("rank bonus wraps"))?,
                     i32::try_from(x.max(y)).map_err(|_| refuse("rank bonus wraps"))?,
                 )?;
-                let bonus = if support.lower() == support.upper() {
+                let bonus = if !EXPECTATION {
+                    F64Interval::ZERO
+                } else if support.lower() == support.upper() {
                     bonus_support.as_real()
                 } else {
                     rank_mean_bounds(mean, support, *percent)?
                 };
                 pending = Some((get_frame(*time_ms), bonus, bonus_support));
-                ranges.push(LuckRangeScoreBounds {
-                    range: *range,
-                    start_query: *start,
-                    end_query: end,
-                    percent: *percent,
-                    mean: mean.into(),
-                    support: support.into(),
-                    bonus_mean: bonus.into(),
-                    bonus_support: bonus_support.into(),
-                    luck_points_mean: probability.range_moments.get(*range).map(|m| m.luck_points.into()),
-                    lot_results_mean: probability.range_moments.get(*range).map(|m| m.lot_results.map(Into::into)),
-                });
+                if EXPECTATION {
+                    ranges.push(LuckRangeScoreBounds {
+                        range: *range,
+                        start_query: *start,
+                        end_query: end,
+                        percent: *percent,
+                        mean: mean.into(),
+                        support: support.into(),
+                        bonus_mean: bonus.into(),
+                        bonus_support: bonus_support.into(),
+                        luck_points_mean: probability
+                            .expected()
+                            .range_moments
+                            .get(*range)
+                            .map(|m| m.luck_points.into()),
+                        lot_results_mean: probability
+                            .expected()
+                            .range_moments
+                            .get(*range)
+                            .map(|m| m.lot_results.map(Into::into)),
+                    });
+                }
             }
             BoundsEvent::Query { time_ms, to } => {
                 // The admitted controller/ordinary predicates never read score. Only native rank
@@ -1464,8 +1610,7 @@ pub(super) fn complete_bounds_recording(
                 // do not change a later sum or any control-flow input: native addition/subtraction
                 // are modular, and each actually observed snapshot is separately proved in i32.
                 // Thus production need not re-enclose every note thousands of unused times.
-                let measure =
-                    details || detailed_queries.contains(&query_means.len()) || query_means.len() + 1 == trace.queries;
+                let measure = details || detailed_queries.contains(&query_count) || query_count + 1 == trace.queries;
                 replay.query(*to)?;
                 let u = added.map_or(*to, |frame| (*to).min(frame - 1));
                 let start = if u < prev { u + 1 } else { prev + 1 };
@@ -1473,11 +1618,11 @@ pub(super) fn complete_bounds_recording(
                 let mandatory_start = if mandatory_u < prev { mandatory_u + 1 } else { prev + 1 };
                 let mut factor_width = [0.0; FIELDS];
                 let mut measured = Vec::new();
-                let retain_notes = details && detailed_queries.contains(&query_means.len());
+                let retain_notes = details && detailed_queries.contains(&query_count);
                 let mut note_count = 0;
                 let (mut lo, mut hi) = (0i64, 0i64);
                 let mut mean = F64Interval::ZERO;
-                let mut rank_notes = detailed_queries.contains(&query_means.len()).then(Vec::new);
+                let mut rank_notes = detailed_queries.contains(&query_count).then(Vec::new);
                 // A note first enters a query at or after `start` (its filing lowers `added`, and an unqueried
                 // note lies after `prev`), so every note's observation is checked in this window once.
                 let first = by_frame.partition_point(|&(f, _)| (f as i32) < start);
@@ -1506,17 +1651,28 @@ pub(super) fn complete_bounds_recording(
                     let (combo, gekisou_combo) =
                         *retained_combos.get(&key).ok_or_else(|| refuse("note has no possible execution"))?;
                     let executed = &replay.notes[at].executed;
-                    factor_widths(executed, &mut factor_width);
+                    if EXPECTATION {
+                        factor_widths(executed, &mut factor_width);
+                    }
                     let (mut bounds, mut support) =
                         note_bounds(&calc, note, executed, combo, gekisou_combo, rush_percent)?;
                     let note_mean = if note.time_ms <= probability_ready {
-                        let (mean, linked_support) = link_note_probability(&mut bounds, &probability)?;
-                        support = linked_support;
-                        mean
-                    } else {
+                        if EXPECTATION {
+                            let (mean, linked_support) = link_note_probability(&mut bounds, probability.expected())?;
+                            support = linked_support;
+                            mean
+                        } else {
+                            support = probability.note_support(&bounds)?;
+                            F64Interval::ZERO
+                        }
+                    } else if EXPECTATION {
                         support.as_real()
+                    } else {
+                        F64Interval::ZERO
                     };
-                    mean = mean.add(note_mean);
+                    if EXPECTATION {
+                        mean = mean.add(note_mean);
+                    }
                     lo += i64::from(support.lower());
                     hi += i64::from(support.upper());
                     if let Some(notes) = &mut rank_notes {
@@ -1536,12 +1692,17 @@ pub(super) fn complete_bounds_recording(
                 for &(frame, offset, bonus, support) in &fixed {
                     let coefficient = i64::from(offset) + i64::from(frame <= *to);
                     fixed_coefficients.push(coefficient as u8);
-                    mean = mean.add(bonus.scale_integer(i128::from(coefficient)));
+                    if EXPECTATION {
+                        mean = mean.add(bonus.scale_integer(i128::from(coefficient)));
+                    }
                     lo += coefficient * i64::from(support.lower());
                     hi += coefficient * i64::from(support.upper());
                 }
                 let support = if measure { checked_support(lo, hi)? } else { I32Interval::point(0) };
-                query_means.push(mean);
+                if EXPECTATION {
+                    query_means.push(mean);
+                }
+                query_count += 1;
                 query_supports.push(support);
                 query_parts.push(QueryParts {
                     note_mean,
@@ -1568,8 +1729,38 @@ pub(super) fn complete_bounds_recording(
             }
         }
     }
-    if pending.is_some() || query_means.is_empty() {
+    if pending.is_some() || query_count == 0 {
         return Err(refuse("terminal query has not filed every rank bonus"));
+    }
+    if !EXPECTATION {
+        for (note_index, (_, _, note, _)) in filed.iter().filter(|(frame, _, _, _)| *frame as i32 <= prev).enumerate() {
+            if note_index.is_multiple_of(64) && cancelled() {
+                return Ok(None);
+            }
+            if note.time_ms > probability_ready {
+                return Err(refuse("final note has pending lottery commands"));
+            }
+        }
+        let support =
+            if has_luck { *query_supports.last().expect("terminal query") } else { I32Interval::point(model.score()) };
+        let (peak_states, transitions) = probability.stats();
+        #[cfg(feature = "search-diagnostics")]
+        profile::record(LuckScoreProfile {
+            probe_mask_events: probe_counts[0],
+            probe_mask_restricted: probe_counts[1],
+            probe_mask_removed_edges: probe_counts[2],
+            probe_mask_elided_rewinds: probe_counts[3],
+            probe_mask_unbound: probe_counts[4],
+            rush_potential_events: probe_counts[5],
+            ..Default::default()
+        });
+        return Ok(Some(ComputedBounds::Maximum(LuckMaximumSupport {
+            final_support: support.into(),
+            exact_constant_score: (support.lower() == support.upper()).then_some(support.lower()),
+            exact_final_life: Some(model.current_life()),
+            reachability_peak_states: peak_states,
+            reachability_transitions: transitions,
+        })));
     }
     let mut final_mean = F64Interval::ZERO;
     let mut final_notes = Vec::new();
@@ -1585,7 +1776,7 @@ pub(super) fn complete_bounds_recording(
         if note.time_ms > probability_ready {
             return Err(refuse("final note has pending lottery commands"));
         }
-        let (mean, _) = link_note_probability(&mut bounds, &probability)?;
+        let (mean, _) = link_note_probability(&mut bounds, probability.expected())?;
         final_mean = final_mean.add(mean);
         if details {
             final_notes.push(bounds);
@@ -1613,7 +1804,7 @@ pub(super) fn complete_bounds_recording(
         rush_potential_events: probe_counts[5],
         ..Default::default()
     });
-    Ok(Some(LuckScoreBounds {
+    Ok(Some(ComputedBounds::Expected(LuckScoreBounds {
         model: "independent nominal draws; all-path native arithmetic enclosure, not an exact expectation or search completion; note probabilities link after their native lottery commands are filed",
         final_support: final_support.into(),
         exact_final_life: Some(model.current_life()),
@@ -1625,9 +1816,9 @@ pub(super) fn complete_bounds_recording(
         ranges,
         query_limit,
         actual_queries: trace.queries,
-        probability_peak_states: probability.peak_states,
-        probability_transitions: probability.transitions,
-    }))
+        probability_peak_states: probability.stats().0,
+        probability_transitions: probability.stats().1,
+    })))
 }
 
 #[cfg(test)]

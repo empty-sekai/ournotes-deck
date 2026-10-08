@@ -16,6 +16,11 @@ use super::*;
 use crate::live::certified::{F64Interval, ProbabilityMass};
 use crate::num::{FxHashMap, floor_to_i32};
 
+mod support;
+pub use support::{
+    LuckDpSupportResult, luck_rush_dp_support_with_ranking, luck_rush_dp_support_with_ranking_cancellable,
+};
+
 /// A complete nominal lottery curve and the size of its sparse computation.
 #[derive(Clone, Debug)]
 pub struct LuckDpResult {
@@ -177,6 +182,13 @@ trait Mass: Copy {
     fn bonus(machine: &LotteryMachine, kind: usize, buff: i32, minimum: i8) -> Result<Vec<(Self, i64)>, Error>;
     fn base(machine: &LotteryMachine, note_type: i32, judgement: i32) -> Result<Vec<(Self, i64)>, Error>;
     fn weights(dist: &Distribution<Self>, probes: &[bool], at_frame: bool) -> Self::Weights;
+    fn admission_endpoints(checker: Option<&Checker>) -> Option<(bool, bool)> {
+        let probability = match checker {
+            Some(checker) => chance::<f64>(checker, 0)?,
+            None => 1.0,
+        };
+        Some((probability == 0.0, probability == 1.0))
+    }
 }
 
 impl Mass for f64 {
@@ -702,11 +714,8 @@ fn compile<M: Mass>(
             if effect.cumulative.is_some() {
                 return Err(fail("a cumulative lottery mechanism"));
             }
-            let probability = match effect.condition.as_ref() {
-                Some(checker) => chance::<f64>(checker, 0)
-                    .ok_or_else(|| fail("a condition outside deterministic-life/independent-probability predicates"))?,
-                None => 1.0,
-            };
+            let (probability_zero, probability_one) = M::admission_endpoints(effect.condition.as_ref())
+                .ok_or_else(|| fail("a condition outside deterministic-life/independent-probability predicates"))?;
             let mass = match effect.condition.as_ref() {
                 Some(checker) => chance::<M>(checker, 0)
                     .ok_or_else(|| fail("a condition outside deterministic-life/independent-probability predicates"))?,
@@ -728,7 +737,7 @@ fn compile<M: Mass>(
                         && effect.act == 0.0
                         && (release.is_none() || complete(release));
                     if !(timed || sustained)
-                        || !matches!(probability, 0.0 | 1.0)
+                        || !(probability_zero || probability_one)
                         || effect.condition.as_ref().is_some_and(has_probability)
                         || effect.condition.as_ref().is_some_and(|checker| fixed_condition(checker).is_none())
                         || effect.execute_limit != 0
@@ -776,12 +785,12 @@ fn compile<M: Mass>(
                         || !complete(release)
                         || effect.execute_limit != 1
                         || !complete(effect.reset.as_ref())
-                        || !matches!(probability, 0.0 | 1.0)
+                        || !(probability_zero || probability_one)
                         || effect.condition.as_ref().is_some_and(|checker| fixed_condition(checker).is_none())
                     {
                         return Err(fail("an unknown once-per-range Miss gauge shape"));
                     }
-                    if probability == 1.0 {
+                    if probability_one {
                         plan.actions.push((effect.phase, Action::MissGauge { value: row.effect_value }, None));
                     }
                 }
@@ -806,7 +815,7 @@ fn compile<M: Mass>(
                         || release.is_some()
                         || effect.execute_limit != 0
                         || effect.reset.is_some()
-                        || !matches!(probability, 0.0 | 1.0)
+                        || !(probability_zero || probability_one)
                         || effect.condition.as_ref().is_some_and(|checker| fixed_condition(checker).is_none())
                     {
                         return Err(fail("an unknown Critical bonus-point shape"));
@@ -823,7 +832,7 @@ fn compile<M: Mass>(
                         || release.is_some()
                         || effect.execute_limit != 0
                         || effect.reset.is_some()
-                        || !matches!(probability, 0.0 | 1.0)
+                        || !(probability_zero || probability_one)
                         || effect.condition.as_ref().is_some_and(|checker| fixed_condition(checker).is_none())
                     {
                         return Err(fail("only untimed sustained direct Rush score probes are supported"));
@@ -2584,7 +2593,10 @@ mod tests {
         ));
     }
 
-    fn fixture(result: i64, base: i64) -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
+    pub(super) fn fixture(
+        result: i64,
+        base: i64,
+    ) -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
         let mut speed = row(1, "_gekisouSkillID", 1, 11001, 20000, 7010, 0, 0);
         speed["_activationTimeSecond"] = json!(0.2);
         let mut sustained = row(3, "_gekisouSkillID", 3, 11001, 20000, 7020, 0, 7013);
