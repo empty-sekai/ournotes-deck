@@ -282,7 +282,7 @@ fn prepare(
     if model.gk.as_ref().is_none_or(|g| g.ctrl.states.iter().any(|state| state.state != gekisou::S_FINISH)) {
         return Err(declined(LuckRushDecline::UnfinishedRanges, "terminal query precedes a range FINISH"));
     }
-    let trace = model.score.bounds_trace.take().expect("bounds recorder enabled");
+    let mut trace = model.score.bounds_trace.take().expect("bounds recorder enabled");
     let frame_times: Vec<_> = model.trace.iter().map(|&(time, _)| time).collect();
     if !frame_times.iter().copied().eq(session.play.frames.iter().map(|frame| frame.time_ms)) {
         return Err(declined(
@@ -293,6 +293,7 @@ fn prepare(
     let probe_lifetime_bound =
         check_probe_music_boundary(&frame_times, &probability, model.music_length_ms, probe_phase_bound, &trace)
             .is_ok();
+    trace.project_probe_filings().map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
     let query_limit = (session.play.frames.len() as u64)
         .checked_mul(2)
         .and_then(|value| value.checked_add(2 * session.setup.fevers.len() as u64))

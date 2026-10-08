@@ -209,7 +209,8 @@ pub(in super::super) fn recorded_identity(
     }
     let limit = capacity.min(MAX_RECORDED_KEY_BYTES);
     let mut shared = Writer::new(limit);
-    let BoundsTrace { events, queries, frames, probes, combo: _, has_luck, filing_gate: _ } = trace;
+    // The full replay consumes the dense events; terminal-only gate projection metadata is not an input.
+    let BoundsTrace { events, queries, frames, probes, combo: _, has_luck, filing_gate: _, probe_filings: _ } = trace;
     shared.length(*frames)?;
     shared.length(*queries)?;
     shared.byte(u8::from(*has_luck))?;

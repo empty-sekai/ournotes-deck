@@ -1994,12 +1994,34 @@ impl LiveModel {
         if let Some(trace) = &self.score.bounds_trace
             && !trace.probes.is_empty()
         {
+            let possible = if let Some(gate) = trace.filing_gate {
+                let gk_view = self.gk.as_ref().map(|g| GkView {
+                    ctrl: &g.ctrl,
+                    prev_lots: &g.prev_lots,
+                    prev_lot_ms: g.prev_lot_ms,
+                });
+                let ctx = CheckCtx {
+                    life: &mut self.life,
+                    random: &mut self.random,
+                    frame_time: t,
+                    current_combo: self.current_combo,
+                    judged: &self.judged,
+                    events: &self.frame_events,
+                    gk: gk_view,
+                    prev_confirmed_rank: frame_rank_confirmation,
+                };
+                // Admitted ordinary appliers cannot change the range machine during either skill phase.
+                // A sustained instance is frozen while its gate is closed; uncertainty retains the filing.
+                engine::mission_gate_open(gate, &ctx).unwrap_or(true)
+            } else {
+                true
+            };
             // Preserve every original skill boundary, including closed mission gates. The lifecycle
             // certificate binds these optional filings to the complete native frame clock.
-            self.score.bounds_potential_skills(t);
+            self.score.bounds_potential_skills(t, possible);
             // An untimed sustained score-up that ends at or after the music length files its end there.
             if self.music_length_ms > 0 && self.music_length_ms < t {
-                self.score.bounds_potential_skills(self.music_length_ms);
+                self.score.bounds_potential_skills(self.music_length_ms, possible);
             }
         }
         let info = self.gk.as_ref().map(|g| &g.ctrl as &dyn GekisouComboInfo);

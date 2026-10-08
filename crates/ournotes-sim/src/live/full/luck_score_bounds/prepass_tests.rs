@@ -664,6 +664,7 @@ fn trace_for_terminal(events: Vec<BoundsEvent>, queries: usize) -> BoundsTrace {
         combo: ComboObserver::default(),
         has_luck: true,
         filing_gate: None,
+        probe_filings: None,
     }
 }
 
