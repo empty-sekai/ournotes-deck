@@ -1,0 +1,16 @@
+{
+  "format": "ournotes-deck.dataset-source/1",
+  "name": "bdon.moe",
+  "region": "tw",
+  "buildUrl": "https://storage.bdon.moe/moenotes/music-data/build.json",
+  "replayManifest": {
+    "url": "https://storage.bdon.moe/moenotes/music-data/replay/311d018f2c2165d7515dd127a322f86e19d2ef30669bb660842183061a349c40/manifest.json",
+    "sha256": "311d018f2c2165d7515dd127a322f86e19d2ef30669bb660842183061a349c40"
+  },
+  "deckData": {
+    "format": "nnnotes.deck-data/1",
+    "url": "https://storage.bdon.moe/moenotes/music-data/replay/311d018f2c2165d7515dd127a322f86e19d2ef30669bb660842183061a349c40/deck-data.json",
+    "sha256": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+    "bytes": 3860477
+  }
+}

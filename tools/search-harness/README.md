@@ -2,7 +2,27 @@
 
 This harness targets played Live with Snap skills, Gekisou score, specified event-song score and expected client event PT. It shares the current fixed-deck evaluator while independently enumerating the bounded physical search domain. Power and Skip are not substitute acceptance targets.
 
-The scorer and latest-game certification remain separate dependencies. Agreement proves search equivalence for these declared model inputs, not native-game equivalence, a real root distribution or server-issued rewards. All synthetic inputs are labelled. Real datasets and account inputs must stay in ignored `work/` directories.
+The scorer and latest-game certification remain separate dependencies. Agreement proves search equivalence for these declared model inputs, not native-game equivalence, a real root distribution or server-issued rewards. Synthetic inputs are labelled. Downloaded datasets, account inputs and generated matrix files stay in ignored `work/` directories. The checked-in full matrix declares fixed hypothetical ownership and progress profiles using real card identifiers.
+
+## Real-chart matrix
+
+The [full48 fixture](fixtures/full48/README.md) defines six LUCK charts across three fixed ownership profiles, nonlinear objectives, and Free and lottery-free controls. Its 48 requests preserve the complete declared card pools, K=3 and a 60-second search budget. Preparation uses the native play-stream generator and fixed payoff thresholds; it performs no calibration search.
+
+```sh
+python3 tools/search-harness/matrix.py run --suite full48 --out work/full48
+```
+
+This command obtains the version-pinned [bdon.moe dataset](fixtures/full48/source.json), checks its exact decoded bytes, prepares the inputs, and runs one candidate serially. Rust and Node are required. Missing native helper binaries are built once; `--prepare-binary` and `--binary` select existing builds. `--cases score` selects the 18 LUCK Score cases; `--cases NAME,...` selects exact fixture names. Selection is recorded and does not represent the full matrix.
+
+```sh
+python3 tools/search-harness/matrix.py prepare --suite full48 --out work/full48-inputs
+python3 tools/search-harness/matrix.py run --suite full48 --offline --out work/full48-offline
+python3 tools/search-harness/matrix.py run --suite full48 --data /path/to/deck-data.json --out work/full48-local
+```
+
+`--cache-dir` chooses the verified download cache. Offline preparation requires the pinned data in that cache or at `--data`; a missing or different dataset fails explicitly. Updating a remote site's latest dataset does not change this fixture. Each run uses a fresh output directory and retains the prepared requests and raw answers.
+
+Execution success, search completion, and completion within the declared budget are reported separately. `TimedOut` and `RefinementRequired` retain their actual states. Add `--require-complete` to return failure unless every selected request proves its canonical Top-K within its budget. This full-domain matrix has no independent exhaustive oracle; the bounded synthetic suite below supplies independent enumeration checks. The manual real-matrix workflow runs this integration matrix separately from ordinary pull-request CI.
 
 ## Repeatable loop
 

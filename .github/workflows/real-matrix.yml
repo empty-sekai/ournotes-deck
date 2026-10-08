@@ -1,0 +1,43 @@
+name: Real-chart matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: all, score, or comma-separated fixture case names
+        type: string
+        default: all
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/cache@v4
+        with:
+          path: work/dataset-cache
+          key: matrix-data-${{ hashFiles('tools/search-harness/fixtures/full48/source.json') }}
+      - name: Run declared cases
+        env:
+          MATRIX_CASES: ${{ inputs.cases }}
+        run: >-
+          python3 tools/search-harness/matrix.py run
+          --suite full48 --cases "$MATRIX_CASES"
+          --cache-dir work/dataset-cache --out work/full48
+          --require-complete
+      - name: Preserve result reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-results
+          path: work/full48/results/
+          if-no-files-found: ignore

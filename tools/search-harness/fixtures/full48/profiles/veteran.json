@@ -1,0 +1,788 @@
+{
+  "format": "ournotes-deck.harness-profile/1",
+  "members": [
+    {
+      "id": 1,
+      "level": 59,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 2,
+      "level": 52,
+      "awake": 5,
+      "rank": 5,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 3,
+      "level": 47,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 5,
+      "level": 51,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 6,
+      "level": 49,
+      "awake": 4,
+      "rank": 5,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 7,
+      "level": 49,
+      "awake": 4,
+      "rank": 5,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 9,
+      "level": 48,
+      "awake": 4,
+      "rank": 5,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 10,
+      "level": 53,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 12,
+      "level": 50,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 13,
+      "level": 48,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 15,
+      "level": 44,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 16,
+      "level": 61,
+      "awake": 5,
+      "rank": 5,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 17,
+      "level": 43,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 19,
+      "level": 61,
+      "awake": 5,
+      "rank": 4,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 20,
+      "level": 70,
+      "awake": 5,
+      "rank": 4,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 22,
+      "level": 54,
+      "awake": 5,
+      "rank": 5,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 23,
+      "level": 55,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 27,
+      "level": 49,
+      "awake": 4,
+      "rank": 5,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 28,
+      "level": 55,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 30,
+      "level": 63,
+      "awake": 5,
+      "rank": 4,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 31,
+      "level": 70,
+      "awake": 5,
+      "rank": 4,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 32,
+      "level": 72,
+      "awake": 5,
+      "rank": 4,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 33,
+      "level": 67,
+      "awake": 4,
+      "rank": 5,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 34,
+      "level": 65,
+      "awake": 5,
+      "rank": 4,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 35,
+      "level": 59,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 36,
+      "level": 79,
+      "awake": 5,
+      "rank": 4,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 38,
+      "level": 67,
+      "awake": 4,
+      "rank": 5,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 39,
+      "level": 53,
+      "awake": 4,
+      "rank": 5,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 41,
+      "level": 66,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 43,
+      "level": 58,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 45,
+      "level": 63,
+      "awake": 5,
+      "rank": 5,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 46,
+      "level": 64,
+      "awake": 5,
+      "rank": 5,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 47,
+      "level": 79,
+      "awake": 5,
+      "rank": 5,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 49,
+      "level": 78,
+      "awake": 5,
+      "rank": 5,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 51,
+      "level": 80,
+      "awake": 5,
+      "rank": 4,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 52,
+      "level": 84,
+      "awake": 5,
+      "rank": 4,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 54,
+      "level": 86,
+      "awake": 5,
+      "rank": 5,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 55,
+      "level": 72,
+      "awake": 4,
+      "rank": 5,
+      "liveSkillLevel": 5,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 57,
+      "level": 72,
+      "awake": 5,
+      "rank": 4,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 60,
+      "level": 62,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 5
+    },
+    {
+      "id": 61,
+      "level": 74,
+      "awake": 4,
+      "rank": 5,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 62,
+      "level": 78,
+      "awake": 5,
+      "rank": 5,
+      "liveSkillLevel": 4,
+      "gekisouSkillLevel": 4
+    },
+    {
+      "id": 63,
+      "level": 61,
+      "awake": 4,
+      "rank": 4,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 3
+    },
+    {
+      "id": 64,
+      "level": 76,
+      "awake": 5,
+      "rank": 4,
+      "liveSkillLevel": 3,
+      "gekisouSkillLevel": 5
+    }
+  ],
+  "snaps": [
+    {
+      "id": 1,
+      "level": 62,
+      "rank": 5
+    },
+    {
+      "id": 2,
+      "level": 50,
+      "rank": 5
+    },
+    {
+      "id": 3,
+      "level": 57,
+      "rank": 4
+    },
+    {
+      "id": 4,
+      "level": 65,
+      "rank": 5
+    },
+    {
+      "id": 6,
+      "level": 53,
+      "rank": 5
+    },
+    {
+      "id": 8,
+      "level": 44,
+      "rank": 4
+    },
+    {
+      "id": 11,
+      "level": 54,
+      "rank": 4
+    },
+    {
+      "id": 14,
+      "level": 59,
+      "rank": 5
+    },
+    {
+      "id": 15,
+      "level": 63,
+      "rank": 5
+    },
+    {
+      "id": 16,
+      "level": 57,
+      "rank": 4
+    },
+    {
+      "id": 17,
+      "level": 49,
+      "rank": 4
+    },
+    {
+      "id": 18,
+      "level": 53,
+      "rank": 4
+    },
+    {
+      "id": 19,
+      "level": 55,
+      "rank": 4
+    },
+    {
+      "id": 20,
+      "level": 52,
+      "rank": 5
+    },
+    {
+      "id": 21,
+      "level": 59,
+      "rank": 4
+    },
+    {
+      "id": 22,
+      "level": 66,
+      "rank": 5
+    },
+    {
+      "id": 23,
+      "level": 64,
+      "rank": 5
+    },
+    {
+      "id": 24,
+      "level": 46,
+      "rank": 4
+    },
+    {
+      "id": 27,
+      "level": 77,
+      "rank": 5
+    },
+    {
+      "id": 28,
+      "level": 57,
+      "rank": 5
+    },
+    {
+      "id": 29,
+      "level": 61,
+      "rank": 4
+    },
+    {
+      "id": 30,
+      "level": 58,
+      "rank": 4
+    },
+    {
+      "id": 32,
+      "level": 65,
+      "rank": 4
+    },
+    {
+      "id": 34,
+      "level": 75,
+      "rank": 5
+    },
+    {
+      "id": 35,
+      "level": 64,
+      "rank": 5
+    },
+    {
+      "id": 36,
+      "level": 75,
+      "rank": 5
+    },
+    {
+      "id": 38,
+      "level": 73,
+      "rank": 5
+    },
+    {
+      "id": 39,
+      "level": 58,
+      "rank": 4
+    },
+    {
+      "id": 40,
+      "level": 52,
+      "rank": 4
+    },
+    {
+      "id": 42,
+      "level": 64,
+      "rank": 4
+    },
+    {
+      "id": 43,
+      "level": 63,
+      "rank": 5
+    },
+    {
+      "id": 45,
+      "level": 66,
+      "rank": 5
+    },
+    {
+      "id": 48,
+      "level": 60,
+      "rank": 5
+    },
+    {
+      "id": 51,
+      "level": 75,
+      "rank": 4
+    },
+    {
+      "id": 52,
+      "level": 60,
+      "rank": 4
+    },
+    {
+      "id": 53,
+      "level": 59,
+      "rank": 4
+    },
+    {
+      "id": 57,
+      "level": 62,
+      "rank": 4
+    },
+    {
+      "id": 59,
+      "level": 64,
+      "rank": 4
+    },
+    {
+      "id": 61,
+      "level": 84,
+      "rank": 5
+    },
+    {
+      "id": 63,
+      "level": 65,
+      "rank": 4
+    },
+    {
+      "id": 64,
+      "level": 66,
+      "rank": 5
+    },
+    {
+      "id": 70,
+      "level": 65,
+      "rank": 5
+    }
+  ],
+  "player": {
+    "characterRanks": {
+      "coverage": "complete",
+      "values": [
+        {
+          "id": 1,
+          "value": 17
+        },
+        {
+          "id": 2,
+          "value": 20
+        },
+        {
+          "id": 3,
+          "value": 24
+        },
+        {
+          "id": 4,
+          "value": 38
+        },
+        {
+          "id": 5,
+          "value": 29
+        },
+        {
+          "id": 6,
+          "value": 18
+        },
+        {
+          "id": 7,
+          "value": 45
+        },
+        {
+          "id": 8,
+          "value": 43
+        },
+        {
+          "id": 9,
+          "value": 41
+        },
+        {
+          "id": 10,
+          "value": 21
+        },
+        {
+          "id": 11,
+          "value": 30
+        },
+        {
+          "id": 12,
+          "value": 16
+        },
+        {
+          "id": 13,
+          "value": 31
+        },
+        {
+          "id": 14,
+          "value": 30
+        },
+        {
+          "id": 15,
+          "value": 27
+        },
+        {
+          "id": 16,
+          "value": 44
+        },
+        {
+          "id": 17,
+          "value": 38
+        },
+        {
+          "id": 18,
+          "value": 19
+        },
+        {
+          "id": 19,
+          "value": 25
+        },
+        {
+          "id": 20,
+          "value": 31
+        },
+        {
+          "id": 21,
+          "value": 38
+        },
+        {
+          "id": 22,
+          "value": 36
+        },
+        {
+          "id": 23,
+          "value": 16
+        },
+        {
+          "id": 24,
+          "value": 21
+        },
+        {
+          "id": 25,
+          "value": 26
+        }
+      ]
+    },
+    "characterTotalRank": null,
+    "vipRank": 16,
+    "bandItems": [
+      {
+        "id": 101,
+        "value": 23
+      },
+      {
+        "id": 102,
+        "value": 22
+      },
+      {
+        "id": 103,
+        "value": 19
+      },
+      {
+        "id": 104,
+        "value": 29
+      },
+      {
+        "id": 105,
+        "value": 23
+      },
+      {
+        "id": 201,
+        "value": 24
+      },
+      {
+        "id": 202,
+        "value": 27
+      },
+      {
+        "id": 203,
+        "value": 19
+      },
+      {
+        "id": 204,
+        "value": 24
+      },
+      {
+        "id": 205,
+        "value": 26
+      },
+      {
+        "id": 301,
+        "value": 26
+      },
+      {
+        "id": 302,
+        "value": 23
+      },
+      {
+        "id": 303,
+        "value": 16
+      },
+      {
+        "id": 304,
+        "value": 16
+      },
+      {
+        "id": 305,
+        "value": 29
+      },
+      {
+        "id": 401,
+        "value": 26
+      },
+      {
+        "id": 402,
+        "value": 16
+      },
+      {
+        "id": 403,
+        "value": 30
+      },
+      {
+        "id": 404,
+        "value": 28
+      },
+      {
+        "id": 405,
+        "value": 27
+      },
+      {
+        "id": 501,
+        "value": 20
+      },
+      {
+        "id": 502,
+        "value": 22
+      },
+      {
+        "id": 503,
+        "value": 24
+      },
+      {
+        "id": 504,
+        "value": 25
+      },
+      {
+        "id": 505,
+        "value": 15
+      }
+    ],
+    "memory": {
+      "musicRanks": [],
+      "unlockedMembers": [],
+      "unlockedSnaps": []
+    },
+    "eventIds": [
+      1
+    ]
+  }
+}
