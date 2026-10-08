@@ -92,6 +92,9 @@ pub struct LuckResponseSpec {
     /// Independent original-program comparison is separately counted and never hidden in timings.
     #[serde(default)]
     pub verify_basis: bool,
+    /// Optional inspection output; persistent queries need only the reusable conditional curves.
+    #[serde(default)]
+    pub basis_reconstruct: bool,
 }
 
 fn fingerprint(value: &Value) -> String {
@@ -471,6 +474,7 @@ pub fn generate_luck_response(built: &BuiltProblem<'_>, spec: &LuckResponseSpec)
                     propagate: matches!(spec.mode, ResponseMode::BasisPrograms),
                     selected: spec.basis_programs.as_deref(),
                     verify: spec.verify_basis,
+                    reconstruct: spec.basis_reconstruct,
                 },
             )
         } else {

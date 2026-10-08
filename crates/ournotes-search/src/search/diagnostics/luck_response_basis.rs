@@ -19,6 +19,7 @@ pub(super) struct BasisOptions<'a> {
     pub propagate: bool,
     pub selected: Option<&'a [String]>,
     pub verify: bool,
+    pub reconstruct: bool,
 }
 
 /// Independent enclosures for the same law must intersect at every event time. Equality of rounded
@@ -197,7 +198,9 @@ pub(super) fn identify_basis(
             }
             row["components"] = json!(components);
             row["status"] = json!("identified");
-            if selected_indices.iter().all(|&index| responses[index].is_some()) {
+            if (options.reconstruct || options.verify)
+                && selected_indices.iter().all(|&index| responses[index].is_some())
+            {
                 let before = Instant::now();
                 let terms: Vec<_> = selected_indices
                     .iter()
