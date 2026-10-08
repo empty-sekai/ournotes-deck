@@ -17,6 +17,9 @@ use std::{env, fs, path::Path, time::Instant};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+#[path = "luck_response/programs.rs"]
+mod programs;
+
 fn mode(name: &str) -> Result<Quantization> {
     match name {
         "lossless" => Ok(Quantization::Lossless),
@@ -211,6 +214,8 @@ fn predict(args: &[String]) -> Result<()> {
 fn run() -> Result<()> {
     let args: Vec<_> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("program-pack") if args.len() == 4 => programs::pack(&args[1..]),
+        Some("program-materialize") if args.len() == 4 => programs::materialize(&args[1..]),
         Some("predict") if args.len() == 7 => predict(&args[1..]),
         Some("pack") if args.len() == 4 => {
             let table = table(&args[1])?;
@@ -239,6 +244,8 @@ fn run() -> Result<()> {
         }
         _ if args.len() == 5 => generate(&args),
         _ => Err("luck_response DATA SNAPSHOT_OR_ROSTER REQUEST SPEC OUTPUT\n\
+            luck_response program-pack PROGRAM_REPORT lossless|u16|u24|u32 OUTPUT_DIRECTORY\n\
+            luck_response program-materialize IDENTIFICATION PROGRAM_INDEX OUTPUT_TABLE\n\
             luck_response predict ARCHIVE DATA SNAPSHOT_OR_ROSTER REQUEST DECKS OUTPUT\n\
             luck_response pack GENERATION_JSON lossless|u16|u24|u32 ARCHIVE\n\
             luck_response unpack ARCHIVE OUTPUT\n\

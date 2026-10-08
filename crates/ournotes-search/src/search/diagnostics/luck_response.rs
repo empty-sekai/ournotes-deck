@@ -40,6 +40,8 @@ pub struct ResponseJob {
 #[serde(rename_all = "camelCase")]
 pub enum ResponseMode {
     Plan,
+    Identify,
+    Programs,
     #[default]
     Generate,
 }
@@ -67,6 +69,11 @@ pub struct LuckResponseSpec {
     /// Explicit byte allowance takes precedence over the compatibility entry estimate.
     #[serde(default)]
     pub cache_bytes: Option<usize>,
+    /// Separate budgets for complete identities and the current compiled controller.
+    #[serde(default)]
+    pub identity_bytes: Option<usize>,
+    #[serde(default)]
+    pub program_bytes: Option<usize>,
 }
 
 fn fingerprint(value: &Value) -> String {
@@ -409,7 +416,7 @@ pub fn generate_luck_response(built: &BuiltProblem<'_>, spec: &LuckResponseSpec)
     input.0.params.total_power = 0;
     let skills = luck_skills(master)?;
     let neutral = luck_neutral(master, &skills);
-    for job in &spec.jobs {
+    for job in spec.jobs.iter().filter(|_| !matches!(spec.mode, ResponseMode::Identify | ResponseMode::Programs)) {
         // The native holder is authoritative for formation compatibility and all positional limits.
         // This constructs no LiveModel and performs no recording, propagation or simulation.
         validate_entries(master, &skills, neutral, &job.entries)?;
@@ -424,6 +431,29 @@ pub fn generate_luck_response(built: &BuiltProblem<'_>, spec: &LuckResponseSpec)
         .map(|(job, deps)| (serde_json::to_string(&job.entries).expect("entry JSON"), fingerprint(deps)))
         .collect();
     let mut context = response_context(&shared_fingerprint, archive_dependencies.clone());
+    if matches!(spec.mode, ResponseMode::Identify | ResponseMode::Programs) {
+        let capacity = spec.cache_bytes.unwrap_or_else(|| spec.cache_entries.saturating_mul(8192));
+        let mut report = super::luck_response_interactions::identify_interactions(
+            master,
+            &input,
+            &skills,
+            neutral,
+            &spec.jobs,
+            spec.identity_bytes.unwrap_or(capacity),
+            spec.program_bytes.unwrap_or(capacity),
+            matches!(spec.mode, ResponseMode::Programs),
+        );
+        report["format"] = json!("ournotes-deck.luck-response-programs/1");
+        report["mode"] = json!(spec.mode);
+        report["sourceVersion"] = json!(ournotes_sim::SOURCE_SHA256);
+        report["context"] = json!(context);
+        report["sharedFingerprint"] = json!(shared_fingerprint);
+        report["dependencyDescriptor"] = shared;
+        report["capabilities"] = json!({"chain":skills.chain});
+        report["provenance"] = json!({"contextDeck":anchor,"contextDeckPower":anchor_power});
+        report["elapsedMs"] = json!(started.elapsed().as_secs_f64() * 1000.0);
+        return Ok(report);
+    }
     let mut table = ResponseTable { context: context.clone(), entries: Vec::new() };
     // Existing request-sized allowance, with an explicit zero-cache experiment. No process-global cache.
     let capacity = spec.cache_bytes.unwrap_or_else(|| spec.cache_entries.saturating_mul(8192)).min(32 << 20);

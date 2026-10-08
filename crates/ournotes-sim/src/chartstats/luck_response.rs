@@ -448,7 +448,7 @@ fn encode_response(response: &Response, mode: Quantization, limits: ResponseLimi
             end += 1;
         }
         out.var((end - at) as u64)?;
-        for (pair, old_lower) in words.chunks_exact(2).zip(&mut previous_lower) {
+        for (pair, old_lower) in words.as_chunks::<2>().0.iter().zip(&mut previous_lower) {
             let (lower, upper) = (pair[0], pair[1]);
             if mode == Quantization::Lossless {
                 out.var(lower ^ *old_lower)?;

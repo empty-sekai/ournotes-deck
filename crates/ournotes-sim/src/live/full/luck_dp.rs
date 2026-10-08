@@ -16,6 +16,8 @@ use super::*;
 use crate::live::certified::{F64Interval, ProbabilityMass};
 use crate::num::{FxHashMap, floor_to_i32};
 
+mod compiled;
+pub use compiled::{CompiledLuckProgram, compile_luck_program};
 mod family;
 pub(super) mod fused;
 pub use family::{
@@ -2944,6 +2946,10 @@ mod tests {
 
     mod state_identity_tests {
         include!("luck_dp/state_identity_tests.rs");
+    }
+
+    mod compiled_program_tests {
+        include!("luck_dp/compiled_program_tests.rs");
     }
 
     use crate::live::certified::F64Interval;

@@ -281,6 +281,26 @@ fn push_items(out: &mut Vec<u64>, items: &[Item]) {
 }
 
 impl LotteryMachine {
+    /// Heap capacities of the immutable pre-frame machine retained by a compiled lottery program.
+    /// A populated hash allocation has no portable exact layout through the public HashMap API;
+    /// decline accounting instead of understating it. Fresh native machines have no such allocation.
+    pub(super) fn owned_allocation_bytes(&self) -> Option<usize> {
+        use std::mem::size_of;
+        let Self { good, great, perfect, hold, tables, minimum, minimum_counter: _, last_consumed } = self;
+        if last_consumed.capacity() != 0 {
+            return None;
+        }
+        let mut bytes = hold.capacity().checked_mul(size_of::<Item>())?;
+        for items in [good, great, perfect].into_iter().flatten() {
+            bytes = bytes.checked_add(items.capacity().checked_mul(size_of::<Item>())?)?;
+        }
+        bytes = bytes.checked_add(tables.capacity().checked_mul(size_of::<LuckSkillTable>())?)?;
+        for table in tables {
+            bytes = bytes.checked_add(table.items.capacity().checked_mul(size_of::<Item>())?)?;
+        }
+        bytes.checked_add(minimum.capacity().checked_mul(size_of::<(i32, i64, i64)>())?)
+    }
+
     /// Every field as words (binary32 by bit pattern, every list after its length): equal words mean equal machines.
     pub(super) fn push_words(&self, out: &mut Vec<u64>) {
         let Self { good, great, perfect, hold, tables, minimum, minimum_counter, last_consumed } = self;

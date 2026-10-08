@@ -140,6 +140,109 @@ struct LuckProbeBatch {
     probes: Vec<Option<usize>>,
 }
 
+/// Complete source-bound program identity. Every batch retains its original order and shape-index
+/// mapping. These are inspection words, not a deserializable native capability or a probability curve.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LuckTableProgramIdentity {
+    pub source_version: String,
+    pub batches: Vec<Vec<u64>>,
+}
+
+impl LuckTableProgramIdentity {
+    pub fn allocated_bytes(&self) -> Option<usize> {
+        use std::mem::size_of;
+        let mut bytes = size_of::<Self>()
+            .checked_add(self.source_version.capacity())?
+            .checked_add(self.batches.capacity().checked_mul(size_of::<Vec<u64>>())?)?;
+        for batch in &self.batches {
+            bytes = bytes.checked_add(batch.capacity().checked_mul(size_of::<u64>())?)?;
+        }
+        Some(bytes)
+    }
+}
+
+/// Original, immutable native programs for every required probe batch. No compilation or recording is
+/// repeated by `certified`; all batches still must propagate and agree before a combined result exists.
+#[derive(Debug)]
+pub struct CompiledLuckTableProgram {
+    batches: Vec<full::CompiledLuckProgram>,
+}
+
+impl CompiledLuckTableProgram {
+    pub fn identity(&self) -> Option<LuckTableProgramIdentity> {
+        Some(LuckTableProgramIdentity {
+            source_version: format!("ournotes-luck-compiled/1/{}", crate::SOURCE_SHA256),
+            batches: self.batches.iter().map(full::CompiledLuckProgram::identity_words).collect::<Option<_>>()?,
+        })
+    }
+
+    /// No native rerecording: each immutable original batch is propagated once, with the original
+    /// complete-probe coverage and joint-curve compatibility checks.
+    pub fn certified(&self) -> Result<full::LuckDpCertifiedResult, Error> {
+        let mut combined = None;
+        for program in &self.batches {
+            merge_certified_batch(&mut combined, program.certified()?)?;
+        }
+        let result = combined.expect("at least the base probe deck");
+        if result.probes.iter().any(|held| !held) {
+            return Err(Error::Input("LUCK certified DP: a score shape has no verified probe".into()));
+        }
+        Ok(result)
+    }
+
+    /// Retained program allocations, excluding separately requested identity words and DP workspace.
+    pub fn allocated_bytes(&self) -> Option<usize> {
+        use std::mem::size_of;
+        let mut bytes = size_of::<Self>()
+            .checked_add(self.batches.capacity().checked_mul(size_of::<full::CompiledLuckProgram>())?)?;
+        for batch in &self.batches {
+            bytes = bytes.checked_add(batch.allocated_bytes()?.checked_sub(size_of::<full::CompiledLuckProgram>())?)?;
+        }
+        Some(bytes)
+    }
+}
+
+/// Compile actual native probe-holder batches without running DP. Complete program equality can avoid
+/// propagation of an alias; neither skill labels nor coincidentally equal output curves authorize it.
+/// Keeps the same holder capacity and formation admission as `luck_table_dp_certified`.
+#[allow(clippy::too_many_arguments)]
+pub fn luck_table_program(
+    master: &Master,
+    skills: &LuckSkills,
+    neutral: Option<(i64, i64)>,
+    notes: &[LiveNote],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    entries: &[(LuckSkillKey, usize)],
+) -> Result<CompiledLuckTableProgram, Error> {
+    let original = luck_probe_batches(master, skills, neutral, entries)?;
+    let mut batches = Vec::with_capacity(original.len());
+    for LuckProbeBatch { deck, probes } in original {
+        let program = full::compile_luck_program(
+            master,
+            skills,
+            notes,
+            &[],
+            params,
+            setup,
+            play,
+            delta_times,
+            &deck,
+            Some(&probes),
+            None,
+            false,
+        )?;
+        if !program.probes().iter().copied().eq(probes.iter().map(Option::is_some)) {
+            return Err(Error::Input("LUCK certified DP: a probe batch did not retain its designated holders".into()));
+        }
+        batches.push(program);
+    }
+    Ok(CompiledLuckTableProgram { batches })
+}
+
 /// Validate holder capacity, formation compatibility and probe coverage using the same construction
 /// as generation. This does not run a native live or propagate a lottery distribution.
 pub fn luck_table_validate(

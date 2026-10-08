@@ -8,6 +8,7 @@ use super::uniform::{self, MEAN_ORDERS, ORDERS};
 mod cutoff;
 pub use cutoff::audit_cutoff;
 mod luck_response;
+mod luck_response_interactions;
 pub use luck_response::{LuckResponseSpec, ResponseDeck, generate_luck_response, predict_luck_response};
 
 /// Harness-only schedules; never part of the player recommendation request.
