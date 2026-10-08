@@ -1,0 +1,4929 @@
+{
+  "mode": "identify",
+  "identityBytes": 33554432,
+  "programBytes": 33554432,
+  "mcRuns": 0,
+  "scoreSamples": 0,
+  "jobs": [
+    {
+      "name": "four-kind-0-1-2-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-1-2-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-1-3-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-1-3-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-1-4-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-1-4-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-2-1-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-2-1-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-2-3-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-2-3-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-2-4-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-2-4-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-3-1-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-3-1-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-3-2-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-3-2-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-3-4-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-3-4-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-4-1-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-4-1-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-4-2-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-4-2-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-4-3-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-0-4-3-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-0-2-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-0-2-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-0-3-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-0-3-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-0-4-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-0-4-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-2-0-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-2-0-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-2-3-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-2-3-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-2-4-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-2-4-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-3-0-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-3-0-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-3-2-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-3-2-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-3-4-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-3-4-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-4-0-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-4-0-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-4-2-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-4-2-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-4-3-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-1-4-3-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-0-1-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-0-1-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-0-3-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-0-3-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-0-4-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-0-4-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-1-0-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-1-0-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-1-3-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-1-3-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-1-4-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-1-4-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-3-0-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-3-0-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-3-1-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-3-1-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-3-4-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-3-4-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-4-0-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-4-0-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-4-1-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-4-1-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-4-3-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-2-4-3-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-0-1-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-0-1-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-0-2-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-0-2-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-0-4-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-0-4-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-1-0-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-1-0-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-1-2-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-1-2-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-1-4-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-1-4-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-2-0-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-2-0-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-2-1-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-2-1-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-2-4-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-2-4-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-4-0-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-4-0-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-4-1-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-4-1-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-4-2-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-3-4-2-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-0-1-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-0-1-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-0-2-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-0-2-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-0-3-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-0-3-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-1-0-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-1-0-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-1-2-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-1-2-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-1-3-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-1-3-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-2-0-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-2-0-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-2-1-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-2-1-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-2-3-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-2-3-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-3-0-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-3-0-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-3-1-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-3-1-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-3-2-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-kind-4-3-2-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    }
+  ]
+}

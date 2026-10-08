@@ -1,0 +1,1067 @@
+{
+  "mode": "identify",
+  "identityBytes": 33554432,
+  "programBytes": 33554432,
+  "mcRuns": 0,
+  "scoreSamples": 0,
+  "jobs": [
+    {
+      "name": "base",
+      "entries": []
+    },
+    {
+      "name": "gauge-start-minimum-rotation-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "gauge-start-minimum-rotation-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "gauge-start-minimum-rotation-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "gauge-start-minimum-rotation-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "gauge-start-minimum-rotation-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "gauge-points-miss-rotation-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 9,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "gauge-points-miss-rotation-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 9,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "gauge-points-miss-rotation-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 9,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "gauge-points-miss-rotation-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 9,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "gauge-points-miss-rotation-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 9,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "matched-off-rotation-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "matched-off-rotation-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "matched-off-rotation-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "matched-off-rotation-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "matched-off-rotation-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-native-effect-types-rotation-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "four-native-effect-types-rotation-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "four-native-effect-types-rotation-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "four-native-effect-types-rotation-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "four-native-effect-types-rotation-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "same-controller-other-id-rotation-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 22,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "same-controller-other-id-rotation-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 22,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "same-controller-other-id-rotation-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 22,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "same-controller-other-id-rotation-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 22,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "same-controller-other-id-rotation-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 22,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "same-holder-66-96",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": false
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "same-holder-96-66",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": false
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "same-holder-96-101",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 101,
+            "level": 5,
+            "matched": false
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "same-holder-101-96",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 101,
+            "level": 5,
+            "matched": false
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ]
+      ]
+    }
+  ]
+}

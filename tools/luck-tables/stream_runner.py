@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -27,6 +28,7 @@ def module(name):
 pipeline, catalogue = module("pipeline"), module("catalogue")
 FORMAT = "ournotes-deck.luck-catalogue-run/1"
 MODES = ("lossless", "u16", "u24", "u32")
+SHARD_ORDERING = "score-id-modulo/1"
 
 
 def file_receipt(path, root):
@@ -66,7 +68,8 @@ def verify_program_index(path, expected_mode, report_sha, source_version, finger
 
 def validate_program_report(report, jobs, keys, source_version):
     if (report.get("format") != "ournotes-deck.luck-response-programs/1"
-            or report.get("sourceVersion") != source_version or report.get("complete") is not True):
+            or report.get("mode") != "programs" or report.get("sourceVersion") != source_version
+            or report.get("complete") is not True or report.get("probabilityComplete") is not True):
         raise ValueError("native program generation is incomplete or from a different source")
     native_keys = report.get("capabilities", {}).get("chain")
     if (not isinstance(native_keys, list) or len(native_keys) != len(keys)
@@ -76,20 +79,98 @@ def validate_program_report(report, jobs, keys, source_version):
     programs = report.get("programs", [])
     fingerprints = [row.get("fingerprint") for row in programs]
     if (not programs or len(set(fingerprints)) != len(programs)
-            or any(not isinstance(f, str) or not f for f in fingerprints)):
+            or any(not pipeline.valid_digest(f) for f in fingerprints)):
         raise ValueError("missing or duplicate compiled program identity")
     referenced = set()
     for row in rows.values():
         index = row.get("programIndex")
-        if row.get("status") != "success" or type(index) is not int or not 0 <= index < len(programs):
+        if (row.get("status") != "success" or type(index) is not int or not 0 <= index < len(programs)
+                or row.get("programFingerprint") != fingerprints[index]):
             raise ValueError("not every labelled requested job has a completed compiled program")
         referenced.add(index)
     if referenced != set(range(len(programs))):
         raise ValueError("program report contains unreferenced programs")
     for program in programs:
-        if program.get("sourceVersion") != source_version or program.get("response", {}).get("status") != "success":
+        if (program.get("status") != "success" or program.get("sourceVersion") != source_version
+                or program.get("response", {}).get("status") != "success"):
             raise ValueError("program response is unavailable or from a different source")
     return fingerprints
+
+
+def validate_input_provenance(report, hashes, spec_sha=None):
+    provenance = report.get("provenance", {})
+    inputs = provenance.get("inputs", {})
+    if (provenance.get("datasetSha256") != hashes["data"]
+            or inputs.get("rosterSha256") != hashes["snapshot"]
+            or inputs.get("requestSha256") != hashes["request"]
+            or (spec_sha is not None and inputs.get("specSha256") != spec_sha)):
+        raise ValueError("native report provenance differs from the current input/spec bytes")
+
+
+def plan_spec(jobs):
+    return {"mode": "plan", "jobs": jobs, "mcRuns": 0, "cacheBytes": 32 * 1024 * 1024}
+
+
+def preserve_plan(directory, spec_raw, report_raw):
+    """Keep immutable native plan bytes separately from the original generation."""
+    receipts = {}
+    for name, raw in (("spec", spec_raw), ("report", report_raw)):
+        path = Path(directory) / "resume" / (pipeline.sha(raw) + "." + name + ".json")
+        pipeline.atomic_bytes(path, raw)
+        receipts[name] = file_receipt(path, directory)
+    return receipts
+
+
+def native_plan(generator, inputs, jobs, directory, timeout=None):
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="plan-", dir=directory) as temporary:
+        temporary = Path(temporary)
+        spec_path, report_path = temporary / "spec.json", temporary / "plan.json"
+        pipeline.write(spec_path, plan_spec(jobs))
+        command = [str(Path(generator).resolve()), inputs["data"], inputs["snapshot"], inputs["request"],
+                   str(spec_path), str(report_path)]
+        with (directory / "resume-plan.log").open("w") as log:
+            subprocess.run(command, check=True, timeout=timeout, stdout=log, stderr=subprocess.STDOUT)
+        return preserve_plan(directory, spec_path.read_bytes(), report_path.read_bytes())
+
+
+def validate_semantic_resume(directory, record, old_report, jobs, keys, source_version, hashes):
+    """A plan proves current dependencies; it never relabels an old generation."""
+    receipt = record["resumePlan"]
+    path = verified_file(directory, receipt["report"])
+    spec_path = verified_file(directory, receipt["spec"])
+    plan, spec = pipeline.read(path), pipeline.read(spec_path)
+    if spec != plan_spec(jobs):
+        raise ValueError("semantic resume spec differs from the full requested plan")
+    validate_input_provenance(plan, hashes, receipt["spec"]["sha256"])
+    if (plan.get("format") != "ournotes-deck.luck-response-generation/1" or plan.get("mode") != "plan"
+            or plan.get("validationDecks") != [] or plan.get("archives") != []
+            or plan.get("table", {}).get("entries") != []):
+        raise ValueError("semantic resume is not a pure native plan")
+    native_keys = plan.get("capabilities", {}).get("chain")
+    if (not isinstance(native_keys, list) or len(native_keys) != len(keys)
+            or {pipeline.canonical(k) for k in native_keys} != {pipeline.canonical(k) for k in keys}):
+        raise ValueError("semantic resume plan omits full native catalogue coverage")
+    rows = pipeline.job_results(plan, jobs)
+    if any(row.get("status") != "planned" or not isinstance(row.get("dependencyDescriptor"), dict)
+           or not pipeline.valid_digest(row.get("dependencyFingerprint")) for row in rows.values()):
+        raise ValueError("semantic resume contains an unplanned or incomplete dependency job")
+    dependencies = plan.get("dependencyDescriptor")
+    context = plan.get("context")
+    if (not isinstance(dependencies, dict) or not isinstance(context, dict) or not context
+            or dependencies.get("algorithm", {}).get("simSourceSha256") != source_version
+            or not pipeline.valid_digest(context.get("fingerprint"))
+            or context.get("algorithmVersion") != "ournotes-luck-response/1/" + source_version
+            or not pipeline.valid_digest(plan.get("sharedFingerprint"))
+            or plan.get("sharedFingerprint") != old_report.get("sharedFingerprint")
+            or dependencies != old_report.get("dependencyDescriptor")
+            or context != old_report.get("context") or plan["table"].get("context") != context):
+        raise ValueError("semantic resume native context or dependencies differ from generation")
+    # Native context binds the shared descriptor AND every selected entry's
+    # dependency fingerprint. Program reports do not repeat per-job descriptors.
+    validate_program_report(old_report, jobs, keys, source_version)
+    return plan
 
 
 def native_programs(generator, inputs, jobs, keys, source_version, output, timeout=None):
@@ -103,6 +184,7 @@ def native_programs(generator, inputs, jobs, keys, source_version, output, timeo
         subprocess.run(command, check=True, timeout=timeout, stdout=log, stderr=subprocess.STDOUT)
     report = pipeline.read(report_path)
     fingerprints = validate_program_report(report, jobs, keys, source_version)
+    validate_input_provenance(report, pipeline.provenance(inputs), pipeline.sha(spec_path.read_bytes()))
     report_sha = pipeline.sha(report_path.read_bytes())
     receipts = []
     for mode in MODES:
@@ -150,7 +232,8 @@ def classic_chart(benchmark, case_name, generator, source, directory, batch_size
 
 
 def run_catalogue(benchmark, generator, source, output, backend="programs", batch_size=None, timeout=None,
-                  call_programs=native_programs, call_classic=classic_chart, shard_index=0, shard_count=1):
+                  call_programs=native_programs, call_classic=classic_chart, shard_index=0, shard_count=1,
+                  call_plan=native_plan):
     if (type(shard_index) is not int or type(shard_count) is not int
             or not 1 <= shard_count <= 1024 or not 0 <= shard_index < shard_count):
         raise ValueError("invalid shard index/count")
@@ -202,11 +285,15 @@ def run_catalogue(benchmark, generator, source, output, backend="programs", batc
         previous = pipeline.read(output / "manifest.json")
         old_rows = {row["name"]: row for row in previous["charts"]} if previous.get("format") == FORMAT else {}
     except (OSError, ValueError, KeyError, TypeError):
+        previous = {}
         old_rows = {}
-    selected_charts = [(sid, case) for ordinal, (sid, case) in enumerate(sorted(chart_cases.items()))
-                       if ordinal % shard_count == shard_index]
+    same_algorithm = previous.get("algorithm") == algorithm and previous.get("backend") == backend
+    # A newly inserted score must never move existing scores to another cache.
+    # The explicit version distinguishes this from the historical ordinal rule.
+    selected_charts = [(sid, case) for sid, case in sorted(chart_cases.items())
+                       if sid % shard_count == shard_index]
     result = {"format": FORMAT, "benchmarkSha256": pipeline.sha(benchmark.read_bytes()),
-              "shard": {"index": shard_index, "count": shard_count, "ordering": "ascending-score-id-modulo",
+              "shard": {"index": shard_index, "count": shard_count, "ordering": SHARD_ORDERING,
                         "catalogueCharts": len(chart_cases), "selectedCharts": len(selected_charts)},
               "datasetId": inv["datasetId"], "generatorSha256": binary_sha, "algorithm": algorithm,
               "backend": backend, "coverage": {**inv["counts"], "allChartsDeclared": True,
@@ -228,22 +315,56 @@ def run_catalogue(benchmark, generator, source, output, backend="programs", batc
         row["missions"] = chart["missions"]
         if not chart["hasLuckMission"]:
             row.update(status="notApplicable", reason="actual played mission ranges contain no LUCK mission",
-                       jobs=0, nativeCalls=0)
+                       jobs=0, nativeCalls=0, nativePlanCalls=0, generatedPrograms=0)
             pipeline.write(output / "manifest.json", result)
             continue
         identity = pipeline.sha(pipeline.canonical({"inputs": hashes, "algorithm": algorithm["digest"],
                                                    "generator": binary_sha, "keys": keys, "backend": backend}))
         directory = output / "charts" / pipeline.sha(case["name"].encode())[:24]
         old = old_rows.get(row["name"], {})
-        if (backend == "programs" and old.get("status") == "success" and old.get("identity") == identity
-                and old.get("inputSha256") == hashes and old.get("jobs") == len(jobs)
-                and old.get("sourceVersion") == algorithm["simSourceSha256"]
+        cache_valid = (backend == "programs" and same_algorithm and old.get("status") == "success"
+                and old.get("jobs") == len(jobs) and old.get("sourceVersion") == algorithm["simSourceSha256"]
+                and old.get("scoreId") == row["scoreId"]
                 and old.get("missions") == chart["missions"] and old.get("difficulty") == chart["difficulty"]
-                and reusable_programs(directory, old)):
-            row.update(old); row["reusedChart"] = True
-            pipeline.write(output / "manifest.json", result)
-            continue
-        row.update(identity=identity, directory=directory.relative_to(output).as_posix(), status="running", reusedChart=False)
+                and reusable_programs(directory, old))
+        if (cache_valid and old.get("identity") == identity
+                and old.get("inputSha256") == hashes):
+            try:
+                old_report = pipeline.read(verified_file(directory, old["report"]))
+                validate_program_report(old_report, jobs, keys, algorithm["simSourceSha256"])
+                if old.get("reusedThroughPlan") is True:
+                    validate_semantic_resume(directory, old, old_report, jobs, keys, algorithm["simSourceSha256"], hashes)
+                else:
+                    validate_input_provenance(old_report, hashes)
+                row.update(old)
+                row.update(reusedChart=True, nativePlanCalls=0, generatedPrograms=0)
+                row.pop("semanticResumeMiss", None)
+                pipeline.write(output / "manifest.json", result)
+                continue
+            except (OSError, ValueError, KeyError, TypeError, IndexError):
+                cache_valid = False
+        if cache_valid:
+            start = time.monotonic()
+            row["nativePlanCalls"] = 1
+            try:
+                old_report = pipeline.read(verified_file(directory, old["report"]))
+                validate_program_report(old_report, jobs, keys, algorithm["simSourceSha256"])
+                current_plan = call_plan(generator, inputs, jobs, directory, timeout)
+                validate_semantic_resume(directory, {"resumePlan": current_plan}, old_report, jobs, keys,
+                                         algorithm["simSourceSha256"], hashes)
+                row.update(old)
+                row.update(identity=identity, inputSha256=hashes, reusedChart=True, reusedThroughPlan=True,
+                           resumePlan=current_plan, semanticResumeElapsedMs=(time.monotonic() - start) * 1000,
+                           nativePlanCalls=1, generatedPrograms=0)
+                row.pop("semanticResumeMiss", None)
+                pipeline.write(output / "manifest.json", result)
+                continue
+            except (OSError, ValueError, KeyError, TypeError, IndexError, subprocess.SubprocessError) as error:
+                # A missing dependency proof is a cache miss, never chart omission.
+                row["semanticResumeMiss"] = pipeline.error_text(error)
+        row.setdefault("nativePlanCalls", 0)
+        row.update(identity=identity, directory=directory.relative_to(output).as_posix(), status="running", reusedChart=False,
+                   reusedThroughPlan=False)
         pipeline.write(output / "manifest.json", result)
         start = time.monotonic()
         try:
@@ -253,6 +374,8 @@ def run_catalogue(benchmark, generator, source, output, backend="programs", batc
             else:
                 details = call_classic(benchmark, case["name"], generator, source, directory, batch_size, timeout)
             row.update(details, status="success")
+            if backend == "programs":
+                row["generatedPrograms"] = details["uniquePrograms"]
         except (OSError, ValueError, KeyError, IndexError, TypeError, subprocess.SubprocessError) as error:
             row.update(status="error", reason=pipeline.error_text(error))
         row["elapsedMs"] = (time.monotonic() - start) * 1000
@@ -260,6 +383,10 @@ def run_catalogue(benchmark, generator, source, output, backend="programs", batc
     result["complete"] = all(row["status"] in ("success", "notApplicable") for row in result["charts"])
     result["summary"] = {status: sum(row["status"] == status for row in result["charts"])
                          for status in ("success", "notApplicable", "error", "pending", "running")}
+    result["work"] = {"reusedCharts": sum(row.get("reusedChart") is True for row in result["charts"]),
+                      "semanticResumeCharts": sum(row.get("reusedThroughPlan") is True for row in result["charts"]),
+                      "nativePlanCalls": sum(row.get("nativePlanCalls", 0) for row in result["charts"]),
+                      "generatedPrograms": sum(row.get("generatedPrograms", 0) for row in result["charts"])}
     result["wholeCatalogueComplete"] = result["complete"] and shard_count == 1
     result["completionMeaning"] = "Complete applies only to this explicit shard. Every selected chart is accounted for; each applicable selected chart has all base/single catalogue entries and four verified archives. Whole-catalogue completion requires validated aggregation of every shard. No claim of all team combinations or arbitrary play-profile coverage."
     pipeline.write(output / "manifest.json", result)

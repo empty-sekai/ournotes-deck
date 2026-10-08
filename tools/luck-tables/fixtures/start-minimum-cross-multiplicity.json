@@ -1,0 +1,229 @@
+{
+  "mode": "programs",
+  "identityBytes": 33554432,
+  "programBytes": 33554432,
+  "mcRuns": 0,
+  "scoreSamples": 0,
+  "jobs": [
+    {
+      "name": "matched-false-holder-1-sixty-plus-fifty",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 5,
+            "matched": false
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "matched-false-holder-1-eighty",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 5,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "matched-false-holder-4-sixty-plus-fifty",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 5,
+            "matched": false
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "matched-false-holder-4-eighty",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 5,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "matched-true-holder-1-sixty-plus-fifty",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 5,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 3,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "matched-true-holder-1-eighty",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 5,
+            "matched": true
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "matched-true-holder-4-sixty-plus-fifty",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 5,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 3,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "matched-true-holder-4-eighty",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 7,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 5,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    }
+  ]
+}

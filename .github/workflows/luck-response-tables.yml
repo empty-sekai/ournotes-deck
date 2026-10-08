@@ -128,10 +128,10 @@ jobs:
         id: response-cache
         with:
           path: work/result
-          key: luck-programs-v1-${{ runner.os }}-${{ matrix.region }}-of8-${{ matrix.shard }}-${{ hashFiles('work/shared/bundle.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: luck-programs-score-id-v1-${{ runner.os }}-${{ matrix.region }}-of8-${{ matrix.shard }}-${{ hashFiles('work/shared/bundle.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            luck-programs-v1-${{ runner.os }}-${{ matrix.region }}-of8-${{ matrix.shard }}-${{ hashFiles('work/shared/bundle.json') }}-
-            luck-programs-v1-${{ runner.os }}-${{ matrix.region }}-of8-${{ matrix.shard }}-
+            luck-programs-score-id-v1-${{ runner.os }}-${{ matrix.region }}-of8-${{ matrix.shard }}-${{ hashFiles('work/shared/bundle.json') }}-
+            luck-programs-score-id-v1-${{ runner.os }}-${{ matrix.region }}-of8-${{ matrix.shard }}-
       - name: Generate every assigned natural LUCK chart and record all other charts
         run: |
           python3 tools/luck-tables/stream_runner.py "work/shared/catalogue/$REGION/inputs/benchmark.json" \
@@ -142,13 +142,54 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: work/result
-          key: luck-programs-v1-${{ runner.os }}-${{ matrix.region }}-of8-${{ matrix.shard }}-${{ hashFiles('work/shared/bundle.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: luck-programs-score-id-v1-${{ runner.os }}-${{ matrix.region }}-of8-${{ matrix.shard }}-${{ hashFiles('work/shared/bundle.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Publish complete and unfinished shard evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: luck-catalogue-shard-${{ matrix.region }}-${{ matrix.shard }}
           path: work/result/
+          if-no-files-found: warn
+          retention-days: 7
+
+  interactions:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: luck-catalogue-pinned-inputs-and-generator
+          path: work/shared
+      - name: Verify the shared real inputs and same-source generator
+        id: verify-inputs
+        run: |
+          chmod +x work/shared/bin/luck_response
+          python3 tools/luck-tables/aggregate_catalogue.py verify-bundle --inputs work/shared/catalogue \
+            --generator work/shared/bin/luck_response --source . --bundle work/shared/bundle.json
+      - name: Validate full-capacity master-skill interactions on both TW reference charts
+        run: |
+          python3 tools/luck-tables/validate_minimum_basis.py work/shared/catalogue/tw/inputs/benchmark.json \
+            --case tw-10006103-expert --case tw-10010703-expert \
+            --generator work/shared/bin/luck_response --output work/interactions/tw
+      - name: Validate the independent JP easy-chart context
+        if: always() && steps.verify-inputs.outcome == 'success'
+        run: |
+          python3 tools/luck-tables/validate_minimum_basis.py work/shared/catalogue/jp/inputs/benchmark.json \
+            --case jp-10000300-easy --generator work/shared/bin/luck_response --output work/interactions/jp
+      - name: Preserve native grid, original-DP comparisons, cold/warm queries and control evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luck-real-multiskill-validation
+          path: work/interactions/
           if-no-files-found: warn
           retention-days: 30
 
@@ -180,6 +221,18 @@ jobs:
           python3 tools/luck-tables/aggregate_catalogue.py aggregate --inputs work/shared/catalogue \
             --results work/shards --bundle work/shared/bundle.json --source . \
             --shard-count 8 --output work/aggregate
+      - name: Deduplicate and compress deployable program dictionaries
+        run: |
+          python3 tools/luck-tables/analyze_programs.py --root work/shards \
+            --inputs work/shared/catalogue --output work/aggregate/program-analysis.json \
+            --bundle-dir work/deployable --compression gzip9,xz6
+      - name: Publish verified lookup dictionaries independently of raw evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: luck-catalogue-program-dictionaries
+          path: work/deployable/
+          if-no-files-found: error
+          retention-days: 30
       - name: Publish the exact full-catalogue outcome
         if: always()
         run: |

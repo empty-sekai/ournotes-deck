@@ -1,0 +1,6197 @@
+{
+  "mode": "programs",
+  "jobs": [
+    {
+      "name": "five-kind-position-0",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-1",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-2",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-3",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-4",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-5",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-6",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-7",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-8",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-9",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-10",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-11",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-12",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-13",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-14",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-15",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-16",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-17",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-18",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-19",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-20",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-21",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-22",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-23",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-24",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-25",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-26",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-27",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-28",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-29",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-30",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-31",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-32",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-33",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-34",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-35",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-36",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-37",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-38",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-39",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-40",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-41",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-42",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-43",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-44",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-45",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-46",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-47",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-48",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-49",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-50",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-51",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-52",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-53",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-54",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-55",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-56",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-57",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-58",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-59",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-60",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-61",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-62",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-63",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-64",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-65",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-66",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-67",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-68",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-69",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-70",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-71",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-72",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-73",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-74",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-75",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-76",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-77",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-78",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-79",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-80",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-81",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-82",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-83",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-84",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-85",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-86",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-87",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-88",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-89",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-90",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-91",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-92",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-93",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-94",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-95",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-96",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-97",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-98",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-99",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-100",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-101",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-102",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-103",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-104",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-105",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-106",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-107",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-108",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-109",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-110",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          3
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-111",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-112",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-113",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-114",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-115",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-116",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          2
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-117",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-118",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          1
+        ]
+      ]
+    },
+    {
+      "name": "five-kind-position-119",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 14,
+            "level": 5,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 4,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 96,
+            "level": 3,
+            "matched": false
+          },
+          0
+        ]
+      ]
+    },
+    {
+      "name": "all-fifteen-slots",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 5,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 3,
+            "matched": true
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 5,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 3,
+            "matched": true
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 5,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 3,
+            "matched": true
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 5,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 3,
+            "matched": true
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 8,
+            "level": 3,
+            "matched": null
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 66,
+            "level": 5,
+            "matched": true
+          },
+          4
+        ],
+        [
+          {
+            "source": "gekisouSupport",
+            "id": 71,
+            "level": 3,
+            "matched": true
+          },
+          4
+        ]
+      ]
+    },
+    {
+      "name": "five-start-gauge-levels",
+      "entries": [
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 1,
+            "matched": null
+          },
+          0
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 2,
+            "matched": null
+          },
+          1
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 3,
+            "matched": null
+          },
+          2
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 4,
+            "matched": null
+          },
+          3
+        ],
+        [
+          {
+            "source": "gekisou",
+            "id": 20,
+            "level": 5,
+            "matched": null
+          },
+          4
+        ]
+      ]
+    }
+  ],
+  "mcRuns": 0,
+  "scoreSamples": 0
+}

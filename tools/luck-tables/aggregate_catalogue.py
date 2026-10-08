@@ -85,12 +85,12 @@ def aggregate(inputs, results, bundle_path, source, output, shard_count=8, regio
             metadata = shard.get('shard', {})
             index = metadata.get('index')
             if (type(index) is not int or not 0 <= index < shard_count or index in shard_indices
-                    or metadata.get('count') != shard_count or metadata.get('ordering') != 'ascending-score-id-modulo'
+                    or metadata.get('count') != shard_count or metadata.get('ordering') != runner.SHARD_ORDERING
                     or metadata.get('catalogueCharts') != len(master)):
                 errors.append(prefix + ': duplicate, unknown or inconsistent shard identity')
                 continue
             shard_indices.add(index)
-            expected = {sid for ordinal, sid in enumerate(sorted(master)) if ordinal % shard_count == index}
+            expected = {sid for sid in master if sid % shard_count == index}
             rows = shard.get('charts', [])
             if (len(rows) != len(expected) or {r.get('scoreId') for r in rows} != expected
                     or metadata.get('selectedCharts') != len(expected)):
@@ -128,6 +128,11 @@ def aggregate(inputs, results, bundle_path, source, output, shard_count=8, regio
                         fingerprints = runner.validate_program_report(report, jobs, keys, bundle['algorithm']['simSourceSha256'])
                         if fingerprints != row['programFingerprints']:
                             raise ValueError('job/program mapping differs from chart receipt')
+                        if row.get('reusedThroughPlan') is True:
+                            runner.validate_semantic_resume(directory, row, report, jobs, keys,
+                                                            bundle['algorithm']['simSourceSha256'], hashes)
+                        else:
+                            runner.validate_input_provenance(report, hashes)
                     elif (row.get('status') != 'notApplicable' or row.get('jobs') != 0 or row.get('nativeCalls') != 0):
                         raise ValueError('non-LUCK chart must remain explicitly notApplicable')
                     summary['auditPassed'] = True
@@ -153,13 +158,21 @@ def aggregate(inputs, results, bundle_path, source, output, shard_count=8, regio
                          'success': sum(r['status'] == 'success' and r['auditPassed'] for r in result['charts']),
                          'notApplicable': sum(r['status'] == 'notApplicable' and r['auditPassed'] for r in result['charts']),
                          'errors': len(errors)}
+    result['work'] = {'reusedCharts': sum(r.get('reusedChart') is True for r in result['charts']),
+                      'semanticResumeCharts': sum(r.get('reusedThroughPlan') is True for r in result['charts']),
+                      'nativePlanCalls': sum(r.get('nativePlanCalls', 0) for r in result['charts']),
+                      'generatedPrograms': sum(r.get('generatedPrograms', 0) for r in result['charts'])}
     pipeline.write(output / 'aggregate.json', result)
     lines = ['# Whole-catalogue LUCK response generation', '',
              f"Complete: **{str(result['complete']).lower()}**. All input pins, source identities, native job labels and program blob hashes were checked.", '',
              '| Region | Declared charts | Natural LUCK | Received charts | Shards |', '|---|---:|---:|---:|---:|']
     for row in result['regions']:
         lines.append(f"| {row['region']} | {row['expected']['charts']} | {row['expected']['luckCharts']} | {row['receivedCharts']} | {len(row['receivedShards'])}/{shard_count} |")
-    lines.extend(['', result['completionMeaning'], ''])
+    lines.extend(['', result['completionMeaning'], '',
+                  'Incremental work (completed chart receipts): '
+                  f"{result['work']['reusedCharts']} reused charts; "
+                  f"{result['work']['nativePlanCalls']} native plans; "
+                  f"{result['work']['generatedPrograms']} generated programs.", ''])
     if errors:
         lines.extend(['Errors:', ''] + ['- ' + error for error in errors])
     pipeline.atomic_bytes(output / 'summary.md', ('\n'.join(lines) + '\n').encode())

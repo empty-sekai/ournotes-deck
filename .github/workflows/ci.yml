@@ -30,7 +30,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --all-targets --features search-diagnostics -- -D warnings
       - run: cargo test --release --features search-diagnostics --test adapter_fixture_export
+      - run: cargo test --release --features search-diagnostics --lib luck_response
+      - run: python3 -m unittest discover -s tools/luck-tables -p 'test_*.py'
 
   msrv:
     runs-on: ubuntu-latest
