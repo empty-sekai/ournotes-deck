@@ -338,6 +338,10 @@ pub enum AdditiveEnvelopeRefusal {
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FactorEnvelopeDiagnostics {
+    /// Complete source/entry proof for the range COMBO count; absent evidence retains the frame-based cap.
+    /// These are conservative proof limits, not a played deck's observed combo or number of resets.
+    pub combo_monotone_epochs: Option<usize>,
+    pub combo_value_upper: Option<i32>,
     pub maximum_command_executions: f64,
     pub commands_by_position: [f64; 5],
     pub executions_by_position: [f64; 5],

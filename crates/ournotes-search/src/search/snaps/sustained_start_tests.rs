@@ -47,6 +47,7 @@ fn frames(open: &[bool]) -> GkFrames {
         next_complete: vec![None; open.len() + 1],
         ent: Vec::new(),
         combo_triggers: None,
+        combo_epochs: None,
     }
 }
 

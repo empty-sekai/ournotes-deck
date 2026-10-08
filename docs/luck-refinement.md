@@ -1093,3 +1093,90 @@ new seed proposals only in the first quarter of the remaining time.
 
 The `certified_seed_budget_preserves_the_complete_canonical_ranking` test checks the canonical result against
 exhaustive score search at several K and cache capacities, including the full candidate count.
+
+## Cumulative COMBO factor-command budget
+
+A cumulative `2001` score factor whose counter is `7001` reads the combo of the native controller's
+current playing range. Its value need not increase throughout a song. A Miss or Bad can reset a range,
+the current range can change, and an inverse controller command can rewrite already-counted history.
+The optional `ComboEpochs` certificate bounds the number of factor replacements without changing the
+native commands, candidate domain, or the 120 labelled performance orders.
+
+The certificate is compiled after the full allowed card pool's per-entry conversion closure. Each entry
+retains its original grade and every grade reachable through registered conversion chains. Missing closure
+entries, unknown controller writers and unsupported lifecycles refuse the certificate. The earlier
+raw/nontransitive `breaks` flag cannot substitute for this evidence, even when it reports no bad grades.
+All ranges are considered: `7001` reads whichever range is current, including a non-COMBO mission.
+
+The native prescribed-judgement path uses `judgement_time_ms` for conversion, but appends the original
+`LiveNote.time_ms` to controller history. Admission requires nondecreasing chart timestamps in each
+range's append order, while preserving separate notes at equal timestamps. A note cannot be processed
+before its chart time. Frame clocks are strictly increasing nonnegative integers in the admitted
+binary32 range. The current-range schedule comes from native playback without skills; both skill phases
+read that frame's same current range, before the after-frame controller recount.
+
+Every possible negative `12000` bonus or `12004` protection command must be strictly later than all
+history already appended when that command is filed. Untimed sustained endings use the current frame;
+admitted one-shot range-start timers retain their native binary32 duration, first-update behavior,
+strict elapsed-time comparison and optional range-complete release. The music-length clamp is checked
+separately. Same-time inverses are refused. In particular, protection history has no sequence-number
+tie-break: ending protection at an earlier Miss's exact timestamp can turn that already-protected Miss
+into a break on recount. A timer that merely ends after the note's processing frame is insufficient.
+
+Positive changes cannot reduce a history prefix under the remaining arithmetic guards. The existing
+whole-deck `12000` capacity certificate includes all allowed members and Snap alternatives, relaxes their
+conditions, and keeps the initial one plus every active nonnegative integer bonus within binary32's exact
+integer range. Native add/remove pairs stay in their original command order. Every command prefix is an
+exact nonnegative integer sum; no floating-point reassociation is used. Positive protection also cannot
+take protection away from an older entry: on a matching bad grade the native controller consumes every
+matching limited ticket, even when another ticket or unlimited protection already covers the grade.
+Adding a ticket does not divert consumption away from an existing ticket. Direct combo additions,
+unproved writers, wrapping protection tags and possible controller-handle reuse are outside this proof.
+The largest range count is checked before native `i32` addition could wrap.
+
+With those conditions, each unchanged-current-range segment is nondecreasing except when a possibly
+breaking entry is appended. A conservative number of monotone epochs is
+
+\[
+E = 1 + \#\{\text{adjacent current-range changes}\}
+      + \#\{\text{range-relevant entries that can become Miss or Bad}\}.
+\]
+
+The first count includes entering and leaving the absence of a current range and changes between
+overlapping ranges. The second count allows protection to fail; protection only removes possible breaks.
+One entry belonging to overlapping ranges is still one append opportunity, with later range switches
+already counted separately. Frozen completed ranges introduce no extra changes.
+
+For each score row, the counter divisor must be positive. Native integer-to-binary32 conversion,
+division and floor are monotone on the admitted nonnegative range. The largest reachable cumulative
+count, including its own cap, must keep `effect_value * count` inside `i32` before the native cast;
+the score-effect cap is applied after that cast and cannot justify an overflowing product. The existing
+`stable_cumulative_churn` check then verifies every possible unsaturated factor and the capped factor
+against its exact binary32 reconstruction from the filed integer command. This excludes factors that
+would repeatedly fail the native approximate-equality test while the counter stays constant. Its bounded
+scan refuses more than 4096 steps. Multiplying that stable per-epoch count by `E`, with outward rounding,
+bounds replacements of one execution. Existing lifetime-start and concurrency bounds still account for
+separate or overlapping executions and for both removal and addition of every replacement.
+
+If either the complete closure/history certificate or the stable arithmetic certificate is unavailable,
+the bound keeps the existing per-frame replacement allowance. This covers two distinct missing proofs:
+reachable bad grades not captured by a raw-grade flag, and controller inverses that can mutate old
+history. Refusal makes no assertion that a previous Top-K result was wrong. It also does not reject a
+legal candidate or change a probability law.
+
+The original PR40 no-LUCK long-chart inputs provide a concrete admission example, rather than a new
+performance fixture. Score `10007003` has three COMBO ranges. Its newcomer and midcore pools include
+LIFE-conditioned sustained combo bonuses and timed protection; the proof checks the full sources, not
+only a returned team. The original range histories contain 107 adjacent equal-chart-time pairs, all
+retained. Among the source timers, one three-second deadline is `101201` ms, filed at `101216` ms after
+prior history through `101200` ms: the one-millisecond strict gap passes, whereas equality would refuse.
+The original music-length clamp is `140001` ms, after all relevant range notes. These input facts explain
+admission and are not a runtime, completion or pruning claim.
+
+`combo_epoch_` tests include a native same-time protection-revocation counterexample, incomplete-closure
+and arithmetic refusals, and complete construction through `SnapLive`. Two independent 120-label runs
+check actual retained factor-command counts and the fine score enclosure respectively. Under
+`search-diagnostics`, the first run borrows the native calculator's original command lists after playback;
+it includes zero commands and both halves of same-frame or overlapping-lifetime replacements. The getter
+adds no state, allocation or native execution. The tests' malformed-closure cases check missing entries
+and missing raw-grade bits; they do not claim to be an independent native conversion-chain oracle.

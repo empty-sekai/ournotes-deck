@@ -206,6 +206,7 @@ impl<'a> SnapLive<'a> {
             None => None,
             Some(g) => Some(Schedule::new(master, setup, g)?),
         };
+        let mut combo_epoch_bonus = None;
         if let Some(sc) = &sched {
             let mut g = GkFrames::new(sc, &frames, &entries);
             // Each physical member brings its own GK rows and at most one Snap.
@@ -241,6 +242,7 @@ impl<'a> SnapLive<'a> {
                 return Err(Error::Domain("Gekisou COMBO bonus arithmetic outside the certified integer range".into()));
             }
             if let Some(bonus) = combo_bonus {
+                combo_epoch_bonus = Some(bonus);
                 g.combo_triggers =
                     combo_triggers::ComboTriggers::compile(master, &g, &entries, &env.count_reach, bonus);
             }
@@ -323,6 +325,11 @@ impl<'a> SnapLive<'a> {
                 }
             })
             .collect();
+        let combo_epochs =
+            combo_epoch_bonus.and_then(|bonus| combo_epochs::compile(&env, setup, &entries, all_rows(), bonus));
+        if let Some(g) = env.gkf.as_mut().and_then(Rc::get_mut) {
+            g.combo_epochs = combo_epochs;
+        }
         // the judgements the score bounds read outside the conversion budgets
         let reached_v: Vec<Vec<i32>> = entries.iter().map(|&(fi, _, j)| reach(j, fi as i64, false)).collect();
         if let Some(sc) = &sched {
@@ -1250,6 +1257,8 @@ impl<'a> SnapLive<'a> {
             }
         };
         let factor_diagnostics = crate::search::telemetry::FactorEnvelopeDiagnostics {
+            combo_monotone_epochs: env.gkf.as_ref().and_then(|g| g.combo_epochs).map(|proof| proof.epochs),
+            combo_value_upper: env.gkf.as_ref().and_then(|g| g.combo_epochs).map(|proof| proof.max_combo),
             maximum_command_executions: e_max,
             commands_by_position: cmd_k,
             executions_by_position: executions_k,

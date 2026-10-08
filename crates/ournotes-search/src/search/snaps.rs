@@ -112,6 +112,10 @@ mod ramp;
 #[path = "snaps/raw.rs"]
 mod raw;
 
+mod combo_epochs;
+#[cfg(test)]
+#[path = "snaps/combo_epochs_tests.rs"]
+mod combo_epochs_tests;
 mod combo_triggers;
 mod conversion;
 mod envelope_data;

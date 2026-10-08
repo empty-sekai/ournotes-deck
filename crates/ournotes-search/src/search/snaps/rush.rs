@@ -71,6 +71,7 @@ pub(super) fn test_probe(note: f64) -> RushRef {
                 next_complete: vec![None; count + 3],
                 ent: Vec::new(),
                 combo_triggers: None,
+                combo_epochs: None,
             }),
             gate: MISSION_LUCK,
             trigger_type: 2,
@@ -318,6 +319,7 @@ mod tests {
             next_complete: vec![None; nf + 3],
             ent: Vec::new(),
             combo_triggers: None,
+            combo_epochs: None,
         })
     }
 

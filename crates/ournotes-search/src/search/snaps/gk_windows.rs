@@ -254,6 +254,8 @@ pub(super) struct GkFrames {
     /// Optional whole-pool certificate of count-threshold trigger frames and
     /// direct7005 override timestamps; never reads this frame's new judgements.
     pub(super) combo_triggers: Option<combo_triggers::ComboTriggers>,
+    /// Complete source/entry proof of monotone epochs for the 7001 count.
+    pub(super) combo_epochs: Option<combo_epochs::ComboEpochs>,
 }
 
 impl GkFrames {
@@ -326,6 +328,7 @@ impl GkFrames {
             next_complete,
             ent: entries.iter().map(|e| (e.0, e.2)).collect(),
             combo_triggers: None,
+            combo_epochs: None,
         }
     }
 
@@ -990,8 +993,8 @@ pub(super) fn frame_time(frames: &[i32], frame: i64) -> i64 {
 
 /// The most factor changes of one execution of a cumulative note score up: its value is `min(effect value *
 /// count, max)`, so once the count reaches `ceil(max / value)` it stops changing. A judgement count only grows while
-/// the effect runs; a combo count grows within a range unless a Miss or a Bad is reachable, and restarts with each
-/// range.
+/// the effect runs. A combo count needs the complete epoch certificate: raw nonbreaking judgements alone do not
+/// exclude a conversion chain or a late negative controller command that rewrites a previous count.
 pub(super) fn churn_max(env: &Env, r: &Row) -> Option<f64> {
     if r.effect_type != 2001 || r.value <= 0 || r.max_value <= 0 {
         return None;
@@ -1000,10 +1003,7 @@ pub(super) fn churn_max(env: &Env, r: &Row) -> Option<f64> {
     let c = env.master.cumulative_condition(r.cumulative)?;
     match c.condition_type {
         1000 => Some(steps),
-        7001 => {
-            let g = env.gk.as_ref()?;
-            if g.breaks { None } else { Some(steps * (g.missions.len() as f64 + 1.0)) }
-        }
+        7001 => env.gkf.as_ref()?.combo_epochs?.churn(env, r, steps),
         _ => None,
     }
 }

@@ -1651,6 +1651,14 @@ impl LiveModel {
         self.score.filed_scores()
     }
 
+    /// Diagnostics only: all retained original factor commands, grouped by native score frame.
+    /// Replacements retain both their removal and addition, even with equal values or timestamps.
+    /// Borrowing this view allocates no storage and does not advance the native calculator.
+    #[cfg(feature = "search-diagnostics")]
+    pub fn filed_factor_commands(&self) -> impl Iterator<Item = &FactorCommand> {
+        self.score.filed_factor_commands()
+    }
+
     /// The score factor state.
     pub fn factor_state(&self) -> &ScoreFactorState {
         &self.score.calc.state

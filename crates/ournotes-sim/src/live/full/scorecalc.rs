@@ -573,6 +573,12 @@ impl IncrementalCalculator {
         (notes, self.fixed.clone())
     }
 
+    /// All original factor filings, including zero commands and both halves of replacements.
+    #[cfg(feature = "search-diagnostics")]
+    pub(crate) fn filed_factor_commands(&self) -> impl Iterator<Item = &FactorCommand> {
+        self.factors.iter().flatten()
+    }
+
     /// Tests only: the number of score frames, and every note of the executed frames with its last execution's
     /// factor state.
     #[cfg(test)]
