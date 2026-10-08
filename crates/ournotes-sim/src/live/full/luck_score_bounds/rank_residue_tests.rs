@@ -22,6 +22,8 @@ fn detailed(input: &RushCase, refine: bool) -> LuckScoreBounds {
         None,
         None,
         &mut || false,
+        false,
+        None,
     )
     .unwrap()
     .unwrap()
