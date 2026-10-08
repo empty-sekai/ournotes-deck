@@ -216,7 +216,7 @@ fn dependencies(master: &Master, input: &LuckInput, skills: &LuckSkills, neutral
         .collect();
     let mut params = input.params;
     params.total_power = 0;
-    let rows: Vec<_> = skills.rows.iter().map(|(key, shape)| (key, shape)).collect();
+    let rows: Vec<_> = skills.rows.iter().collect();
     json!({
         "algorithm":{"name":ALGORITHM,"simSourceSha256":ournotes_sim::SOURCE_SHA256,
             "law":"independentNominal","value":"kernelProbability","nativeScoreCertificate":false},
