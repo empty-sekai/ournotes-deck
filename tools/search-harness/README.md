@@ -116,6 +116,18 @@ JavaScript's safe range cannot silently compare equal. Only diagnostics/timing
 fields are excluded. They record runtime, runner, manifest and WASM identities.
 This verifies the declared corpus and transport, not every browser or game parity.
 
+For the synthetic account transport corpus, run
+`node tools/search-harness/account-wasm.cjs PACKAGE_JS CORPUS_DIRECTORY [REPORT_JSON]`.
+It requires all 76 unique cases (49 Expected and 27 non-Gekisou Maximum), checks
+final `ok` answers with an exhausted search, proven optimality and K = 5, and
+compares every semantic JSON number token with its native reference. The gate
+also checks the declared Maximum random model, progress answers and rejection
+of Mission, Battle and Arena Maximum requests. Callback assertion failures are
+retained and rethrown after the synchronous transport call. The optional report
+records runtime, input, reference, answer, semantic, runner and WASM hashes and
+per-case elapsed time; these timings describe this synthetic run and do not
+establish production performance or general seed realizability.
+
 ## Mock rosters
 
 ```sh

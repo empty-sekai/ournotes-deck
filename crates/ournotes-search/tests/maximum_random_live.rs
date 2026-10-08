@@ -72,6 +72,16 @@ fn random_live_support_preserves_exact_ranking_and_cache_admission() {
     };
     let uncached = run(0);
     let cached = run(64);
+    let model = serde_json::to_value(cached.maximum_model).unwrap();
+    assert_eq!(
+        model,
+        json!({
+            "kind":"independentNativeDrawSupport", "performanceOrders":120,
+            "streamBaseSeedRole":"notAConstraint",
+            "ordinarySkillDraw":"binary32OfSystemRandomNextDouble", "ordinarySkillComparison":"strictLessThan",
+            "rootSeedRealizability":"notEstablished", "bestOrderCertificate":"performanceOrderAndTerminalValuesOnly"
+        })
+    );
     assert_eq!(cached.completion, Completion::Complete);
     assert_eq!(cached.optimality, Optimality::Proven);
     assert_eq!(cached.results.len(), 30);
@@ -80,6 +90,29 @@ fn random_live_support_preserves_exact_ranking_and_cache_admission() {
     assert_eq!(cached.telemetry.caches.program_orders_reused, 0);
     assert_eq!(cached.telemetry.caches.team_scores.peak_entries, 1);
     assert!(cached.telemetry.caches.program_admissions.hits > 0);
+
+    // An explicitly supplied stream seed is not a second random-domain restriction. In native seeded
+    // execution these two seeds can differ at a skill comparison, but aggregation retains both branches.
+    let mut seeded_request = request.clone();
+    let Objective::LiveScore { play: PlayInput::Stream { stream, .. }, .. } = &mut seeded_request.objective else {
+        unreachable!()
+    };
+    stream.base_seed = 24_917_099;
+    let seeded = solve_physical_with_aggregation(
+        &pool,
+        &seeded_request,
+        &Metric::Score,
+        None,
+        &Limits { time_limit_ms: None, max_candidates: None, cache_entries: 64 },
+        &Strategy::Exhaustive,
+        None,
+        &SimulationInput::default(),
+        Aggregation::Maximum,
+    )
+    .unwrap();
+    assert_eq!(seeded.completion, Completion::Complete);
+    assert_eq!(seeded.maximum_model, cached.maximum_model);
+    assert_eq!(seeded.results, cached.results);
 
     // One binary skill predicate is read once per Snap-bearing order. Setting its threshold to each
     // endpoint gives fresh native executions of the complete two-outcome support.

@@ -2,8 +2,8 @@
 
 The played Live/PT recommendation facade searches teams (a leader, four other members and the Snap paired with
 each member). The default `aggregation:"expected"` target values a team by its mean payoff under uniformly random
-member order and the declared lottery law. The `aggregation:"maximum"` target values its maximum reachable payoff
-under the same play conditions. The expected target's result order and proof contract are specified
+member order and the declared lottery law. The `aggregation:"maximum"` target values its maximum payoff in the
+declared independent random support under the same play conditions. The expected target's result order and proof contract are specified
 in [uniform member-order search](#uniform-member-order-search); the bounds it uses are described after it, and
 [validation](#validation) lists the reproducible correctness experiments.
 The opening sections describe the canonical member-set solvers and the power/score components that the team
@@ -25,7 +25,7 @@ result, and the complete tie order. The following contracts use different identi
 | Recommendation facade, Power and deterministic Skip metrics | Declared deterministic payoff, then power | Leader and five member/Snap pairs; nonleader pairs in canonical layout | Before every Snap ID |
 | Recommendation facade, deterministic played Live | Mean terminal payoff over all 120 orders, then power | The same canonical team | Before every Snap ID |
 | Recommendation facade, LUCK | Expected terminal payoff under the declared order and lottery law | Canonical team, with certified interval ranking | Before every Snap ID |
-| Recommendation facade, maximum aggregation | Maximum reachable terminal payoff over performance orders and lottery outcomes, then power | Canonical team | Before every Snap ID |
+| Recommendation facade, non-Gekisou maximum aggregation | Maximum terminal payoff over all orders and independent ordinary-skill support, then power | Canonical team | Before every Snap ID |
 | Deterministic `SearchSession` v1 | Its supported deterministic payoff, then power | Five physical member slots and their Snap bindings | Before every Snap ID |
 
 `search::search` accepts Power and Skip; best-order Live optimization is exposed through the explicitly named
@@ -36,9 +36,13 @@ The session's physical-slot contract is specified in [search sessions](search-se
 A fixed-deck evaluation proves the value of its requested deck under its declared inputs; its domain contains that
 deck alone.
 
-The maximum objective computes `max_order max_outcome payoff(team, order, outcome)` over outcomes with positive
-probability. The declared judgement stream or accuracy, chart, scene, room and event context stay fixed. An
-outcome's terminal payoff is evaluated before taking the maximum, so a threshold metric describes attainability
+The supported non-Gekisou maximum objective computes `max_order max_outcome payoff(team, order, outcome)` over
+the declared independent support of ordinary random skill checks. This support includes the native binary32
+probability endpoint: a threshold of 1 admits both outcomes because the draw can equal 1. It does not certify that
+one integer PRNG base seed realizes a whole optimized sequence of random choices; a `Complete` proof is relative
+to this declared support domain. Maximum requests for Gekisou execution are unsupported. The declared judgement
+stream or accuracy, chart, scene, room and event context stay fixed. An outcome's terminal payoff is evaluated
+before taking the maximum, so a threshold metric describes attainability within that support
 and event points follow their score-rank conversion. Its common payoff denominator is 1. Results echo the selected
 `aggregation`, expose its exact `objectiveValue`, and report `maximumScore` separately from the payoff-optimal
 `bestOrder`. Expected-value fields and probability summaries remain absent when they are not computed. The
@@ -54,6 +58,59 @@ The real-arithmetic inequalities below require the indicated numerical certifica
 Optional bounds return no cap when their certificate is unavailable; the caller retains the complete continuation
 or uses an exhaustive route. An input, model or arithmetic error remains an error. In particular, an unavailable
 upper bound has the meaning “unknown,” rather than a numerical value of zero.
+
+### Maximum support and seed realizability
+
+Fix a legal canonical team `t`, the complete play and the execution context. For a performance order `p`, let
+`A(t,p)` be the tree of admitted ordinary-skill outcomes. At each visited comparison with finite binary32
+threshold `r`, its children are:
+
+| Threshold | Admitted outcomes of `draw < r` |
+|---|---|
+| `r <= 0` | false |
+| `0 < r <= 1` | false, true |
+| `r > 1` | true |
+
+The draw is the native `NextDouble()` result converted to binary32. Its support includes both 0 and 1;
+in particular, `r = 1` still admits a failed comparison. Each child resumes the same simulation checkpoint with
+that semantic choice. Later thresholds, checks and effects can depend on earlier choices, so `A(t,p)` is a
+history-dependent tree. Independence means each visited check admits its full local support, without a common
+PRNG-seed constraint. It does not assign probabilities to the resulting paths.
+
+Let `F(t,p,a)` be the native terminal payoff for a completed path `a` under these fixed inputs. The supported
+Maximum value is
+
+```text
+V_support(t) = max over p in the 120 orders, a in A(t,p) of F(t,p,a).
+```
+
+The search ranks this value, then power, then the canonical team key. A complete support traversal, or an
+admissible bound attained by an evaluated support path, establishes that team's value. Canonical Top-K also
+requires coverage or certified pruning of every remaining legal team. The `Complete` contract is relative to
+this value function. An incomplete traversal retains an unproven result even when its best evaluated value
+equals a value reported by another run.
+
+For comparison, a fixed integer base seed determines a whole sequence of states in
+[`LiveRandom`](../crates/ournotes-sim/src/live/random.rs). The streams derived from that root and any
+seed-determined order form one joint trajectory. Whenever all of its draws are covered by the admitted model,
+that trajectory is an element of the support domain. Therefore, for each team,
+
+```text
+V_seed(t) <= V_support(t).
+```
+
+The reverse inequality needs a seed whose full native replay attains the support maximum. Local possibility
+of each draw alone does not establish it: a 32-bit root has at most `2^32` complete trajectories for fixed
+inputs, while an independent support tree can have more paths. A performance order alone supplies neither the
+random choices nor their joint seed witness. The `bestOrder` field records the payoff-optimal order and its
+selected outcome's values; it carries no such replay certificate.
+
+The pointwise upper bound also does not transfer a ranking. For example, support values of 100 and 90 can
+correspond to seeded values of 80 and 90. Establishing a seeded canonical Top-K requires sufficient seeded
+value evidence and bounds for that ranking. One sufficient certificate would be a native replay attaining
+`V_support(t)` for every team in the support Top-K: all other teams remain bounded by their support values,
+and the power and canonical-key tie rules are unchanged. This API reports the support-domain result and its
+explicit seed-certification boundary.
 
 ## Problem
 

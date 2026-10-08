@@ -4,13 +4,16 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const [pkg, directory] = process.argv.slice(2);
-if (!pkg || !directory) throw new Error('usage: node account-wasm.cjs PACKAGE_JS CORPUS_DIRECTORY');
+const { performance } = require('node:perf_hooks');
+const { projection } = require('./json-tokens.cjs');
+const [pkg, directory, reportPath] = process.argv.slice(2);
+if (!pkg || !directory) throw new Error('usage: node account-wasm.cjs PACKAGE_JS CORPUS_DIRECTORY [REPORT_JSON]');
 const { DeckSolver } = require(path.resolve(pkg));
 const root = path.resolve(directory);
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const bytes = fs.readFileSync(path.join(root, 'data.json'));
 const datasetId = createHash('sha256').update(bytes).digest('hex');
+const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const solver = new DeckSolver(new Uint8Array(bytes));
 assert.equal(solver.datasetId, datasetId);
 const textSolver = new DeckSolver(bytes.toString('utf8'));
@@ -38,47 +41,89 @@ assert.equal(capabilities.scoreAndLife.requiresCompleteJudgementStream, true);
 assert.equal(capabilities.skip.musicIdOrChallengeMusicId, true);
 assert.equal(capabilities.defaultAggregation, 'expected');
 assert.deepEqual(capabilities.aggregations.expected, capabilities.metrics);
-assert.deepEqual(capabilities.aggregations.maximum, capabilities.metrics);
+const maximumGoals = ['power', 'freeLive', 'challengeLive', 'skip'];
+assert.deepEqual(Object.keys(capabilities.aggregations.maximum).sort(), maximumGoals.sort());
+for (const goal of maximumGoals) assert.deepEqual(capabilities.aggregations.maximum[goal], capabilities.metrics[goal]);
+const liveMaximumModel = {
+  kind: 'independentNativeDrawSupport', performanceOrders: 120,
+  ordinarySkillDraw: 'binary32OfSystemRandomNextDouble', ordinarySkillComparison: 'strictLessThan',
+  rootSeedRealizability: 'notEstablished', bestOrderCertificate: 'performanceOrderAndTerminalValuesOnly',
+  streamBaseSeedRole: 'notAConstraint',
+};
+const deterministicMaximumModel = {
+  kind: 'deterministic', performanceOrders: 1,
+  rootSeedRealizability: 'notApplicable', bestOrderCertificate: 'notApplicable',
+};
+assert.deepEqual(capabilities.maximumModel, liveMaximumModel);
+assert.deepEqual(capabilities.maximumModels, {
+  power: deterministicMaximumModel, freeLive: liveMaximumModel,
+  challengeLive: liveMaximumModel, skip: deterministicMaximumModel,
+});
+const assertModel = (result, request, aggregation) => {
+  const model = aggregation === 'maximum'
+    ? (['power', 'skip'].includes(request.goal.kind) ? deterministicMaximumModel : liveMaximumModel)
+    : undefined;
+  assert.deepEqual(result.maximumModel, model);
+};
 const privateValues = ['PRIVATE_NAME_SENTINEL', '9007199254740993', '9223372036854775806',
   '9007199254740992', '9223372036854776000', '"_name"', '"_accountid"', '"_profileId"'];
 const assertPrivate = raw => {
   for (const value of privateValues) assert(!raw.includes(value), `private field leaked: ${value}`);
 };
-const comparable = answer => {
-  const result = answer.result ? { ...answer.result } : null;
-  if (result) { delete result.elapsedMs; delete result.telemetry; }
-  return { ...answer, result };
-};
 const account = read('account.json');
 let reports = 0;
 const names = JSON.parse(read('cases.json'));
+assert.equal(names.length, 76, 'complete synthetic transport corpus');
+assert.equal(new Set(names).size, names.length, 'unique case identities');
+let expectedCases = 0, maximumCases = 0;
+const records = [];
 for (const name of names) {
   const request = read(name + '.request.json');
   const requestValue = JSON.parse(request);
   const aggregation = requestValue.aggregation ?? 'expected';
-  const expected = JSON.parse(read(name + '.expected.json'));
+  const expectedRaw = read(name + '.expected.json');
+  const expected = JSON.parse(expectedRaw);
+  aggregation === 'maximum' ? maximumCases++ : expectedCases++;
+  assert.equal(expected.status, 'ok', `${name}: native status`);
+  assert.equal(expected.final, true, `${name}: native final`);
+  assert.equal(expected.result.optimality.proven, true, `${name}: native proof`);
+  assert.equal(expected.result.exitReason, 'exhausted', `${name}: native exhausted`);
+  assert.equal(expected.result.teams.length, 5, `${name}: native K=5`);
+  assertModel(expected.result, requestValue, aggregation);
   let caseReports = 0;
+  let progressFailure;
+  const started = performance.now();
   const raw = solver.recommend(account, request, raw => {
-    const answer = JSON.parse(raw);
-    assert.equal(answer.format, 'ournotes-deck.account-recommendation/1');
-    assert.equal(answer.datasetId, datasetId);
-    assert.equal(answer.final, false);
-    assert.equal(answer.result.optimality.proven, false);
-    assert.equal(answer.result.aggregation, aggregation);
-    assert(answer.result.teams.every(team => team.orders === null));
-    assertPrivate(raw);
     reports++;
     caseReports++;
+    // The transport deliberately ignores callback exceptions. Retain any
+    // assertion failure and rethrow after the synchronous call has returned.
+    try {
+      const answer = JSON.parse(raw);
+      assert.equal(answer.format, 'ournotes-deck.account-recommendation/1');
+      assert.equal(answer.datasetId, datasetId);
+      assert.equal(answer.final, false);
+      assert.equal(answer.result.optimality.proven, false);
+      assert.equal(answer.result.aggregation, aggregation);
+      assertModel(answer.result, requestValue, aggregation);
+      assert(answer.result.teams.every(team => team.orders === null));
+      assertPrivate(raw);
+    } catch (error) { progressFailure ??= error; }
   }, 0);
+  const recommendWallMs = performance.now() - started;
+  if (progressFailure) throw progressFailure;
   assertPrivate(raw);
   const actual = JSON.parse(raw);
   assert.equal(actual.status, 'ok');
   assert.equal(actual.final, true);
   assert.equal(actual.result.optimality.proven, true);
+  assert.equal(actual.result.exitReason, 'exhausted', `${name}: WASM exhausted`);
+  assert.equal(actual.result.phase, 'done');
   assert.equal(actual.result.aggregation, aggregation);
+  assertModel(actual.result, requestValue, aggregation);
   assert.equal(actual.result.teams.length, 5, `${name}: complete K=5`);
   assert(actual.result.teams.some(team => team.layout.snaps.some(snap => snap !== null)), `${name}: nonempty Snap`);
-  if (requestValue.goal.kind === 'freeLive') {
+  if (['freeLive', 'challengeLive'].includes(requestValue.goal.kind)) {
     assert(caseReports > 0, `${name}: progress reports`);
     for (const team of actual.result.teams) {
       if (aggregation === 'maximum') {
@@ -101,9 +146,27 @@ for (const name of names) {
       }
     }
   }
-  assert.deepEqual(comparable(actual), comparable(expected), name);
+  assert.deepEqual(projection(raw), projection(expectedRaw), `${name}: exact native/WASM semantics`);
+  records.push({ name, aggregation, requestSha256: hash(request), referenceSha256: hash(expectedRaw),
+    answerSha256: hash(raw), semanticSha256: hash(JSON.stringify(projection(raw))),
+    recommendWallMs, progressReports: caseReports,
+    status: actual.status, exitReason: actual.result.exitReason, proven: actual.result.optimality.proven,
+    teams: actual.result.teams.length });
 }
+assert.equal(expectedCases, 49);
+assert.equal(maximumCases, 27);
 assert(reports > 0);
+for (const name of ['mission-score', 'battle-score', 'arena-score']) {
+  const request = JSON.parse(read(name + '.request.json'));
+  request.aggregation = 'maximum';
+  let rejectedProgress = 0;
+  const answer = JSON.parse(solver.recommend(account, JSON.stringify(request), () => rejectedProgress++, 0));
+  assert.equal(answer.status, 'invalid', `${name}: unsupported Maximum`);
+  assert.equal(answer.final, true);
+  assert.equal(answer.result, null);
+  assert(answer.errors.some(issue => issue.path === 'aggregation' && issue.code === 'unsupported'));
+  assert.equal(rejectedProgress, 0, `${name}: no unsupported search`);
+}
 for (const [name, change, issuePath] of [
   ['life-stream', q => { delete q.goal.play; }, 'goal.play'],
   ['life-stream', q => { q.goal.accuracy = { greatFraction: 0.1 }; }, 'goal.accuracy'],
@@ -171,4 +234,10 @@ for (const input of [new Uint8Array(bomBytes), bomBytes.toString('utf8')]) {
   bomSolver.free();
 }
 solver.free();
-console.log(JSON.stringify({ cases: names.length, status: 'passed', progressReports: reports }));
+const report = { cases: names.length, expectedCases, maximumCases, status: 'passed', progressReports: reports,
+  runtime: process.version, datasetId, accountSha256: hash(account), casesSha256: hash(read('cases.json')),
+  runnerSha256: hash(fs.readFileSync(__filename)), projectionSha256: hash(fs.readFileSync(require.resolve('./json-tokens.cjs'))),
+  glueSha256: hash(fs.readFileSync(path.resolve(pkg))),
+  wasmSha256: hash(fs.readFileSync(path.resolve(pkg).replace(/\.js$/, '_bg.wasm'))), records };
+if (reportPath) fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
+console.log(JSON.stringify({ cases: names.length, expectedCases, maximumCases, status: 'passed', progressReports: reports }));

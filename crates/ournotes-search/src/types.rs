@@ -56,6 +56,49 @@ pub enum Aggregation {
     Maximum,
 }
 
+/// The domain proved by Maximum aggregation. Independent draw support does not imply that
+/// a single native root seed realizes the complete sequence, including its performance order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum MaximumModel {
+    Deterministic {
+        performance_orders: usize,
+        root_seed_realizability: &'static str,
+        best_order_certificate: &'static str,
+    },
+    IndependentNativeDrawSupport {
+        performance_orders: usize,
+        stream_base_seed_role: &'static str,
+        ordinary_skill_draw: &'static str,
+        ordinary_skill_comparison: &'static str,
+        root_seed_realizability: &'static str,
+        best_order_certificate: &'static str,
+    },
+}
+
+impl MaximumModel {
+    /// Played lives maximize over every order and independently supported native draw outcome.
+    /// Power and Skip have one deterministic outcome and do not require a randomness certificate.
+    pub const fn for_execution(live: bool) -> Self {
+        if live {
+            Self::IndependentNativeDrawSupport {
+                performance_orders: 120,
+                stream_base_seed_role: "notAConstraint",
+                ordinary_skill_draw: "binary32OfSystemRandomNextDouble",
+                ordinary_skill_comparison: "strictLessThan",
+                root_seed_realizability: "notEstablished",
+                best_order_certificate: "performanceOrderAndTerminalValuesOnly",
+            }
+        } else {
+            Self::Deterministic {
+                performance_orders: 1,
+                root_seed_realizability: "notApplicable",
+                best_order_certificate: "notApplicable",
+            }
+        }
+    }
+}
+
 /// A deck by public IDs: member cards in physical slots (slot 2 leads) and each slot's Snap.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -603,6 +646,9 @@ pub struct RecommendationOutcome {
     pub result_identity: &'static str,
     pub metric: Metric,
     pub aggregation: Aggregation,
+    /// The Maximum proof domain; absent for Expected aggregation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum_model: Option<MaximumModel>,
     pub player_goal: Option<GoalDescription>,
     pub strategy: Strategy,
     pub probability_law: serde_json::Value,

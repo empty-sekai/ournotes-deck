@@ -35,13 +35,19 @@ The one-shot deadline includes construction; execution on an already built probl
 Outcomes carry `telemetry` (`ournotes-deck.telemetry/1`, see [telemetry](docs/telemetry.en.md)) with problem construction, bound compilation and search as separate phases; reused problems have no construction phase.
 
 The facade supports Snap-inclusive Free Live, conditional Mission Gekisou, score and client event points.
-Power/Skip retain canonical member-set identity. Played Live/PT rank teams (a leader, four other members and the Snap
-paired with each) by their mean payoff over the 120 equally likely performance orders; the positions of the four
+Power/Skip use canonical team identity. The default `aggregation:"expected"` ranks played Live/PT teams (a leader,
+four other members and the Snap paired with each) by their mean payoff over the 120 equally likely performance orders; the positions of the four
 non-leader members are a layout, not a decision, and each team is reported in a canonical layout with its score
-distribution over the orders and its best order. A skill probability check with Gekisou off is rejected as
+distribution over deterministic orders and its best order. Expected aggregation rejects a skill probability check with Gekisou off as
 unsupported. In a Gekisou live without a LUCK range it gates nothing that can run, so each order keeps one exact
 score; a LUCK range ranks decks by certified intervals over the native lottery probabilities, and an overlapping
 frontier ends `RefinementRequired`.
+Free Live and Challenge Live also support `aggregation:"maximum"` over all performance orders and the independent
+support of ordinary skill draws with the same declared play. Power/Skip have the same value under both aggregations.
+Maximum results, progress and capabilities expose `maximumModel`, distinguishing deterministic results from
+independent random support. The latter's `rootSeedRealizability:"notEstablished"` declares that no single native
+root seed has been proved to replay the whole trajectory; `bestOrder` supplies only the order and terminal values.
+See the [recommendation contract](docs/recommendation.md).
 The default `branchAndBound` decomposes ordinary Live into member compositions and Snap pairings; Gekisou retains
 joint member/Snap traversal. Both bound the mean score with position-mean skill gains and bound normal-played PT in a
 certified nonwrapping bonus domain. Unsupported bounds fall back to enumeration with
@@ -94,13 +100,16 @@ and the bonus builders are integer code, ported function by function. The whole 
 frame by frame; the method and how to reproduce it are in [native validation](docs/native-validation.en.md). The
 tests that replay the client's reference vectors build with the `native-fixtures` feature.
 
-**Exact search.** A `Complete` search result is exactly the canonical Top-K over every legal deck. Pruning uses only
+**Exact search.** A `Complete` search result proves canonical Top-K for the declared candidate domain, play, random
+model and result identity. Non-Gekisou Maximum uses independent support for successive ordinary random skill
+choices; it does not certify one integer PRNG base seed realizing a whole maximizing path. See the
+[recommendation contract](docs/recommendation.md) for its random domain and fixed play. Pruning uses only
 bounds that are proven admissible under the game's arithmetic (proofs in [docs/search.md](docs/search.md)). Search
 results are compared item by item with an independent exhaustive enumeration, which shares no bound, decomposition
 or Top-K code with the search; with snap skills it simulates every member set, leader, snap placement and
 performance order. The cases and the commands that run them are under [search validation](docs/search.md#validation).
-A search that reaches its time limit returns `TimedOut`, with legal and exactly evaluated decks but no
-ranking claim. Inputs outside the proven range, unknown cards, rules the game would reject and parts of the game that
+A search that reaches its time limit returns `TimedOut`, without a ranking guarantee. Exact-value or certified-interval
+fields describe whether a displayed value is exact. Inputs outside the proven range, unknown cards, rules the game would reject and parts of the game that
 are not modelled are reported as errors.
 
 **Shared runtime.** Per-note calculation, chart statistics and search share one Rust model; the same replay request

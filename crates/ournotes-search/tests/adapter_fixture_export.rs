@@ -2228,6 +2228,7 @@ fn account_maximum_ranks_all_teams_by_their_best_reachable_order_with_the_same_p
         assert!(mean.optimality.proven);
         assert_eq!(mean.teams.len(), 5, "all five member sets with the fixed leader are needed for the oracle");
         assert_eq!(serde_json::to_value(mean.aggregation).unwrap(), "expected");
+        assert!(serde_json::to_value(&mean).unwrap().get("maximumModel").is_none());
         let mut oracle: Vec<_> = mean
             .teams
             .iter()
@@ -2248,6 +2249,12 @@ fn account_maximum_ranks_all_teams_by_their_best_reachable_order_with_the_same_p
         assert!(peak.optimality.proven);
         assert_eq!(peak.goal, mean.goal, "aggregation preserves the resolved play conditions");
         assert_eq!(serde_json::to_value(peak.aggregation).unwrap(), "maximum");
+        let model = serde_json::to_value(peak.maximum_model).unwrap();
+        let capabilities = ournotes_search::recommendation::capabilities();
+        assert_eq!(model, capabilities["maximumModel"]);
+        assert_eq!(model, capabilities["maximumModels"]["freeLive"]);
+        assert_eq!(model["rootSeedRealizability"], "notEstablished");
+        assert_eq!(model["bestOrderCertificate"], "performanceOrderAndTerminalValuesOnly");
         assert_eq!(peak.exit_reason, Some(ournotes_search::types::ExitReason::Exhausted));
         assert_eq!(peak.teams.len(), oracle.len());
         for (team, (score, power, members)) in peak.teams.iter().zip(oracle) {
@@ -2270,10 +2277,33 @@ fn account_maximum_ranks_all_teams_by_their_best_reachable_order_with_the_same_p
         assert!(!reports.is_empty());
         for report in reports {
             assert_eq!(report["result"]["aggregation"], "maximum");
+            assert_eq!(report["result"]["maximumModel"], model);
             assert_eq!(report["result"]["goal"], peak.goal);
             assert_eq!(report["result"]["optimality"]["proven"], false);
             assert!(report["result"].get("exitReason").is_none());
         }
+    }
+}
+
+#[test]
+fn account_maximum_deterministic_goals_declare_no_seed_certificate_requirement() {
+    use ournotes_search::{engine, recommendation::Status};
+    let (data, account) = account_recommendation_fixture();
+    let capabilities = ournotes_search::recommendation::capabilities();
+    for goal in [json!({"kind":"power"}), json!({"kind":"skip","musicId":10,"difficulty":"expert"})] {
+        let mut request = account_request(goal.clone());
+        request["aggregation"] = json!("maximum");
+        let answer = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
+        assert!(matches!(answer.status, Status::Ok), "{:?}", answer.errors);
+        let result = answer.result.unwrap();
+        assert!(result.optimality.proven);
+        let model = serde_json::to_value(result.maximum_model).unwrap();
+        assert_eq!(model, capabilities["maximumModels"][goal["kind"].as_str().unwrap()]);
+        assert_eq!(
+            model,
+            json!({"kind":"deterministic","performanceOrders":1,
+            "rootSeedRealizability":"notApplicable","bestOrderCertificate":"notApplicable"})
+        );
     }
 }
 
@@ -2419,6 +2449,10 @@ fn account_aggregation_rejects_unknown_values_and_keeps_timeout_unproven() {
     assert!(matches!(timed_out.status, Status::Ok), "{:?}", timed_out.errors);
     let result = timed_out.result.unwrap();
     assert_eq!(serde_json::to_value(result.aggregation).unwrap(), "maximum");
+    assert_eq!(
+        serde_json::to_value(result.maximum_model).unwrap(),
+        ournotes_search::recommendation::capabilities()["maximumModel"]
+    );
     assert_eq!(result.exit_reason, Some(ournotes_search::types::ExitReason::TimeLimit));
     assert_eq!(serde_json::to_value(&result).unwrap()["exitReason"], "timeLimit");
     assert!(!result.optimality.proven);
