@@ -162,7 +162,7 @@ fn family_leaf_budget_refusal_stays_recorded_and_disabled_caches_do_no_work() {
         FamilyNodeOutcome::Unavailable
     );
     assert_eq!(
-        cache.leaf_upper(&pool, &domain, &bounds, &physical, &orders[..119], &mut curves, &mut || false),
+        cache.leaf_upper(&pool, &domain, &bounds, &physical, &[([0, 1, 2, 3, 4], 119)], &mut curves, &mut || false),
         FamilyNodeOutcome::Unavailable
     );
     assert_eq!(cache.stats.leaf_preparation_attempts, attempts);
