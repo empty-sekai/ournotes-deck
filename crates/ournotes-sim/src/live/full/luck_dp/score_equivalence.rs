@@ -427,7 +427,16 @@ impl Context<'_> {
                 | BoundsEvent::Rank { .. } => {}
             }
         }
-        let BoundsTrace { events, queries, frames, probes: trace_probes, has_luck, filing_gate, combo: _ } = trace;
+        let BoundsTrace {
+            events,
+            queries,
+            frames,
+            probes: trace_probes,
+            has_luck,
+            filing_gate,
+            combo: _,
+            probe_filings: _,
+        } = trace;
         // Both models share the exact immutable calculator inputs and initial power supplied by this Context.
         // Final LIFE is retained too, so the capability never silently transports a different outcome field.
         let final_life = model.current_life();

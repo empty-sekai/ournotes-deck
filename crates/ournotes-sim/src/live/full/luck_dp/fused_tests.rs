@@ -364,7 +364,7 @@ fn fused_native_recording_declines_wrapped_ordinary_and_retained_effect_key_alia
     let effects: Vec<_> = full.cond.iter().flat_map(|skill| skill.updater.effects()).collect();
     let ids: crate::num::FxHashSet<_> = effects.iter().map(|effect| effect.effect_id).collect();
     assert!(ids.len() < effects.len(), "the actual native constructor must create the collision");
-    assert!(input.start(true).unwrap().is_none());
+    assert!(matches!(input.start(true), Err(Error::Unsupported(_))));
 }
 
 #[test]

@@ -20,6 +20,7 @@ fn armed(input: &RushCase) -> LiveModel {
 fn assert_trace_equal(left: &BoundsTrace, right: &BoundsTrace) {
     assert_eq!((left.frames, left.queries, left.has_luck), (right.frames, right.queries, right.has_luck));
     assert_eq!(left.filing_gate, right.filing_gate);
+    assert_eq!(left.probe_filings, right.probe_filings);
     assert_eq!(
         left.probes.iter().map(|probe| (probe.owner, probe.value.to_bits())).collect::<Vec<_>>(),
         right.probes.iter().map(|probe| (probe.owner, probe.value.to_bits())).collect::<Vec<_>>()

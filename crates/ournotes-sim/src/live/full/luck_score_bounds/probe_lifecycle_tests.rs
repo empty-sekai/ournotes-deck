@@ -114,10 +114,13 @@ fn probe_enclosures_cover_declared_music_boundary() {
             let mut session = LuckScoreSession::new(&master, &skills, &notes, &[], params, &setup, &play, &delta, None);
             let terminal = session.rush_cap_preparation(&deck, None, || false);
             if music_length == 1000 {
-                assert!(matches!(
-                    terminal,
-                    LuckRushPreparation::Unavailable { reason: LuckRushDecline::RecorderAdmission, .. }
-                ));
+                let LuckRushPreparation::Ready(terminal) = terminal else {
+                    panic!("the independent terminal envelope preserves an admitted chart");
+                };
+                assert_eq!(terminal.probe_gate(), None);
+                let times: Vec<_> = notes.iter().map(|note| note.time_ms).collect();
+                let conditional: Vec<_> = times.iter().map(|&time| (time, [0, 1, 1, 2])).collect();
+                assert!(terminal.weighted_note_bucket_upper(&conditional).is_none());
             } else {
                 assert!(matches!(terminal, LuckRushPreparation::Ready(_)));
             }
@@ -249,6 +252,7 @@ fn probe_boundary_guard_requires_every_late_transition_to_stay_off_and_all_nativ
         combo: Default::default(),
         has_luck: true,
         filing_gate: None,
+        probe_filings: None,
     };
     let frame_times: Vec<_> = play.frames.iter().map(|frame| frame.time_ms).collect();
     assert!(check_probe_music_boundary(&frame_times, &curve, 200, true, &trace).is_ok());
