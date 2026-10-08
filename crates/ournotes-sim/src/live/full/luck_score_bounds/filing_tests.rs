@@ -142,6 +142,8 @@ struct FilingSet {
 }
 
 fn possible_filings(trace: &BoundsTrace) -> FilingSet {
+    let mut trace = trace.clone();
+    trace.project_probe_filings().unwrap();
     let mut out = FilingSet::default();
     for event in &trace.events {
         match event {
@@ -270,7 +272,8 @@ fn certified_filing_hooks_cover_every_native_branch_across_ranges_and_quiet_gaps
         let fallback = possible_filings(&filing_recording(&input, false));
         let certified = possible_filings(&filing_recording(&input, true));
         assert_eq!(certified.queries, fallback.queries);
-        assert_eq!(certified.probes, fallback.probes);
+        assert!(certified.probes.is_subset(&fallback.probes));
+        assert!(certified.probes.len() < fallback.probes.len());
         assert!(certified.rush.len() < fallback.rush.len());
         let coverage = every_native_filing_is_possible(&input, false);
         assert!(coverage.paths > 1 && coverage.rush > 0 && coverage.probes > 0);

@@ -365,6 +365,7 @@ impl IncrementalCalculator {
             combo: Default::default(),
             has_luck,
             filing_gate: None,
+            probe_filings: None,
         });
     }
 
@@ -372,6 +373,15 @@ impl IncrementalCalculator {
     pub(super) fn certify_bounds_filings(&mut self, gate: Option<i64>) {
         if let Some(trace) = &mut self.bounds_trace {
             trace.filing_gate = Some(gate);
+            // Existing boundaries have no retroactive gate proof and stay possible.
+            trace.probe_filings = Some(
+                trace
+                    .events
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, event)| matches!(event, BoundsEvent::Probe { .. }).then_some(index))
+                    .collect(),
+            );
         }
     }
 
@@ -471,7 +481,7 @@ impl IncrementalCalculator {
         }
     }
 
-    pub(super) fn bounds_potential_skills(&mut self, time_ms: i32) {
+    pub(super) fn bounds_potential_skills(&mut self, time_ms: i32, possible: bool) {
         if self.bounds_trace.is_none() {
             return;
         }
@@ -479,6 +489,9 @@ impl IncrementalCalculator {
         if let Some(trace) = &mut self.bounds_trace
             && !trace.probes.is_empty()
         {
+            if possible && let Some(filings) = &mut trace.probe_filings {
+                filings.push(trace.events.len());
+            }
             trace.events.push(BoundsEvent::Probe { frame, time_ms });
         }
     }

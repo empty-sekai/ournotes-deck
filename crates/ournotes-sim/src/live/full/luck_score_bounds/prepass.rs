@@ -72,6 +72,7 @@ impl TerminalRecipe {
         size_of::<Self>()
             + self.trace.events.capacity() * size_of::<BoundsEvent>()
             + self.trace.probes.capacity() * size_of::<ProbeRow>()
+            + self.trace.probe_filings.as_ref().map_or(0, |filings| filings.capacity() * size_of::<usize>())
             + self.ingredients.allocated_bytes()
             - size_of::<terminal_prefix::TerminalIngredients>()
             + self.base.cache_allocation_bytes()
@@ -687,7 +688,7 @@ fn prepare_policy(
         }
     }
     let probability = probability.expect("complete original or fused probability recorder");
-    let trace = model.score.bounds_trace.take().expect("bounds recorder enabled");
+    let mut trace = model.score.bounds_trace.take().expect("bounds recorder enabled");
     let frame_times: Vec<_> = model.trace.iter().map(|&(time, _)| time).collect();
     if !frame_times.iter().copied().eq(session.play.frames.iter().map(|frame| frame.time_ms)) {
         return Err(declined(
@@ -698,6 +699,7 @@ fn prepare_policy(
     let probe_lifetime_bound =
         check_probe_music_boundary(&frame_times, &probability, model.music_length_ms, probe_phase_bound, &trace)
             .is_ok();
+    trace.project_probe_filings().map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
     let query_limit = (session.play.frames.len() as u64)
         .checked_mul(2)
         .and_then(|value| value.checked_add(2 * session.setup.fevers.len() as u64))

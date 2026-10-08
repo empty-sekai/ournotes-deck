@@ -96,6 +96,36 @@ pub(super) struct BoundsTrace {
     /// filing schedule. Terminal probability caps also retain it to match the DP's LUCK score-probe class;
     /// full factor replay uses only the resulting events.
     pub filing_gate: Option<Option<i64>>,
+    /// Possible Probe event positions under the admitted native mission gate. The complete event stream
+    /// retains every skill boundary for lifecycle checks; None grants no permission to omit a Probe.
+    pub probe_filings: Option<Vec<usize>>,
+}
+
+impl BoundsTrace {
+    /// After lifecycle checks consume the dense stream, terminal arithmetic can omit closed-gate filings.
+    /// All non-Probe events keep their original order, and the consumed position table is not retained.
+    pub(super) fn project_probe_filings(&mut self) -> Result<(), Error> {
+        let Some(filings) = self.probe_filings.take() else { return Ok(()) };
+        if self.filing_gate.is_none()
+            || filings.windows(2).any(|pair| pair[0] >= pair[1])
+            || filings.iter().any(|&index| !matches!(self.events.get(index), Some(BoundsEvent::Probe { .. })))
+        {
+            return Err(refuse("invalid certified probe filing positions"));
+        }
+        let mut filings = filings.into_iter().peekable();
+        let mut index = 0;
+        self.events.retain(|event| {
+            let keep = if filings.peek() == Some(&index) {
+                filings.next();
+                true
+            } else {
+                !matches!(event, BoundsEvent::Probe { .. })
+            };
+            index += 1;
+            keep
+        });
+        Ok(())
+    }
 }
 
 /// The filed notes a score query must observe again: every note whose combo inputs may have changed since the

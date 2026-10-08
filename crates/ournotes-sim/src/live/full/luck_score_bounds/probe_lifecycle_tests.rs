@@ -252,6 +252,7 @@ fn probe_boundary_guard_requires_every_late_transition_to_stay_off_and_all_nativ
         combo: Default::default(),
         has_luck: true,
         filing_gate: None,
+        probe_filings: None,
     };
     let frame_times: Vec<_> = play.frames.iter().map(|frame| frame.time_ms).collect();
     assert!(check_probe_music_boundary(&frame_times, &curve, 200, true, &trace).is_ok());

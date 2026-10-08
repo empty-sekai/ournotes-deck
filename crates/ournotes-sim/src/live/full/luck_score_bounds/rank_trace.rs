@@ -247,6 +247,7 @@ mod tests {
             combo: ComboObserver::default(),
             has_luck: true,
             filing_gate: Some(None),
+            probe_filings: None,
         }
     }
 
