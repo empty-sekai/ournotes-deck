@@ -375,10 +375,21 @@ every selected source and owner in the projected deck. It can normalize only unr
 tag, category and mission fields in this private key. The proof follows the native target predicates' OR
 semantics and their exact positive/nonzero selector rules; a selector is retained even when another selector
 already matches the current deck. Character-reading, unknown, cumulative or conversion programs keep the
-original construction path. All selected source IDs, levels, source-vector order and potentially read fields
-remain exact. Uncached recording still constructs the original physical performers. These complete input keys
+original construction path. The ordinary input proof retains all selected source IDs, levels, source-vector
+order and potentially read fields. Uncached recording still constructs the original physical performers. These complete input keys
 share the existing per-family recorder-key storage, its 128-entry/1 MiB limits and the configured curve
 allowance. A hit still registers the original physical profile and labelled order independently.
+
+The separately admitted controller key can also omit a selected main or support source when every selected
+row has effect type `12000`, `13000` or `13002`. The native family constructor filters these rows before
+building conditions, cumulative counters, actions or state identities. Every original source, selected level
+and target must still resolve, and complete physical-pair admission must already have succeeded. A source
+containing any retained row keeps its full ID and level; retained support sources keep their relative order.
+Converters and unknown readers still decline the key. Native construction uses main-source presence to
+decide whether to construct that member's supports, so a separate boolean retains this gate whenever any
+support descriptor survives. This boolean participates in both ordered keys and canonical sorting. All
+admitted controller inputs share one namespace, including decks without omitted rows. Only this private
+controller identity is normalized: the original native score model and actual performers are unchanged.
 
 The complete-family preparation API computes every profile, and `admit_domain` checks its full possible
 order/profile work before returning. Search uses `admit_profile_domain` to check the entire physical pair
@@ -388,14 +399,14 @@ profile from another context or another admitted domain from being substituted. 
 after its own 120 original labels complete. Unrequested profiles remain explicitly unknown. Semantic admission
 still checks every pair: an unrequested LIFE dependency, conversion or unsupported writer refuses the domain.
 
-A completed profile may also supply a complete canonical probability program. Its key retains the full
-projected Performer multiset and immutable context; normalization of unread fields requires the same closed
-dependency proof. Each key also records its originating admitted domain, exact profile and fixed slot
+A completed profile may also supply a complete canonical probability program. Its key retains the complete
+proved controller descriptors, their multiplicities, support-enable gates and immutable context; every
+normalization requires the closed dependency proof above. Each key also records its originating admitted domain, exact profile and fixed slot
 bijection. Constructing a program requires that key's own completed profile, with all 120 unique labels.
 
 Another fully admitted profile can reuse this program only when the complete canonical inputs match.
 Transport enumerates the target's original 120 orders and maps each target slot to the corresponding
-canonical slot. The ordered native input is identical under this bijection. The returned profile receives
+canonical slot. The ordered native controller has the same retained inputs under this bijection. The returned profile receives
 the target domain identity, target writer-owner label and target positions, in the target's original
 enumeration order. This preserves both physical coverage and the reward template's outward summation
 order; it does not commute native commands or combine approximately equal probability curves. Missing

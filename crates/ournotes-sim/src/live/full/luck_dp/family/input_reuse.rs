@@ -3,14 +3,16 @@
 //! The native constructor reads member attributes through Factory's target predicates, then retains the
 //! compiled checkers rather than the Performer. The closed source/condition proof excludes cumulative and
 //! unknown consumers. Its whole-deck union of referenced target fields permits erasing only unread attributes
-//! in this private key. All source identities, levels, order and every potentially read attribute remain exact;
-//! the original performers still construct every uncached native model and all 120 labels remain present.
+//! in this private key. The separately admitted controller key also removes sources containing only closed,
+//! filtered bonus rows, preserving the main-presence gate for retained supports. All remaining source
+//! identities, levels, relative order and potentially read attributes stay exact. Original performers still
+//! construct every uncached native model and all 120 labels remain present.
 use super::*;
 use std::fmt::Write;
 
 // Compiled recording keys start with their Debug row list; this binary prefix cannot alias that namespace.
 const PREFIX: &[u8] = b"\0family-complete-projected-input\0\x02";
-const CONTROLLER_PREFIX: &[u8] = b"\0family-admitted-controller-input\0\x01";
+const CONTROLLER_PREFIX: &[u8] = b"\0family-admitted-controller-input\0\x02";
 
 /// Created only after every original physical pair and the complete labelled work guards have passed.
 /// This permits a controller-only key; it is neither a completed profile nor a probability certificate.
@@ -27,10 +29,14 @@ impl ControllerInputAdmission {
 
 pub(super) struct InputKeys {
     physical: [Performer; SLOTS],
+    // Native construction ignores an owner's GK supports when its original main source is absent.
+    // A removed bonus-only main must retain this bit whenever any support descriptor remains.
+    support_enabled: [bool; SLOTS],
     prefix: &'static [u8],
 }
 
 impl InputKeys {
+    #[cfg(test)]
     pub(super) fn new(master: &Master, physical: &[Performer; SLOTS]) -> Option<Self> {
         Self::build(master, physical, false)
     }
@@ -39,7 +45,9 @@ impl InputKeys {
     /// Three closed bonus types are removed before Factory constructs their conditions/cumulative counters.
     /// Conversion rows still refuse this proof, and retained writers keep the original closed read analysis.
     /// Thus no omitted bonus can enter a LIFE interpreter: no conversion is held and no writer reads LIFE.
-    /// Sources, levels and ordered support vectors remain exact, including sources with no retained rows.
+    /// An all-bonus source contributes only an empty updater: no condition, action, RNG draw, effect row or
+    /// state identity survives. Removing its descriptor preserves every retained source's relative order.
+    /// Main presence still controls support construction, so it is retained separately from the removed ID.
     pub(super) fn admitted_controller(
         master: &Master,
         physical: &[Performer; SLOTS],
@@ -49,50 +57,64 @@ impl InputKeys {
         if !writers.chain.is_empty() || !writers.shapes.is_empty() || !writers.rows.is_empty() {
             return None;
         }
-        Self::new(master, physical).or_else(|| Self::build(master, physical, true))
+        // Use one controller namespace even for decks accepted by the ordinary proof, allowing a bonus-only
+        // main/support to match its absent counterpart when the native support-enable gate agrees.
+        Self::build(master, physical, true)
     }
 
     fn build(master: &Master, physical: &[Performer; SLOTS], controller: bool) -> Option<Self> {
         let mut reads = AttributeReads::default();
-        for performer in physical {
+        let mut normalized = physical.clone();
+        let mut support_enabled = [false; SLOTS];
+        for (slot, performer) in physical.iter().enumerate() {
             if performer.live_skill.is_some() || !performer.support_skills.is_empty() {
                 return None;
             }
             if let Some((id, level)) = performer.gekisou_skill {
                 master.gekisou_skill(id)?;
-                if !admit_rows(
+                let retained = admit_rows(
                     master,
                     master.gekisou_skill_effects.iter().filter(|row| row.skill_id == id && row.level == level),
                     &mut reads,
                     controller,
-                ) {
-                    return None;
+                )?;
+                if controller && !retained {
+                    normalized[slot].gekisou_skill = None;
                 }
             }
+            normalized[slot].gekisou_support_skills.clear();
             for &(id, level) in &performer.gekisou_support_skills {
                 master.gekisou_support_skill(id)?;
-                if !admit_rows(
+                let retained = admit_rows(
                     master,
                     master.gekisou_support_skill_effects.iter().filter(|row| row.skill_id == id && row.level == level),
                     &mut reads,
                     controller,
-                ) {
-                    return None;
+                )?;
+                if !controller || retained {
+                    normalized[slot].gekisou_support_skills.push((id, level));
                 }
             }
+            support_enabled[slot] =
+                controller && performer.gekisou_skill.is_some() && !normalized[slot].gekisou_support_skills.is_empty();
         }
-        let mut physical = physical.clone();
-        for performer in &mut physical {
+        for performer in &mut normalized {
             reads.erase_unread(performer);
         }
-        Some(Self { physical, prefix: if controller { CONTROLLER_PREFIX } else { PREFIX } })
+        Some(Self {
+            physical: normalized,
+            support_enabled,
+            prefix: if controller { CONTROLLER_PREFIX } else { PREFIX },
+        })
     }
 
     /// Sort the complete normalized descriptors, with multiplicities. The inverse is a fixed slot
     /// bijection; it is used only to transport labels, never to reorder an actual native replay.
     pub(super) fn canonical(&self, capacity: usize) -> Option<(Vec<u8>, [usize; SLOTS])> {
         let mut order = [0, 1, 2, 3, 4];
-        order.sort_by(|&a, &b| self.physical[a].cmp(&self.physical[b]));
+        order.sort_by(|&a, &b| {
+            self.physical[a].cmp(&self.physical[b]).then(self.support_enabled[a].cmp(&self.support_enabled[b]))
+        });
         let bytes = self.key(&order, capacity)?;
         let mut inverse = [0; SLOTS];
         for (canonical, &physical) in order.iter().enumerate() {
@@ -103,6 +125,7 @@ impl InputKeys {
 
     pub(super) fn key(&self, order: &[usize; SLOTS], capacity: usize) -> Option<Vec<u8>> {
         let mut ordered = [None; SLOTS];
+        let mut support_enabled = [false; SLOTS];
         let mut seen = 0u8;
         for (position, &slot) in order.iter().enumerate() {
             let performer = self.physical.get(slot)?;
@@ -111,6 +134,7 @@ impl InputKeys {
             }
             seen |= 1 << slot;
             ordered[position] = Some(performer);
+            support_enabled[position] = self.support_enabled[slot];
         }
         let mut out = KeyBytes { bytes: Vec::new(), capacity };
         out.bytes.try_reserve_exact(capacity.min(4096)).ok()?;
@@ -119,8 +143,12 @@ impl InputKeys {
         }
         out.append(self.prefix).ok()?;
         // Performer derives Eq and Debug from integer/optional/vector fields. Keep its complete normalized
-        // ordered image, including empty sources and the exact vectors of every potentially read attribute.
+        // ordered image and the exact vectors of every potentially read attribute. The controller gate is a
+        // separate boolean, never a fabricated skill ID. Ordinary input keys retain their original image.
         write!(&mut out, "{ordered:?}").ok()?;
+        if self.prefix == CONTROLLER_PREFIX {
+            write!(&mut out, "{support_enabled:?}").ok()?;
+        }
         Some(out.bytes)
     }
 }
@@ -181,28 +209,31 @@ fn admit_rows<'a>(
     rows: impl Iterator<Item = &'a crate::master::GekisouSkillEffectRow>,
     reads: &mut AttributeReads,
     controller: bool,
-) -> bool {
+) -> Option<bool> {
     let mut selected = false;
+    let mut retained = false;
     for row in rows {
         selected = true;
         // These rows are absent from the actual family controller before checker/cumulative construction.
         // Whole-pair admission has already constructed the original sources. Do not reinterpret their
-        // predicates, erase their source identities, or extend this branch to converters/unknown effects.
+        // predicates or extend this branch to converters/unknown effects. A source can be removed only if
+        // every selected row takes this branch, after all original source/level lookups have succeeded.
         if controller && matches!(row.skill_effect_type, 12000 | 13000 | 13002) {
             if row.skill_target_ids.iter().any(|&id| master.skill_target(id).is_none()) {
-                return false;
+                return None;
             }
             continue;
         }
         if controller && matches!(row.skill_effect_type, 12006 | 13005) {
-            return false;
+            return None;
         }
         if !admit_row(master, row, reads) {
-            return false;
+            return None;
         }
+        retained = true;
     }
     // A missing selected level keeps the ordinary recording path, rather than authorizing an empty proof.
-    selected
+    selected.then_some(retained)
 }
 
 fn admit_row(master: &Master, row: &crate::master::GekisouSkillEffectRow, reads: &mut AttributeReads) -> bool {
@@ -287,3 +318,7 @@ mod tests;
 #[cfg(test)]
 #[path = "controller_input_tests.rs"]
 mod controller_tests;
+
+#[cfg(test)]
+#[path = "controller_empty_source_tests.rs"]
+mod controller_empty_source_tests;

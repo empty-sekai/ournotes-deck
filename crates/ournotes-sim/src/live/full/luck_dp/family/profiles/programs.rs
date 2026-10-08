@@ -75,7 +75,8 @@ impl LuckFamilyContext<'_> {
     /// Optional identity proof after full physical-pair admission. Retained writers and omitted score rows
     /// pass the closed attribute-read proof; three known bonus types are filtered before native Factory
     /// construction. Converters still refuse the key. The whole-deck target union retains every potentially
-    /// read member field, while source identities, levels and vector order stay exact.
+    /// read member field. Retained sources keep their identities, levels and relative vector order; a
+    /// separate main-presence gate preserves whether their native support updaters are constructed.
     pub fn profile_program_key(
         &self,
         domain: &LuckFamilyDomain,
