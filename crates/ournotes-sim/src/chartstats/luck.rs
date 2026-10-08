@@ -177,6 +177,46 @@ impl CompiledLuckTableProgram {
         })
     }
 
+    /// Explicitly quotient each batch's contiguous range-start minimum operators. This retains full
+    /// native recording admission and the observer contract, and performs no DP or second recording.
+    pub fn canonicalize_start_minimum(mut self) -> Self {
+        self.batches = self.batches.into_iter().map(full::CompiledLuckProgram::canonicalize_start_minimum).collect();
+        self
+    }
+
+    /// Decompose each original native probe batch into the same positive whole-live conditional
+    /// minimum basis. Every batch keeps its recorder admission; any weight or start disagreement is
+    /// refused. At most 64 terms are admitted, with no propagation during construction.
+    pub fn start_minimum_basis(self, max_terms: usize) -> Result<CompiledLuckTableMinimumBasis, Error> {
+        let batches = self
+            .batches
+            .into_iter()
+            .map(|batch| batch.start_minimum_basis(max_terms))
+            .collect::<Result<Vec<_>, _>>()?;
+        let first = batches.first().ok_or_else(|| Error::Input("LUCK minimum basis has no probe batch".into()))?;
+        for batch in &batches[1..] {
+            if batch.start_count() != first.start_count() || batch.term_count() != first.term_count() {
+                return Err(Error::Unsupported(
+                    "LUCK minimum basis probe batches have different conditional support".into(),
+                ));
+            }
+            for index in 0..first.term_count() {
+                if batch.term_choices(index)? != first.term_choices(index)?
+                    || batch.term_weight(index)? != first.term_weight(index)?
+                {
+                    return Err(Error::Unsupported(
+                        "LUCK minimum basis probe batches have different conditional weights".into(),
+                    ));
+                }
+            }
+        }
+        Ok(CompiledLuckTableMinimumBasis { batches })
+    }
+
+    pub fn operator_contract(&self) -> &'static str {
+        self.batches[0].operator_contract()
+    }
+
     /// The observer mechanism is explicit and also included in each complete batch identity.
     pub fn observer_contract(&self) -> &'static str {
         self.batches[0].observer_contract()
@@ -203,6 +243,135 @@ impl CompiledLuckTableProgram {
             .checked_add(self.batches.capacity().checked_mul(size_of::<full::CompiledLuckProgram>())?)?;
         for batch in &self.batches {
             bytes = bytes.checked_add(batch.allocated_bytes()?.checked_sub(size_of::<full::CompiledLuckProgram>())?)?;
+        }
+        Some(bytes)
+    }
+}
+
+/// A bounded whole-live conditional basis over the originally admitted probe batches. Source skill
+/// probabilities and multiplicity appear only in term weights; each complete conditioned program is
+/// reusable independently. No additive single-skill approximation or range-reset assumption is used.
+#[derive(Debug)]
+pub struct CompiledLuckTableMinimumBasis {
+    batches: Vec<full::CompiledLuckMinimumBasis>,
+}
+
+/// A complete original-native evaluation of one multi-batch conditional program. Keeping fields
+/// private prevents decoded table data from entering this in-process native reconstruction path.
+#[derive(Clone, Debug)]
+pub struct LuckTableMinimumTermResponse {
+    identity: LuckTableProgramIdentity,
+    curve: full::LuckDpCertifiedResult,
+}
+
+impl LuckTableMinimumTermResponse {
+    pub fn identity(&self) -> &LuckTableProgramIdentity {
+        &self.identity
+    }
+
+    pub fn curve(&self) -> &full::LuckDpCertifiedResult {
+        &self.curve
+    }
+
+    pub fn allocated_bytes(&self) -> Option<usize> {
+        use std::mem::size_of;
+        let mut bytes = size_of::<Self>()
+            .checked_add(self.identity.allocated_bytes()?.checked_sub(size_of::<LuckTableProgramIdentity>())?)?;
+        for (capacity, width) in [
+            (self.curve.steps.capacity(), size_of::<(i32, [crate::live::certified::ProbabilityMass; 4])>()),
+            (self.curve.probe_transitions.capacity(), size_of::<u8>()),
+            (self.curve.probes.capacity(), size_of::<bool>()),
+            (self.curve.range_moments.capacity(), size_of::<full::LuckRangeMoments>()),
+        ] {
+            bytes = bytes.checked_add(capacity.checked_mul(width)?)?;
+        }
+        Some(bytes)
+    }
+}
+
+impl CompiledLuckTableMinimumBasis {
+    pub fn start_count(&self) -> usize {
+        self.batches[0].start_count()
+    }
+
+    /// The first native probe batch's count; every batch has the same conditional term support.
+    pub fn minimum_action_count(&self) -> usize {
+        self.batches[0].minimum_action_count()
+    }
+
+    pub fn term_count(&self) -> usize {
+        self.batches[0].term_count()
+    }
+
+    pub fn term_weight(&self, index: usize) -> Result<crate::live::certified::ProbabilityMass, Error> {
+        self.batches[0].term_weight(index)
+    }
+
+    pub fn term_choices(&self, index: usize) -> Result<&[u8], Error> {
+        self.batches[0].term_choices(index)
+    }
+
+    pub fn observer_contract(&self) -> &'static str {
+        self.batches[0].observer_contract()
+    }
+
+    pub fn operator_contract(&self) -> &'static str {
+        self.batches[0].operator_contract()
+    }
+
+    pub fn term_identity(&mut self, index: usize) -> Result<LuckTableProgramIdentity, Error> {
+        Ok(LuckTableProgramIdentity {
+            source_version: format!("ournotes-luck-minimum-basis/1/{}", crate::SOURCE_SHA256),
+            batches: self.batches.iter_mut().map(|batch| batch.term_identity_words(index)).collect::<Result<_, _>>()?,
+        })
+    }
+
+    pub fn certified_term(&mut self, index: usize) -> Result<LuckTableMinimumTermResponse, Error> {
+        let identity = self.term_identity(index)?;
+        let mut combined = None;
+        for batch in &mut self.batches {
+            merge_certified_batch(&mut combined, batch.certified_term(index)?.into_curve())?;
+        }
+        let curve = combined.expect("at least the base probe deck");
+        if curve.probes.iter().any(|held| !held) {
+            return Err(Error::Input("LUCK minimum basis: a score shape has no verified probe".into()));
+        }
+        Ok(LuckTableMinimumTermResponse { identity, curve })
+    }
+
+    /// Positive mixture with forward filling over the union of term step times. Direct-probe masks
+    /// are ORed at each original frame over all positive-support terms; probe flags must match, and
+    /// moments must be empty. Execution counts describe conditional graph work, not direct-DP work.
+    /// Only native responses whose complete multi-batch identities match are accepted here.
+    pub fn reconstruct(
+        &mut self,
+        responses: &[&LuckTableMinimumTermResponse],
+    ) -> Result<full::LuckDpCertifiedResult, Error> {
+        if responses.len() != self.term_count() {
+            return Err(Error::Input("LUCK minimum basis needs exactly one response per positive term".into()));
+        }
+        for (index, response) in responses.iter().enumerate() {
+            if response.identity != self.term_identity(index)? {
+                return Err(Error::Input("LUCK minimum basis response has a different complete program".into()));
+            }
+        }
+        let curves: Vec<_> = responses.iter().map(|response| &response.curve).collect();
+        let probes = curves[0].probes.clone();
+        if probes.iter().any(|held| !held) {
+            return Err(Error::Input("LUCK minimum basis response has incomplete probe coverage".into()));
+        }
+        self.batches[0].reconstruct_validated(&curves, &probes)
+    }
+
+    /// Actual retained batch/program/term capacities, excluding caller identities, native responses,
+    /// reconstruction output and separately bounded native DP workspace.
+    pub fn allocated_bytes(&self) -> Option<usize> {
+        use std::mem::size_of;
+        let mut bytes = size_of::<Self>()
+            .checked_add(self.batches.capacity().checked_mul(size_of::<full::CompiledLuckMinimumBasis>())?)?;
+        for batch in &self.batches {
+            bytes = bytes
+                .checked_add(batch.allocated_bytes()?.checked_sub(size_of::<full::CompiledLuckMinimumBasis>())?)?;
         }
         Some(bytes)
     }

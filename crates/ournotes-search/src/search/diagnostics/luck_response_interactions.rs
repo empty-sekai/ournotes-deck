@@ -23,7 +23,7 @@ pub(super) fn program_fingerprint(identity: &LuckTableProgramIdentity) -> Option
     fingerprint_with_workspace(identity).map(|(fingerprint, _)| fingerprint)
 }
 
-fn fingerprint_with_workspace(identity: &LuckTableProgramIdentity) -> Option<(String, usize)> {
+pub(super) fn fingerprint_with_workspace(identity: &LuckTableProgramIdentity) -> Option<(String, usize)> {
     let bytes = FINGERPRINT_DOMAIN.len().checked_add(16)?.checked_add(identity.source_version.len())?;
     let bytes = identity
         .batches
@@ -52,14 +52,14 @@ struct RetainedIdentity {
 
 /// Metadata is reserved once and its actual capacity is charged before any key is admitted. There
 /// is no unaccounted tree/hash allocation or growth; the sorted vector moves ownership, not payloads.
-struct IdentityRegistry {
+pub(super) struct IdentityRegistry {
     entries: Vec<RetainedIdentity>,
-    bytes: usize,
+    pub(super) bytes: usize,
     limit: usize,
 }
 
 impl IdentityRegistry {
-    fn new(jobs: usize, limit: usize) -> Self {
+    pub(super) fn new(jobs: usize, limit: usize) -> Self {
         let mut entries = Vec::new();
         let slots = jobs.min(limit / size_of::<RetainedIdentity>());
         if entries.try_reserve_exact(slots).is_err() {
@@ -72,7 +72,7 @@ impl IdentityRegistry {
         }
     }
 
-    fn get(&self, fingerprint: &str, identity: &LuckTableProgramIdentity) -> Option<usize> {
+    pub(super) fn get(&self, fingerprint: &str, identity: &LuckTableProgramIdentity) -> Option<usize> {
         let start = self.entries.partition_point(|entry| entry.fingerprint.as_str() < fingerprint);
         self.entries[start..]
             .iter()
@@ -81,7 +81,7 @@ impl IdentityRegistry {
             .map(|entry| entry.program)
     }
 
-    fn insert(&mut self, identity: LuckTableProgramIdentity, fingerprint: String, program: usize) -> bool {
+    pub(super) fn insert(&mut self, identity: LuckTableProgramIdentity, fingerprint: String, program: usize) -> bool {
         if self.entries.len() == self.entries.capacity() {
             return false;
         }
@@ -101,7 +101,7 @@ impl IdentityRegistry {
     }
 }
 
-fn error_status(error: &Error) -> &'static str {
+pub(super) fn error_status(error: &Error) -> &'static str {
     match error {
         Error::Unsupported(_) => "unsupported",
         Error::Capacity(_) => "capacity",
@@ -123,6 +123,7 @@ pub(super) fn identify_interactions(
     identity_budget_bytes: usize,
     program_budget_bytes: usize,
     propagate_representatives: bool,
+    canonical_start_minimum: bool,
 ) -> Value {
     let started = Instant::now();
     let identity_limit = identity_budget_bytes.min(MAX_BYTES);
@@ -160,11 +161,14 @@ pub(super) fn identify_interactions(
                 &input.0.delta_times,
                 &job.entries,
             );
+            let program = program
+                .map(|program| if canonical_start_minimum { program.canonicalize_start_minimum() } else { program });
             let elapsed = before.elapsed().as_secs_f64() * 1000.0;
             compile_ms += elapsed;
             row["compileMs"] = json!(elapsed);
             let program = program?;
             row["observerContract"] = json!(program.observer_contract());
+            row["operatorContract"] = json!(program.operator_contract());
             compiled += 1;
             let bytes =
                 program.allocated_bytes().ok_or_else(|| Error::Capacity("compiled program byte count".into()))?;
@@ -198,6 +202,7 @@ pub(super) fn identify_interactions(
             let mut report = json!({"programIndex":index,"fingerprint":fingerprint,
                 "sourceVersion":ournotes_sim::SOURCE_SHA256,"identityVersion":identity.source_version,
                 "observerContract":program.observer_contract(),
+                "operatorContract":program.operator_contract(),
                 "representativeJobIndex":ordinal,
                 "identityBatchCount":identity.batches.len(),
                 "identityWordCount":identity.batches.iter().map(Vec::len).sum::<usize>(),
@@ -256,6 +261,7 @@ pub(super) fn identify_interactions(
         "hashAddressIsEquivalenceProof":false,
         "memoryScope":"Separate retained-identity and compiled-program allowances; temporary identity and fingerprint buffers, returned JSON, inputs and native DP workspace are reported separately or governed by their original limits, not a total RSS bound.",
         "usesSingleSkillResponseComposition":false,"usesMonteCarlo":false,
+        "canonicalStartMinimum":canonical_start_minimum,
         "jobs":reports,"programs":programs,
         "stats":{"sourceJobs":jobs.len(),"distinctSourceKeys":source_keys.len(),
             "compiledJobs":compiled,"uniqueRetainedPrograms":registry.entries.len(),"exactProgramAliases":aliases,

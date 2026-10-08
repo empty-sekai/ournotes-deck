@@ -378,3 +378,85 @@ fn compiled_luck_virtual_refuses_unsupported_observers_and_illegal_holders() {
         Err(Error::Input(_))
     ));
 }
+
+#[test]
+fn compiled_luck_canonical_minimum_reuses_exact_operator_without_native_rerecording() {
+    let (mut master, notes, params, setup, play, delta) = fixture(0, 60);
+    add_probe_neutral(&mut master);
+    let critical: Vec<_> = master
+        .gekisou_luck_bonus_lots
+        .iter()
+        .cloned()
+        .map(|mut row| {
+            row.id += 100;
+            row.lot_result = 3;
+            row
+        })
+        .collect();
+    master.gekisou_luck_bonus_lots.extend(critical);
+    // The real guarantee witness: binary32 60% followed by 50%, versus binary32 80%.
+    // Both request minimum result 2. Exact failed mass is 3355443 / 16777216.
+    let condition = master.skill_conditions.iter().find(|row| row.id == 4011).unwrap().clone();
+    let set = master.skill_condition_sets.iter().find(|row| row.group == 4011).unwrap().clone();
+    for probability in [50, 60, 80] {
+        let mut row = condition.clone();
+        row.id = 4000 + probability;
+        row.condition_values = vec![probability];
+        master.skill_conditions.push(row);
+        let mut group = set.clone();
+        group.id = 4000 + probability;
+        group.group = 4000 + probability;
+        group.condition_ids = vec![4000 + probability];
+        master.skill_condition_sets.push(group);
+    }
+    let guarantee = master.gekisou_support_skill_effects.iter_mut().find(|row| row.skill_id == 66).unwrap();
+    guarantee.level = 5;
+    guarantee.effect_value = 3;
+    guarantee.skill_condition_group = 4060;
+    let template = guarantee.clone();
+    let mut skill = master.gekisou_support_skills.iter().find(|row| row.id == 66).unwrap().clone();
+    skill.id = 71;
+    master.gekisou_support_skills.push(skill);
+    for (level, probability) in [(3, 50), (5, 80)] {
+        let mut row = template.clone();
+        row.id = 710 + level;
+        row.skill_id = 71;
+        row.level = level;
+        row.skill_condition_group = 4000 + probability;
+        master.gekisou_support_skill_effects.push(row);
+    }
+    master.reindex().unwrap();
+    let skills = luck_skills(&master).unwrap();
+    let neutral = luck_neutral(&master, &skills);
+    let key = |id, level| LuckSkillKey { source: LuckSource::GekisouSupport, id, level, matched: None };
+    let pair = [(key(66, 5), 0), (key(71, 3), 0)];
+    let single = [(key(71, 5), 0)];
+    let build = |entries: &[(LuckSkillKey, usize)]| {
+        luck_table_program(&master, &skills, neutral, &notes, params, &setup, &play, &delta, entries).unwrap()
+    };
+    let original_pair = build(&pair);
+    let original_single = build(&single);
+    assert_ne!(original_pair.identity().unwrap(), original_single.identity().unwrap());
+    let original_curves = [original_pair.certified().unwrap(), original_single.certified().unwrap()];
+    let _ = take_luck_record_profile();
+    let canonical_pair = original_pair.canonicalize_start_minimum();
+    let canonical_single = original_single.canonicalize_start_minimum();
+    assert_eq!(canonical_pair.operator_contract(), "canonical-start-minimum-cdf/1");
+    assert_eq!(canonical_pair.identity().unwrap(), canonical_single.identity().unwrap());
+    let curve = canonical_pair.certified().unwrap();
+    same_response(&curve, &canonical_single.certified().unwrap());
+    assert_eq!(take_luck_record_profile().calls, 0);
+    // Enclosures of the same real nominal operator may have different interval endpoint bits.
+    // Exact kernel equivalence itself is checked by independent integer enumeration in minimum.rs.
+    for original in &original_curves {
+        for time in original.steps.iter().chain(&curve.steps).map(|step| step.0) {
+            let before = &original.steps[original.steps.partition_point(|step| step.0 <= time) - 1].1;
+            let after = &curve.steps[curve.steps.partition_point(|step| step.0 <= time) - 1].1;
+            for (before, after) in before.iter().zip(after) {
+                assert!(before.interval().intersect(after.interval()).is_some(), "at {time}: {before:?} / {after:?}");
+            }
+        }
+    }
+    let identity = canonical_pair.identity().unwrap();
+    assert_eq!(canonical_pair.canonicalize_start_minimum().identity().unwrap(), identity, "opt-in is idempotent");
+}

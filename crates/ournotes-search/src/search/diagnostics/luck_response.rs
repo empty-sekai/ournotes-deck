@@ -44,6 +44,8 @@ pub enum ResponseMode {
     Plan,
     Identify,
     Programs,
+    BasisIdentify,
+    BasisPrograms,
     #[default]
     Generate,
 }
@@ -76,6 +78,20 @@ pub struct LuckResponseSpec {
     pub identity_bytes: Option<usize>,
     #[serde(default)]
     pub program_bytes: Option<usize>,
+    /// Experimental exact-CDF quotient for contiguous nominal start-minimum operators.
+    #[serde(default)]
+    pub canonical_start_minimum: bool,
+    /// Optional conditional-minimum experiment; the native implementation always caps this at 64.
+    #[serde(default)]
+    pub basis_max_terms: Option<usize>,
+    #[serde(default)]
+    pub basis_response_bytes: Option<usize>,
+    /// In basisPrograms mode propagate only these already identified term addresses; None means all.
+    #[serde(default)]
+    pub basis_programs: Option<Vec<String>>,
+    /// Independent original-program comparison is separately counted and never hidden in timings.
+    #[serde(default)]
+    pub verify_basis: bool,
 }
 
 fn fingerprint(value: &Value) -> String {
@@ -418,7 +434,11 @@ pub fn generate_luck_response(built: &BuiltProblem<'_>, spec: &LuckResponseSpec)
     input.0.params.total_power = 0;
     let skills = luck_skills(master)?;
     let neutral = luck_neutral(master, &skills);
-    for job in spec.jobs.iter().filter(|_| !matches!(spec.mode, ResponseMode::Identify | ResponseMode::Programs)) {
+    let compiled_mode = matches!(
+        spec.mode,
+        ResponseMode::Identify | ResponseMode::Programs | ResponseMode::BasisIdentify | ResponseMode::BasisPrograms
+    );
+    for job in spec.jobs.iter().filter(|_| !compiled_mode) {
         // The native holder is authoritative for formation compatibility and all positional limits.
         // This constructs no LiveModel and performs no recording, propagation or simulation.
         validate_entries(master, &skills, neutral, &job.entries)?;
@@ -433,19 +453,44 @@ pub fn generate_luck_response(built: &BuiltProblem<'_>, spec: &LuckResponseSpec)
         .map(|(job, deps)| (serde_json::to_string(&job.entries).expect("entry JSON"), fingerprint(deps)))
         .collect();
     let mut context = response_context(&shared_fingerprint, archive_dependencies.clone());
-    if matches!(spec.mode, ResponseMode::Identify | ResponseMode::Programs) {
+    if compiled_mode {
         let capacity = spec.cache_bytes.unwrap_or_else(|| spec.cache_entries.saturating_mul(8192));
-        let mut report = super::luck_response_interactions::identify_interactions(
-            master,
-            &input,
-            &skills,
-            neutral,
-            &spec.jobs,
-            spec.identity_bytes.unwrap_or(capacity),
-            spec.program_bytes.unwrap_or(capacity),
-            matches!(spec.mode, ResponseMode::Programs),
-        );
-        report["format"] = json!("ournotes-deck.luck-response-programs/1");
+        let basis_mode = matches!(spec.mode, ResponseMode::BasisIdentify | ResponseMode::BasisPrograms);
+        let mut report = if basis_mode {
+            super::luck_response_basis::identify_basis(
+                master,
+                &input,
+                &skills,
+                neutral,
+                &spec.jobs,
+                super::luck_response_basis::BasisOptions {
+                    identity_bytes: spec.identity_bytes.unwrap_or(capacity),
+                    program_bytes: spec.program_bytes.unwrap_or(capacity),
+                    response_bytes: spec.basis_response_bytes.unwrap_or(capacity),
+                    max_terms: spec.basis_max_terms.unwrap_or(64),
+                    propagate: matches!(spec.mode, ResponseMode::BasisPrograms),
+                    selected: spec.basis_programs.as_deref(),
+                    verify: spec.verify_basis,
+                },
+            )
+        } else {
+            super::luck_response_interactions::identify_interactions(
+                master,
+                &input,
+                &skills,
+                neutral,
+                &spec.jobs,
+                spec.identity_bytes.unwrap_or(capacity),
+                spec.program_bytes.unwrap_or(capacity),
+                matches!(spec.mode, ResponseMode::Programs),
+                spec.canonical_start_minimum,
+            )
+        };
+        report["format"] = json!(if basis_mode {
+            "ournotes-deck.luck-response-basis/1"
+        } else {
+            "ournotes-deck.luck-response-programs/1"
+        });
         report["mode"] = json!(spec.mode);
         report["sourceVersion"] = json!(ournotes_sim::SOURCE_SHA256);
         report["context"] = json!(context);

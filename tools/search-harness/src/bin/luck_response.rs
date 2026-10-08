@@ -17,6 +17,8 @@ use std::{env, fs, path::Path, time::Instant};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+#[path = "luck_response/minimum_basis.rs"]
+mod minimum_basis;
 #[path = "luck_response/programs.rs"]
 mod programs;
 
@@ -216,6 +218,7 @@ fn run() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("program-pack") if args.len() == 4 => programs::pack(&args[1..]),
         Some("program-materialize") if args.len() == 4 => programs::materialize(&args[1..]),
+        Some("basis-materialize") if args.len() == 4 => minimum_basis::materialize(&args[1..]),
         Some("predict") if args.len() == 7 => predict(&args[1..]),
         Some("pack") if args.len() == 4 => {
             let table = table(&args[1])?;

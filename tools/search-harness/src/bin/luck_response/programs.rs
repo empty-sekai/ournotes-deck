@@ -7,7 +7,7 @@ const INDEX_FORMAT: &str = "ournotes-deck.luck-program-index/1";
 const REPORT_FORMAT: &str = "ournotes-deck.luck-response-programs/1";
 const ALGORITHM: &str = "ournotes-luck-program-response/1";
 
-fn digest(value: &Value, field: &str) -> Result<String> {
+pub(super) fn digest(value: &Value, field: &str) -> Result<String> {
     let text = value[field].as_str().ok_or_else(|| format!("missing {field}"))?;
     if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
         return Err(format!("invalid {field}").into());
@@ -83,7 +83,12 @@ pub(super) fn pack(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn read_response(index_file: &Path, row: &Value, expected_source: &str, expected_mode: &Value) -> Result<Response> {
+pub(super) fn read_response(
+    index_file: &Path,
+    row: &Value,
+    expected_source: &str,
+    expected_mode: &Value,
+) -> Result<Response> {
     let fingerprint = digest(row, "fingerprint")?;
     if digest(row, "sourceVersion")? != expected_source || row["status"] != "success" {
         return Err("program response source or status differs".into());

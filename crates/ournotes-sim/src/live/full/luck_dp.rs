@@ -18,7 +18,7 @@ use crate::num::{FxHashMap, floor_to_i32};
 
 mod compiled;
 pub(crate) use compiled::compile_luck_program_virtual;
-pub use compiled::{CompiledLuckProgram, compile_luck_program};
+pub use compiled::{CompiledLuckMinimumBasis, CompiledLuckProgram, LuckMinimumTermResponse, compile_luck_program};
 mod family;
 pub(super) mod fused;
 pub use family::{
@@ -2952,6 +2952,10 @@ mod tests {
 
     mod compiled_program_tests {
         include!("luck_dp/compiled_program_tests.rs");
+    }
+
+    mod minimum_basis_tests {
+        include!("luck_dp/minimum_basis_tests.rs");
     }
 
     use crate::live::certified::F64Interval;
