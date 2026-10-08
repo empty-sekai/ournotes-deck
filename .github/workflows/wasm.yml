@@ -1,0 +1,78 @@
+name: WASM packages
+
+on:
+  workflow_call:
+    inputs:
+      source-commit:
+        description: Source commit to build and verify
+        required: true
+        type: string
+      tag:
+        description: Package version tag; defaults to the source Cargo version
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  wasm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      SOURCE_COMMIT: ${{ inputs.source-commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: automation
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source-commit }}
+          path: source
+      - name: Resolve package version
+        env:
+          PACKAGE_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${PACKAGE_TAG:-$(python3 -c 'import tomllib; print("v" + tomllib.load(open("source/Cargo.toml", "rb"))["workspace"]["package"]["version"])')}"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install exact binding tool and browser
+        run: |
+          cargo install wasm-bindgen-cli --version 0.2.127 --locked
+          npm install --prefix automation/work/browser playwright@1.58.2
+          automation/work/browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Build WASM modules and bindings
+        working-directory: source
+        run: |
+          for module in replay recommend; do
+            cargo build --release --locked --target wasm32-unknown-unknown --manifest-path "wasm/$module/Cargo.toml"
+            for binding in web nodejs; do
+              wasm-bindgen --target "$binding" --out-dir "work/bindings/$module/$binding" "wasm/$module/target/wasm32-unknown-unknown/release/ournotes_${module}_wasm.wasm"
+            done
+          done
+      - name: Export native account references
+        working-directory: source
+        env:
+          OURNOTES_ACCOUNT_CORPUS: ${{ github.workspace }}/source/work/account-corpus
+        run: cargo test --release --locked --test adapter_fixture_export export_account_transport_corpus -- --ignored --exact
+      - name: Package and verify extracted WASM in Node and Chromium
+        env:
+          NODE_PATH: ${{ github.workspace }}/automation/work/browser/node_modules
+        run: |
+          python3 automation/scripts/release/package.py wasm --source source --output dist --tag "$TAG" --commit "$SOURCE_COMMIT"
+          mkdir -p work/unpacked
+          for archive in dist/*.tar.gz; do tar xzf "$archive" -C work/unpacked; done
+          recommend="work/unpacked/ournotes-recommend-wasm-$TAG"
+          replay="work/unpacked/ournotes-replay-wasm-$TAG"
+          node source/tools/search-harness/account-wasm.cjs "$recommend/nodejs/ournotes_recommend_wasm.js" source/work/account-corpus
+          node automation/scripts/release/smoke-wasm.cjs "$recommend" "$replay" source/work/account-corpus
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: dist/*
+          if-no-files-found: error

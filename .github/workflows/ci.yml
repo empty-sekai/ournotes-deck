@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
@@ -13,6 +16,11 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  wasm:
+    uses: ./.github/workflows/wasm.yml
+    with:
+      source-commit: ${{ github.sha }}
+
   test:
     runs-on: ubuntu-latest
     steps:
