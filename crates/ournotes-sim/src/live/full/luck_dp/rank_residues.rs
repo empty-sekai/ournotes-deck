@@ -63,6 +63,7 @@ pub(in super::super) fn probabilities(
         deck,
         None,
         ranking,
+        false,
     )?;
     if cancelled() {
         return Ok(None);

@@ -78,6 +78,7 @@ impl Input {
             &self.deck,
             None,
             None,
+            false,
         )
         .unwrap()
     }

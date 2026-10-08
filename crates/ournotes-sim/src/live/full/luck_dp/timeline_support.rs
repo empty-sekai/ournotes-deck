@@ -178,6 +178,9 @@ pub(super) fn complete_timeline_support(
         let chance = match action {
             Action::StartGauge { chance, .. } | Action::StartMinimum { chance, .. } => *chance,
             Action::MissGauge { .. } => ProbabilityMass::ONE,
+            Action::StartPoints { .. } | Action::CriticalPoints { .. } => {
+                return Err(Error::Unsupported("LUCK timeline support requires a controller-only transcript".into()));
+            }
         };
         if chance != ProbabilityMass::ZERO && chance != ProbabilityMass::ONE {
             return Err(Error::Unsupported("LUCK timeline coupling requires exact action truth".into()));
@@ -292,6 +295,11 @@ impl<'a, 'c, M: Mass> Dp<'a, 'c, M> {
             }
             let mut next = state;
             let chance = match action {
+                Action::StartPoints { .. } | Action::CriticalPoints { .. } => {
+                    return Err(Error::Unsupported(
+                        "LUCK timeline support requires a controller-only transcript".into(),
+                    ));
+                }
                 Action::StartMinimum { result, chance } => {
                     next.inner.minimum = next.inner.minimum.max(result);
                     chance

@@ -553,6 +553,7 @@ fn prepare_policy(
     // The identity above describes the fresh native model. Every request, including recipe hits, repeats
     // ordinary/full-model admission and the private no-score-feedback gate before skipping any recording.
     model.set_luck_weights(session.skills, Vec::new()).map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
+    let probe_phase_bound = bind_probe_phase(&model, session.skills);
     model.score.begin_bounds(probes, true);
     model.score.certify_bounds_filings(probe_gate);
     let record_only = model.try_enable_bounds_record_only();
@@ -687,6 +688,15 @@ fn prepare_policy(
     }
     let probability = probability.expect("complete original or fused probability recorder");
     let trace = model.score.bounds_trace.take().expect("bounds recorder enabled");
+    let frame_times: Vec<_> = model.trace.iter().map(|&(time, _)| time).collect();
+    if !frame_times.iter().copied().eq(session.play.frames.iter().map(|frame| frame.time_ms)) {
+        return Err(declined(
+            LuckRushDecline::RecorderAdmission,
+            "the completed recorder frame clock differs from the probability recording",
+        ));
+    }
+    check_probe_music_boundary(&frame_times, &probability, model.music_length_ms, probe_phase_bound, &trace)
+        .map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
     let query_limit = (session.play.frames.len() as u64)
         .checked_mul(2)
         .and_then(|value| value.checked_add(2 * session.setup.fevers.len() as u64))

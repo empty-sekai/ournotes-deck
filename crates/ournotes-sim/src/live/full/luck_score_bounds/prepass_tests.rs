@@ -700,7 +700,14 @@ fn trace_for_terminal(events: Vec<BoundsEvent>, queries: usize) -> BoundsTrace {
 }
 
 fn constant_curve() -> Arc<LuckDpCertifiedResult> {
-    Arc::new(LuckDpCertifiedResult { steps: Vec::new(), probes: Vec::new(), peak_states: 1, transitions: 0 })
+    Arc::new(LuckDpCertifiedResult {
+        probe_transitions: Vec::new(),
+        steps: Vec::new(),
+        probes: Vec::new(),
+        range_moments: Vec::new(),
+        peak_states: 1,
+        transitions: 0,
+    })
 }
 
 #[test]

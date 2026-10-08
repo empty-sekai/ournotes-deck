@@ -208,6 +208,7 @@ fn complete_native_recording_family_reuses_every_original_key() {
             deck,
             None,
             None,
+            false,
         )
         .unwrap();
         assert!(raw_keys.insert(RecordingCache::key(&prepared)), "the recording identities must be distinct");

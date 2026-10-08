@@ -405,6 +405,25 @@ impl ConditionSkillUpdater {
         &self.effects
     }
 
+    /// Installs semantic probability checks on the selected score rows before recording. Replacing
+    /// probability leaves preserves every trigger/reset property used to compile the idle plan.
+    pub(super) fn condition_score_probabilities(&mut self, score_rows: &[bool]) -> Result<bool, Error> {
+        let mut found = false;
+        for effect in &mut self.effects {
+            if score_rows[effect.row] {
+                for checker in [&mut effect.trigger, &mut effect.condition, &mut effect.reset] {
+                    found |= super::nominal_expectation::condition_checker(checker)?;
+                }
+            }
+        }
+        for updater in &mut self.updaters {
+            if score_rows[self.effects[updater.effect].row] {
+                found |= super::nominal_expectation::condition_checker(&mut updater.release)?;
+            }
+        }
+        Ok(found)
+    }
+
     /// Effect metadata stays private so a compiled idle plan cannot be invalidated
     /// by a caller replacing a trigger, reset checker or trigger type after build.
     pub(super) fn effect(&self, index: usize) -> &CondEffect {

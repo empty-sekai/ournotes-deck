@@ -128,7 +128,7 @@ fn certified_curves_reject_cross_updater_identity_errors_before_cache_lookup() {
         None,
     )
     .unwrap_err();
-    assert!(matches!(&expected, Error::Unsupported(reason) if reason.contains("repeated condition effect state")));
+    assert!(matches!(&expected, Error::Unsupported(reason) if reason.contains("distinct effect state identities")));
     let fast = luck_rush_dp(
         &input.master,
         &skills,
@@ -159,6 +159,9 @@ fn certified_curves_reject_cross_updater_identity_errors_before_cache_lookup() {
             let after = curves.stats();
             assert_eq!(after.recording_lookups, before.recording_lookups);
             assert_eq!(after.shared_recording_lookups, before.shared_recording_lookups);
+            assert_eq!(after.recording_hits, before.recording_hits);
+            assert_eq!(after.hits, before.hits);
+            assert_eq!(after.peak_entries, before.peak_entries);
             assert_eq!(after.lookups, before.lookups);
             assert_eq!(after.propagated_curves, before.propagated_curves);
             assert_eq!(after.transitions, before.transitions);

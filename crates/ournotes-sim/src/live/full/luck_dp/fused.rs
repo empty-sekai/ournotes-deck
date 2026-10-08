@@ -53,7 +53,7 @@ impl Recorder {
             }
         }
         let prepared = prepare_recording::<ProbabilityMass>(
-            master, skills, notes, events, params, setup, play, deltas, deck, None, None,
+            master, skills, notes, events, params, setup, play, deltas, deck, None, None, false,
         )?;
         if prepared.life.is_some()
             || prepared.life_deck.is_some()
@@ -65,6 +65,7 @@ impl Recorder {
         let ctrl = &model.gk.as_ref().expect("admitted Gekisou recorder").ctrl;
         let ranges = ctrl.ranges.iter().map(|range| (range.start_ms, range.end_ms, range.mission)).collect();
         let transcript = Transcript {
+            collect_moments: false,
             // Capture these before any full-native frame: weighted 11003/11005 appliers may still alter
             // gauge/minimum state. The DP applies the immutable Plan itself, exactly once.
             templates: ctrl.states.iter().map(|state| state.luck.clone()).collect(),
@@ -224,6 +225,8 @@ impl LuckDpCache {
         }
         let Some(result) = result? else { return Ok(None) };
         let result = Arc::new(LuckDpCertifiedResult {
+            probe_transitions: result.probe_transitions,
+            range_moments: result.range_moments,
             steps: result.steps,
             probes: result.probes,
             peak_states: result.peak_states,

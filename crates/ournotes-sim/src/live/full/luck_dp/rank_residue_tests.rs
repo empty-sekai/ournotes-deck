@@ -73,6 +73,7 @@ fn residue_observer_sees_both_weight_sites_even_when_every_marginal_is_unchanged
         &input.deck,
         None,
         None,
+        false,
     )
     .unwrap();
     struct Observations(Vec<(i32, bool)>);

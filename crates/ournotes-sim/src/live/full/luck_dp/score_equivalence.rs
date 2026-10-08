@@ -294,6 +294,7 @@ impl Context<'_> {
                 deck,
                 None,
                 None,
+                false,
             ),
             LuckScoreEquivalenceDecline::ProbabilityDomain,
         )?;
@@ -304,6 +305,7 @@ impl Context<'_> {
         let gk = model.gk.as_mut().expect("Gekisou constructed");
         let ranges: Vec<_> = gk.ctrl.ranges.iter().map(|range| (range.start_ms, range.end_ms, range.mission)).collect();
         let mut transcript = Transcript {
+            collect_moments: false,
             templates: gk.ctrl.states.iter().map(|state| state.luck.clone()).collect(),
             machine: gk.ctrl.machine.clone(),
             luck: ranges.iter().map(|range| range.2 == M_LUCK).collect(),
@@ -349,6 +351,9 @@ impl Context<'_> {
             let chance = match action {
                 Action::StartGauge { chance, .. } | Action::StartMinimum { chance, .. } => *chance,
                 Action::MissGauge { .. } => ProbabilityMass::ONE,
+                Action::StartPoints { .. } | Action::CriticalPoints { .. } => {
+                    return declined(LuckScoreEquivalenceDecline::ProbabilityDomain);
+                }
             };
             if chance != ProbabilityMass::ZERO && chance != ProbabilityMass::ONE {
                 return declined(LuckScoreEquivalenceDecline::ActionChance);

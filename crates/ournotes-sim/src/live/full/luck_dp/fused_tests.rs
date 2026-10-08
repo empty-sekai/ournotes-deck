@@ -106,6 +106,7 @@ impl Input {
             &self.deck,
             None,
             None,
+            false,
         )
         .unwrap()
     }
@@ -213,6 +214,8 @@ impl Input {
 fn certified(transcript: &Transcript<ProbabilityMass>) -> LuckDpCertifiedResult {
     let result = propagate(transcript).unwrap();
     LuckDpCertifiedResult {
+        probe_transitions: result.probe_transitions,
+        range_moments: result.range_moments,
         steps: result.steps,
         probes: result.probes,
         peak_states: result.peak_states,

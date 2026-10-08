@@ -14,7 +14,7 @@ fn timeline_support_keeps_native_same_frame_edges_probe_delay_and_finish() {
             ..Default::default()
         }];
         let transcript =
-            record::<ProbabilityMass>(&master, &skills, &notes, &[], params, &setup, &play, &delta, &deck, None, None)
+            record::<ProbabilityMass>(&master, &skills, &notes, &[], params, &setup, &play, &delta, &deck, None, None, false)
                 .unwrap();
         let times: Vec<_> = play.frames.iter().map(|frame| frame.time_ms).collect();
         let support = complete_timeline_support(&transcript, &times, true, &mut || false).unwrap().unwrap();
@@ -62,7 +62,7 @@ fn timeline_support_never_publishes_cancelled_or_incomplete_clock_coverage() {
     let skills = luck_skills(&master).unwrap();
     let deck = [Performer { gekisou_skill: Some((1, 1)), ..Default::default() }];
     let transcript =
-        record::<ProbabilityMass>(&master, &skills, &notes, &[], params, &setup, &play, &delta, &deck, None, None)
+        record::<ProbabilityMass>(&master, &skills, &notes, &[], params, &setup, &play, &delta, &deck, None, None, false)
             .unwrap();
     let times: Vec<_> = play.frames.iter().map(|frame| frame.time_ms).collect();
     assert!(complete_timeline_support(&transcript, &times[..times.len() - 1], false, &mut || false).is_err());

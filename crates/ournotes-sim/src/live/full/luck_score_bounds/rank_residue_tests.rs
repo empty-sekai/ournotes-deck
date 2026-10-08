@@ -436,6 +436,8 @@ fn rank_residue_request_requires_its_own_ready_query_and_unchanged_prefix() {
         support: point(10),
         bonus_mean: F64Interval::ONE.into(),
         bonus_support: point(1),
+        luck_points_mean: None,
+        lot_results_mean: None,
     };
     assert!(request(&window, &range, &queries, &notes).is_some());
     window.end.probability_ready = 99;
