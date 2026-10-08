@@ -58,6 +58,7 @@ mod life;
 mod luck;
 mod luck_dp;
 mod luck_exact;
+pub(crate) use luck_dp::compile_luck_program_virtual;
 pub use luck_dp::{
     CompiledLuckProgram, LuckControllerFamily, LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult,
     LuckFamilyBindings, LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline, LuckFamilyDomain, LuckFamilyError,

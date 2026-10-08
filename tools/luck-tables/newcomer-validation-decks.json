@@ -1,0 +1,70 @@
+[
+  {
+    "name": "original-incumbent-no-writer",
+    "members": [
+      47,
+      56,
+      57,
+      59,
+      63
+    ],
+    "snaps": [
+      47,
+      53,
+      24,
+      46,
+      11
+    ]
+  },
+  {
+    "name": "original-roster-one-writer",
+    "members": [
+      47,
+      56,
+      57,
+      59,
+      8
+    ],
+    "snaps": [
+      47,
+      53,
+      24,
+      46,
+      11
+    ]
+  },
+  {
+    "name": "original-roster-two-writers",
+    "members": [
+      63,
+      56,
+      57,
+      8,
+      22
+    ],
+    "snaps": [
+      47,
+      53,
+      24,
+      46,
+      11
+    ]
+  },
+  {
+    "name": "original-roster-three-writers",
+    "members": [
+      63,
+      56,
+      8,
+      22,
+      24
+    ],
+    "snaps": [
+      47,
+      53,
+      24,
+      46,
+      11
+    ]
+  }
+]

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+from fractions import Fraction
 import gzip
 import hashlib
 import itertools
@@ -296,6 +297,88 @@ def monte_carlo_report(document, entries):
     return results
 
 
+def scalar_coefficient_report(validation_decks):
+    """Fit a score-prediction coefficient per complete ordered writer key.
+
+    Fit c in s0 + c*(s1-s0) to scoreAtMean with exact rational accumulation.
+    This is equivalent to averaging each defined c with weight (s1-s0)^2;
+    it does not replace a time-dependent response or estimate E[native score].
+    Partial validations remain usable observations, with explicit coverage.
+    """
+    if not validation_decks:
+        return None
+    all_orders = set(itertools.permutations(range(5)))
+    groups, decks, seen, unavailable = {}, [], set(), {}
+    for deck in validation_decks:
+        members, snaps = tuple(deck["members"]), tuple(deck["snaps"])
+        if len(members) != 5 or len(snaps) != 5:
+            raise ValueError("scalar analysis requires five paired deck positions")
+        orders, scored = set(), 0
+        for row in deck.get("orders", []):
+            order = tuple(row["order"])
+            if any(type(value) is not int for value in order) or order not in all_orders:
+                raise ValueError("scalar analysis requires an original five-position order")
+            identity = (members, snaps, order)
+            if identity in seen:
+                raise ValueError("scalar analysis contains a duplicate physical deck/order")
+            seen.add(identity)
+            orders.add(order)
+            scoring = row.get("scoring") or {}
+            if scoring.get("status") != "success":
+                status = scoring.get("status", "missingScoring")
+                unavailable[status] = unavailable.get(status, 0) + 1
+                continue
+            if scoring.get("scoreAtMeanIsExactExpectation") is not False:
+                raise ValueError("scalar analysis requires explicitly labelled scoreAtMean predictions")
+            s0, s1, score = (scoring[field] for field in ("s0", "s1", "scoreAtMean"))
+            if any(type(value) is not int or not -(2**31) <= value < 2**31 for value in (s0, s1, score)):
+                raise ValueError("scalar analysis scores must be native i32 integers")
+            key = canonical(row["entries"])
+            groups.setdefault(key, []).append((identity, s1 - s0, score - s0, score))
+            scored += 1
+        decks.append({"name": deck.get("name", ""), "members": members, "snaps": snaps,
+                      "observedOrders": len(orders), "scoredOrders": scored,
+                      "all120Labels": orders == all_orders, "all120Scored": orders == all_orders and scored == 120})
+    reports = []
+    for key, samples in sorted(groups.items()):
+        denominator = sum(x * x for _, x, _, _ in samples)
+        fitted = Fraction(sum(x * y for _, x, y, _ in samples), denominator) if denominator else Fraction(0)
+        coefficients = [Fraction(y, x) for _, x, y, _ in samples if x]
+        residuals = [(identity, fitted * x - y, score) for identity, x, y, score in samples]
+        worst = max(residuals, key=lambda item: abs(item[1]))
+        relative = [abs(residual / score) for _, residual, score in residuals if score]
+        reports.append({
+            "entries": json.loads(key), "orders": len(samples),
+            "physicalDecks": len({identity[:2] for identity, _, _, _ in samples}),
+            "coefficientDefinedOrders": len(coefficients),
+            "zeroDenominatorOrders": sum(x == 0 for _, x, _, _ in samples),
+            "zeroDenominatorNonzeroSignalOrders": sum(x == 0 and y != 0 for _, x, y, _ in samples),
+            "minimumCoefficient": float(min(coefficients)) if coefficients else None,
+            "maximumCoefficient": float(max(coefficients)) if coefficients else None,
+            "coefficientSpan": float(max(coefficients) - min(coefficients)) if coefficients else None,
+            "weightedLeastSquaresCoefficient": float(fitted) if denominator else None,
+            "exactFittedFraction": {"numerator": fitted.numerator, "denominator": fitted.denominator} if denominator else None,
+            "maximumAbsoluteProxyScoreResidual": float(abs(worst[1])),
+            "meanAbsoluteProxyScoreResidual": float(sum(abs(r) for _, r, _ in residuals) / len(residuals)),
+            "maximumRelativeProxyScoreResidual": float(max(relative)) if relative else None,
+            "zeroReferenceScoreOrders": sum(score == 0 for _, _, score in residuals),
+            "worstOrder": {"members": worst[0][0], "snaps": worst[0][1], "order": worst[0][2],
+                           "signedProxyScoreResidual": float(worst[1]), "referenceScore": worst[2]},
+        })
+    return {
+        "reference": "native scoreAtMean predictor; not Monte Carlo expectation, E[native score], or a score certificate",
+        "fit": "argmin_c sum_orders ((s1-s0)*c-(scoreAtMean-s0))^2; exact rational accumulation; no coefficient clipping",
+        "key": "ordered complete entries, including source, level, matched, holder position and multiplicity",
+        "observedOrders": len(seen), "scoredOrders": sum(row["scoredOrders"] for row in decks),
+        "unavailableScoring": unavailable, "decks": decks, "groups": reports,
+        "allDecksHave120ScoredOrders": all(row["all120Scored"] for row in decks),
+        "groupsWithCoefficientVariation": sum((row["coefficientSpan"] or 0) > 0 for row in reports),
+        "maximumAbsoluteProxyScoreResidual": max((row["maximumAbsoluteProxyScoreResidual"] for row in reports), default=None),
+        "maximumRelativeProxyScoreResidual": max((row["maximumRelativeProxyScoreResidual"] for row in reports
+                                                  if row["maximumRelativeProxyScoreResidual"] is not None), default=None),
+    }
+
+
 def analyze(path, tolerances, fit_outputs):
     source = path.read_bytes()
     document = json.loads(source)
@@ -342,7 +425,7 @@ def analyze(path, tolerances, fit_outputs):
             data = archive.read_bytes()
             archives.append({"mode": mode, "sha256": hashlib.sha256(data).hexdigest(), "bytes": sizes(data)})
     job_rows = document.get("jobs", [])
-    return {
+    report = {
         "input": path.name,
         "inputSha256": hashlib.sha256(source).hexdigest(),
         "context": table["context"],
@@ -362,6 +445,10 @@ def analyze(path, tolerances, fit_outputs):
         "composition": [composition_report(entries, order) for order in (1, 2)],
         "monteCarlo": monte_carlo_report(document, entries),
     }
+    scalar = scalar_coefficient_report(document.get("validationDecks"))
+    if scalar is not None:
+        report["scalarCoefficientAnalysis"] = scalar
+    return report
 
 
 def main():

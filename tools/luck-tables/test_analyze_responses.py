@@ -124,6 +124,39 @@ class ResponseAnalysisTests(unittest.TestCase):
         self.assertEqual(row["timeWeightedBucketRms"][2], math.sqrt(1 / 101))
         self.assertNotIn("bucketRms", row)
 
+    def test_scalar_constant_cannot_represent_two_ordinary_timings_with_same_writer_key(self):
+        writer = skill("gekisou", 7, 0)
+        orders = []
+        # The same holder/key sees two ordinary-skill timings. Their implied c
+        # values are 1/4 and 3/4; full-score LS weights them by 100^2 and 200^2.
+        for order, s1, score in [([0, 1, 2, 3, 4], 200, 125), ([0, 2, 1, 3, 4], 300, 250)]:
+            orders.append({"order": order, "entries": [writer], "scoring": {
+                "status": "success", "s0": 100, "s1": s1, "scoreAtMean": score,
+                "scoreAtMeanIsExactExpectation": False,
+            }})
+        deck = {"name": "timing observations", "members": [1, 2, 3, 4, 5], "snaps": [None] * 5, "orders": orders}
+        report = analysis.scalar_coefficient_report([deck])
+        self.assertEqual(report["scoredOrders"], 2)
+        self.assertFalse(report["allDecksHave120ScoredOrders"])
+        group = report["groups"][0]
+        self.assertEqual(group["entries"], [writer])
+        self.assertEqual(group["minimumCoefficient"], 1 / 4)
+        self.assertEqual(group["maximumCoefficient"], 3 / 4)
+        self.assertEqual(group["exactFittedFraction"], {"numerator": 13, "denominator": 20})
+        self.assertEqual(group["maximumAbsoluteProxyScoreResidual"], 40)
+        self.assertEqual(group["meanAbsoluteProxyScoreResidual"], 30)
+        self.assertEqual(group["maximumRelativeProxyScoreResidual"], 40 / 125)
+        self.assertIsNone(analysis.scalar_coefficient_report([]))
+        with self.assertRaises(ValueError):
+            analysis.scalar_coefficient_report([deck, deck])
+        support = skill("gekisouSupport", 69, 0)
+        reordered = [dict(orders[0], order=order, entries=entries) for order, entries in [
+            ([0, 1, 3, 2, 4], [writer, support]),
+            ([0, 1, 4, 2, 3], [support, writer]),
+        ]]
+        groups = analysis.scalar_coefficient_report([dict(deck, orders=orders + reordered)])["groups"]
+        self.assertEqual(len(groups), 3, "same-holder source order must not collapse into one coefficient key")
+
 
 if __name__ == "__main__":
     unittest.main()

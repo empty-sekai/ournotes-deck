@@ -6,11 +6,11 @@ on:
       scope:
         description: Declared real inputs to generate; no search request is reduced
         type: choice
-        options: [newcomer-combinations, full48-singles]
-        default: newcomer-combinations
+        options: [whole-catalogue, newcomer-combinations, full48-singles]
+        default: whole-catalogue
         required: true
       batch_size:
-        description: Completed entries per resumable native invocation
+        description: Entry batch size for the optional legacy scopes
         type: choice
         options: ['128', '8', '1']
         default: '128'
@@ -23,6 +23,10 @@ on:
       - 'tools/search-harness/src/bin/luck_response*'
       - 'tools/search-harness/src/bin/luck_response/**'
       - 'tools/search-harness/fixtures/full48/**'
+      - 'tools/search-harness/fetch_dataset.py'
+      - 'tools/search-harness/mock_rosters.py'
+      - 'tools/search-harness/Cargo.toml'
+      - 'Cargo.toml'
       - 'crates/**'
       - 'Cargo.lock'
       - 'tools/search-harness/Cargo.lock'
@@ -33,6 +37,10 @@ on:
       - 'tools/search-harness/src/bin/luck_response*'
       - 'tools/search-harness/src/bin/luck_response/**'
       - 'tools/search-harness/fixtures/full48/**'
+      - 'tools/search-harness/fetch_dataset.py'
+      - 'tools/search-harness/mock_rosters.py'
+      - 'tools/search-harness/Cargo.toml'
+      - 'Cargo.toml'
       - 'crates/**'
       - 'Cargo.lock'
       - 'tools/search-harness/Cargo.lock'
@@ -45,7 +53,147 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  generate:
+  prepare:
+    if: github.event_name != 'workflow_dispatch' || inputs.scope == 'whole-catalogue'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check catalogue, incremental storage, sharding and audit contracts
+        run: python3 -m unittest discover -s tools/luck-tables -p 'test_*.py'
+      - name: Build one same-source native generator for all Linux shards
+        run: |
+          cargo build --release --locked --manifest-path tools/search-harness/Cargo.toml --bin luck_response
+          mkdir -p work/shared/bin
+          cp tools/search-harness/target/release/luck_response work/shared/bin/luck_response
+      - name: Pin both complete bdon catalogues exactly once for this run
+        run: |
+          python3 tools/luck-tables/catalogue.py acquire --region all --output work/shared/catalogue
+          for region in tw jp; do
+            python3 tools/luck-tables/catalogue.py anchor "work/shared/catalogue/$region/deck-data.json" \
+              --output "work/shared/catalogue/$region/anchor.json"
+            python3 tools/luck-tables/catalogue.py manifest "work/shared/catalogue/$region/deck-data.json" \
+              "work/shared/catalogue/$region/anchor.json" --region "$region" \
+              --output "work/shared/catalogue/$region/inputs"
+          done
+          python3 tools/luck-tables/aggregate_catalogue.py bundle --inputs work/shared/catalogue \
+            --generator work/shared/bin/luck_response --source . --bundle work/shared/bundle.json
+      - name: Share the pinned inputs and identical generator
+        uses: actions/upload-artifact@v4
+        with:
+          name: luck-catalogue-pinned-inputs-and-generator
+          path: work/shared/
+          if-no-files-found: error
+          retention-days: 30
+
+  catalogue:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        region: [tw, jp]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    env:
+      REGION: ${{ matrix.region }}
+      SHARD: ${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: luck-catalogue-pinned-inputs-and-generator
+          path: work/shared
+      - name: Verify the identical source, binary and every pinned input byte
+        run: |
+          chmod +x work/shared/bin/luck_response
+          python3 tools/luck-tables/aggregate_catalogue.py verify-bundle --inputs work/shared/catalogue \
+            --generator work/shared/bin/luck_response --source . --bundle work/shared/bundle.json
+      - uses: actions/cache/restore@v4
+        id: response-cache
+        with:
+          path: work/result
+          key: luck-programs-v1-${{ runner.os }}-${{ matrix.region }}-of8-${{ matrix.shard }}-${{ hashFiles('work/shared/bundle.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            luck-programs-v1-${{ runner.os }}-${{ matrix.region }}-of8-${{ matrix.shard }}-${{ hashFiles('work/shared/bundle.json') }}-
+            luck-programs-v1-${{ runner.os }}-${{ matrix.region }}-of8-${{ matrix.shard }}-
+      - name: Generate every assigned natural LUCK chart and record all other charts
+        run: |
+          python3 tools/luck-tables/stream_runner.py "work/shared/catalogue/$REGION/inputs/benchmark.json" \
+            --generator work/shared/bin/luck_response --source . --output work/result \
+            --shard-index "$SHARD" --shard-count 8
+      - name: Preserve finished charts even when another chart failed
+        if: always() && steps.response-cache.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: work/result
+          key: luck-programs-v1-${{ runner.os }}-${{ matrix.region }}-of8-${{ matrix.shard }}-${{ hashFiles('work/shared/bundle.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Publish complete and unfinished shard evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luck-catalogue-shard-${{ matrix.region }}-${{ matrix.shard }}
+          path: work/result/
+          if-no-files-found: warn
+          retention-days: 30
+
+  aggregate:
+    needs: [prepare, catalogue]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: luck-catalogue-pinned-inputs-and-generator
+          path: work/shared
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: luck-catalogue-shard-*
+          path: work/shards
+          merge-multiple: false
+      - name: Audit both complete master chart sets and all native program blobs
+        run: |
+          python3 tools/luck-tables/aggregate_catalogue.py aggregate --inputs work/shared/catalogue \
+            --results work/shards --bundle work/shared/bundle.json --source . \
+            --shard-count 8 --output work/aggregate
+      - name: Publish the exact full-catalogue outcome
+        if: always()
+        run: |
+          if [[ -f work/aggregate/summary.md ]]; then
+            cat work/aggregate/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: luck-catalogue-full-audit
+          path: work/aggregate/
+          if-no-files-found: warn
+          retention-days: 30
+
+  legacy:
+    if: github.event_name == 'workflow_dispatch' && inputs.scope != 'whole-catalogue'
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:

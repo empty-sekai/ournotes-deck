@@ -172,9 +172,14 @@ pub struct CompiledLuckTableProgram {
 impl CompiledLuckTableProgram {
     pub fn identity(&self) -> Option<LuckTableProgramIdentity> {
         Some(LuckTableProgramIdentity {
-            source_version: format!("ournotes-luck-compiled/1/{}", crate::SOURCE_SHA256),
+            source_version: format!("ournotes-luck-compiled/2/{}", crate::SOURCE_SHA256),
             batches: self.batches.iter().map(full::CompiledLuckProgram::identity_words).collect::<Option<_>>()?,
         })
+    }
+
+    /// The observer mechanism is explicit and also included in each complete batch identity.
+    pub fn observer_contract(&self) -> &'static str {
+        self.batches[0].observer_contract()
     }
 
     /// No native rerecording: each immutable original batch is propagated once, with the original
@@ -241,6 +246,67 @@ pub fn luck_table_program(
         batches.push(program);
     }
     Ok(CompiledLuckTableProgram { batches })
+}
+
+/// Compile all five occupied holders without replacing any writer with a score probe. Separate native
+/// probe construction validates every score shape against the supported direct 7021 observer contract;
+/// only the original writer deck is recorded and propagated. Other holder counts use `luck_table_program`.
+/// This changes observation only, not the independent nominal lottery law or the game's score pipeline.
+#[allow(clippy::too_many_arguments)]
+pub fn luck_table_program_virtual(
+    master: &Master,
+    skills: &LuckSkills,
+    neutral: Option<(i64, i64)>,
+    notes: &[LiveNote],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    entries: &[(LuckSkillKey, usize)],
+) -> Result<CompiledLuckTableProgram, Error> {
+    let (deck, validation) = virtual_probe_inputs(master, skills, neutral, entries)?;
+    let program = full::compile_luck_program_virtual(
+        master,
+        skills,
+        notes,
+        params,
+        setup,
+        play,
+        delta_times,
+        &deck,
+        validation.iter().map(|batch| (batch.deck.as_slice(), batch.probes.as_slice())),
+    )?;
+    Ok(CompiledLuckTableProgram { batches: vec![program] })
+}
+
+/// Validate the explicit five-holder mode's source/formation/capacity construction. Like
+/// `luck_table_validate`, this is structural validation only: the context-dependent native compiler
+/// still must establish the direct-observer contract before any compiled program is returned.
+pub fn luck_table_validate_virtual(
+    master: &Master,
+    skills: &LuckSkills,
+    neutral: Option<(i64, i64)>,
+    entries: &[(LuckSkillKey, usize)],
+) -> Result<(), Error> {
+    virtual_probe_inputs(master, skills, neutral, entries).map(|_| ())
+}
+
+fn virtual_probe_inputs(
+    master: &Master,
+    skills: &LuckSkills,
+    neutral: Option<(i64, i64)>,
+    entries: &[(LuckSkillKey, usize)],
+) -> Result<(Vec<Performer>, Vec<LuckProbeBatch>), Error> {
+    let mut held: [Vec<LuckSkillKey>; DECK] = Default::default();
+    for &(key, position) in entries {
+        held.get_mut(position).ok_or_else(|| Error::Input(format!("a LUCK DP position is below {DECK}")))?.push(key);
+    }
+    if held.iter().any(Vec::is_empty) {
+        return Err(Error::Input("LUCK virtual observation requires all five occupied holders".into()));
+    }
+    let deck = held.iter().map(|keys| holder(master, keys, neutral)).collect::<Result<Vec<_>, _>>()?;
+    let validation = luck_probe_batches(master, skills, neutral, &[])?;
+    Ok((deck, validation))
 }
 
 /// Validate holder capacity, formation compatibility and probe coverage using the same construction

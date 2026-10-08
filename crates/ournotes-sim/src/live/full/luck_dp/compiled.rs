@@ -9,6 +9,7 @@ use std::mem::size_of;
 /// compiled by the same source version. This is not a whole-score or finite-seed expectation proof.
 pub struct CompiledLuckProgram {
     transcript: Transcript<ProbabilityMass>,
+    virtual_observer: bool,
 }
 
 impl std::fmt::Debug for CompiledLuckProgram {
@@ -26,7 +27,11 @@ impl CompiledLuckProgram {
     /// templates, lottery tables, action probabilities, binary32 factors and shape-index probe flags.
     /// Hashes may index these words, but only complete equality establishes a matching program.
     pub fn identity_words(&self) -> Option<Vec<u64>> {
-        self.transcript.key()
+        let mut words = self.transcript.key()?;
+        // The observer contract is part of the identity even when the controller transcript and
+        // shape coverage happen to be identical. External words still cannot construct a program.
+        words.extend([0x6f62736572766531, u64::from(self.virtual_observer)]);
+        Some(words)
     }
 
     /// Propagate this original recording directly, without another model construction or frame replay.
@@ -43,7 +48,12 @@ impl CompiledLuckProgram {
         })
     }
 
-    /// Shape-index flags validated against the designated original holders at compilation.
+    /// Describes how the direct 7021 observer's shape coverage was established.
+    pub fn observer_contract(&self) -> &'static str {
+        if self.virtual_observer { "validated-virtual-direct-7021/1" } else { "native-held-direct-7021/1" }
+    }
+
+    /// Shape-index coverage validated against actual holders or the explicit virtual observer contract.
     pub fn probes(&self) -> &[bool] {
         &self.transcript.probes
     }
@@ -104,5 +114,85 @@ pub fn compile_luck_program(
     if let Some(error) = transcript.failure.take() {
         return Err(error);
     }
-    Ok(CompiledLuckProgram { transcript })
+    Ok(CompiledLuckProgram { transcript, virtual_observer: false })
+}
+
+/// Constructible only after every shape has passed the original native probe compiler. This
+/// capability stays local to this call: it cannot be reused with another master or probe catalogue.
+struct ValidatedVirtualProbes(Vec<bool>);
+
+/// Explicit virtual observation leaves the actual writer deck and native recording unchanged. The
+/// separate validation decks establish that every observed score shape is exactly an untimed,
+/// sustained, fixed-true direct 7021 reader, with no controller writer or LIFE interpreter. The DP's
+/// existing score/score_before bits already implement that reader at the native skill boundary;
+/// neither actions nor note lotteries later in that frame alter its observed class.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compile_luck_program_virtual<'a>(
+    master: &Master,
+    skills: &LuckSkills,
+    notes: &[LiveNote],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    deck: &[Performer],
+    validation: impl IntoIterator<Item = (&'a [Performer], &'a [Option<usize>])>,
+) -> Result<CompiledLuckProgram, Error> {
+    let mut covered = vec![false; skills.shapes.len()];
+    for (probe_deck, designated) in validation {
+        let prepared = prepare_recording::<ProbabilityMass>(
+            master,
+            skills,
+            notes,
+            &[],
+            params,
+            setup,
+            play,
+            delta_times,
+            probe_deck,
+            Some(designated),
+            None,
+            false,
+        )?;
+        if prepared.life.is_some() || prepared.model.rows.iter().any(|row| (11000..=11005).contains(&row.effect_type)) {
+            return Err(Error::Unsupported("LUCK virtual observer validation contains a controller dependency".into()));
+        }
+        for (shape, (&held, &position)) in prepared.plan.probes.iter().zip(designated).enumerate() {
+            if held != position.is_some() {
+                return Err(Error::Input("LUCK virtual observer did not retain its designated probe".into()));
+            }
+            let Some(member) = position else { continue };
+            if covered[shape] {
+                return Err(Error::Input("LUCK virtual observer has duplicate shape coverage".into()));
+            }
+            // `may_hold` is deliberately permissive for general Checker trees. Require actual fixed
+            // true here, including nested Not/And/Or, rather than interpreting possible as certain.
+            let enabled = prepared.model.cond.iter().filter(|condition| condition.member == member).any(|condition| {
+                let source = match condition.skill_type {
+                    SKILL_TYPE_GEKISOU => LuckSource::Gekisou,
+                    SKILL_TYPE_GEKISOU_SUPPORT => LuckSource::GekisouSupport,
+                    _ => return false,
+                };
+                condition.updater.effects().iter().any(|effect| {
+                    skills.rows.get(&(source, prepared.model.rows[effect.row].id)) == Some(&shape)
+                        && effect.condition.as_ref().is_none_or(|checker| fixed_condition(checker) == Some(true))
+                })
+            });
+            if !enabled {
+                return Err(Error::Unsupported("LUCK virtual observer has no fixed-true score probe".into()));
+            }
+            covered[shape] = true;
+        }
+    }
+    if covered.iter().any(|held| !held) {
+        return Err(Error::Input("LUCK virtual observer is missing a score shape".into()));
+    }
+    let validated = ValidatedVirtualProbes(covered);
+    // Record all original writers with the original admission and error path. No actual performer is
+    // displaced, no score row is inserted into this recording, and no controller action is bypassed.
+    let mut program =
+        compile_luck_program(master, skills, notes, &[], params, setup, play, delta_times, deck, None, None, false)?;
+    program.transcript.probes = validated.0;
+    program.virtual_observer = true;
+    Ok(program)
 }

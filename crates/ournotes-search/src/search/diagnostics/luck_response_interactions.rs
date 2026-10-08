@@ -5,7 +5,7 @@
 use super::luck_response::ResponseJob;
 use super::{Error, LuckInput};
 use ournotes_sim::chartstats::luck_response::{Response, ResponseCurve, response_fingerprint};
-use ournotes_sim::chartstats::{LuckTableProgramIdentity, luck_table_program};
+use ournotes_sim::chartstats::{LuckTableProgramIdentity, luck_table_program, luck_table_program_virtual};
 use ournotes_sim::live::full::LuckSkills;
 use ournotes_sim::master::Master;
 use serde_json::{Value, json};
@@ -144,7 +144,12 @@ pub(super) fn identify_interactions(
                 return Err(Error::Input("response entry is outside the LUCK chain catalogue".into()));
             }
             let before = Instant::now();
-            let program = luck_table_program(
+            let compile = if (0..5).all(|position| job.entries.iter().any(|(_, held)| *held == position)) {
+                luck_table_program_virtual
+            } else {
+                luck_table_program
+            };
+            let program = compile(
                 master,
                 skills,
                 neutral,
@@ -159,6 +164,7 @@ pub(super) fn identify_interactions(
             compile_ms += elapsed;
             row["compileMs"] = json!(elapsed);
             let program = program?;
+            row["observerContract"] = json!(program.observer_contract());
             compiled += 1;
             let bytes =
                 program.allocated_bytes().ok_or_else(|| Error::Capacity("compiled program byte count".into()))?;
@@ -191,6 +197,7 @@ pub(super) fn identify_interactions(
             let index = programs.len();
             let mut report = json!({"programIndex":index,"fingerprint":fingerprint,
                 "sourceVersion":ournotes_sim::SOURCE_SHA256,"identityVersion":identity.source_version,
+                "observerContract":program.observer_contract(),
                 "representativeJobIndex":ordinal,
                 "identityBatchCount":identity.batches.len(),
                 "identityWordCount":identity.batches.iter().map(Vec::len).sum::<usize>(),

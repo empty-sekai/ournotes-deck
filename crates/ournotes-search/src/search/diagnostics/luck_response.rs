@@ -4,7 +4,9 @@ use ournotes_sim::chartstats::luck_response::{
     EntryKey, Response, ResponseArchive, ResponseContext, ResponseCurve, ResponseEntry, ResponseTable,
     response_fingerprint,
 };
-use ournotes_sim::chartstats::{luck_neutral, luck_table_dp_certified_cached, luck_table_steps, luck_table_validate};
+use ournotes_sim::chartstats::{
+    luck_neutral, luck_table_dp_certified_cached, luck_table_steps, luck_table_validate, luck_table_validate_virtual,
+};
 use ournotes_sim::live::full::{
     LuckDpCache, LuckSkillKey, LuckSkills, LuckSource, Performer, luck_rush_dp_certified_with_ranking,
     luck_rush_dp_with_ranking, luck_skill_key, luck_skills,
@@ -638,7 +640,14 @@ pub fn predict_luck_response(
         let shared = fingerprint(&dependencies(master, &input, &skills, neutral));
         let mut entries = BTreeMap::new();
         for key in archive.keys() {
-            validate_entries(master, &skills, neutral, key)?;
+            if (0..5).all(|position| key.iter().any(|(_, held)| *held == position)) {
+                if key.iter().any(|(source, _)| !skills.chain.contains(source)) {
+                    return Err(Error::Input("response entry is outside the LUCK chain catalogue".into()));
+                }
+                luck_table_validate_virtual(master, &skills, neutral, key)?;
+            } else {
+                validate_entries(master, &skills, neutral, key)?;
+            }
             entries.insert(
                 serde_json::to_string(key).expect("entry JSON"),
                 fingerprint(&source_dependencies(master, key)),

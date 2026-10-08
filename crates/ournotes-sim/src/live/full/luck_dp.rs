@@ -17,6 +17,7 @@ use crate::live::certified::{F64Interval, ProbabilityMass};
 use crate::num::{FxHashMap, floor_to_i32};
 
 mod compiled;
+pub(crate) use compiled::compile_luck_program_virtual;
 pub use compiled::{CompiledLuckProgram, compile_luck_program};
 mod family;
 pub(super) mod fused;
@@ -57,7 +58,8 @@ pub struct LuckDpCertifiedResult {
     /// Joint probabilities in the order [neither, score only, Rush only, Rush and score]. Every bucket is
     /// accumulated directly from mutually exclusive DP states, never by subtracting rounded marginals.
     pub steps: Vec<(i32, [ProbabilityMass; 4])>,
-    /// All supported score probes use the same 7021 predicate; this identifies the shapes with a holder.
+    /// All supported score probes use the same 7021 predicate. Coverage is established by an actual
+    /// holder, or by the explicit compiled virtual-observer API after validating that shape natively.
     pub probes: Vec<bool>,
     /// Optional additive indicators, one per range when requested; empty for score-only curves.
     pub range_moments: Vec<LuckRangeMoments>,

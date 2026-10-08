@@ -310,5 +310,47 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(result["coverage"]["luckCases"], ["other-difficulty"])
 
 
+
+
+class WholeCatalogueTests(unittest.TestCase):
+    def test_declared_catalogue_uses_all_native_levels_and_refuses_omission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data, snapshot, request = tiny_inputs()
+            pipeline.write(root / 'data.json', data)
+            digest = pipeline.sha((root / 'data.json').read_bytes())
+            snapshot['datasetId'] = digest
+            pipeline.write(root / 'snapshot.json', snapshot)
+            pipeline.write(root / 'request.json', request)
+            generator = root / 'generator'; generator.write_bytes(b'generator')
+            key2 = {**KEY, 'level': 2}
+            keys = [KEY, key2]
+            manifest = {'format': 'ournotes-deck.search-benchmark/1', 'datasetId': digest,
+                        'cases': [{'name': 'all', 'data': 'data.json', 'snapshot': 'snapshot.json', 'request': 'request.json'}],
+                        'luckCatalogue': {'format': 'ournotes-deck.luck-catalogue/1',
+                                          'selection': 'all-master-source-levels', 'keys': keys}}
+            pipeline.write(root / 'benchmark.json', manifest)
+            calls = []
+
+            def native(_generator, _inputs, spec, _work):
+                calls.append(spec)
+                return {'capabilities': {'chain': keys}, 'sharedFingerprint': 'same',
+                        'dependencyDescriptor': {'algorithm': {'simSourceSha256': 'native-source'}},
+                        'jobs': [{**job, 'status': 'planned', 'dependencyDescriptor': {'key': job['entries']}}
+                                 for job in spec['jobs']]}
+
+            with patch.object(pipeline, 'source_identity', return_value={'digest': 'a', 'simSourceSha256': 'native-source'}):
+                plan = pipeline.build_plan(root / 'benchmark.json', generator, root, root / 'plan.json',
+                                           corpus_mode='declared-manifest', call=native)
+                self.assertEqual(plan['coverage']['jobs'], 11)
+                self.assertTrue(plan['coverage']['nativeCatalogueValidated'])
+                self.assertTrue(any(job['entries'] == [[key2, 4]] for job in calls[0]['jobs']))
+                manifest['luckCatalogue']['keys'] = [KEY]
+                pipeline.write(root / 'benchmark.json', manifest)
+                with self.assertRaisesRegex(ValueError, 'full catalogue differs'):
+                    pipeline.build_plan(root / 'benchmark.json', generator, root, root / 'bad.json',
+                                        corpus_mode='declared-manifest', call=native)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -401,6 +401,17 @@ def build_plan(benchmark, generator, source, output, combinations=None, cases="a
             raise ValueError("the complete original full48 manifest is required before selection")
     elif corpus_mode != "declared-manifest":
         raise ValueError("unknown corpus mode")
+    catalogue = manifest.get("luckCatalogue")
+    if catalogue is not None:
+        if (corpus_mode != "declared-manifest" or not isinstance(catalogue, dict)
+                or catalogue.get("format") != "ournotes-deck.luck-catalogue/1"
+                or catalogue.get("selection") != "all-master-source-levels"
+                or not isinstance(catalogue.get("keys"), list)):
+            raise ValueError("whole master catalogue requires an explicit declared-manifest")
+        encoded_keys = [canonical(key) for key in catalogue["keys"]]
+        if len(encoded_keys) != len(set(encoded_keys)):
+            raise ValueError("declared whole catalogue contains duplicate keys")
+    validated_catalogues = set()
     selected = set(names if cases == "all" else cases.split(","))
     if not selected or not selected <= set(names):
         raise ValueError("unknown or empty case selection")
@@ -429,12 +440,18 @@ def build_plan(benchmark, generator, source, output, combinations=None, cases="a
         if not luck_case(data, request):
             controls.append(case["name"])
             continue
-        keys = selected_keys(data, snapshot)
+        keys = catalogue["keys"] if catalogue is not None else selected_keys(data, snapshot)
         jobs = base_jobs(keys) + extra_jobs(extra, case["name"], keys)
         jobs = list({canonical(job["entries"]): job for job in jobs}.values())
         spec = {"mode": "plan", "jobs": jobs, "mcRuns": mc_runs}
         report = call(generator, inputs, spec, Path(output).parent / "planning")
         rows = job_results(report, jobs)
+        if catalogue is not None and hashes["data"] not in validated_catalogues:
+            native_keys = report.get("capabilities", {}).get("chain")
+            if (not isinstance(native_keys, list) or len(native_keys) != len(keys)
+                    or {canonical(key) for key in native_keys} != {canonical(key) for key in keys}):
+                raise ValueError("declared full catalogue differs from complete native capabilities.chain")
+            validated_catalogues.add(hashes["data"])
         dependencies = report["dependencyDescriptor"]
         if dependencies["algorithm"]["simSourceSha256"] != algorithm["simSourceSha256"]:
             raise ValueError("native binary embeds a different simulation source identity")
@@ -465,7 +482,11 @@ def build_plan(benchmark, generator, source, output, combinations=None, cases="a
               "provenance": {"manifestSha256": sha(benchmark.read_bytes()), "manifestCases": names,
                              "combinationSpecSha256": sha(Path(combinations).read_bytes()) if combinations else None},
               "coverage": {"requestedCases": sorted(selected), "luckCases": included, "nonLuckControls": controls,
-                           "meaning": "base and declared single-skill position kernels plus explicit combinations; not full-team combination coverage",
+                           "meaning": ("base and all master source-level/formation single-skill position kernels plus explicit combinations"
+                                       if catalogue is not None else "base and declared single-skill position kernels plus explicit combinations")
+                                      + "; not full-team combination coverage",
+                           "fullMasterCatalogue": catalogue is not None,
+                           "nativeCatalogueValidated": catalogue is not None and bool(validated_catalogues),
                            "searchDomainChanged": False, "performanceOrders": 120},
               "contexts": [{**context, "jobs": sorted(context["jobs"].values(), key=lambda job: job["id"])}
                            for context in contexts.values()]}
