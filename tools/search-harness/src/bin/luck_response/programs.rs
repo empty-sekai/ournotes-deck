@@ -64,7 +64,10 @@ pub(super) fn pack(args: &[String]) -> Result<()> {
     }
     for job in jobs {
         complete &= job["status"] == "success"
-            && job["programIndex"].as_u64().and_then(|i| usize::try_from(i).ok()).is_some_and(|i| i < rows.len());
+            && job["programIndex"]
+                .as_u64()
+                .and_then(|i| usize::try_from(i).ok())
+                .is_some_and(|i| rows.get(i).is_some_and(|row| job["programFingerprint"] == row["fingerprint"]));
     }
     let index = json!({"format":INDEX_FORMAT,"mode":quantization,"sourceVersion":source,
         "complete":complete,"inputReportSha256":response_fingerprint(&raw),
@@ -123,6 +126,9 @@ pub(super) fn materialize(args: &[String]) -> Result<()> {
     if identification["format"] != REPORT_FORMAT || index["format"] != INDEX_FORMAT {
         return Err("expected native identification and program index".into());
     }
+    if identification["identificationComplete"] != true {
+        return Err("native identification is incomplete".into());
+    }
     let source = digest(&identification, "sourceVersion")?;
     if digest(&index, "sourceVersion")? != source {
         return Err("program index uses a different native source version".into());
@@ -146,8 +152,11 @@ pub(super) fn materialize(args: &[String]) -> Result<()> {
         let number = job["programIndex"].as_u64().and_then(|n| usize::try_from(n).ok()).ok_or("unidentified job")?;
         let program = programs.get(number).ok_or("invalid program index")?;
         let fingerprint = digest(program, "fingerprint")?;
-        if digest(program, "sourceVersion")? != source {
-            return Err("identified program source differs".into());
+        if digest(program, "sourceVersion")? != source
+            || job["programFingerprint"] != fingerprint
+            || (job["status"] != "identified" && job["status"] != "success")
+        {
+            return Err("identified program source, mapping or status differs".into());
         }
         let key: EntryKey = serde_json::from_value(job["entries"].clone())?;
         let key_text = serde_json::to_string(&key)?;

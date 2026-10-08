@@ -18,6 +18,7 @@ const FINGERPRINT_DOMAIN: &[u8] = b"ournotes-luck-controller-program\0v1\0";
 
 /// Stable address of a complete native program. Lengths separate the source, batches and words;
 /// the exact-word comparison below remains authoritative when assigning aliases.
+#[cfg(test)]
 pub(super) fn program_fingerprint(identity: &LuckTableProgramIdentity) -> Option<String> {
     fingerprint_with_workspace(identity).map(|(fingerprint, _)| fingerprint)
 }
