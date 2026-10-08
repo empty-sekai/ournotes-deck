@@ -46,6 +46,10 @@ impl FamilyPruneCutoff {
 #[path = "family_cache_tests.rs"]
 mod cache_tests;
 
+#[cfg(test)]
+#[path = "family_leaf_tests.rs"]
+mod leaf_tests;
+
 #[derive(Clone, Debug, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FamilyRefusals {
@@ -93,9 +97,11 @@ pub(crate) struct FamilyNodeStats {
     /// A completed subfamily cap made this optional maximum unable to prune at the current cutoff.
     /// The remaining subfamilies were not prepared and no partial whole-node upper was published.
     pub(crate) non_pruning_exits: u64,
-    /// Singleton physical bindings checked against already retained complete profile coefficients.
+    /// Singleton physical bindings checked for a complete profile cap, including cold leaf requests.
     pub(crate) leaf_checks: u64,
     pub(crate) bounded_leaves: u64,
+    /// Leaf cache misses entering family admission/required-profile preparation, including remembered refusals.
+    pub(crate) leaf_preparation_attempts: u64,
     pub(crate) family_lookups: u64,
     pub(crate) family_hits: u64,
     pub(crate) refused_hits: u64,
@@ -682,6 +688,84 @@ impl<'a> FamilyNodeCache<'a> {
         match cap {
             Some(cap) => {
                 self.touch_family(index);
+                self.stats.record_bound(&cap);
+                self.stats.bounded_leaves += 1;
+                FamilyNodeOutcome::Upper(cap.upper)
+            }
+            None => FamilyNodeOutcome::Unavailable,
+        }
+    }
+
+    /// Bound this exact legal leaf, preparing only its required complete writer profile on a cache miss.
+    /// Other profiles remain unknown. All original physical-pair admission and the existing family work and
+    /// cache allowances still apply; failure publishes no partial cap and leaves the ordinary scorer available.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn leaf_upper(
+        &mut self,
+        pool: &Pool<'_>,
+        domain: &CandidateDomain,
+        bounds: &JointBounds,
+        physical: &PhysicalDeck,
+        orders: &[([usize; 5], u128)],
+        curves: &mut LuckDpCache,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> FamilyNodeOutcome {
+        // This performs the single leaf-check accounting and retains the preparation-free hit path.
+        let cached = self.cached_leaf_upper(pool, domain, bounds, physical, orders, cancelled);
+        if cached != FamilyNodeOutcome::Unavailable {
+            return cached;
+        }
+        if !self.enabled()
+            || orders != crate::search::uniform::MEAN_ORDERS.as_slice()
+            || domain.snaps().len() > 4096
+            || domain.check_fixed(pool, physical).is_err()
+        {
+            return FamilyNodeOutcome::Unavailable;
+        }
+        let Some(scope) = bounds.family_reward_template() else { return FamilyNodeOutcome::Unavailable };
+        if !self.set_scope(scope) {
+            return FamilyNodeOutcome::Unavailable;
+        }
+        let mut members = physical.members;
+        let mut others = [members[0], members[1], members[3], members[4]];
+        others.sort_unstable();
+        for (slot, member) in [0, 1, 3, 4].into_iter().zip(others) {
+            members[slot] = member;
+        }
+        let choice = match physical.snaps[SLOTS[4]] {
+            None => 0,
+            Some(snap) => match domain.snaps().iter().position(|&value| value == snap) {
+                Some(index) => index + 1,
+                None => return FamilyNodeOutcome::Unavailable,
+            },
+        };
+        self.stats.leaf_preparation_attempts += 1;
+        let mut state = match self.family(pool, domain, members, cancelled) {
+            Ok(Some(state)) => state,
+            Ok(None) => return FamilyNodeOutcome::Unavailable,
+            Err(()) => {
+                self.stats.stopped += 1;
+                return FamilyNodeOutcome::Stopped;
+            }
+        };
+        let required = bounds.required_family_profiles(domain, physical, &state.table, &[choice]);
+        let result = match required {
+            Some(required) => self.complete_required(&mut state, &required, curves, cancelled),
+            None => Ok(false),
+        };
+        let cap = if matches!(result, Ok(true)) {
+            bounds.family_profiles_upper_measured(domain, physical, &state.table, &[choice])
+        } else {
+            None
+        };
+        // Keep completed evidence, refusals and all reservations before reporting any interrupted attempt.
+        self.remember(members, Some(state));
+        if result.is_err() || cancelled() {
+            self.stats.stopped += 1;
+            return FamilyNodeOutcome::Stopped;
+        }
+        match cap {
+            Some(cap) => {
                 self.stats.record_bound(&cap);
                 self.stats.bounded_leaves += 1;
                 FamilyNodeOutcome::Upper(cap.upper)

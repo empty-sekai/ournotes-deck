@@ -1701,7 +1701,10 @@ fn joint_rec(
         }
         if depth == 5 && e.certified.is_some() && matches!(e.metric, Metric::Score) && e.family.enabled() {
             let mut family = std::mem::take(&mut e.family);
-            let result = family.cached_leaf_upper(e.pool, domain, bounds, p, orders, &mut || e.expired());
+            let mut curves = std::mem::take(&mut e.certified.as_mut().expect("certified family leaf").luck_curves);
+            let result = family.leaf_upper(e.pool, domain, bounds, p, orders, &mut curves, &mut || e.expired());
+            e.tel.caches.luck_curves.record(curves.stats());
+            e.certified.as_mut().expect("certified family leaf").luck_curves = curves;
             e.family = family;
             e.tel.joint.luck_family = e.family.stats().clone();
             match result {
