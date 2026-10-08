@@ -1,0 +1,1068 @@
+{
+  "format": "ournotes-deck.luck-response-interaction-audit/1",
+  "source": {
+    "nativeSourceSha256": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+    "publishedNativeSourceCommit": "de589e3a03ab546add92f58740a71102cf2b9fc9",
+    "binarySha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61",
+    "localCommitMeaning": "Equivalent native simulator source to the published full-catalogue run; a subsequent iterator-only diagnostic compilation correction does not alter the native simulator source.",
+    "localCommit": "a80ac2a"
+  },
+  "nativeExpectationProven": false,
+  "rankingProven": false,
+  "usesMonteCarlo": false,
+  "mixedMasterKernels": {
+    "binarySha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61",
+    "sourceCommit": "a80ac2a",
+    "runs": [
+      {
+        "scope": "jp-easy",
+        "name": "mixed-smoke",
+        "exit": 0,
+        "wallSeconds": 0.5358608960013953,
+        "complete": true,
+        "stats": {
+          "compileMs": 151.36843200000004,
+          "compiledJobs": 30,
+          "compiledProgramPeakBytes": 117931,
+          "distinctSourceKeys": 30,
+          "elapsedMs": 464.026877,
+          "exactProgramAliases": 20,
+          "fingerprintWorkspacePeakBytes": 80877,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 10,
+          "propagationMs": 299.438711,
+          "retainedIdentityBytes": 882120,
+          "sourceJobs": 30,
+          "temporaryIdentityPeakBytes": 113012,
+          "uniqueRetainedPrograms": 10
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 2630794,
+        "statuses": {
+          "success": 30
+        },
+        "errors": []
+      },
+      {
+        "scope": "jp-easy",
+        "name": "full-catalogue-triples",
+        "exit": 0,
+        "wallSeconds": 2.833158094996179,
+        "complete": true,
+        "stats": {
+          "compileMs": 792.9668699999995,
+          "compiledJobs": 241,
+          "compiledProgramPeakBytes": 101547,
+          "distinctSourceKeys": 241,
+          "elapsedMs": 2713.997949,
+          "exactProgramAliases": 191,
+          "fingerprintWorkspacePeakBytes": 71181,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 50,
+          "propagationMs": 1841.0801819999995,
+          "retainedIdentityBytes": 3971480,
+          "sourceJobs": 241,
+          "temporaryIdentityPeakBytes": 93620,
+          "uniqueRetainedPrograms": 50
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 10437424,
+        "statuses": {
+          "success": 241
+        },
+        "errors": []
+      },
+      {
+        "scope": "jp-easy",
+        "name": "four-kind-position-permutations",
+        "exit": 0,
+        "wallSeconds": 0.7844519029968069,
+        "complete": true,
+        "stats": {
+          "compileMs": 689.310464,
+          "compiledJobs": 120,
+          "compiledProgramPeakBytes": 85675,
+          "distinctSourceKeys": 120,
+          "elapsedMs": 723.414336,
+          "exactProgramAliases": 119,
+          "fingerprintWorkspacePeakBytes": 61677,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 1,
+          "propagationMs": 24.271908,
+          "retainedIdentityBytes": 84228,
+          "sourceJobs": 120,
+          "temporaryIdentityPeakBytes": 74612,
+          "uniqueRetainedPrograms": 1
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 1043735,
+        "statuses": {
+          "success": 120
+        },
+        "errors": []
+      },
+      {
+        "scope": "jp-easy",
+        "name": "five-holder-real",
+        "exit": 0,
+        "wallSeconds": 0.9586708019996877,
+        "complete": true,
+        "stats": {
+          "compileMs": 699.8081519999998,
+          "compiledJobs": 122,
+          "compiledProgramPeakBytes": 101540,
+          "distinctSourceKeys": 122,
+          "elapsedMs": 891.337752,
+          "exactProgramAliases": 118,
+          "fingerprintWorkspacePeakBytes": 71373,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 4,
+          "propagationMs": 176.303428,
+          "retainedIdentityBytes": 351280,
+          "sourceJobs": 122,
+          "temporaryIdentityPeakBytes": 94004,
+          "uniqueRetainedPrograms": 4
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 1643201,
+        "statuses": {
+          "success": 122
+        },
+        "errors": []
+      },
+      {
+        "scope": "jp-easy",
+        "name": "start-minimum-cross-multiplicity",
+        "exit": 0,
+        "wallSeconds": 0.11674439699709183,
+        "complete": true,
+        "stats": {
+          "compileMs": 20.188297000000002,
+          "compiledJobs": 8,
+          "compiledProgramPeakBytes": 85675,
+          "distinctSourceKeys": 8,
+          "elapsedMs": 60.676809999999996,
+          "exactProgramAliases": 4,
+          "fingerprintWorkspacePeakBytes": 61677,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 4,
+          "propagationMs": 35.069274,
+          "retainedIdentityBytes": 298384,
+          "sourceJobs": 8,
+          "temporaryIdentityPeakBytes": 74612,
+          "uniqueRetainedPrograms": 4
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 1445565,
+        "statuses": {
+          "success": 8
+        },
+        "errors": []
+      },
+      {
+        "scope": "short",
+        "name": "mixed-smoke",
+        "exit": 0,
+        "wallSeconds": 1.4641407150047598,
+        "complete": true,
+        "stats": {
+          "compileMs": 145.81807199999997,
+          "compiledJobs": 30,
+          "compiledProgramPeakBytes": 193707,
+          "distinctSourceKeys": 30,
+          "elapsedMs": 1393.39911,
+          "exactProgramAliases": 20,
+          "fingerprintWorkspacePeakBytes": 136045,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 10,
+          "propagationMs": 1233.024801,
+          "retainedIdentityBytes": 1576776,
+          "sourceJobs": 30,
+          "temporaryIdentityPeakBytes": 190132,
+          "uniqueRetainedPrograms": 10
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 2602191,
+        "statuses": {
+          "success": 30
+        },
+        "errors": []
+      },
+      {
+        "scope": "short",
+        "name": "full-catalogue-triples",
+        "exit": 0,
+        "wallSeconds": 5.385330432000046,
+        "complete": true,
+        "stats": {
+          "compileMs": 519.3181830000001,
+          "compiledJobs": 241,
+          "compiledProgramPeakBytes": 177323,
+          "distinctSourceKeys": 241,
+          "elapsedMs": 5233.709916999999,
+          "exactProgramAliases": 191,
+          "fingerprintWorkspacePeakBytes": 123405,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 50,
+          "propagationMs": 4630.2121799999995,
+          "retainedIdentityBytes": 7309336,
+          "sourceJobs": 241,
+          "temporaryIdentityPeakBytes": 164852,
+          "uniqueRetainedPrograms": 50
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 10460947,
+        "statuses": {
+          "success": 241
+        },
+        "errors": []
+      },
+      {
+        "scope": "short",
+        "name": "four-kind-position-permutations",
+        "exit": 0,
+        "wallSeconds": 0.7394392210044316,
+        "complete": true,
+        "stats": {
+          "compileMs": 579.657488,
+          "compiledJobs": 120,
+          "compiledProgramPeakBytes": 161451,
+          "distinctSourceKeys": 120,
+          "elapsedMs": 666.35857,
+          "exactProgramAliases": 119,
+          "fingerprintWorkspacePeakBytes": 110957,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 1,
+          "propagationMs": 70.42900900000001,
+          "retainedIdentityBytes": 149572,
+          "sourceJobs": 120,
+          "temporaryIdentityPeakBytes": 139956,
+          "uniqueRetainedPrograms": 1
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 997926,
+        "statuses": {
+          "success": 120
+        },
+        "errors": []
+      },
+      {
+        "scope": "short",
+        "name": "five-holder-real",
+        "exit": 0,
+        "wallSeconds": 1.2844103259994881,
+        "complete": true,
+        "stats": {
+          "compileMs": 623.1372250000002,
+          "compiledJobs": 122,
+          "compiledProgramPeakBytes": 177316,
+          "distinctSourceKeys": 122,
+          "elapsedMs": 1209.116823,
+          "exactProgramAliases": 118,
+          "fingerprintWorkspacePeakBytes": 123597,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 4,
+          "propagationMs": 562.1071609999999,
+          "retainedIdentityBytes": 624432,
+          "sourceJobs": 122,
+          "temporaryIdentityPeakBytes": 165236,
+          "uniqueRetainedPrograms": 4
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 1598167,
+        "statuses": {
+          "success": 122
+        },
+        "errors": []
+      },
+      {
+        "scope": "short",
+        "name": "start-minimum-cross-multiplicity",
+        "exit": 0,
+        "wallSeconds": 0.3655576899982407,
+        "complete": true,
+        "stats": {
+          "compileMs": 16.117684,
+          "compiledJobs": 8,
+          "compiledProgramPeakBytes": 161451,
+          "distinctSourceKeys": 8,
+          "elapsedMs": 304.10700299999996,
+          "exactProgramAliases": 4,
+          "fingerprintWorkspacePeakBytes": 110957,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 4,
+          "propagationMs": 283.164086,
+          "retainedIdentityBytes": 559760,
+          "sourceJobs": 8,
+          "temporaryIdentityPeakBytes": 139956,
+          "uniqueRetainedPrograms": 4
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 1423486,
+        "statuses": {
+          "success": 8
+        },
+        "errors": []
+      },
+      {
+        "scope": "long",
+        "name": "mixed-smoke",
+        "exit": 0,
+        "wallSeconds": 1.5501308789971517,
+        "complete": true,
+        "stats": {
+          "compileMs": 190.38169,
+          "compiledJobs": 30,
+          "compiledProgramPeakBytes": 193707,
+          "distinctSourceKeys": 30,
+          "elapsedMs": 1465.289058,
+          "exactProgramAliases": 20,
+          "fingerprintWorkspacePeakBytes": 159117,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 10,
+          "propagationMs": 1250.6836170000001,
+          "retainedIdentityBytes": 1878344,
+          "sourceJobs": 30,
+          "temporaryIdentityPeakBytes": 218292,
+          "uniqueRetainedPrograms": 10
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 3336516,
+        "statuses": {
+          "success": 30
+        },
+        "errors": []
+      },
+      {
+        "scope": "long",
+        "name": "full-catalogue-triples",
+        "exit": 0,
+        "wallSeconds": 6.438515052002913,
+        "complete": true,
+        "stats": {
+          "compileMs": 978.8939479999999,
+          "compiledJobs": 241,
+          "compiledProgramPeakBytes": 177323,
+          "distinctSourceKeys": 241,
+          "elapsedMs": 6282.836482000001,
+          "exactProgramAliases": 191,
+          "fingerprintWorkspacePeakBytes": 147245,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 50,
+          "propagationMs": 5200.607439999998,
+          "retainedIdentityBytes": 8852504,
+          "sourceJobs": 241,
+          "temporaryIdentityPeakBytes": 194548,
+          "uniqueRetainedPrograms": 50
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 13002430,
+        "statuses": {
+          "success": 241
+        },
+        "errors": []
+      },
+      {
+        "scope": "long",
+        "name": "four-kind-position-permutations",
+        "exit": 0,
+        "wallSeconds": 0.9553434270055732,
+        "complete": true,
+        "stats": {
+          "compileMs": 802.0633089999998,
+          "compiledJobs": 120,
+          "compiledProgramPeakBytes": 161451,
+          "distinctSourceKeys": 120,
+          "elapsedMs": 885.7252970000001,
+          "exactProgramAliases": 119,
+          "fingerprintWorkspacePeakBytes": 135565,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 1,
+          "propagationMs": 65.01346099999999,
+          "retainedIdentityBytes": 180804,
+          "sourceJobs": 120,
+          "temporaryIdentityPeakBytes": 171188,
+          "uniqueRetainedPrograms": 1
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 1325813,
+        "statuses": {
+          "success": 120
+        },
+        "errors": []
+      },
+      {
+        "scope": "long",
+        "name": "five-holder-real",
+        "exit": 0,
+        "wallSeconds": 1.6742607179985498,
+        "complete": true,
+        "stats": {
+          "compileMs": 972.9747279999999,
+          "compiledJobs": 122,
+          "compiledProgramPeakBytes": 177316,
+          "distinctSourceKeys": 122,
+          "elapsedMs": 1586.320307,
+          "exactProgramAliases": 118,
+          "fingerprintWorkspacePeakBytes": 147437,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 4,
+          "propagationMs": 585.170459,
+          "retainedIdentityBytes": 746288,
+          "sourceJobs": 122,
+          "temporaryIdentityPeakBytes": 194932,
+          "uniqueRetainedPrograms": 4
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 2061206,
+        "statuses": {
+          "success": 122
+        },
+        "errors": []
+      },
+      {
+        "scope": "long",
+        "name": "start-minimum-cross-multiplicity",
+        "exit": 0,
+        "wallSeconds": 0.41613842300284887,
+        "complete": true,
+        "stats": {
+          "compileMs": 28.112600999999994,
+          "compiledJobs": 8,
+          "compiledProgramPeakBytes": 161451,
+          "distinctSourceKeys": 8,
+          "elapsedMs": 327.738924,
+          "exactProgramAliases": 4,
+          "fingerprintWorkspacePeakBytes": 135565,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 4,
+          "propagationMs": 292.70599500000003,
+          "retainedIdentityBytes": 684688,
+          "sourceJobs": 8,
+          "temporaryIdentityPeakBytes": 171188,
+          "uniqueRetainedPrograms": 4
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "reportBytes": 1886949,
+        "statuses": {
+          "success": 8
+        },
+        "errors": []
+      }
+    ]
+  },
+  "programQueries": {
+    "binarySha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61",
+    "runs": [
+      {
+        "name": "jp-easy-cold",
+        "exit": 0,
+        "wallSeconds": 4.585158500995021,
+        "stats": {
+          "compiledQueries": 241,
+          "generatedPrograms": 50,
+          "propagationCalls": 50,
+          "requestedJobs": 241,
+          "reusedPrograms": 0,
+          "storedPrograms": 50,
+          "uniquePrograms": 50
+        },
+        "complete": true,
+        "archive": {
+          "bytes": 151457,
+          "path": "responses.onlrsp",
+          "sha256": "3b2832c7f2fb65138295ed209950feb2df673bd50b3aa13eaef7cda440c59d93"
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "inputsUnchanged": true
+      },
+      {
+        "name": "jp-easy-warm",
+        "exit": 0,
+        "wallSeconds": 2.7340798219956923,
+        "stats": {
+          "compiledQueries": 241,
+          "generatedPrograms": 0,
+          "propagationCalls": 0,
+          "requestedJobs": 241,
+          "reusedPrograms": 50,
+          "storedPrograms": 50,
+          "uniquePrograms": 50
+        },
+        "complete": true,
+        "archive": {
+          "bytes": 151457,
+          "path": "responses.onlrsp",
+          "sha256": "3b2832c7f2fb65138295ed209950feb2df673bd50b3aa13eaef7cda440c59d93"
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "inputsUnchanged": true
+      },
+      {
+        "name": "jp-easy-one-corrupt-blob",
+        "exit": 0,
+        "wallSeconds": 4.2942191129986895,
+        "stats": {
+          "compiledQueries": 241,
+          "generatedPrograms": 1,
+          "propagationCalls": 1,
+          "requestedJobs": 241,
+          "reusedPrograms": 49,
+          "storedPrograms": 50,
+          "uniquePrograms": 50
+        },
+        "complete": true,
+        "repairedBytesEqual": true
+      },
+      {
+        "name": "jp-easy-no-generate",
+        "exit": 1,
+        "wallSeconds": 0.19618101000378374,
+        "stats": {
+          "compiledQueries": 8,
+          "generatedPrograms": 0,
+          "propagationCalls": 0,
+          "requestedJobs": 8,
+          "reusedPrograms": 0,
+          "storedPrograms": 0,
+          "uniquePrograms": 4
+        },
+        "status": "missing",
+        "complete": false
+      },
+      {
+        "name": "short-cold",
+        "exit": 0,
+        "wallSeconds": 8.490732441998261,
+        "stats": {
+          "compiledQueries": 241,
+          "generatedPrograms": 50,
+          "propagationCalls": 50,
+          "requestedJobs": 241,
+          "reusedPrograms": 0,
+          "storedPrograms": 50,
+          "uniquePrograms": 50
+        },
+        "complete": true,
+        "archive": {
+          "bytes": 251973,
+          "path": "responses.onlrsp",
+          "sha256": "65d5f00c51fe0b447075239232e882c4176b67259763245120f451c0f36279b8"
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "inputsUnchanged": true
+      },
+      {
+        "name": "short-warm",
+        "exit": 0,
+        "wallSeconds": 2.0412208839989034,
+        "stats": {
+          "compiledQueries": 241,
+          "generatedPrograms": 0,
+          "propagationCalls": 0,
+          "requestedJobs": 241,
+          "reusedPrograms": 50,
+          "storedPrograms": 50,
+          "uniquePrograms": 50
+        },
+        "complete": true,
+        "archive": {
+          "bytes": 251973,
+          "path": "responses.onlrsp",
+          "sha256": "65d5f00c51fe0b447075239232e882c4176b67259763245120f451c0f36279b8"
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "inputsUnchanged": true
+      },
+      {
+        "name": "long-cold",
+        "exit": 0,
+        "wallSeconds": 8.801193398001487,
+        "stats": {
+          "compiledQueries": 241,
+          "generatedPrograms": 50,
+          "propagationCalls": 50,
+          "requestedJobs": 241,
+          "reusedPrograms": 0,
+          "storedPrograms": 50,
+          "uniquePrograms": 50
+        },
+        "complete": true,
+        "archive": {
+          "bytes": 236565,
+          "path": "responses.onlrsp",
+          "sha256": "ec36af2475b756f208b90c8daafdfe567ec19082b4bb13d49c3d47337537363d"
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "inputsUnchanged": true
+      },
+      {
+        "name": "long-warm",
+        "exit": 0,
+        "wallSeconds": 2.4462221689973376,
+        "stats": {
+          "compiledQueries": 241,
+          "generatedPrograms": 0,
+          "propagationCalls": 0,
+          "requestedJobs": 241,
+          "reusedPrograms": 50,
+          "storedPrograms": 50,
+          "uniquePrograms": 50
+        },
+        "complete": true,
+        "archive": {
+          "bytes": 236565,
+          "path": "responses.onlrsp",
+          "sha256": "ec36af2475b756f208b90c8daafdfe567ec19082b4bb13d49c3d47337537363d"
+        },
+        "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "inputsUnchanged": true
+      },
+      {
+        "name": "short-veteran-native-reference",
+        "exit": 0,
+        "wallSeconds": 28.189887791995716,
+        "reportBytes": 28589820
+      },
+      {
+        "name": "long-veteran-native-reference",
+        "exit": 0,
+        "wallSeconds": 32.3481728570041,
+        "reportBytes": 35882802
+      }
+    ],
+    "nativeExpectationProven": false,
+    "rankingProven": false
+  },
+  "physicalDeckValidation": [
+    {
+      "format": "ournotes-deck.luck-real-deck-validation/1",
+      "complete": true,
+      "status": "matched",
+      "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+      "generatorSha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61",
+      "inputSha256": {
+        "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "decks": "f4768b621b77927d36d24c2f57c4306652fed926cb693ed148c9fd74405b9f41",
+        "request": "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa",
+        "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d"
+      },
+      "inputsUnchanged": true,
+      "decks": [
+        {
+          "members": [
+            1,
+            28,
+            43,
+            49,
+            64
+          ],
+          "name": "pr40-veteran-five-writers-and-luck-snap",
+          "snaps": [
+            42,
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      ],
+      "mode": "u24",
+      "summary": {
+        "jointIntervalsOverlapOrders": 120,
+        "lookupCoversRequiredProbesOrders": 120,
+        "lookupEnclosesReferenceEndpointsOrders": 120,
+        "maximumJointSeparatedGap": 0.0,
+        "maximumWeightedSeparatedGap": 0.0,
+        "orders": 120,
+        "sameJointEndpointsOrders": 0,
+        "sameProbeFlagsOrders": 120,
+        "sameRangeMomentsOrders": 120,
+        "sameTransitionMasksOrders": 120,
+        "scoreProxy": {
+          "cold": {
+            "differentOrders": 0,
+            "exactOrders": 120,
+            "maximumAbsoluteError": 0,
+            "meanAbsoluteError": 0.0,
+            "meanSignedError": 0.0
+          },
+          "warm": {
+            "differentOrders": 0,
+            "exactOrders": 120,
+            "maximumAbsoluteError": 0,
+            "meanAbsoluteError": 0.0,
+            "meanSignedError": 0.0
+          }
+        },
+        "weightedIntervalsOverlapOrders": 120
+      },
+      "queries": {
+        "cold": {
+          "allTeamCombinationsCovered": false,
+          "archive": {
+            "bytes": 14815,
+            "path": "responses.onlrsp",
+            "sha256": "bf515b67e57b90c7f9f420c0758ca395b97712710d9ab84e186a02f2938f2ce3"
+          },
+          "complete": true,
+          "elapsedMs": 1848.2316230001743,
+          "format": "ournotes-deck.luck-program-query/1",
+          "generationStats": {
+            "compileMs": 4.575206,
+            "compiledJobs": 1,
+            "compiledProgramPeakBytes": 161444,
+            "distinctSourceKeys": 1,
+            "elapsedMs": 100.54186,
+            "exactProgramAliases": 0,
+            "fingerprintWorkspacePeakBytes": 110957,
+            "identityBudgetBytes": 33554432,
+            "programBudgetBytes": 33554432,
+            "propagationCalls": 1,
+            "propagationMs": 94.99852,
+            "retainedIdentityBytes": 140052,
+            "sourceJobs": 1,
+            "temporaryIdentityPeakBytes": 139956,
+            "uniqueRetainedPrograms": 1
+          },
+          "generatorSha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61",
+          "identificationStats": {
+            "compileMs": 535.5381329999999,
+            "compiledJobs": 120,
+            "compiledProgramPeakBytes": 161444,
+            "distinctSourceKeys": 120,
+            "elapsedMs": 550.6092580000001,
+            "exactProgramAliases": 119,
+            "fingerprintWorkspacePeakBytes": 110957,
+            "identityBudgetBytes": 33554432,
+            "programBudgetBytes": 33554432,
+            "propagationCalls": 0,
+            "propagationMs": 0.0,
+            "retainedIdentityBytes": 149572,
+            "sourceJobs": 120,
+            "temporaryIdentityPeakBytes": 139956,
+            "uniqueRetainedPrograms": 1
+          },
+          "inputSha256": {
+            "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+            "decks": "f4768b621b77927d36d24c2f57c4306652fed926cb693ed148c9fd74405b9f41",
+            "request": "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa",
+            "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+            "spec": "644ca4a14aed272f6ebe22a49174ecebb62c2f1f6d66b56a580ea7f3f7ae2691"
+          },
+          "inputsUnchanged": true,
+          "missingPrograms": [],
+          "mode": "u24",
+          "nativeExpectationProven": false,
+          "prediction": {
+            "ordersScored": 120,
+            "status": "success"
+          },
+          "rankingProven": false,
+          "scope": "Requested native-compiled joint probabilities; only missing program responses are generated.",
+          "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+          "stats": {
+            "compiledQueries": 120,
+            "generatedPrograms": 1,
+            "propagationCalls": 1,
+            "requestedJobs": 120,
+            "reusedPrograms": 0,
+            "storedPrograms": 1,
+            "uniquePrograms": 1
+          },
+          "status": "success",
+          "usesMonteCarlo": false
+        },
+        "warm": {
+          "allTeamCombinationsCovered": false,
+          "archive": {
+            "bytes": 14815,
+            "path": "responses.onlrsp",
+            "sha256": "bf515b67e57b90c7f9f420c0758ca395b97712710d9ab84e186a02f2938f2ce3"
+          },
+          "complete": true,
+          "elapsedMs": 1573.4923070049263,
+          "format": "ournotes-deck.luck-program-query/1",
+          "generatorSha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61",
+          "identificationStats": {
+            "compileMs": 530.2243950000002,
+            "compiledJobs": 120,
+            "compiledProgramPeakBytes": 161444,
+            "distinctSourceKeys": 120,
+            "elapsedMs": 545.848191,
+            "exactProgramAliases": 119,
+            "fingerprintWorkspacePeakBytes": 110957,
+            "identityBudgetBytes": 33554432,
+            "programBudgetBytes": 33554432,
+            "propagationCalls": 0,
+            "propagationMs": 0.0,
+            "retainedIdentityBytes": 149572,
+            "sourceJobs": 120,
+            "temporaryIdentityPeakBytes": 139956,
+            "uniqueRetainedPrograms": 1
+          },
+          "inputSha256": {
+            "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+            "decks": "f4768b621b77927d36d24c2f57c4306652fed926cb693ed148c9fd74405b9f41",
+            "request": "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa",
+            "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+            "spec": "644ca4a14aed272f6ebe22a49174ecebb62c2f1f6d66b56a580ea7f3f7ae2691"
+          },
+          "inputsUnchanged": true,
+          "missingPrograms": [],
+          "mode": "u24",
+          "nativeExpectationProven": false,
+          "prediction": {
+            "ordersScored": 120,
+            "status": "success"
+          },
+          "rankingProven": false,
+          "scope": "Requested native-compiled joint probabilities; only missing program responses are generated.",
+          "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+          "stats": {
+            "compiledQueries": 120,
+            "generatedPrograms": 0,
+            "propagationCalls": 0,
+            "requestedJobs": 120,
+            "reusedPrograms": 1,
+            "storedPrograms": 1,
+            "uniquePrograms": 1
+          },
+          "status": "success",
+          "usesMonteCarlo": false
+        }
+      },
+      "jointProbabilityAgreement": true,
+      "scoreProxyExactlyMatches": true,
+      "sameColdWarmArchiveBytes": true,
+      "sameColdWarmMaterialization": true,
+      "scope": "Full native nominal joint curves and score-at-mean proxies for the supplied real decks and all 120 original orders; no full-score expectation or ranking certificate.",
+      "usesMonteCarlo": false,
+      "elapsedMs": 4485.243495000759,
+      "case": "short-veteran-validation",
+      "fullValidationSha256": "8c87bf2320174784283c2a9328e285537eeb3b6b39f512d2fd21af9a35d4c5c7"
+    },
+    {
+      "format": "ournotes-deck.luck-real-deck-validation/1",
+      "complete": true,
+      "status": "matched",
+      "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+      "generatorSha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61",
+      "inputSha256": {
+        "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "decks": "f4768b621b77927d36d24c2f57c4306652fed926cb693ed148c9fd74405b9f41",
+        "request": "5716ce5637ded361e9ed5e4cea3361c129849696f524135311d986617d39ea7b",
+        "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d"
+      },
+      "inputsUnchanged": true,
+      "decks": [
+        {
+          "members": [
+            1,
+            28,
+            43,
+            49,
+            64
+          ],
+          "name": "pr40-veteran-five-writers-and-luck-snap",
+          "snaps": [
+            42,
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      ],
+      "mode": "u24",
+      "summary": {
+        "jointIntervalsOverlapOrders": 120,
+        "lookupCoversRequiredProbesOrders": 120,
+        "lookupEnclosesReferenceEndpointsOrders": 120,
+        "maximumJointSeparatedGap": 0.0,
+        "maximumWeightedSeparatedGap": 0.0,
+        "orders": 120,
+        "sameJointEndpointsOrders": 0,
+        "sameProbeFlagsOrders": 120,
+        "sameRangeMomentsOrders": 120,
+        "sameTransitionMasksOrders": 120,
+        "scoreProxy": {
+          "cold": {
+            "differentOrders": 0,
+            "exactOrders": 120,
+            "maximumAbsoluteError": 0,
+            "meanAbsoluteError": 0.0,
+            "meanSignedError": 0.0
+          },
+          "warm": {
+            "differentOrders": 0,
+            "exactOrders": 120,
+            "maximumAbsoluteError": 0,
+            "meanAbsoluteError": 0.0,
+            "meanSignedError": 0.0
+          }
+        },
+        "weightedIntervalsOverlapOrders": 120
+      },
+      "queries": {
+        "cold": {
+          "allTeamCombinationsCovered": false,
+          "archive": {
+            "bytes": 14545,
+            "path": "responses.onlrsp",
+            "sha256": "ecf377a1ca908aa80ee24cabb559735ff270687b7ef11d2a5b807d50753ec5ed"
+          },
+          "complete": true,
+          "elapsedMs": 2598.2349830010207,
+          "format": "ournotes-deck.luck-program-query/1",
+          "generationStats": {
+            "compileMs": 8.293797,
+            "compiledJobs": 1,
+            "compiledProgramPeakBytes": 161444,
+            "distinctSourceKeys": 1,
+            "elapsedMs": 131.78784499999998,
+            "exactProgramAliases": 0,
+            "fingerprintWorkspacePeakBytes": 135565,
+            "identityBudgetBytes": 33554432,
+            "programBudgetBytes": 33554432,
+            "propagationCalls": 1,
+            "propagationMs": 122.22733400000001,
+            "retainedIdentityBytes": 171284,
+            "sourceJobs": 1,
+            "temporaryIdentityPeakBytes": 171188,
+            "uniqueRetainedPrograms": 1
+          },
+          "generatorSha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61",
+          "identificationStats": {
+            "compileMs": 848.5496390000001,
+            "compiledJobs": 120,
+            "compiledProgramPeakBytes": 161444,
+            "distinctSourceKeys": 120,
+            "elapsedMs": 867.505172,
+            "exactProgramAliases": 119,
+            "fingerprintWorkspacePeakBytes": 135565,
+            "identityBudgetBytes": 33554432,
+            "programBudgetBytes": 33554432,
+            "propagationCalls": 0,
+            "propagationMs": 0.0,
+            "retainedIdentityBytes": 180804,
+            "sourceJobs": 120,
+            "temporaryIdentityPeakBytes": 171188,
+            "uniqueRetainedPrograms": 1
+          },
+          "inputSha256": {
+            "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+            "decks": "f4768b621b77927d36d24c2f57c4306652fed926cb693ed148c9fd74405b9f41",
+            "request": "5716ce5637ded361e9ed5e4cea3361c129849696f524135311d986617d39ea7b",
+            "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+            "spec": "644ca4a14aed272f6ebe22a49174ecebb62c2f1f6d66b56a580ea7f3f7ae2691"
+          },
+          "inputsUnchanged": true,
+          "missingPrograms": [],
+          "mode": "u24",
+          "nativeExpectationProven": false,
+          "prediction": {
+            "ordersScored": 120,
+            "status": "success"
+          },
+          "rankingProven": false,
+          "scope": "Requested native-compiled joint probabilities; only missing program responses are generated.",
+          "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+          "stats": {
+            "compiledQueries": 120,
+            "generatedPrograms": 1,
+            "propagationCalls": 1,
+            "requestedJobs": 120,
+            "reusedPrograms": 0,
+            "storedPrograms": 1,
+            "uniquePrograms": 1
+          },
+          "status": "success",
+          "usesMonteCarlo": false
+        },
+        "warm": {
+          "allTeamCombinationsCovered": false,
+          "archive": {
+            "bytes": 14545,
+            "path": "responses.onlrsp",
+            "sha256": "ecf377a1ca908aa80ee24cabb559735ff270687b7ef11d2a5b807d50753ec5ed"
+          },
+          "complete": true,
+          "elapsedMs": 2243.0193059990415,
+          "format": "ournotes-deck.luck-program-query/1",
+          "generatorSha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61",
+          "identificationStats": {
+            "compileMs": 806.9405830000003,
+            "compiledJobs": 120,
+            "compiledProgramPeakBytes": 161444,
+            "distinctSourceKeys": 120,
+            "elapsedMs": 828.44427,
+            "exactProgramAliases": 119,
+            "fingerprintWorkspacePeakBytes": 135565,
+            "identityBudgetBytes": 33554432,
+            "programBudgetBytes": 33554432,
+            "propagationCalls": 0,
+            "propagationMs": 0.0,
+            "retainedIdentityBytes": 180804,
+            "sourceJobs": 120,
+            "temporaryIdentityPeakBytes": 171188,
+            "uniqueRetainedPrograms": 1
+          },
+          "inputSha256": {
+            "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+            "decks": "f4768b621b77927d36d24c2f57c4306652fed926cb693ed148c9fd74405b9f41",
+            "request": "5716ce5637ded361e9ed5e4cea3361c129849696f524135311d986617d39ea7b",
+            "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+            "spec": "644ca4a14aed272f6ebe22a49174ecebb62c2f1f6d66b56a580ea7f3f7ae2691"
+          },
+          "inputsUnchanged": true,
+          "missingPrograms": [],
+          "mode": "u24",
+          "nativeExpectationProven": false,
+          "prediction": {
+            "ordersScored": 120,
+            "status": "success"
+          },
+          "rankingProven": false,
+          "scope": "Requested native-compiled joint probabilities; only missing program responses are generated.",
+          "sourceVersion": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+          "stats": {
+            "compiledQueries": 120,
+            "generatedPrograms": 0,
+            "propagationCalls": 0,
+            "requestedJobs": 120,
+            "reusedPrograms": 1,
+            "storedPrograms": 1,
+            "uniquePrograms": 1
+          },
+          "status": "success",
+          "usesMonteCarlo": false
+        }
+      },
+      "jointProbabilityAgreement": true,
+      "scoreProxyExactlyMatches": true,
+      "sameColdWarmArchiveBytes": true,
+      "sameColdWarmMaterialization": true,
+      "scope": "Full native nominal joint curves and score-at-mean proxies for the supplied real decks and all 120 original orders; no full-score expectation or ranking certificate.",
+      "usesMonteCarlo": false,
+      "elapsedMs": 6079.333296002005,
+      "case": "long-veteran-validation",
+      "fullValidationSha256": "f9b7c5bcf62c684cb4c5482e95068d44f849af51caef101700436f9112d073da"
+    }
+  ]
+}

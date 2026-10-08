@@ -1,0 +1,3133 @@
+{
+  "allSkillCombinationsPrecomputed": false,
+  "build": {
+    "completedChecks": [
+      {
+        "check": "compiled",
+        "exit": 0,
+        "seconds": 64.6151608500004,
+        "sourceCommit": "8c659937ba0822a56b0d2880241edefe1b7575d0",
+        "sourceTree": "90e3be4dab096a4776bc7770bcc73493e6a5e3b8"
+      },
+      {
+        "check": "minimum-math",
+        "exit": 0,
+        "seconds": 0.5150811069979682,
+        "sourceCommit": "8c659937ba0822a56b0d2880241edefe1b7575d0",
+        "sourceTree": "90e3be4dab096a4776bc7770bcc73493e6a5e3b8"
+      },
+      {
+        "check": "canonical-math",
+        "exit": 0,
+        "seconds": 0.04745288700360106,
+        "sourceCommit": "8c659937ba0822a56b0d2880241edefe1b7575d0",
+        "sourceTree": "90e3be4dab096a4776bc7770bcc73493e6a5e3b8"
+      },
+      {
+        "check": "search-diagnostics",
+        "exit": 0,
+        "seconds": 44.647086560995376,
+        "sourceCommit": "753ad7624d1f01584595290a6af0f72bb4c98029",
+        "sourceTree": "8e241c258c8eb853a170cb35c65fe062742a84b7"
+      },
+      {
+        "check": "clippy",
+        "exit": 0,
+        "seconds": 73.34974157899705,
+        "sourceCommit": "753ad7624d1f01584595290a6af0f72bb4c98029",
+        "sourceTree": "8e241c258c8eb853a170cb35c65fe062742a84b7"
+      },
+      {
+        "check": "harness-tests",
+        "exit": 0,
+        "seconds": 37.85172008199879,
+        "sourceCommit": "753ad7624d1f01584595290a6af0f72bb4c98029",
+        "sourceTree": "8e241c258c8eb853a170cb35c65fe062742a84b7"
+      },
+      {
+        "check": "harness-clippy",
+        "exit": 0,
+        "seconds": 14.029189033004513,
+        "sourceCommit": "753ad7624d1f01584595290a6af0f72bb4c98029",
+        "sourceTree": "8e241c258c8eb853a170cb35c65fe062742a84b7"
+      },
+      {
+        "check": "release",
+        "exit": 0,
+        "seconds": 228.40654313299456,
+        "sourceCommit": "753ad7624d1f01584595290a6af0f72bb4c98029",
+        "sourceTree": "8e241c258c8eb853a170cb35c65fe062742a84b7"
+      }
+    ],
+    "generatorSha256": "d01307109fab12c6cc640e2378dec0075f16fa511da066ed319e20fb66dc436f",
+    "pythonTestSuite": {
+      "status": "passed",
+      "tests": 97
+    },
+    "rawBuildReceipt": {
+      "bytes": 1637,
+      "sha256": "e4f6db1ad5e4365343c29745abcfb70ca51555364e2ad91b011fde4380cc44a2"
+    },
+    "simSourceSha256": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+    "sourceCommit": "753ad7624d1f01584595290a6af0f72bb4c98029",
+    "sourceTree": "8e241c258c8eb853a170cb35c65fe062742a84b7"
+  },
+  "complete": true,
+  "compressionRoundtrips": {
+    "bundles": [
+      {
+        "codec": "lossless",
+        "compressedBytes": 128393,
+        "compressedSha256": "79d3b9810571ec0d6282969ce3f184e8fb51218f05d9d6cb10b9920430043a71",
+        "compression": "gzip9",
+        "decodedTarBytes": 296960,
+        "decodedTarSha256": "a5e12ddbaafa8f4648edcb12cc9d59231c4d825f5daa08c2e7586549c489e865",
+        "family": "pr40-short",
+        "status": "matched"
+      },
+      {
+        "codec": "lossless",
+        "compressedBytes": 36492,
+        "compressedSha256": "a69258224d17164f1aaaab179d9316e8e24cabb057606d69113fa9ef0504644d",
+        "compression": "xz6",
+        "decodedTarBytes": 296960,
+        "decodedTarSha256": "a5e12ddbaafa8f4648edcb12cc9d59231c4d825f5daa08c2e7586549c489e865",
+        "family": "pr40-short",
+        "status": "matched"
+      },
+      {
+        "codec": "lossless",
+        "compressedBytes": 46883,
+        "compressedSha256": "cb938c9998f7cbfe0d6fad6f3ee0913153a8c78134f31692c479b4777e18c28c",
+        "compression": "zstd9",
+        "decodedTarBytes": 296960,
+        "decodedTarSha256": "a5e12ddbaafa8f4648edcb12cc9d59231c4d825f5daa08c2e7586549c489e865",
+        "family": "pr40-short",
+        "status": "matched"
+      },
+      {
+        "codec": "u16",
+        "compressedBytes": 11797,
+        "compressedSha256": "a0ae31c4feb10bae5f875f2d50f8cb97975601e406683581562b07c7fc072640",
+        "compression": "gzip9",
+        "decodedTarBytes": 153600,
+        "decodedTarSha256": "c3a077730057e7804a53b42cab36578f30ea6b47c3a32958a84ac086148657bc",
+        "family": "pr40-short",
+        "status": "matched"
+      },
+      {
+        "codec": "u16",
+        "compressedBytes": 7128,
+        "compressedSha256": "1e8f52cff8e0a1e9ff86d1d2fb6e6a769bd2faf68551a8d986bf01ab5505dc06",
+        "compression": "xz6",
+        "decodedTarBytes": 153600,
+        "decodedTarSha256": "c3a077730057e7804a53b42cab36578f30ea6b47c3a32958a84ac086148657bc",
+        "family": "pr40-short",
+        "status": "matched"
+      },
+      {
+        "codec": "u16",
+        "compressedBytes": 8525,
+        "compressedSha256": "a2e66098612dd08ff20b1c5fbaf8b15327907f666d9ca130333b6625942057a8",
+        "compression": "zstd9",
+        "decodedTarBytes": 153600,
+        "decodedTarSha256": "c3a077730057e7804a53b42cab36578f30ea6b47c3a32958a84ac086148657bc",
+        "family": "pr40-short",
+        "status": "matched"
+      },
+      {
+        "codec": "u24",
+        "compressedBytes": 20975,
+        "compressedSha256": "1a4da798f999073cce781c8873f37735eac980a5cc03a34d068bc0c1e74b7aac",
+        "compression": "gzip9",
+        "decodedTarBytes": 184320,
+        "decodedTarSha256": "0149fc7d58b542d7f9deb1cb7cb55ee7add7db15b1c3c6269f419d1df197b4ad",
+        "family": "pr40-short",
+        "status": "matched"
+      },
+      {
+        "codec": "u24",
+        "compressedBytes": 9704,
+        "compressedSha256": "3ce014baa44abfe2f534a560bb40f96eaecaab53778812891a86ce989ed04f62",
+        "compression": "xz6",
+        "decodedTarBytes": 184320,
+        "decodedTarSha256": "0149fc7d58b542d7f9deb1cb7cb55ee7add7db15b1c3c6269f419d1df197b4ad",
+        "family": "pr40-short",
+        "status": "matched"
+      },
+      {
+        "codec": "u24",
+        "compressedBytes": 11880,
+        "compressedSha256": "0ab2b4d7f34dd7bfa8aa761f128c60bda83d578d5053453444e0cd8d5545333a",
+        "compression": "zstd9",
+        "decodedTarBytes": 184320,
+        "decodedTarSha256": "0149fc7d58b542d7f9deb1cb7cb55ee7add7db15b1c3c6269f419d1df197b4ad",
+        "family": "pr40-short",
+        "status": "matched"
+      },
+      {
+        "codec": "u32",
+        "compressedBytes": 34676,
+        "compressedSha256": "ec68a240d2b78510fbeb94a182d9c5caf0c8cec79d0d5de083f8ccb10b04226e",
+        "compression": "gzip9",
+        "decodedTarBytes": 194560,
+        "decodedTarSha256": "ffcc8a9619cc16e776153d022af568f80b1ee76b1255669e21cf5c7d41424d0a",
+        "family": "pr40-short",
+        "status": "matched"
+      },
+      {
+        "codec": "u32",
+        "compressedBytes": 12320,
+        "compressedSha256": "4ebd69e64f63444a461ecedcef49d04f91dc588bc3477f268fdf865b063f70bd",
+        "compression": "xz6",
+        "decodedTarBytes": 194560,
+        "decodedTarSha256": "ffcc8a9619cc16e776153d022af568f80b1ee76b1255669e21cf5c7d41424d0a",
+        "family": "pr40-short",
+        "status": "matched"
+      },
+      {
+        "codec": "u32",
+        "compressedBytes": 14915,
+        "compressedSha256": "307bace80bcaad9df46fbb2e739da6ed3c312147254b23ca8f089b94e9bfa5e0",
+        "compression": "zstd9",
+        "decodedTarBytes": 194560,
+        "decodedTarSha256": "ffcc8a9619cc16e776153d022af568f80b1ee76b1255669e21cf5c7d41424d0a",
+        "family": "pr40-short",
+        "status": "matched"
+      },
+      {
+        "codec": "lossless",
+        "compressedBytes": 125987,
+        "compressedSha256": "1aeba9c3ec986cda4fd6206c6a85a69376d656860ac2c8fefcf5569fdceeca0f",
+        "compression": "gzip9",
+        "decodedTarBytes": 276480,
+        "decodedTarSha256": "14bb224c7efad327cc520cfdcd65e5dab0384483d59f9155165745023b28e610",
+        "family": "pr40-long",
+        "status": "matched"
+      },
+      {
+        "codec": "lossless",
+        "compressedBytes": 39268,
+        "compressedSha256": "88099babd7af662a84eb6bf13e8692023291b0880c70b12a222bc7025f94c65c",
+        "compression": "xz6",
+        "decodedTarBytes": 276480,
+        "decodedTarSha256": "14bb224c7efad327cc520cfdcd65e5dab0384483d59f9155165745023b28e610",
+        "family": "pr40-long",
+        "status": "matched"
+      },
+      {
+        "codec": "lossless",
+        "compressedBytes": 49102,
+        "compressedSha256": "cef1a8f11ddfc6eaf0046f585d09d045d33ac0a4fd65c7fb6fefc10015f1ef87",
+        "compression": "zstd9",
+        "decodedTarBytes": 276480,
+        "decodedTarSha256": "14bb224c7efad327cc520cfdcd65e5dab0384483d59f9155165745023b28e610",
+        "family": "pr40-long",
+        "status": "matched"
+      },
+      {
+        "codec": "u16",
+        "compressedBytes": 11884,
+        "compressedSha256": "fc233edddcd7a191742737e41c6c510d99dadb83b0827112f9011e29bf428597",
+        "compression": "gzip9",
+        "decodedTarBytes": 153600,
+        "decodedTarSha256": "6cad9b01079f33c1efc0942a8f426ced169f6f6957045220b921929e052455b7",
+        "family": "pr40-long",
+        "status": "matched"
+      },
+      {
+        "codec": "u16",
+        "compressedBytes": 7064,
+        "compressedSha256": "1bb6c70f2c6007751dba728d8be005cc3d274dc468d45b9db1625cb90687f2f2",
+        "compression": "xz6",
+        "decodedTarBytes": 153600,
+        "decodedTarSha256": "6cad9b01079f33c1efc0942a8f426ced169f6f6957045220b921929e052455b7",
+        "family": "pr40-long",
+        "status": "matched"
+      },
+      {
+        "codec": "u16",
+        "compressedBytes": 8481,
+        "compressedSha256": "f8b5d77b647824febd4f416e2e5b30349923e447cc5c244abda7356da5789f06",
+        "compression": "zstd9",
+        "decodedTarBytes": 153600,
+        "decodedTarSha256": "6cad9b01079f33c1efc0942a8f426ced169f6f6957045220b921929e052455b7",
+        "family": "pr40-long",
+        "status": "matched"
+      },
+      {
+        "codec": "u24",
+        "compressedBytes": 23116,
+        "compressedSha256": "b21b96f6b6d463ed663b47fd99d6cfc1c5340d7db6a919f350d2553bea6ebc1a",
+        "compression": "gzip9",
+        "decodedTarBytes": 174080,
+        "decodedTarSha256": "9cfc9a0624bb58af8bc7410fea0b3c06d6fdf10e9d40f623179158e137c624b4",
+        "family": "pr40-long",
+        "status": "matched"
+      },
+      {
+        "codec": "u24",
+        "compressedBytes": 9400,
+        "compressedSha256": "73b255d1aa5124ee6d570774e67bd589f03fe86617e47ea07f00eaf4ad8ce332",
+        "compression": "xz6",
+        "decodedTarBytes": 174080,
+        "decodedTarSha256": "9cfc9a0624bb58af8bc7410fea0b3c06d6fdf10e9d40f623179158e137c624b4",
+        "family": "pr40-long",
+        "status": "matched"
+      },
+      {
+        "codec": "u24",
+        "compressedBytes": 11789,
+        "compressedSha256": "0ea144f1b408b49f53fd7098f02b268c120612b9bd98ccdc7a6242a7e498e5fb",
+        "compression": "zstd9",
+        "decodedTarBytes": 174080,
+        "decodedTarSha256": "9cfc9a0624bb58af8bc7410fea0b3c06d6fdf10e9d40f623179158e137c624b4",
+        "family": "pr40-long",
+        "status": "matched"
+      },
+      {
+        "codec": "u32",
+        "compressedBytes": 28274,
+        "compressedSha256": "c947966df68d8e07f69ea613e9bcd54aae80cde15e70c74c541013f2a2006d8f",
+        "compression": "gzip9",
+        "decodedTarBytes": 194560,
+        "decodedTarSha256": "38c7230e74b46ac10f7b26f5aa83bf976331fb06533a505eacc3cb30a1b08c6c",
+        "family": "pr40-long",
+        "status": "matched"
+      },
+      {
+        "codec": "u32",
+        "compressedBytes": 11792,
+        "compressedSha256": "09471238c5b3595db5cd5f0d7efbb8c24c9fe48352dbc515970e4ee33d314936",
+        "compression": "xz6",
+        "decodedTarBytes": 194560,
+        "decodedTarSha256": "38c7230e74b46ac10f7b26f5aa83bf976331fb06533a505eacc3cb30a1b08c6c",
+        "family": "pr40-long",
+        "status": "matched"
+      },
+      {
+        "codec": "u32",
+        "compressedBytes": 14529,
+        "compressedSha256": "ccb2834c51bcfb2d7623093059ae0cc608599fde3033d61321b93276f05fba78",
+        "compression": "zstd9",
+        "decodedTarBytes": 194560,
+        "decodedTarSha256": "38c7230e74b46ac10f7b26f5aa83bf976331fb06533a505eacc3cb30a1b08c6c",
+        "family": "pr40-long",
+        "status": "matched"
+      },
+      {
+        "codec": "lossless",
+        "compressedBytes": 87145,
+        "compressedSha256": "09661661c13d2c5810f5c7f15d1ced6dba7272d7567e6bb58f02991686947257",
+        "compression": "gzip9",
+        "decodedTarBytes": 225280,
+        "decodedTarSha256": "ee0c31498c35004c2a9334a170cd17c34788ffa7755aba41c878c544c78e80a7",
+        "family": "jp-easy",
+        "status": "matched"
+      },
+      {
+        "codec": "lossless",
+        "compressedBytes": 33612,
+        "compressedSha256": "8e681728fac8c40bbba31dc5445a6d9f983cb3e9e6321c38a7cb721a483b3d0a",
+        "compression": "xz6",
+        "decodedTarBytes": 225280,
+        "decodedTarSha256": "ee0c31498c35004c2a9334a170cd17c34788ffa7755aba41c878c544c78e80a7",
+        "family": "jp-easy",
+        "status": "matched"
+      },
+      {
+        "codec": "lossless",
+        "compressedBytes": 42182,
+        "compressedSha256": "c011994ee30593cf688d435c8123b4012b434fa6c01de737ae550c2e532f49b2",
+        "compression": "zstd9",
+        "decodedTarBytes": 225280,
+        "decodedTarSha256": "ee0c31498c35004c2a9334a170cd17c34788ffa7755aba41c878c544c78e80a7",
+        "family": "jp-easy",
+        "status": "matched"
+      },
+      {
+        "codec": "u16",
+        "compressedBytes": 12873,
+        "compressedSha256": "f8a92ea85753a0abfbc20b7ae7e392bd3faeb6a124e4884933bb59322afd8ad6",
+        "compression": "gzip9",
+        "decodedTarBytes": 133120,
+        "decodedTarSha256": "f899d7390a5bd7f74e5201f5c43c654befef797bb5e69cdf43fb31ed2aeb3ec1",
+        "family": "jp-easy",
+        "status": "matched"
+      },
+      {
+        "codec": "u16",
+        "compressedBytes": 7748,
+        "compressedSha256": "b8492e9eb42525d2f376af885aa211b8a6ad67a784c67f1dcfc2ed6be9840cc6",
+        "compression": "xz6",
+        "decodedTarBytes": 133120,
+        "decodedTarSha256": "f899d7390a5bd7f74e5201f5c43c654befef797bb5e69cdf43fb31ed2aeb3ec1",
+        "family": "jp-easy",
+        "status": "matched"
+      },
+      {
+        "codec": "u16",
+        "compressedBytes": 9482,
+        "compressedSha256": "5bd9d0a7bea73b66f68a6ed1ca0ed18250cdc0566a27e0da58c48988b8da2d61",
+        "compression": "zstd9",
+        "decodedTarBytes": 133120,
+        "decodedTarSha256": "f899d7390a5bd7f74e5201f5c43c654befef797bb5e69cdf43fb31ed2aeb3ec1",
+        "family": "jp-easy",
+        "status": "matched"
+      },
+      {
+        "codec": "u24",
+        "compressedBytes": 14882,
+        "compressedSha256": "089d253c140de0dc287c97777c69e8e677868ce7a6072c0a4d3d4383cae1f439",
+        "compression": "gzip9",
+        "decodedTarBytes": 143360,
+        "decodedTarSha256": "ec16b47e514fdf4b20baf0682bbfaff9b5afd3ec0ed95061d7f9fc313d0de651",
+        "family": "jp-easy",
+        "status": "matched"
+      },
+      {
+        "codec": "u24",
+        "compressedBytes": 9620,
+        "compressedSha256": "012527c567681c23f0ff184d98656f367713706882d5ede7addde8ae7d7a77a6",
+        "compression": "xz6",
+        "decodedTarBytes": 143360,
+        "decodedTarSha256": "ec16b47e514fdf4b20baf0682bbfaff9b5afd3ec0ed95061d7f9fc313d0de651",
+        "family": "jp-easy",
+        "status": "matched"
+      },
+      {
+        "codec": "u24",
+        "compressedBytes": 11755,
+        "compressedSha256": "d37720ce412d88aba5aa95309d5fc1577bd62e292145167da5f5a57e08387fe9",
+        "compression": "zstd9",
+        "decodedTarBytes": 143360,
+        "decodedTarSha256": "ec16b47e514fdf4b20baf0682bbfaff9b5afd3ec0ed95061d7f9fc313d0de651",
+        "family": "jp-easy",
+        "status": "matched"
+      },
+      {
+        "codec": "u32",
+        "compressedBytes": 21499,
+        "compressedSha256": "e0742265177deb9426d0158ec122fdacb99dfafb92b0fb8a271d56951bde5b10",
+        "compression": "gzip9",
+        "decodedTarBytes": 153600,
+        "decodedTarSha256": "e09cefe6f50b4f09b86de499a694be292e2a816f0de01d0714b4136a2bff5357",
+        "family": "jp-easy",
+        "status": "matched"
+      },
+      {
+        "codec": "u32",
+        "compressedBytes": 11788,
+        "compressedSha256": "02a8726abdc7c9b8e8ece71cae537725f2ae2873b8309aadea74e785630ac12f",
+        "compression": "xz6",
+        "decodedTarBytes": 153600,
+        "decodedTarSha256": "e09cefe6f50b4f09b86de499a694be292e2a816f0de01d0714b4136a2bff5357",
+        "family": "jp-easy",
+        "status": "matched"
+      },
+      {
+        "codec": "u32",
+        "compressedBytes": 13533,
+        "compressedSha256": "7d3d9e3a5175a4b0cf767593f0796e328087e7801dcd6f5375af53b16b73ba37",
+        "compression": "zstd9",
+        "decodedTarBytes": 153600,
+        "decodedTarSha256": "e09cefe6f50b4f09b86de499a694be292e2a816f0de01d0714b4136a2bff5357",
+        "family": "jp-easy",
+        "status": "matched"
+      },
+      {
+        "codec": "lossless",
+        "compressedBytes": 482863,
+        "compressedSha256": "561a8a946f4fdd7028d6a83fd409103bb60174adf232d5ac2d9b1f6e22103b1e",
+        "compression": "gzip9",
+        "decodedTarBytes": 778240,
+        "decodedTarSha256": "8d1f1b92c914778cc0c0ec704267c2a0c3a9dda6c38289b47c5237f9e652f47d",
+        "family": "merged",
+        "status": "matched"
+      },
+      {
+        "codec": "lossless",
+        "compressedBytes": 107812,
+        "compressedSha256": "f9c5d2e3c4c2d05a05cf3171d281dfc50c1633a648fa1eb000a665cf4914bc82",
+        "compression": "xz6",
+        "decodedTarBytes": 778240,
+        "decodedTarSha256": "8d1f1b92c914778cc0c0ec704267c2a0c3a9dda6c38289b47c5237f9e652f47d",
+        "family": "merged",
+        "status": "matched"
+      },
+      {
+        "codec": "lossless",
+        "compressedBytes": 135667,
+        "compressedSha256": "8414f57c9fee1ced88003f6eba22e1e4605dc5eb10b8eca9329074faf6480887",
+        "compression": "zstd9",
+        "decodedTarBytes": 778240,
+        "decodedTarSha256": "8d1f1b92c914778cc0c0ec704267c2a0c3a9dda6c38289b47c5237f9e652f47d",
+        "family": "merged",
+        "status": "matched"
+      },
+      {
+        "codec": "u16",
+        "compressedBytes": 68988,
+        "compressedSha256": "b8da78c286ceeb9879a955de3f8a63f46771eac57839ea1a703fafc89e20529d",
+        "compression": "gzip9",
+        "decodedTarBytes": 430080,
+        "decodedTarSha256": "279fba35ea6e7b53c79b9bafd1970423dfbc5978a11f85a0f286ec36c3b30ab6",
+        "family": "merged",
+        "status": "matched"
+      },
+      {
+        "codec": "u16",
+        "compressedBytes": 20332,
+        "compressedSha256": "9ecd34296da84909be74bbf4024a3cd30607900dadc6eea4dc54be05e55f1032",
+        "compression": "xz6",
+        "decodedTarBytes": 430080,
+        "decodedTarSha256": "279fba35ea6e7b53c79b9bafd1970423dfbc5978a11f85a0f286ec36c3b30ab6",
+        "family": "merged",
+        "status": "matched"
+      },
+      {
+        "codec": "u16",
+        "compressedBytes": 25052,
+        "compressedSha256": "1bb16b767fcd256e58ed148a945ad7c732521f0a019e8c9e2ce3eb56e47dc96e",
+        "compression": "zstd9",
+        "decodedTarBytes": 430080,
+        "decodedTarSha256": "279fba35ea6e7b53c79b9bafd1970423dfbc5978a11f85a0f286ec36c3b30ab6",
+        "family": "merged",
+        "status": "matched"
+      },
+      {
+        "codec": "u24",
+        "compressedBytes": 121799,
+        "compressedSha256": "6efab50651da161915603e08770ecf110c4058371d28dc6e9cdc3e1bb87ac62f",
+        "compression": "gzip9",
+        "decodedTarBytes": 481280,
+        "decodedTarSha256": "e3a199c7edde713d3164ad7b896adaa9792a1c0554b19f7be2e74fb59e0d4784",
+        "family": "merged",
+        "status": "matched"
+      },
+      {
+        "codec": "u24",
+        "compressedBytes": 27104,
+        "compressedSha256": "0bc66920833fec16e890bf3c9d93e823133f61bd7b5bb16d97188a896f046d0e",
+        "compression": "xz6",
+        "decodedTarBytes": 481280,
+        "decodedTarSha256": "e3a199c7edde713d3164ad7b896adaa9792a1c0554b19f7be2e74fb59e0d4784",
+        "family": "merged",
+        "status": "matched"
+      },
+      {
+        "codec": "u24",
+        "compressedBytes": 34025,
+        "compressedSha256": "e2498fbc13f0eb2dda93fbeff280e213e559ff261c6385202b4cd5d40e97a7f6",
+        "compression": "zstd9",
+        "decodedTarBytes": 481280,
+        "decodedTarSha256": "e3a199c7edde713d3164ad7b896adaa9792a1c0554b19f7be2e74fb59e0d4784",
+        "family": "merged",
+        "status": "matched"
+      },
+      {
+        "codec": "u32",
+        "compressedBytes": 183450,
+        "compressedSha256": "6f89886310bd6e69209a46db14a226fd30a0d0896ecb453c4963d07e1c1b208d",
+        "compression": "gzip9",
+        "decodedTarBytes": 532480,
+        "decodedTarSha256": "d43858a114e079b897929618dd7531aadfeeff6cf93cff859b4454c4bab4cfb3",
+        "family": "merged",
+        "status": "matched"
+      },
+      {
+        "codec": "u32",
+        "compressedBytes": 34476,
+        "compressedSha256": "6a62df36dba357ce60cb47c4dcb992dcbd8528ee510f4c2b69585d32fbcff2c2",
+        "compression": "xz6",
+        "decodedTarBytes": 532480,
+        "decodedTarSha256": "d43858a114e079b897929618dd7531aadfeeff6cf93cff859b4454c4bab4cfb3",
+        "family": "merged",
+        "status": "matched"
+      },
+      {
+        "codec": "u32",
+        "compressedBytes": 41541,
+        "compressedSha256": "fb9c112ba65773706197ff40f74945891b0d4e252e0e5efe3f5675a244088bd6",
+        "compression": "zstd9",
+        "decodedTarBytes": 532480,
+        "decodedTarSha256": "d43858a114e079b897929618dd7531aadfeeff6cf93cff859b4454c4bab4cfb3",
+        "family": "merged",
+        "status": "matched"
+      }
+    ],
+    "checkedBundles": 48,
+    "complete": true,
+    "format": "ournotes-deck.luck-conditional-compression-roundtrip/1"
+  },
+  "conditionalCompression": {
+    "analysisReceipts": {
+      "jp-easy": {
+        "bytes": 44440,
+        "sha256": "fccbb09e80dd42bdc3ec341ddd88a9f48893780e514cb59d974e839f94184bad"
+      },
+      "merged": {
+        "bytes": 118457,
+        "sha256": "415c209557ab44cff9a3a6ada2ec93b86491bcaddc3b54785f6499d9b095f012"
+      },
+      "pr40-long": {
+        "bytes": 43791,
+        "sha256": "c077a444c186ca5643d9441e665ad87db8508066c730a4bc98592878df3d5b6f"
+      },
+      "pr40-short": {
+        "bytes": 43798,
+        "sha256": "1e7382929e50494b0ad6b63bd8084d40a974b890ae2ff26531cb26ea0115a7a2"
+      }
+    },
+    "cases": [
+      {
+        "dictionaries": [
+          {
+            "blobBytes": 255078,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 128393,
+                "elapsedMs": 5.591117995209061,
+                "sha256": "79d3b9810571ec0d6282969ce3f184e8fb51218f05d9d6cb10b9920430043a71"
+              },
+              "tar": {
+                "bytes": 296960,
+                "sha256": "a5e12ddbaafa8f4648edcb12cc9d59231c4d825f5daa08c2e7586549c489e865"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 36492,
+                "elapsedMs": 55.198264999489766,
+                "sha256": "a69258224d17164f1aaaab179d9316e8e24cabb057606d69113fa9ef0504644d"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 46883,
+                "elapsedMs": 5.722195994167123,
+                "sha256": "cb938c9998f7cbfe0d6fad6f3ee0913153a8c78134f31692c479b4777e18c28c"
+              }
+            },
+            "indexAndBlobBytes": 266510,
+            "indexBytes": 11432,
+            "indexSha256": "419881e9d3a13cf71c85edfae087089280d66e8e51a6f1540fcc7fb307558975",
+            "maximumProgramBytes": 9460,
+            "minimumProgramBytes": 9432,
+            "mode": "lossless",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 27,
+            "uniquePrograms": 27
+          },
+          {
+            "blobBytes": 118197,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 11797,
+                "elapsedMs": 1.7883719992823899,
+                "sha256": "a0ae31c4feb10bae5f875f2d50f8cb97975601e406683581562b07c7fc072640"
+              },
+              "tar": {
+                "bytes": 153600,
+                "sha256": "c3a077730057e7804a53b42cab36578f30ea6b47c3a32958a84ac086148657bc"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 7128,
+                "elapsedMs": 15.278976999979932,
+                "sha256": "1e8f52cff8e0a1e9ff86d1d2fb6e6a769bd2faf68551a8d986bf01ab5505dc06"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 8525,
+                "elapsedMs": 2.3253729959833436,
+                "sha256": "a2e66098612dd08ff20b1c5fbaf8b15327907f666d9ca130333b6625942057a8"
+              }
+            },
+            "indexAndBlobBytes": 129489,
+            "indexBytes": 11292,
+            "indexSha256": "feeb8cadaf6d5a968031b192d960e0c00b09d79ff114bab4be2281a4892eaf0f",
+            "maximumProgramBytes": 4378,
+            "minimumProgramBytes": 4377,
+            "mode": "u16",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 27,
+            "uniquePrograms": 27
+          },
+          {
+            "blobBytes": 141795,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 20975,
+                "elapsedMs": 4.729726999357808,
+                "sha256": "1a4da798f999073cce781c8873f37735eac980a5cc03a34d068bc0c1e74b7aac"
+              },
+              "tar": {
+                "bytes": 184320,
+                "sha256": "0149fc7d58b542d7f9deb1cb7cb55ee7add7db15b1c3c6269f419d1df197b4ad"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 9704,
+                "elapsedMs": 23.958031000802293,
+                "sha256": "3ce014baa44abfe2f534a560bb40f96eaecaab53778812891a86ce989ed04f62"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 11880,
+                "elapsedMs": 2.0294470014050603,
+                "sha256": "0ab2b4d7f34dd7bfa8aa761f128c60bda83d578d5053453444e0cd8d5545333a"
+              }
+            },
+            "indexAndBlobBytes": 153087,
+            "indexBytes": 11292,
+            "indexSha256": "9729cdcd000098853b221a7576ea3c7c5261c2ba4d332e7dbdb83fcc21bba562",
+            "maximumProgramBytes": 5253,
+            "minimumProgramBytes": 5250,
+            "mode": "u24",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 27,
+            "uniquePrograms": 27
+          },
+          {
+            "blobBytes": 162702,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 34676,
+                "elapsedMs": 2.7429550027591176,
+                "sha256": "ec68a240d2b78510fbeb94a182d9c5caf0c8cec79d0d5de083f8ccb10b04226e"
+              },
+              "tar": {
+                "bytes": 194560,
+                "sha256": "ffcc8a9619cc16e776153d022af568f80b1ee76b1255669e21cf5c7d41424d0a"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 12320,
+                "elapsedMs": 18.629550002515316,
+                "sha256": "4ebd69e64f63444a461ecedcef49d04f91dc588bc3477f268fdf865b063f70bd"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 14915,
+                "elapsedMs": 1.3067449981463142,
+                "sha256": "307bace80bcaad9df46fbb2e739da6ed3c312147254b23ca8f089b94e9bfa5e0"
+              }
+            },
+            "indexAndBlobBytes": 173994,
+            "indexBytes": 11292,
+            "indexSha256": "00d44e3355c595053c1f93b99749b08e80a13682c7e2e1b251cb29043fc6bc97",
+            "maximumProgramBytes": 6026,
+            "minimumProgramBytes": 6026,
+            "mode": "u32",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 27,
+            "uniquePrograms": 27
+          }
+        ],
+        "name": "pr40-short",
+        "reportSha256": "0dc39be52b5d2133e133de142a5b7e3ea8ee9cedc4d311fcad8cfbb485e15b7f"
+      },
+      {
+        "dictionaries": [
+          {
+            "blobBytes": 235170,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 125987,
+                "elapsedMs": 5.763407993072178,
+                "sha256": "1aeba9c3ec986cda4fd6206c6a85a69376d656860ac2c8fefcf5569fdceeca0f"
+              },
+              "tar": {
+                "bytes": 276480,
+                "sha256": "14bb224c7efad327cc520cfdcd65e5dab0384483d59f9155165745023b28e610"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 39268,
+                "elapsedMs": 35.965233997558244,
+                "sha256": "88099babd7af662a84eb6bf13e8692023291b0880c70b12a222bc7025f94c65c"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 49102,
+                "elapsedMs": 3.47592199977953,
+                "sha256": "cef1a8f11ddfc6eaf0046f585d09d045d33ac0a4fd65c7fb6fefc10015f1ef87"
+              }
+            },
+            "indexAndBlobBytes": 246602,
+            "indexBytes": 11432,
+            "indexSha256": "5b1577b84b266f7683552e5b70fc4d0d15dfc55d3912a4d14926dd1ed0e6a0a3",
+            "maximumProgramBytes": 8728,
+            "minimumProgramBytes": 8694,
+            "mode": "lossless",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 27,
+            "uniquePrograms": 27
+          },
+          {
+            "blobBytes": 111042,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 11884,
+                "elapsedMs": 3.4358510019956157,
+                "sha256": "fc233edddcd7a191742737e41c6c510d99dadb83b0827112f9011e29bf428597"
+              },
+              "tar": {
+                "bytes": 153600,
+                "sha256": "6cad9b01079f33c1efc0942a8f426ced169f6f6957045220b921929e052455b7"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 7064,
+                "elapsedMs": 9.579805002431385,
+                "sha256": "1bb6c70f2c6007751dba728d8be005cc3d274dc468d45b9db1625cb90687f2f2"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 8481,
+                "elapsedMs": 1.183447995572351,
+                "sha256": "f8b5d77b647824febd4f416e2e5b30349923e447cc5c244abda7356da5789f06"
+              }
+            },
+            "indexAndBlobBytes": 122334,
+            "indexBytes": 11292,
+            "indexSha256": "fec1bb40d9101c1b3bd1d95988c103489df89a2a568afe4a491860381a3236d4",
+            "maximumProgramBytes": 4115,
+            "minimumProgramBytes": 4110,
+            "mode": "u16",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 27,
+            "uniquePrograms": 27
+          },
+          {
+            "blobBytes": 132381,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 23116,
+                "elapsedMs": 2.628551999805495,
+                "sha256": "b21b96f6b6d463ed663b47fd99d6cfc1c5340d7db6a919f350d2553bea6ebc1a"
+              },
+              "tar": {
+                "bytes": 174080,
+                "sha256": "9cfc9a0624bb58af8bc7410fea0b3c06d6fdf10e9d40f623179158e137c624b4"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 9400,
+                "elapsedMs": 12.6659279994783,
+                "sha256": "73b255d1aa5124ee6d570774e67bd589f03fe86617e47ea07f00eaf4ad8ce332"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 11789,
+                "elapsedMs": 1.2828990002162755,
+                "sha256": "0ea144f1b408b49f53fd7098f02b268c120612b9bd98ccdc7a6242a7e498e5fb"
+              }
+            },
+            "indexAndBlobBytes": 143673,
+            "indexBytes": 11292,
+            "indexSha256": "5529bca8f8072cbe0fdf621639562896c45b36c7f5793c347ac065859fc215be",
+            "maximumProgramBytes": 4903,
+            "minimumProgramBytes": 4903,
+            "mode": "u24",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 27,
+            "uniquePrograms": 27
+          },
+          {
+            "blobBytes": 152145,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 28274,
+                "elapsedMs": 2.786910998111125,
+                "sha256": "c947966df68d8e07f69ea613e9bcd54aae80cde15e70c74c541013f2a2006d8f"
+              },
+              "tar": {
+                "bytes": 194560,
+                "sha256": "38c7230e74b46ac10f7b26f5aa83bf976331fb06533a505eacc3cb30a1b08c6c"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 11792,
+                "elapsedMs": 12.407797999912873,
+                "sha256": "09471238c5b3595db5cd5f0d7efbb8c24c9fe48352dbc515970e4ee33d314936"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 14529,
+                "elapsedMs": 2.525456002331339,
+                "sha256": "ccb2834c51bcfb2d7623093059ae0cc608599fde3033d61321b93276f05fba78"
+              }
+            },
+            "indexAndBlobBytes": 163437,
+            "indexBytes": 11292,
+            "indexSha256": "a0bfc3e6913f4616c61a490bc7920bc708beb56b38de38bb31abd3ed53fc01d1",
+            "maximumProgramBytes": 5635,
+            "minimumProgramBytes": 5635,
+            "mode": "u32",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 27,
+            "uniquePrograms": 27
+          }
+        ],
+        "name": "pr40-long",
+        "reportSha256": "4a95f2c870b63367392521a9f71844893268e5125a1ab074f864e34ec593be7e"
+      },
+      {
+        "dictionaries": [
+          {
+            "blobBytes": 188195,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 87145,
+                "elapsedMs": 5.3546260023722425,
+                "sha256": "09661661c13d2c5810f5c7f15d1ced6dba7272d7567e6bb58f02991686947257"
+              },
+              "tar": {
+                "bytes": 225280,
+                "sha256": "ee0c31498c35004c2a9334a170cd17c34788ffa7755aba41c878c544c78e80a7"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 33612,
+                "elapsedMs": 26.23094499722356,
+                "sha256": "8e681728fac8c40bbba31dc5445a6d9f983cb3e9e6321c38a7cb721a483b3d0a"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 42182,
+                "elapsedMs": 2.1731629967689514,
+                "sha256": "c011994ee30593cf688d435c8123b4012b434fa6c01de737ae550c2e532f49b2"
+              }
+            },
+            "indexAndBlobBytes": 199627,
+            "indexBytes": 11432,
+            "indexSha256": "f9249b448e42c39ab33e624c57a930c2a0a0d688068bae8edc92f291ff791789",
+            "maximumProgramBytes": 6981,
+            "minimumProgramBytes": 6958,
+            "mode": "lossless",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 27,
+            "uniquePrograms": 27
+          },
+          {
+            "blobBytes": 88785,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 12873,
+                "elapsedMs": 2.2243210041779093,
+                "sha256": "f8a92ea85753a0abfbc20b7ae7e392bd3faeb6a124e4884933bb59322afd8ad6"
+              },
+              "tar": {
+                "bytes": 133120,
+                "sha256": "f899d7390a5bd7f74e5201f5c43c654befef797bb5e69cdf43fb31ed2aeb3ec1"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 7748,
+                "elapsedMs": 8.476707997033373,
+                "sha256": "b8492e9eb42525d2f376af885aa211b8a6ad67a784c67f1dcfc2ed6be9840cc6"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 9482,
+                "elapsedMs": 1.1654720001388341,
+                "sha256": "5bd9d0a7bea73b66f68a6ed1ca0ed18250cdc0566a27e0da58c48988b8da2d61"
+              }
+            },
+            "indexAndBlobBytes": 100077,
+            "indexBytes": 11292,
+            "indexSha256": "63b58fd4f0d598aaf30599086d9d10877e51db9171f4b85df7297fe30a12b0c1",
+            "maximumProgramBytes": 3289,
+            "minimumProgramBytes": 3287,
+            "mode": "u16",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 27,
+            "uniquePrograms": 27
+          },
+          {
+            "blobBytes": 104688,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 14882,
+                "elapsedMs": 1.854633002949413,
+                "sha256": "089d253c140de0dc287c97777c69e8e677868ce7a6072c0a4d3d4383cae1f439"
+              },
+              "tar": {
+                "bytes": 143360,
+                "sha256": "ec16b47e514fdf4b20baf0682bbfaff9b5afd3ec0ed95061d7f9fc313d0de651"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 9620,
+                "elapsedMs": 9.474997001234442,
+                "sha256": "012527c567681c23f0ff184d98656f367713706882d5ede7addde8ae7d7a77a6"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 11755,
+                "elapsedMs": 1.265721999516245,
+                "sha256": "d37720ce412d88aba5aa95309d5fc1577bd62e292145167da5f5a57e08387fe9"
+              }
+            },
+            "indexAndBlobBytes": 115980,
+            "indexBytes": 11292,
+            "indexSha256": "1ccdb186e96202ebd309f2bc5bfbf700e66d60c36951cc7928d1ae0e590cd74d",
+            "maximumProgramBytes": 3878,
+            "minimumProgramBytes": 3877,
+            "mode": "u24",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 27,
+            "uniquePrograms": 27
+          },
+          {
+            "blobBytes": 120366,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 21499,
+                "elapsedMs": 2.191662002587691,
+                "sha256": "e0742265177deb9426d0158ec122fdacb99dfafb92b0fb8a271d56951bde5b10"
+              },
+              "tar": {
+                "bytes": 153600,
+                "sha256": "e09cefe6f50b4f09b86de499a694be292e2a816f0de01d0714b4136a2bff5357"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 11788,
+                "elapsedMs": 10.815822999575175,
+                "sha256": "02a8726abdc7c9b8e8ece71cae537725f2ae2873b8309aadea74e785630ac12f"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 13533,
+                "elapsedMs": 1.3840620013070293,
+                "sha256": "7d3d9e3a5175a4b0cf767593f0796e328087e7801dcd6f5375af53b16b73ba37"
+              }
+            },
+            "indexAndBlobBytes": 131658,
+            "indexBytes": 11292,
+            "indexSha256": "4a8fed0fe023f644829eb275dd9382b34fe1b0d79c6d34f57ccb9c8ed21d240c",
+            "maximumProgramBytes": 4459,
+            "minimumProgramBytes": 4457,
+            "mode": "u32",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 27,
+            "uniquePrograms": 27
+          }
+        ],
+        "name": "jp-easy",
+        "reportSha256": "166daaf51c04cdbc6461c1b5ff9823f455afb65491d0f603a218da2b7372ed85"
+      },
+      {
+        "dictionaries": [
+          {
+            "blobBytes": 678443,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 482863,
+                "elapsedMs": 20.227123000950087,
+                "sha256": "561a8a946f4fdd7028d6a83fd409103bb60174adf232d5ac2d9b1f6e22103b1e"
+              },
+              "tar": {
+                "bytes": 778240,
+                "sha256": "8d1f1b92c914778cc0c0ec704267c2a0c3a9dda6c38289b47c5237f9e652f47d"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 107812,
+                "elapsedMs": 197.2983889936586,
+                "sha256": "f9c5d2e3c4c2d05a05cf3171d281dfc50c1633a648fa1eb000a665cf4914bc82"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 135667,
+                "elapsedMs": 7.823692001693416,
+                "sha256": "8414f57c9fee1ced88003f6eba22e1e4605dc5eb10b8eca9329074faf6480887"
+              }
+            },
+            "indexAndBlobBytes": 712069,
+            "indexBytes": 33626,
+            "indexSha256": "edb87c1f93925886c719deb53ec73eef6d94ac6f0a0dc6ca8990a15789ac0d5c",
+            "maximumProgramBytes": 9460,
+            "minimumProgramBytes": 6958,
+            "mode": "lossless",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 81,
+            "uniquePrograms": 81
+          },
+          {
+            "blobBytes": 318024,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 68988,
+                "elapsedMs": 17.262052999285515,
+                "sha256": "b8da78c286ceeb9879a955de3f8a63f46771eac57839ea1a703fafc89e20529d"
+              },
+              "tar": {
+                "bytes": 430080,
+                "sha256": "279fba35ea6e7b53c79b9bafd1970423dfbc5978a11f85a0f286ec36c3b30ab6"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 20332,
+                "elapsedMs": 35.63615600432968,
+                "sha256": "9ecd34296da84909be74bbf4024a3cd30607900dadc6eea4dc54be05e55f1032"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 25052,
+                "elapsedMs": 4.181286996754352,
+                "sha256": "1bb16b767fcd256e58ed148a945ad7c732521f0a019e8c9e2ce3eb56e47dc96e"
+              }
+            },
+            "indexAndBlobBytes": 351240,
+            "indexBytes": 33216,
+            "indexSha256": "b331430ae7035df504a34d6b32af6992211e17f5809b76e7f45d379453aca55e",
+            "maximumProgramBytes": 4378,
+            "minimumProgramBytes": 3287,
+            "mode": "u16",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 81,
+            "uniquePrograms": 81
+          },
+          {
+            "blobBytes": 378864,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 121799,
+                "elapsedMs": 18.25625499623129,
+                "sha256": "6efab50651da161915603e08770ecf110c4058371d28dc6e9cdc3e1bb87ac62f"
+              },
+              "tar": {
+                "bytes": 481280,
+                "sha256": "e3a199c7edde713d3164ad7b896adaa9792a1c0554b19f7be2e74fb59e0d4784"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 27104,
+                "elapsedMs": 49.85420499724569,
+                "sha256": "0bc66920833fec16e890bf3c9d93e823133f61bd7b5bb16d97188a896f046d0e"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 34025,
+                "elapsedMs": 3.6731199943460524,
+                "sha256": "e2498fbc13f0eb2dda93fbeff280e213e559ff261c6385202b4cd5d40e97a7f6"
+              }
+            },
+            "indexAndBlobBytes": 412080,
+            "indexBytes": 33216,
+            "indexSha256": "54db23680a2298da0673aebf5506aff1a10f5e93e4dcd9b5e45a5d68221b426b",
+            "maximumProgramBytes": 5253,
+            "minimumProgramBytes": 3877,
+            "mode": "u24",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 81,
+            "uniquePrograms": 81
+          },
+          {
+            "blobBytes": 435213,
+            "compression": {
+              "gzip9": {
+                "artifact": "dictionary.tar.gz",
+                "available": true,
+                "bytes": 183450,
+                "elapsedMs": 22.526328000822105,
+                "sha256": "6f89886310bd6e69209a46db14a226fd30a0d0896ecb453c4963d07e1c1b208d"
+              },
+              "tar": {
+                "bytes": 532480,
+                "sha256": "d43858a114e079b897929618dd7531aadfeeff6cf93cff859b4454c4bab4cfb3"
+              },
+              "xz6": {
+                "artifact": "dictionary.tar.xz",
+                "available": true,
+                "bytes": 34476,
+                "elapsedMs": 56.44890399707947,
+                "sha256": "6a62df36dba357ce60cb47c4dcb992dcbd8528ee510f4c2b69585d32fbcff2c2"
+              },
+              "zstd9": {
+                "artifact": "dictionary.tar.zst",
+                "available": true,
+                "bytes": 41541,
+                "elapsedMs": 2.746651000052225,
+                "sha256": "fb9c112ba65773706197ff40f74945891b0d4e252e0e5efe3f5675a244088bd6"
+              }
+            },
+            "indexAndBlobBytes": 468429,
+            "indexBytes": 33216,
+            "indexSha256": "e76a22a154865a5fa8fd8abe836e09d10da999b657c9a3bb90930772a28bec59",
+            "maximumProgramBytes": 6026,
+            "minimumProgramBytes": 4457,
+            "mode": "u32",
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "uniqueBlobs": 81,
+            "uniquePrograms": 81
+          }
+        ],
+        "name": "merged"
+      }
+    ],
+    "format": "ournotes-deck.luck-conditional-compression-measurement/1",
+    "scope": "Three measured fixed nonminimum controller families, each with all27 warm conditional responses; excludes changed-controller controls and request alias metadata"
+  },
+  "conditionalExperiments": [
+    {
+      "caseDetails": [
+        {
+          "complete": true,
+          "elapsedMs": 19161.464238997723,
+          "inputSha256": {
+            "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+            "request": "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa",
+            "snapshot": "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242"
+          },
+          "inputsUnchanged": true,
+          "musicId": 100061,
+          "name": "short-newcomer-score",
+          "nativeExpectationProven": false,
+          "phases": {
+            "control-generated": {
+              "newMissingPrograms": 27,
+              "queryElapsedMs": 2932.4768599981326,
+              "report": {
+                "bytes": 2497,
+                "path": "control-generated/query.json",
+                "sha256": "8012cc3c46070b10dc8cd71cd0c75384037f41621c9478745f6dff78f1234571"
+              },
+              "spec": {
+                "bytes": 1099,
+                "path": "specs/nonminimum-control.json",
+                "sha256": "1e12b6e340697fe4bc615c8451f0465bc521df0f184cd4dccc706696301418db"
+              },
+              "stats": {
+                "conditionalTermReferences": 27,
+                "generatedPrograms": 27,
+                "propagationCalls": 27,
+                "requestedJobs": 1,
+                "reusedPrograms": 0,
+                "storedPrograms": 54,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "wallMs": 2936.59905900131
+            },
+            "control-missing": {
+              "changedNativeProgramSet": true,
+              "newMissingPrograms": 27,
+              "queryElapsedMs": 114.77907000517007,
+              "report": {
+                "bytes": 3521,
+                "path": "control-missing/query.json",
+                "sha256": "3ca8d977663a35e84e1cffb04c69e4f4ddb7e9b2ac48786c18fdb4e837cd835d"
+              },
+              "spec": {
+                "bytes": 1099,
+                "path": "specs/nonminimum-control.json",
+                "sha256": "1e12b6e340697fe4bc615c8451f0465bc521df0f184cd4dccc706696301418db"
+              },
+              "stats": {
+                "conditionalTermReferences": 27,
+                "generatedPrograms": 0,
+                "propagationCalls": 0,
+                "requestedJobs": 1,
+                "reusedPrograms": 0,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "missing",
+              "wallMs": 116.02277999918442
+            },
+            "grid-identify": {
+              "conditionalTermReferences": 21875,
+              "identifiedJobs": 1250,
+              "nativeStats": {
+                "basisTermReferences": 21875,
+                "compileMs": 5068.563801000001,
+                "compiledJobs": 1250,
+                "compiledProgramPeakBytes": 165252,
+                "elapsedMs": 7344.362581,
+                "exactTermAliases": 21848,
+                "fingerprintWorkspacePeakBytes": 110714,
+                "identityBudgetBytes": 33554432,
+                "mixtureMs": 0.0,
+                "programBudgetBytes": 33554432,
+                "propagationCalls": 0,
+                "propagationMs": 0.0,
+                "reconstructedJobs": 0,
+                "requestedJobs": 1250,
+                "responseArcCounterBytes": 0,
+                "responseBudgetBytes": 33554432,
+                "responseIndexBytes": 256,
+                "retainedIdentityBytes": 10164232,
+                "retainedResponseBytes": 0,
+                "temporaryIdentityPeakBytes": 139400,
+                "uniquePrograms": 27,
+                "verificationCalls": 0,
+                "verificationMs": 0.0,
+                "verifiedJobs": 0
+              },
+              "propagationCalls": 0,
+              "report": {
+                "bytes": 11556056,
+                "path": "grid-identify.json",
+                "sha256": "c6aaad66c2ec4ae1b855336c53309b634f82bf5dada41a8c67d46933f7a69ba0"
+              },
+              "requestedJobs": 1250,
+              "spec": {
+                "bytes": 1238851,
+                "path": "specs/grid-identify.json",
+                "sha256": "19f2c621cf743c2df924d3861d0be3542e8ebd0d8e4483c644c4ecd774a3c0cb"
+              },
+              "uniquePrograms": 27,
+              "wallMs": 7847.070990006614
+            },
+            "new-combinations": {
+              "archive": {
+                "bytes": 31029,
+                "path": "responses.onlrsp",
+                "sha256": "2a2c43da933f7718c61ca6376950b705dce00f2f6001b1a39929b152aca32f48"
+              },
+              "queryElapsedMs": 154.21036499901675,
+              "report": {
+                "bytes": 1853,
+                "path": "new-combinations/query.json",
+                "sha256": "3680d441654d0f211c93e24e17500a400b782bb8182dccb6fdddc7030bf0af29"
+              },
+              "spec": {
+                "bytes": 4841,
+                "path": "specs/new-combinations.json",
+                "sha256": "a29fb0454d68d187c57e1145f3709166bb6ac842577f267f9b7c366e6aa4e0b1"
+              },
+              "stats": {
+                "conditionalTermReferences": 105,
+                "generatedPrograms": 0,
+                "propagationCalls": 0,
+                "requestedJobs": 6,
+                "reusedPrograms": 27,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "wallMs": 155.72411299945088
+            },
+            "unseen-levels": {
+              "archive": {
+                "bytes": 52073,
+                "path": "responses.onlrsp",
+                "sha256": "6d6e584425ddc1b1b9aaa7df480cecf05557cb280d3206a26d584a283ded567b"
+              },
+              "queryElapsedMs": 234.89194000285352,
+              "report": {
+                "bytes": 1857,
+                "path": "unseen-levels/query.json",
+                "sha256": "2eb021889c7bdc018bbf0df3e5ce1d5cd5ad4858a9db82550646487663d14778"
+              },
+              "spec": {
+                "bytes": 11993,
+                "path": "specs/unseen-levels.json",
+                "sha256": "6dcdb0450cf7484a0399f05069838e1c2bb1a6283781d31c93514fcb105c5cd8"
+              },
+              "stats": {
+                "conditionalTermReferences": 210,
+                "generatedPrograms": 0,
+                "propagationCalls": 0,
+                "requestedJobs": 12,
+                "reusedPrograms": 27,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "wallMs": 236.49201799707953
+            },
+            "verification": {
+              "comparedBuckets": 4824,
+              "comparisons": [
+                {
+                  "comparedBuckets": 804,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 5.551115123125783e-15,
+                  "name": "minimum-verify-all-matched-1234",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 804,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 5.995204332975845e-15,
+                  "name": "minimum-verify-all-matched-5432",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 804,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 5.329070518200751e-15,
+                  "name": "minimum-verify-all-matched-1352",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 804,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 6.772360450213455e-15,
+                  "name": "minimum-verify-mixed-matches-1234",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 804,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 8.548717289613705e-15,
+                  "name": "minimum-verify-mixed-matches-5432",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 804,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 6.994405055138486e-15,
+                  "name": "minimum-verify-mixed-matches-1352",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                }
+              ],
+              "disjointIntervals": 0,
+              "maximumEndpointDifference": 8.548717289613705e-15,
+              "nativeStats": {
+                "basisTermReferences": 105,
+                "compileMs": 26.350869000000003,
+                "compiledJobs": 6,
+                "compiledProgramPeakBytes": 165252,
+                "elapsedMs": 3763.3701899999996,
+                "exactTermAliases": 78,
+                "fingerprintWorkspacePeakBytes": 110714,
+                "identityBudgetBytes": 33554432,
+                "mixtureMs": 4.681895,
+                "programBudgetBytes": 33554432,
+                "propagationCalls": 27,
+                "propagationMs": 3045.3777550000004,
+                "reconstructedJobs": 6,
+                "requestedJobs": 6,
+                "responseArcCounterBytes": 432,
+                "responseBudgetBytes": 33554432,
+                "responseIndexBytes": 256,
+                "retainedIdentityBytes": 3794952,
+                "retainedResponseBytes": 4485699,
+                "temporaryIdentityPeakBytes": 139400,
+                "uniquePrograms": 27,
+                "verificationCalls": 6,
+                "verificationMs": 664.569486,
+                "verifiedJobs": 6
+              },
+              "report": {
+                "bytes": 7038086,
+                "path": "verification.json",
+                "sha256": "732860504c6ed87cc89f6154559e39f0f235599df6cd35ab9e225d36f323bab1"
+              },
+              "spec": {
+                "bytes": 6058,
+                "path": "specs/verification.json",
+                "sha256": "13b1908be3a9567eb605da7b5c47b5b09d06bc197ecfc973e716a52977a8f6bc"
+              },
+              "uniquePrograms": 27,
+              "verifiedJobs": 6,
+              "wallMs": 3922.279537997383
+            },
+            "warm-repeat": {
+              "archive": {
+                "bytes": 52073,
+                "path": "responses.onlrsp",
+                "sha256": "6d6e584425ddc1b1b9aaa7df480cecf05557cb280d3206a26d584a283ded567b"
+              },
+              "queryElapsedMs": 213.84761000081198,
+              "report": {
+                "bytes": 1856,
+                "path": "warm-repeat/query.json",
+                "sha256": "dc049c6bb54b6254ff82ad954289f9a9bb12bc9d7fb124569051357095798ff4"
+              },
+              "spec": {
+                "bytes": 11993,
+                "path": "specs/unseen-levels.json",
+                "sha256": "6dcdb0450cf7484a0399f05069838e1c2bb1a6283781d31c93514fcb105c5cd8"
+              },
+              "stats": {
+                "conditionalTermReferences": 210,
+                "generatedPrograms": 0,
+                "propagationCalls": 0,
+                "requestedJobs": 12,
+                "reusedPrograms": 27,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "wallMs": 215.4062449990306
+            },
+            "warmup": {
+              "coversAllGridPrograms": true,
+              "queryElapsedMs": 3239.243461001024,
+              "report": {
+                "bytes": 2482,
+                "path": "warmup/query.json",
+                "sha256": "d8b752a5831b4d3a3bb105dd2558fd67169f78439a3a50bd7a29aa4a5477a60f"
+              },
+              "spec": {
+                "bytes": 2083,
+                "path": "specs/warmup.json",
+                "sha256": "25e790ab9a51bd35d10e405bb7317bdb12ada370a73b992dd6f88f8a8270b6f1"
+              },
+              "stats": {
+                "conditionalTermReferences": 35,
+                "generatedPrograms": 27,
+                "propagationCalls": 27,
+                "requestedJobs": 2,
+                "reusedPrograms": 0,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "storedPrograms": 27,
+              "wallMs": 3243.404469001689
+            }
+          },
+          "rankingProven": false,
+          "sameRepeatedQueryArchiveBytes": true,
+          "scoreId": 10006103,
+          "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+          "status": "success",
+          "summary": {
+            "gridJobs": 1250,
+            "minimumOnlyQueryPropagationCalls": 0,
+            "newCombinationJobs": 6,
+            "nonminimumControlJobs": 1,
+            "nonminimumNewPrograms": 27,
+            "nonminimumPropagationCalls": 27,
+            "repeatedJobs": 12,
+            "uniqueGridPrograms": 27,
+            "unseenLevelJobs": 12,
+            "verificationDisjointIntervals": 0,
+            "verifiedJobs": 6,
+            "warmupJobs": 2,
+            "warmupPrograms": 27
+          }
+        },
+        {
+          "complete": true,
+          "elapsedMs": 21723.05650299677,
+          "inputSha256": {
+            "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+            "request": "f98368aeac2d6a370638e320a6d25b789c6f3c5015d545621d7cbbfa3cc8567e",
+            "snapshot": "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242"
+          },
+          "inputsUnchanged": true,
+          "musicId": 100107,
+          "name": "long-newcomer-score",
+          "nativeExpectationProven": false,
+          "phases": {
+            "control-generated": {
+              "newMissingPrograms": 27,
+              "queryElapsedMs": 3058.5314679992734,
+              "report": {
+                "bytes": 2500,
+                "path": "control-generated/query.json",
+                "sha256": "d5dd0c7f52e8ebde8e2560b497f33afa0bf9f27a59174b0aca6cdebbbd112ffb"
+              },
+              "spec": {
+                "bytes": 1099,
+                "path": "specs/nonminimum-control.json",
+                "sha256": "1e12b6e340697fe4bc615c8451f0465bc521df0f184cd4dccc706696301418db"
+              },
+              "stats": {
+                "conditionalTermReferences": 27,
+                "generatedPrograms": 27,
+                "propagationCalls": 27,
+                "requestedJobs": 1,
+                "reusedPrograms": 0,
+                "storedPrograms": 54,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "wallMs": 3063.7567450030474
+            },
+            "control-missing": {
+              "changedNativeProgramSet": true,
+              "newMissingPrograms": 27,
+              "queryElapsedMs": 96.31329799594823,
+              "report": {
+                "bytes": 3529,
+                "path": "control-missing/query.json",
+                "sha256": "151440a41a537387cd60f6e11af78a3af0c19d5725dc386bec2ef36350f17e24"
+              },
+              "spec": {
+                "bytes": 1099,
+                "path": "specs/nonminimum-control.json",
+                "sha256": "1e12b6e340697fe4bc615c8451f0465bc521df0f184cd4dccc706696301418db"
+              },
+              "stats": {
+                "conditionalTermReferences": 27,
+                "generatedPrograms": 0,
+                "propagationCalls": 0,
+                "requestedJobs": 1,
+                "reusedPrograms": 0,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "missing",
+              "wallMs": 97.36249400157249
+            },
+            "grid-identify": {
+              "conditionalTermReferences": 21875,
+              "identifiedJobs": 1250,
+              "nativeStats": {
+                "basisTermReferences": 21875,
+                "compileMs": 7437.204792999992,
+                "compiledJobs": 1250,
+                "compiledProgramPeakBytes": 165252,
+                "elapsedMs": 10258.178864,
+                "exactTermAliases": 21848,
+                "fingerprintWorkspacePeakBytes": 135322,
+                "identityBudgetBytes": 33554432,
+                "mixtureMs": 0.0,
+                "programBudgetBytes": 33554432,
+                "propagationCalls": 0,
+                "propagationMs": 0.0,
+                "reconstructedJobs": 0,
+                "requestedJobs": 1250,
+                "responseArcCounterBytes": 0,
+                "responseBudgetBytes": 33554432,
+                "responseIndexBytes": 256,
+                "retainedIdentityBytes": 11007496,
+                "retainedResponseBytes": 0,
+                "temporaryIdentityPeakBytes": 170632,
+                "uniquePrograms": 27,
+                "verificationCalls": 0,
+                "verificationMs": 0.0,
+                "verifiedJobs": 0
+              },
+              "propagationCalls": 0,
+              "report": {
+                "bytes": 11838899,
+                "path": "grid-identify.json",
+                "sha256": "90fa3eec4d823883c1fc614ee3615e1c1b27ac45a7d6447ab7be57aadc7323d0"
+              },
+              "requestedJobs": 1250,
+              "spec": {
+                "bytes": 1238851,
+                "path": "specs/grid-identify.json",
+                "sha256": "19f2c621cf743c2df924d3861d0be3542e8ebd0d8e4483c644c4ecd774a3c0cb"
+              },
+              "uniquePrograms": 27,
+              "wallMs": 10804.131356999278
+            },
+            "new-combinations": {
+              "archive": {
+                "bytes": 28935,
+                "path": "responses.onlrsp",
+                "sha256": "bd79c44b9329146d1098c299eb0236fa2e0db8a65956ee5d169fe9d037a06014"
+              },
+              "queryElapsedMs": 182.76805800269358,
+              "report": {
+                "bytes": 1853,
+                "path": "new-combinations/query.json",
+                "sha256": "732a89a45f9c9c571369f1bb73b382fec938123489f26392ddac93c0b4d6b443"
+              },
+              "spec": {
+                "bytes": 4841,
+                "path": "specs/new-combinations.json",
+                "sha256": "a29fb0454d68d187c57e1145f3709166bb6ac842577f267f9b7c366e6aa4e0b1"
+              },
+              "stats": {
+                "conditionalTermReferences": 105,
+                "generatedPrograms": 0,
+                "propagationCalls": 0,
+                "requestedJobs": 6,
+                "reusedPrograms": 27,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "wallMs": 184.35987299744738
+            },
+            "unseen-levels": {
+              "archive": {
+                "bytes": 48583,
+                "path": "responses.onlrsp",
+                "sha256": "b0dc08f0f69185fdf5ed68eb42aa133b259cd7fac57694779ec794d0bc50a3ba"
+              },
+              "queryElapsedMs": 263.20106699859025,
+              "report": {
+                "bytes": 1855,
+                "path": "unseen-levels/query.json",
+                "sha256": "bccf007645d33c9d0bd208a5801f0a742e8059bbf22709c12a30bd24b0188875"
+              },
+              "spec": {
+                "bytes": 11993,
+                "path": "specs/unseen-levels.json",
+                "sha256": "6dcdb0450cf7484a0399f05069838e1c2bb1a6283781d31c93514fcb105c5cd8"
+              },
+              "stats": {
+                "conditionalTermReferences": 210,
+                "generatedPrograms": 0,
+                "propagationCalls": 0,
+                "requestedJobs": 12,
+                "reusedPrograms": 27,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "wallMs": 270.2041910015396
+            },
+            "verification": {
+              "comparedBuckets": 4512,
+              "comparisons": [
+                {
+                  "comparedBuckets": 752,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 6.772360450213455e-15,
+                  "name": "minimum-verify-all-matched-1234",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 752,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 8.215650382226158e-15,
+                  "name": "minimum-verify-all-matched-5432",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 752,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 7.105427357601002e-15,
+                  "name": "minimum-verify-all-matched-1352",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 752,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 6.772360450213455e-15,
+                  "name": "minimum-verify-mixed-matches-1234",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 752,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 8.326672684688674e-15,
+                  "name": "minimum-verify-mixed-matches-5432",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 752,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 8.326672684688674e-15,
+                  "name": "minimum-verify-mixed-matches-1352",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                }
+              ],
+              "disjointIntervals": 0,
+              "maximumEndpointDifference": 8.326672684688674e-15,
+              "nativeStats": {
+                "basisTermReferences": 105,
+                "compileMs": 39.239566,
+                "compiledJobs": 6,
+                "compiledProgramPeakBytes": 165252,
+                "elapsedMs": 3346.313019,
+                "exactTermAliases": 78,
+                "fingerprintWorkspacePeakBytes": 135322,
+                "identityBudgetBytes": 33554432,
+                "mixtureMs": 4.497717,
+                "programBudgetBytes": 33554432,
+                "propagationCalls": 27,
+                "propagationMs": 2696.5103609999996,
+                "reconstructedJobs": 6,
+                "requestedJobs": 6,
+                "responseArcCounterBytes": 432,
+                "responseBudgetBytes": 33554432,
+                "responseIndexBytes": 256,
+                "retainedIdentityBytes": 4638216,
+                "retainedResponseBytes": 5550147,
+                "temporaryIdentityPeakBytes": 170632,
+                "uniquePrograms": 27,
+                "verificationCalls": 6,
+                "verificationMs": 579.0319939999999,
+                "verifiedJobs": 6
+              },
+              "report": {
+                "bytes": 8803104,
+                "path": "verification.json",
+                "sha256": "9667e9088d8fc4777ccd6fbccba7755f60bed7c4f79bdb28a0af493a07e29136"
+              },
+              "spec": {
+                "bytes": 6058,
+                "path": "specs/verification.json",
+                "sha256": "13b1908be3a9567eb605da7b5c47b5b09d06bc197ecfc973e716a52977a8f6bc"
+              },
+              "uniquePrograms": 27,
+              "verifiedJobs": 6,
+              "wallMs": 3520.535693001875
+            },
+            "warm-repeat": {
+              "archive": {
+                "bytes": 48583,
+                "path": "responses.onlrsp",
+                "sha256": "b0dc08f0f69185fdf5ed68eb42aa133b259cd7fac57694779ec794d0bc50a3ba"
+              },
+              "queryElapsedMs": 263.6565050052013,
+              "report": {
+                "bytes": 1847,
+                "path": "warm-repeat/query.json",
+                "sha256": "d25cb27e676d8451f28651f9c2981351b0f73df8205171171c50f667002714cd"
+              },
+              "spec": {
+                "bytes": 11993,
+                "path": "specs/unseen-levels.json",
+                "sha256": "6dcdb0450cf7484a0399f05069838e1c2bb1a6283781d31c93514fcb105c5cd8"
+              },
+              "stats": {
+                "conditionalTermReferences": 210,
+                "generatedPrograms": 0,
+                "propagationCalls": 0,
+                "requestedJobs": 12,
+                "reusedPrograms": 27,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "wallMs": 265.3778660023818
+            },
+            "warmup": {
+              "coversAllGridPrograms": true,
+              "queryElapsedMs": 3129.88866300293,
+              "report": {
+                "bytes": 2481,
+                "path": "warmup/query.json",
+                "sha256": "4c954b9128e26a23281a464c15e61f93d50f73b69cc8ef8e1324401226febc65"
+              },
+              "spec": {
+                "bytes": 2083,
+                "path": "specs/warmup.json",
+                "sha256": "25e790ab9a51bd35d10e405bb7317bdb12ada370a73b992dd6f88f8a8270b6f1"
+              },
+              "stats": {
+                "conditionalTermReferences": 35,
+                "generatedPrograms": 27,
+                "propagationCalls": 27,
+                "requestedJobs": 2,
+                "reusedPrograms": 0,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "storedPrograms": 27,
+              "wallMs": 3134.3524390031234
+            }
+          },
+          "rankingProven": false,
+          "sameRepeatedQueryArchiveBytes": true,
+          "scoreId": 10010703,
+          "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+          "status": "success",
+          "summary": {
+            "gridJobs": 1250,
+            "minimumOnlyQueryPropagationCalls": 0,
+            "newCombinationJobs": 6,
+            "nonminimumControlJobs": 1,
+            "nonminimumNewPrograms": 27,
+            "nonminimumPropagationCalls": 27,
+            "repeatedJobs": 12,
+            "uniqueGridPrograms": 27,
+            "unseenLevelJobs": 12,
+            "verificationDisjointIntervals": 0,
+            "verifiedJobs": 6,
+            "warmupJobs": 2,
+            "warmupPrograms": 27
+          }
+        }
+      ],
+      "inputScope": "Original unchanged PR40 newcomer requests and snapshot; published TW master and chart data",
+      "receipt": {
+        "bytes": 2729,
+        "sha256": "62d076dea38e9a0e39b7f85abeb0ecfb116818a434469c724a8e568ec75d8ec7"
+      },
+      "run": {
+        "allSkillCombinationsPrecomputed": false,
+        "cases": [
+          {
+            "complete": true,
+            "directory": "cases/000",
+            "elapsedMs": 19161.464238997723,
+            "error": null,
+            "inputSha256": {
+              "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+              "request": "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa",
+              "snapshot": "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242"
+            },
+            "name": "short-newcomer-score",
+            "receipt": {
+              "bytes": 8537,
+              "path": "cases/000/validation.json",
+              "sha256": "3402b1c4744c7c9b55ab0a8fe743371a9170a4edba7f44b9877dec9b9c236bf6"
+            },
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "status": "success",
+            "summary": {
+              "gridJobs": 1250,
+              "minimumOnlyQueryPropagationCalls": 0,
+              "newCombinationJobs": 6,
+              "nonminimumControlJobs": 1,
+              "nonminimumNewPrograms": 27,
+              "nonminimumPropagationCalls": 27,
+              "repeatedJobs": 12,
+              "uniqueGridPrograms": 27,
+              "unseenLevelJobs": 12,
+              "verificationDisjointIntervals": 0,
+              "verifiedJobs": 6,
+              "warmupJobs": 2,
+              "warmupPrograms": 27
+            }
+          },
+          {
+            "complete": true,
+            "directory": "cases/001",
+            "elapsedMs": 21723.05650299677,
+            "error": null,
+            "inputSha256": {
+              "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+              "request": "f98368aeac2d6a370638e320a6d25b789c6f3c5015d545621d7cbbfa3cc8567e",
+              "snapshot": "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242"
+            },
+            "name": "long-newcomer-score",
+            "receipt": {
+              "bytes": 8526,
+              "path": "cases/001/validation.json",
+              "sha256": "0fdcb4c7f3e6b5a9bf334b395291ff008a8b0e0f95c859b17c494c2dd577fba2"
+            },
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "status": "success",
+            "summary": {
+              "gridJobs": 1250,
+              "minimumOnlyQueryPropagationCalls": 0,
+              "newCombinationJobs": 6,
+              "nonminimumControlJobs": 1,
+              "nonminimumNewPrograms": 27,
+              "nonminimumPropagationCalls": 27,
+              "repeatedJobs": 12,
+              "uniqueGridPrograms": 27,
+              "unseenLevelJobs": 12,
+              "verificationDisjointIntervals": 0,
+              "verifiedJobs": 6,
+              "warmupJobs": 2,
+              "warmupPrograms": 27
+            }
+          }
+        ],
+        "changesChartsOrMissions": false,
+        "complete": true,
+        "elapsedMs": 41000.667613996484,
+        "format": "ournotes-deck.luck-minimum-basis-validation/1",
+        "generatorSha256": "d01307109fab12c6cc640e2378dec0075f16fa511da066ed319e20fb66dc436f",
+        "inputsUnchanged": true,
+        "manifestSha256": "2172052c5f07c0a7010f7bbda34d644a328046c686fe7156d9d3ad7e4f2c9870",
+        "mode": "u24",
+        "nativeExpectationProven": false,
+        "rankingProven": false,
+        "runnerSha256": "5576ce35e0cf96a2b3fb1f16f470597616b917de34aace6a402f2f1dc584775d",
+        "scope": "Declared real-chart contexts and actual published master-skill kernels; full-capacity interaction experiments, not owned-deck search or all-combination coverage.",
+        "selectedCases": [
+          "short-newcomer-score",
+          "long-newcomer-score"
+        ],
+        "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+        "status": "success",
+        "usesMonteCarlo": false
+      }
+    },
+    {
+      "caseDetails": [
+        {
+          "complete": true,
+          "elapsedMs": 15055.112797999755,
+          "inputSha256": {
+            "data": "76446232396ba61cbc499f9e31313a39ab635534426354197b29d81fd0a87d47",
+            "request": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+            "snapshot": "e00221d87e0feea288887e76a5e96b8a5a8e9834953dc485edb85357f72310c6"
+          },
+          "inputsUnchanged": true,
+          "musicId": 100003,
+          "name": "jp-10000300-easy",
+          "nativeExpectationProven": false,
+          "phases": {
+            "control-generated": {
+              "newMissingPrograms": 27,
+              "queryElapsedMs": 1574.8911190021317,
+              "report": {
+                "bytes": 2484,
+                "path": "control-generated/query.json",
+                "sha256": "0025da0a208dfa3731f62908c96e6335b5d9856a74e144a28832e1f8b042810a"
+              },
+              "spec": {
+                "bytes": 1099,
+                "path": "specs/nonminimum-control.json",
+                "sha256": "1e12b6e340697fe4bc615c8451f0465bc521df0f184cd4dccc706696301418db"
+              },
+              "stats": {
+                "conditionalTermReferences": 27,
+                "generatedPrograms": 27,
+                "propagationCalls": 27,
+                "requestedJobs": 1,
+                "reusedPrograms": 0,
+                "storedPrograms": 54,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "wallMs": 1578.6299880055594
+            },
+            "control-missing": {
+              "changedNativeProgramSet": true,
+              "newMissingPrograms": 27,
+              "queryElapsedMs": 87.77381000254536,
+              "report": {
+                "bytes": 3517,
+                "path": "control-missing/query.json",
+                "sha256": "bc3cfa97ac68a3ff18a19e0c5c6aa6e36bf5e39954723e2bb2b5bb11a5512425"
+              },
+              "spec": {
+                "bytes": 1099,
+                "path": "specs/nonminimum-control.json",
+                "sha256": "1e12b6e340697fe4bc615c8451f0465bc521df0f184cd4dccc706696301418db"
+              },
+              "stats": {
+                "conditionalTermReferences": 27,
+                "generatedPrograms": 0,
+                "propagationCalls": 0,
+                "requestedJobs": 1,
+                "reusedPrograms": 0,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "missing",
+              "wallMs": 89.14711399847874
+            },
+            "grid-identify": {
+              "conditionalTermReferences": 21875,
+              "identifiedJobs": 1250,
+              "nativeStats": {
+                "basisTermReferences": 21875,
+                "compileMs": 7479.220281000022,
+                "compiledJobs": 1250,
+                "compiledProgramPeakBytes": 89476,
+                "elapsedMs": 8760.213659,
+                "exactTermAliases": 21848,
+                "fingerprintWorkspacePeakBytes": 61434,
+                "identityBudgetBytes": 33554432,
+                "mixtureMs": 0.0,
+                "programBudgetBytes": 33554432,
+                "propagationCalls": 0,
+                "propagationMs": 0.0,
+                "reconstructedJobs": 0,
+                "requestedJobs": 1250,
+                "responseArcCounterBytes": 0,
+                "responseBudgetBytes": 33554432,
+                "responseIndexBytes": 256,
+                "retainedIdentityBytes": 8399944,
+                "retainedResponseBytes": 0,
+                "temporaryIdentityPeakBytes": 74056,
+                "uniquePrograms": 27,
+                "verificationCalls": 0,
+                "verificationMs": 0.0,
+                "verifiedJobs": 0
+              },
+              "propagationCalls": 0,
+              "report": {
+                "bytes": 11601993,
+                "path": "grid-identify.json",
+                "sha256": "644622c7cec9825e98f4aa2437bd8ab9ae78894faa71259a7fac271ffe259378"
+              },
+              "requestedJobs": 1250,
+              "spec": {
+                "bytes": 1238851,
+                "path": "specs/grid-identify.json",
+                "sha256": "19f2c621cf743c2df924d3861d0be3542e8ebd0d8e4483c644c4ecd774a3c0cb"
+              },
+              "uniquePrograms": 27,
+              "wallMs": 9278.642617005971
+            },
+            "new-combinations": {
+              "archive": {
+                "bytes": 22785,
+                "path": "responses.onlrsp",
+                "sha256": "d1ea25ce397f86d66883162c9b98f4b22e7dc63de96c20c6462320e75ee35d07"
+              },
+              "queryElapsedMs": 163.93740500643617,
+              "report": {
+                "bytes": 1850,
+                "path": "new-combinations/query.json",
+                "sha256": "622baf69c5489fd71e83a1f0d88d9d451988dd54a83f84c1087d112618a431e0"
+              },
+              "spec": {
+                "bytes": 4841,
+                "path": "specs/new-combinations.json",
+                "sha256": "a29fb0454d68d187c57e1145f3709166bb6ac842577f267f9b7c366e6aa4e0b1"
+              },
+              "stats": {
+                "conditionalTermReferences": 105,
+                "generatedPrograms": 0,
+                "propagationCalls": 0,
+                "requestedJobs": 6,
+                "reusedPrograms": 27,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "wallMs": 165.34875700017437
+            },
+            "unseen-levels": {
+              "archive": {
+                "bytes": 38333,
+                "path": "responses.onlrsp",
+                "sha256": "e08994cf19277da2385cb32fef1f6d0ae7d3e333bac51c08a016bc92d2e41511"
+              },
+              "queryElapsedMs": 270.6193050034926,
+              "report": {
+                "bytes": 1844,
+                "path": "unseen-levels/query.json",
+                "sha256": "5d2ef5b8b1695ce6823deb0eeb859b23ca06cfcc92a4a004aae9fc5119032b1f"
+              },
+              "spec": {
+                "bytes": 11993,
+                "path": "specs/unseen-levels.json",
+                "sha256": "6dcdb0450cf7484a0399f05069838e1c2bb1a6283781d31c93514fcb105c5cd8"
+              },
+              "stats": {
+                "conditionalTermReferences": 210,
+                "generatedPrograms": 0,
+                "propagationCalls": 0,
+                "requestedJobs": 12,
+                "reusedPrograms": 27,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "wallMs": 272.6566329947673
+            },
+            "verification": {
+              "comparedBuckets": 3720,
+              "comparisons": [
+                {
+                  "comparedBuckets": 620,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 1.0769163338864018e-14,
+                  "name": "minimum-verify-all-matched-1234",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 620,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 1.1102230246251565e-14,
+                  "name": "minimum-verify-all-matched-5432",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 620,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 8.43769498715119e-15,
+                  "name": "minimum-verify-all-matched-1352",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 620,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 8.215650382226158e-15,
+                  "name": "minimum-verify-mixed-matches-1234",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 620,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 1.0325074129013956e-14,
+                  "name": "minimum-verify-mixed-matches-5432",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                },
+                {
+                  "comparedBuckets": 620,
+                  "comparison": "independent native joint law at the union of original event times",
+                  "disjointIntervals": 0,
+                  "maximumEndpointDifference": 6.8833827526759706e-15,
+                  "name": "minimum-verify-mixed-matches-1352",
+                  "probeTransitionsEqual": true,
+                  "probesEqual": true,
+                  "status": "success"
+                }
+              ],
+              "disjointIntervals": 0,
+              "maximumEndpointDifference": 1.1102230246251565e-14,
+              "nativeStats": {
+                "basisTermReferences": 105,
+                "compileMs": 36.911183,
+                "compiledJobs": 6,
+                "compiledProgramPeakBytes": 89476,
+                "elapsedMs": 1346.124303,
+                "exactTermAliases": 78,
+                "fingerprintWorkspacePeakBytes": 61434,
+                "identityBudgetBytes": 33554432,
+                "mixtureMs": 2.66092,
+                "programBudgetBytes": 33554432,
+                "propagationCalls": 27,
+                "propagationMs": 1058.992702,
+                "reconstructedJobs": 6,
+                "requestedJobs": 6,
+                "responseArcCounterBytes": 432,
+                "responseBudgetBytes": 33554432,
+                "responseIndexBytes": 256,
+                "retainedIdentityBytes": 2030664,
+                "retainedResponseBytes": 2721411,
+                "temporaryIdentityPeakBytes": 74056,
+                "uniquePrograms": 27,
+                "verificationCalls": 6,
+                "verificationMs": 226.992058,
+                "verifiedJobs": 6
+              },
+              "report": {
+                "bytes": 7121377,
+                "path": "verification.json",
+                "sha256": "5cdd12ea0e6328be1b92bac4ffb538719cbe42a2e78eb09707ca72f8a962e6d0"
+              },
+              "spec": {
+                "bytes": 6058,
+                "path": "specs/verification.json",
+                "sha256": "13b1908be3a9567eb605da7b5c47b5b09d06bc197ecfc973e716a52977a8f6bc"
+              },
+              "uniquePrograms": 27,
+              "verifiedJobs": 6,
+              "wallMs": 1487.2928440017859
+            },
+            "warm-repeat": {
+              "archive": {
+                "bytes": 38333,
+                "path": "responses.onlrsp",
+                "sha256": "e08994cf19277da2385cb32fef1f6d0ae7d3e333bac51c08a016bc92d2e41511"
+              },
+              "queryElapsedMs": 241.74578100064537,
+              "report": {
+                "bytes": 1861,
+                "path": "warm-repeat/query.json",
+                "sha256": "1f0acaa7ce174f9f884e2e3b131d9ec247ba5560aeb7fc7fc00877a3735bffd2"
+              },
+              "spec": {
+                "bytes": 11993,
+                "path": "specs/unseen-levels.json",
+                "sha256": "6dcdb0450cf7484a0399f05069838e1c2bb1a6283781d31c93514fcb105c5cd8"
+              },
+              "stats": {
+                "conditionalTermReferences": 210,
+                "generatedPrograms": 0,
+                "propagationCalls": 0,
+                "requestedJobs": 12,
+                "reusedPrograms": 27,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "wallMs": 243.24254199746065
+            },
+            "warmup": {
+              "coversAllGridPrograms": true,
+              "queryElapsedMs": 1509.1879879983026,
+              "report": {
+                "bytes": 2479,
+                "path": "warmup/query.json",
+                "sha256": "d5c62dca31241e6104ea1718317a50e349ac8cf862b62691a340e58611ee4076"
+              },
+              "spec": {
+                "bytes": 2083,
+                "path": "specs/warmup.json",
+                "sha256": "25e790ab9a51bd35d10e405bb7317bdb12ada370a73b992dd6f88f8a8270b6f1"
+              },
+              "stats": {
+                "conditionalTermReferences": 35,
+                "generatedPrograms": 27,
+                "propagationCalls": 27,
+                "requestedJobs": 2,
+                "reusedPrograms": 0,
+                "storedPrograms": 27,
+                "uniqueBasisPrograms": 27
+              },
+              "status": "success",
+              "storedPrograms": 27,
+              "wallMs": 1513.4956569963833
+            }
+          },
+          "rankingProven": false,
+          "sameRepeatedQueryArchiveBytes": true,
+          "scoreId": 10000300,
+          "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+          "status": "success",
+          "summary": {
+            "gridJobs": 1250,
+            "minimumOnlyQueryPropagationCalls": 0,
+            "newCombinationJobs": 6,
+            "nonminimumControlJobs": 1,
+            "nonminimumNewPrograms": 27,
+            "nonminimumPropagationCalls": 27,
+            "repeatedJobs": 12,
+            "uniqueGridPrograms": 27,
+            "unseenLevelJobs": 12,
+            "verificationDisjointIntervals": 0,
+            "verifiedJobs": 6,
+            "warmupJobs": 2,
+            "warmupPrograms": 27
+          }
+        }
+      ],
+      "inputScope": "Published JP easy chart with declared catalogue anchor; actual master skill kernels",
+      "receipt": {
+        "bytes": 1780,
+        "sha256": "98186b1d9ad6482c1d1fe38556d593cb2fd6a0bd573c21acc1a84953fe46ac45"
+      },
+      "run": {
+        "allSkillCombinationsPrecomputed": false,
+        "cases": [
+          {
+            "complete": true,
+            "directory": "cases/000",
+            "elapsedMs": 15055.112797999755,
+            "error": null,
+            "inputSha256": {
+              "data": "76446232396ba61cbc499f9e31313a39ab635534426354197b29d81fd0a87d47",
+              "request": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+              "snapshot": "e00221d87e0feea288887e76a5e96b8a5a8e9834953dc485edb85357f72310c6"
+            },
+            "name": "jp-10000300-easy",
+            "receipt": {
+              "bytes": 8508,
+              "path": "cases/000/validation.json",
+              "sha256": "386b8197bbf096bb4c0cccb77676384200196e49f93522e7ebb274cbf4bd1b69"
+            },
+            "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+            "status": "success",
+            "summary": {
+              "gridJobs": 1250,
+              "minimumOnlyQueryPropagationCalls": 0,
+              "newCombinationJobs": 6,
+              "nonminimumControlJobs": 1,
+              "nonminimumNewPrograms": 27,
+              "nonminimumPropagationCalls": 27,
+              "repeatedJobs": 12,
+              "uniqueGridPrograms": 27,
+              "unseenLevelJobs": 12,
+              "verificationDisjointIntervals": 0,
+              "verifiedJobs": 6,
+              "warmupJobs": 2,
+              "warmupPrograms": 27
+            }
+          }
+        ],
+        "changesChartsOrMissions": false,
+        "complete": true,
+        "elapsedMs": 15151.896998002485,
+        "format": "ournotes-deck.luck-minimum-basis-validation/1",
+        "generatorSha256": "d01307109fab12c6cc640e2378dec0075f16fa511da066ed319e20fb66dc436f",
+        "inputsUnchanged": true,
+        "manifestSha256": "7c6ba6dcae6dba474a7224fe891fa2c7fb58022df51a18fc6e0791c60c9097ae",
+        "mode": "u24",
+        "nativeExpectationProven": false,
+        "rankingProven": false,
+        "runnerSha256": "5576ce35e0cf96a2b3fb1f16f470597616b917de34aace6a402f2f1dc584775d",
+        "scope": "Declared real-chart contexts and actual published master-skill kernels; full-capacity interaction experiments, not owned-deck search or all-combination coverage.",
+        "selectedCases": [
+          "jp-10000300-easy"
+        ],
+        "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+        "status": "success",
+        "usesMonteCarlo": false
+      }
+    }
+  ],
+  "date": "2026-10-08",
+  "exactCdfWitness": {
+    "binarySha256": "d01307109fab12c6cc640e2378dec0075f16fa511da066ed319e20fb66dc436f",
+    "format": "ournotes-deck.luck-canonical-real/1",
+    "nativeExpectationProven": false,
+    "rankingProven": false,
+    "runs": [
+      {
+        "canonical": false,
+        "complete": true,
+        "context": "jp-easy",
+        "exit": 0,
+        "reportSha256": "27fd34ab2f1c643ae414c1e9944f3f0cbb5788b6eb51c6bee45c0a4aa29e1fa7",
+        "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+        "stats": {
+          "compileMs": 24.470972000000003,
+          "compiledJobs": 8,
+          "compiledProgramPeakBytes": 85699,
+          "distinctSourceKeys": 8,
+          "elapsedMs": 72.857011,
+          "exactProgramAliases": 4,
+          "fingerprintWorkspacePeakBytes": 61677,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 4,
+          "propagationMs": 42.90668,
+          "retainedIdentityBytes": 298384,
+          "sourceJobs": 8,
+          "temporaryIdentityPeakBytes": 74612,
+          "uniqueRetainedPrograms": 4
+        },
+        "wallSeconds": 0.14887987599649932
+      },
+      {
+        "canonical": true,
+        "complete": true,
+        "context": "jp-easy",
+        "exit": 0,
+        "independentComparison": {
+          "buckets": 4928,
+          "disjointIntervals": 0,
+          "maximumEndpointDifference": 2.4424906541753444e-15,
+          "probesAndMasksEqual": true
+        },
+        "reportSha256": "ccdc14e43b4e93fe915dc80e4cf04092a7838b40fa811335b88da5803fcafcd0",
+        "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+        "stats": {
+          "compileMs": 22.945545000000003,
+          "compiledJobs": 8,
+          "compiledProgramPeakBytes": 86019,
+          "distinctSourceKeys": 8,
+          "elapsedMs": 45.420272,
+          "exactProgramAliases": 6,
+          "fingerprintWorkspacePeakBytes": 61645,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 2,
+          "propagationMs": 19.618648,
+          "retainedIdentityBytes": 148744,
+          "sourceJobs": 8,
+          "temporaryIdentityPeakBytes": 74036,
+          "uniqueRetainedPrograms": 2
+        },
+        "wallSeconds": 0.11182378400553716
+      },
+      {
+        "canonical": false,
+        "complete": true,
+        "context": "short",
+        "exit": 0,
+        "reportSha256": "8b15612fd8c901781f159d71285b109ddd429de4559ddce8ae9fe3dd0a3475be",
+        "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+        "stats": {
+          "compileMs": 16.985532,
+          "compiledJobs": 8,
+          "compiledProgramPeakBytes": 161475,
+          "distinctSourceKeys": 8,
+          "elapsedMs": 294.327382,
+          "exactProgramAliases": 4,
+          "fingerprintWorkspacePeakBytes": 110957,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 4,
+          "propagationMs": 272.172506,
+          "retainedIdentityBytes": 559760,
+          "sourceJobs": 8,
+          "temporaryIdentityPeakBytes": 139956,
+          "uniqueRetainedPrograms": 4
+        },
+        "wallSeconds": 0.37048840699571883
+      },
+      {
+        "canonical": true,
+        "complete": true,
+        "context": "short",
+        "exit": 0,
+        "independentComparison": {
+          "buckets": 6432,
+          "disjointIntervals": 0,
+          "maximumEndpointDifference": 1.6653345369377348e-15,
+          "probesAndMasksEqual": true
+        },
+        "reportSha256": "9c838b041d1e4a16a695c7472c3942ae8c5671d13561d4e20ccefe110b719d8e",
+        "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+        "stats": {
+          "compileMs": 16.042220999999998,
+          "compiledJobs": 8,
+          "compiledProgramPeakBytes": 161795,
+          "distinctSourceKeys": 8,
+          "elapsedMs": 150.980467,
+          "exactProgramAliases": 6,
+          "fingerprintWorkspacePeakBytes": 110925,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 2,
+          "propagationMs": 132.192903,
+          "retainedIdentityBytes": 279432,
+          "sourceJobs": 8,
+          "temporaryIdentityPeakBytes": 139380,
+          "uniqueRetainedPrograms": 2
+        },
+        "wallSeconds": 0.21690682000189554
+      },
+      {
+        "canonical": false,
+        "complete": true,
+        "context": "long",
+        "exit": 0,
+        "reportSha256": "6e813f8a7a6045b7952db3e85dc17481075d9a1834a15dfca29c6aa15f5f898c",
+        "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+        "stats": {
+          "compileMs": 23.93306,
+          "compiledJobs": 8,
+          "compiledProgramPeakBytes": 161475,
+          "distinctSourceKeys": 8,
+          "elapsedMs": 275.758838,
+          "exactProgramAliases": 4,
+          "fingerprintWorkspacePeakBytes": 135565,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 4,
+          "propagationMs": 245.60291800000002,
+          "retainedIdentityBytes": 684688,
+          "sourceJobs": 8,
+          "temporaryIdentityPeakBytes": 171188,
+          "uniqueRetainedPrograms": 4
+        },
+        "wallSeconds": 0.3565658690058626
+      },
+      {
+        "canonical": true,
+        "complete": true,
+        "context": "long",
+        "exit": 0,
+        "independentComparison": {
+          "buckets": 6016,
+          "disjointIntervals": 0,
+          "maximumEndpointDifference": 1.5543122344752192e-15,
+          "probesAndMasksEqual": true
+        },
+        "reportSha256": "0450c1962634717c33b96db6cdcb96835c839ff14ee8a7f4fdf82b07744d5a5a",
+        "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+        "stats": {
+          "compileMs": 23.362549,
+          "compiledJobs": 8,
+          "compiledProgramPeakBytes": 161795,
+          "distinctSourceKeys": 8,
+          "elapsedMs": 157.21134,
+          "exactProgramAliases": 6,
+          "fingerprintWorkspacePeakBytes": 135533,
+          "identityBudgetBytes": 33554432,
+          "programBudgetBytes": 33554432,
+          "propagationCalls": 2,
+          "propagationMs": 130.18418100000002,
+          "retainedIdentityBytes": 341896,
+          "sourceJobs": 8,
+          "temporaryIdentityPeakBytes": 170612,
+          "uniqueRetainedPrograms": 2
+        },
+        "wallSeconds": 0.22833443700073985
+      }
+    ]
+  },
+  "format": "ournotes-deck.luck-conditional-audit/1",
+  "nativeExpectationProven": false,
+  "ownedDeckConditionalValidation": [
+    {
+      "backend": "basis",
+      "complete": true,
+      "decks": [
+        {
+          "members": [
+            1,
+            28,
+            43,
+            49,
+            64
+          ],
+          "name": "pr40-veteran-five-writers-and-luck-snap",
+          "snaps": [
+            42,
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      ],
+      "elapsedMs": 6937.4137180057005,
+      "format": "ournotes-deck.luck-real-deck-validation/1",
+      "generatorSha256": "d01307109fab12c6cc640e2378dec0075f16fa511da066ed319e20fb66dc436f",
+      "independentReferenceGeneration": {
+        "case": "short-veteran-score",
+        "elapsedMs": 26294.49065800145,
+        "inputSha256": {
+          "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+          "request": "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa",
+          "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d"
+        },
+        "inputUnchanged": true,
+        "orders": 120,
+        "referenceSha256": "2bd7e053aa66d53423a0f8f5d0c71da5b021168bb3a42994315d2ed26ef36fd0",
+        "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6"
+      },
+      "inputSha256": {
+        "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "decks": "f4768b621b77927d36d24c2f57c4306652fed926cb693ed148c9fd74405b9f41",
+        "request": "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa",
+        "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d"
+      },
+      "inputsUnchanged": true,
+      "jointProbabilityAgreement": true,
+      "mode": "u24",
+      "name": "short-veteran-score",
+      "nativeExpectationProven": false,
+      "queries": {
+        "cold": {
+          "archive": {
+            "bytes": 14815,
+            "path": "responses.onlrsp",
+            "sha256": "d959503179764b893f29c88fbef75cec28d0e2d807e6035cc186133cf40dc3ab"
+          },
+          "complete": true,
+          "elapsedMs": 3752.2290519991657,
+          "format": "ournotes-deck.luck-basis-query/1",
+          "generationStats": {
+            "basisTermReferences": 960,
+            "compileMs": 634.40296,
+            "compiledJobs": 120,
+            "compiledProgramPeakBytes": 163260,
+            "elapsedMs": 1608.097448,
+            "exactTermAliases": 952,
+            "fingerprintWorkspacePeakBytes": 110906,
+            "identityBudgetBytes": 33554432,
+            "mixtureMs": 0.0,
+            "programBudgetBytes": 33554432,
+            "propagationCalls": 8,
+            "propagationMs": 862.806556,
+            "reconstructedJobs": 0,
+            "requestedJobs": 120,
+            "responseArcCounterBytes": 128,
+            "responseBudgetBytes": 33554432,
+            "responseIndexBytes": 64,
+            "retainedIdentityBytes": 1732800,
+            "retainedResponseBytes": 1332168,
+            "temporaryIdentityPeakBytes": 139784,
+            "uniquePrograms": 8,
+            "verificationCalls": 0,
+            "verificationMs": 0.0,
+            "verifiedJobs": 0
+          },
+          "identificationStats": {
+            "basisTermReferences": 960,
+            "compileMs": 599.0673739999997,
+            "compiledJobs": 120,
+            "compiledProgramPeakBytes": 163260,
+            "elapsedMs": 732.7379510000001,
+            "exactTermAliases": 952,
+            "fingerprintWorkspacePeakBytes": 110906,
+            "identityBudgetBytes": 33554432,
+            "mixtureMs": 0.0,
+            "programBudgetBytes": 33554432,
+            "propagationCalls": 0,
+            "propagationMs": 0.0,
+            "reconstructedJobs": 0,
+            "requestedJobs": 120,
+            "responseArcCounterBytes": 0,
+            "responseBudgetBytes": 33554432,
+            "responseIndexBytes": 64,
+            "retainedIdentityBytes": 1732800,
+            "retainedResponseBytes": 0,
+            "temporaryIdentityPeakBytes": 139784,
+            "uniquePrograms": 8,
+            "verificationCalls": 0,
+            "verificationMs": 0.0,
+            "verifiedJobs": 0
+          },
+          "inputSha256": {
+            "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+            "decks": "f4768b621b77927d36d24c2f57c4306652fed926cb693ed148c9fd74405b9f41",
+            "request": "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa",
+            "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+            "spec": "62435bf68b64a2379825b45e6ee4b9bdd46a9b1d69ae7d2549864f92b2925d4f"
+          },
+          "inputsUnchanged": true,
+          "mode": "u24",
+          "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+          "stats": {
+            "conditionalTermReferences": 960,
+            "generatedPrograms": 8,
+            "propagationCalls": 8,
+            "requestedJobs": 120,
+            "reusedPrograms": 0,
+            "storedPrograms": 8,
+            "uniqueBasisPrograms": 8
+          },
+          "status": "success"
+        },
+        "warm": {
+          "archive": {
+            "bytes": 14815,
+            "path": "responses.onlrsp",
+            "sha256": "d959503179764b893f29c88fbef75cec28d0e2d807e6035cc186133cf40dc3ab"
+          },
+          "complete": true,
+          "elapsedMs": 1989.7055879991967,
+          "format": "ournotes-deck.luck-basis-query/1",
+          "identificationStats": {
+            "basisTermReferences": 960,
+            "compileMs": 643.9710110000002,
+            "compiledJobs": 120,
+            "compiledProgramPeakBytes": 163260,
+            "elapsedMs": 745.186643,
+            "exactTermAliases": 952,
+            "fingerprintWorkspacePeakBytes": 110906,
+            "identityBudgetBytes": 33554432,
+            "mixtureMs": 0.0,
+            "programBudgetBytes": 33554432,
+            "propagationCalls": 0,
+            "propagationMs": 0.0,
+            "reconstructedJobs": 0,
+            "requestedJobs": 120,
+            "responseArcCounterBytes": 0,
+            "responseBudgetBytes": 33554432,
+            "responseIndexBytes": 64,
+            "retainedIdentityBytes": 1732800,
+            "retainedResponseBytes": 0,
+            "temporaryIdentityPeakBytes": 139784,
+            "uniquePrograms": 8,
+            "verificationCalls": 0,
+            "verificationMs": 0.0,
+            "verifiedJobs": 0
+          },
+          "inputSha256": {
+            "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+            "decks": "f4768b621b77927d36d24c2f57c4306652fed926cb693ed148c9fd74405b9f41",
+            "request": "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa",
+            "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+            "spec": "62435bf68b64a2379825b45e6ee4b9bdd46a9b1d69ae7d2549864f92b2925d4f"
+          },
+          "inputsUnchanged": true,
+          "mode": "u24",
+          "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+          "stats": {
+            "conditionalTermReferences": 960,
+            "generatedPrograms": 0,
+            "propagationCalls": 0,
+            "requestedJobs": 120,
+            "reusedPrograms": 8,
+            "storedPrograms": 8,
+            "uniqueBasisPrograms": 8
+          },
+          "status": "success"
+        }
+      },
+      "queryFormat": "ournotes-deck.luck-basis-query/1",
+      "rankingProven": false,
+      "receipt": {
+        "bytes": 74229,
+        "sha256": "5938e85fac9d395230cb585e6ca073702de622607b08410402c768df7a7fa82c"
+      },
+      "reference": {
+        "generationWallMs": null,
+        "nativeElapsedMs": 25833.512928,
+        "orders": 120,
+        "reused": true,
+        "sha256": "2bd7e053aa66d53423a0f8f5d0c71da5b021168bb3a42994315d2ed26ef36fd0",
+        "specSha256": "14ecebe6e011dded8221226a9e42de4d27165b95ce4c590abc815847760d132a"
+      },
+      "sameColdWarmArchiveBytes": true,
+      "sameColdWarmMaterialization": true,
+      "scope": "Full native nominal joint curves and score-at-mean proxies for the supplied real decks and all 120 original orders; no full-score expectation or ranking certificate.",
+      "scoreProxyExactlyMatches": true,
+      "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+      "status": "matched",
+      "summary": {
+        "jointIntervalsOverlapOrders": 120,
+        "lookupCoversRequiredProbesOrders": 120,
+        "lookupEnclosesReferenceEndpointsOrders": 120,
+        "maximumJointSeparatedGap": 0.0,
+        "maximumWeightedSeparatedGap": 0.0,
+        "orders": 120,
+        "sameJointEndpointsOrders": 0,
+        "sameProbeFlagsOrders": 120,
+        "sameRangeMomentsOrders": 120,
+        "sameTransitionMasksOrders": 120,
+        "scoreProxy": {
+          "cold": {
+            "differentOrders": 0,
+            "exactOrders": 120,
+            "maximumAbsoluteError": 0,
+            "meanAbsoluteError": 0.0,
+            "meanSignedError": 0.0
+          },
+          "warm": {
+            "differentOrders": 0,
+            "exactOrders": 120,
+            "maximumAbsoluteError": 0,
+            "meanAbsoluteError": 0.0,
+            "meanSignedError": 0.0
+          }
+        },
+        "weightedIntervalsOverlapOrders": 120
+      },
+      "usesMonteCarlo": false
+    },
+    {
+      "backend": "basis",
+      "complete": true,
+      "decks": [
+        {
+          "members": [
+            1,
+            28,
+            43,
+            49,
+            64
+          ],
+          "name": "pr40-veteran-five-writers-and-luck-snap",
+          "snaps": [
+            42,
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      ],
+      "elapsedMs": 8848.323459998937,
+      "format": "ournotes-deck.luck-real-deck-validation/1",
+      "generatorSha256": "d01307109fab12c6cc640e2378dec0075f16fa511da066ed319e20fb66dc436f",
+      "independentReferenceGeneration": {
+        "case": "long-veteran-score",
+        "elapsedMs": 30565.45591699978,
+        "inputSha256": {
+          "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+          "request": "5716ce5637ded361e9ed5e4cea3361c129849696f524135311d986617d39ea7b",
+          "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d"
+        },
+        "inputUnchanged": true,
+        "orders": 120,
+        "referenceSha256": "287d40c50330091b0b4596ba18b47772d08591fa4fc91bd0d39e9df80661dbd8",
+        "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6"
+      },
+      "inputSha256": {
+        "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "decks": "f4768b621b77927d36d24c2f57c4306652fed926cb693ed148c9fd74405b9f41",
+        "request": "5716ce5637ded361e9ed5e4cea3361c129849696f524135311d986617d39ea7b",
+        "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d"
+      },
+      "inputsUnchanged": true,
+      "jointProbabilityAgreement": true,
+      "mode": "u24",
+      "name": "long-veteran-score",
+      "nativeExpectationProven": false,
+      "queries": {
+        "cold": {
+          "archive": {
+            "bytes": 14545,
+            "path": "responses.onlrsp",
+            "sha256": "17cef3c5c7ada6aa459715592f568dda97aea2cafc6ef1924a8ae2b8331ffef9"
+          },
+          "complete": true,
+          "elapsedMs": 5321.174675002112,
+          "format": "ournotes-deck.luck-basis-query/1",
+          "generationStats": {
+            "basisTermReferences": 960,
+            "compileMs": 1033.8411640000004,
+            "compiledJobs": 120,
+            "compiledProgramPeakBytes": 163260,
+            "elapsedMs": 2284.6850820000004,
+            "exactTermAliases": 952,
+            "fingerprintWorkspacePeakBytes": 135514,
+            "identityBudgetBytes": 33554432,
+            "mixtureMs": 0.0,
+            "programBudgetBytes": 33554432,
+            "propagationCalls": 8,
+            "propagationMs": 1110.465835,
+            "reconstructedJobs": 0,
+            "requestedJobs": 120,
+            "responseArcCounterBytes": 128,
+            "responseBudgetBytes": 33554432,
+            "responseIndexBytes": 64,
+            "retainedIdentityBytes": 1982656,
+            "retainedResponseBytes": 1647560,
+            "temporaryIdentityPeakBytes": 171016,
+            "uniquePrograms": 8,
+            "verificationCalls": 0,
+            "verificationMs": 0.0,
+            "verifiedJobs": 0
+          },
+          "identificationStats": {
+            "basisTermReferences": 960,
+            "compileMs": 1013.9241440000005,
+            "compiledJobs": 120,
+            "compiledProgramPeakBytes": 163260,
+            "elapsedMs": 1147.098065,
+            "exactTermAliases": 952,
+            "fingerprintWorkspacePeakBytes": 135514,
+            "identityBudgetBytes": 33554432,
+            "mixtureMs": 0.0,
+            "programBudgetBytes": 33554432,
+            "propagationCalls": 0,
+            "propagationMs": 0.0,
+            "reconstructedJobs": 0,
+            "requestedJobs": 120,
+            "responseArcCounterBytes": 0,
+            "responseBudgetBytes": 33554432,
+            "responseIndexBytes": 64,
+            "retainedIdentityBytes": 1982656,
+            "retainedResponseBytes": 0,
+            "temporaryIdentityPeakBytes": 171016,
+            "uniquePrograms": 8,
+            "verificationCalls": 0,
+            "verificationMs": 0.0,
+            "verifiedJobs": 0
+          },
+          "inputSha256": {
+            "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+            "decks": "f4768b621b77927d36d24c2f57c4306652fed926cb693ed148c9fd74405b9f41",
+            "request": "5716ce5637ded361e9ed5e4cea3361c129849696f524135311d986617d39ea7b",
+            "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+            "spec": "62435bf68b64a2379825b45e6ee4b9bdd46a9b1d69ae7d2549864f92b2925d4f"
+          },
+          "inputsUnchanged": true,
+          "mode": "u24",
+          "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+          "stats": {
+            "conditionalTermReferences": 960,
+            "generatedPrograms": 8,
+            "propagationCalls": 8,
+            "requestedJobs": 120,
+            "reusedPrograms": 0,
+            "storedPrograms": 8,
+            "uniqueBasisPrograms": 8
+          },
+          "status": "success"
+        },
+        "warm": {
+          "archive": {
+            "bytes": 14545,
+            "path": "responses.onlrsp",
+            "sha256": "17cef3c5c7ada6aa459715592f568dda97aea2cafc6ef1924a8ae2b8331ffef9"
+          },
+          "complete": true,
+          "elapsedMs": 2407.5646519995644,
+          "format": "ournotes-deck.luck-basis-query/1",
+          "identificationStats": {
+            "basisTermReferences": 960,
+            "compileMs": 814.0807330000005,
+            "compiledJobs": 120,
+            "compiledProgramPeakBytes": 163260,
+            "elapsedMs": 931.253149,
+            "exactTermAliases": 952,
+            "fingerprintWorkspacePeakBytes": 135514,
+            "identityBudgetBytes": 33554432,
+            "mixtureMs": 0.0,
+            "programBudgetBytes": 33554432,
+            "propagationCalls": 0,
+            "propagationMs": 0.0,
+            "reconstructedJobs": 0,
+            "requestedJobs": 120,
+            "responseArcCounterBytes": 0,
+            "responseBudgetBytes": 33554432,
+            "responseIndexBytes": 64,
+            "retainedIdentityBytes": 1982656,
+            "retainedResponseBytes": 0,
+            "temporaryIdentityPeakBytes": 171016,
+            "uniquePrograms": 8,
+            "verificationCalls": 0,
+            "verificationMs": 0.0,
+            "verifiedJobs": 0
+          },
+          "inputSha256": {
+            "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+            "decks": "f4768b621b77927d36d24c2f57c4306652fed926cb693ed148c9fd74405b9f41",
+            "request": "5716ce5637ded361e9ed5e4cea3361c129849696f524135311d986617d39ea7b",
+            "snapshot": "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+            "spec": "62435bf68b64a2379825b45e6ee4b9bdd46a9b1d69ae7d2549864f92b2925d4f"
+          },
+          "inputsUnchanged": true,
+          "mode": "u24",
+          "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+          "stats": {
+            "conditionalTermReferences": 960,
+            "generatedPrograms": 0,
+            "propagationCalls": 0,
+            "requestedJobs": 120,
+            "reusedPrograms": 8,
+            "storedPrograms": 8,
+            "uniqueBasisPrograms": 8
+          },
+          "status": "success"
+        }
+      },
+      "queryFormat": "ournotes-deck.luck-basis-query/1",
+      "rankingProven": false,
+      "receipt": {
+        "bytes": 74239,
+        "sha256": "7263083fa3a29d8cdd6dea90b3240fe7da62f74e2d94796ca9e0c0f67f2e9eb8"
+      },
+      "reference": {
+        "generationWallMs": null,
+        "nativeElapsedMs": 30021.454395,
+        "orders": 120,
+        "reused": true,
+        "sha256": "287d40c50330091b0b4596ba18b47772d08591fa4fc91bd0d39e9df80661dbd8",
+        "specSha256": "14ecebe6e011dded8221226a9e42de4d27165b95ce4c590abc815847760d132a"
+      },
+      "sameColdWarmArchiveBytes": true,
+      "sameColdWarmMaterialization": true,
+      "scope": "Full native nominal joint curves and score-at-mean proxies for the supplied real decks and all 120 original orders; no full-score expectation or ranking certificate.",
+      "scoreProxyExactlyMatches": true,
+      "sourceVersion": "0164248e95314dc38d8154f7fa93f7ec0f7e445697e191a7289097ec89d830d6",
+      "status": "matched",
+      "summary": {
+        "jointIntervalsOverlapOrders": 120,
+        "lookupCoversRequiredProbesOrders": 120,
+        "lookupEnclosesReferenceEndpointsOrders": 120,
+        "maximumJointSeparatedGap": 0.0,
+        "maximumWeightedSeparatedGap": 0.0,
+        "orders": 120,
+        "sameJointEndpointsOrders": 0,
+        "sameProbeFlagsOrders": 120,
+        "sameRangeMomentsOrders": 120,
+        "sameTransitionMasksOrders": 120,
+        "scoreProxy": {
+          "cold": {
+            "differentOrders": 0,
+            "exactOrders": 120,
+            "maximumAbsoluteError": 0,
+            "meanAbsoluteError": 0.0,
+            "meanSignedError": 0.0
+          },
+          "warm": {
+            "differentOrders": 0,
+            "exactOrders": 120,
+            "maximumAbsoluteError": 0,
+            "meanAbsoluteError": 0.0,
+            "meanSignedError": 0.0
+          }
+        },
+        "weightedIntervalsOverlapOrders": 120
+      },
+      "usesMonteCarlo": false
+    }
+  ],
+  "rankingProven": false,
+  "scope": "Measured whole-live conditional minimum responses for fixed remaining native controllers, plus exact-CDF witnesses and two original owned-deck contexts. Not a universal multi-skill-combination table or a native full-score/ranking certificate.",
+  "summary": {
+    "compressionRoundtrips": 48,
+    "conditionalProgramsAcrossSeparateContexts": 81,
+    "disjointVerificationIntervals": 0,
+    "gridRequests": 3750,
+    "heldOutAndRepeatedPropagationCalls": 0,
+    "heldOutLevelAndCombinationJobs": 54,
+    "maximumVerificationEndpointDifference": 1.1102230246251565e-14,
+    "originalDpComparedBuckets": 13056,
+    "originalDpVerificationJobs": 18,
+    "ownedDeckOrders": 240,
+    "realContexts": 3
+  },
+  "usesMonteCarlo": false
+}

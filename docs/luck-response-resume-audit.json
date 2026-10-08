@@ -1,0 +1,464 @@
+{
+  "algorithmDigest": "1671628eff764c8b2f3bbee87736f47cd1ac219b554e0ccec9431aff458e8a1c",
+  "allCatalogueChartsTestedHere": false,
+  "complete": true,
+  "format": "ournotes-deck.luck-semantic-resume-experiment/1",
+  "generatorSha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61",
+  "interpretation": "Only the original-cold and original-warm stages use unmodified published bdon inputs. The subsequent stages are controlled private mutation tests of invalidation. Wall times cover this one-chart shard invocation and are not full-catalogue or ranking-search timings.",
+  "originalDeclaredCatalogueCharts": 344,
+  "originalInputFilesVerified": 348,
+  "originalManifestSha256": "7c6ba6dcae6dba474a7224fe891fa2c7fb58022df51a18fc6e0791c60c9097ae",
+  "originalsUnchanged": true,
+  "purpose": "Actual unmodified native cold/warm run followed by private mutation tests of cache invalidation; mutated masters are not performance acceptance inputs.",
+  "selectedMutation": {
+    "after": 11000,
+    "before": 10000,
+    "effectType": 11001,
+    "field": "_effectValue",
+    "id": 31,
+    "level": 1,
+    "reason": "Private fault-injection check of a selected actual skill dependency; not a published master input.",
+    "skillId": 7,
+    "source": "gekisou",
+    "table": "MasterGekisouSkillEffect"
+  },
+  "selection": {
+    "ordering": "score-id-modulo/1",
+    "scoreId": 10000300,
+    "shardCount": 1024,
+    "shardIndex": 940
+  },
+  "simSourceSha256": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+  "stages": [
+    {
+      "context": {
+        "algorithmVersion": "ournotes-luck-response/1/303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "fingerprint": "99a4e9526eab091862644fc1f6936cd6bd3118af6dac5feb1fdb3062fe4091da"
+      },
+      "currentInputSha256": {
+        "data": "76446232396ba61cbc499f9e31313a39ab635534426354197b29d81fd0a87d47",
+        "request": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+        "snapshot": "e00221d87e0feea288887e76a5e96b8a5a8e9834953dc485edb85357f72310c6"
+      },
+      "generationInputProvenance": {
+        "contextDeck": {
+          "members": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "name": "firstLegalContext",
+          "snaps": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "contextDeckPower": 55655,
+        "datasetSha256": "76446232396ba61cbc499f9e31313a39ab635534426354197b29d81fd0a87d47",
+        "inputs": {
+          "data": "data.json",
+          "request": "jp-10000300-easy.json",
+          "requestSha256": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+          "roster": "snapshot.json",
+          "rosterSha256": "e00221d87e0feea288887e76a5e96b8a5a8e9834953dc485edb85357f72310c6",
+          "spec": "spec.json",
+          "specSha256": "46650b19e3a1a26c24aca474cb75e0a1e1f12e9fb4ab2ec704cbd1083a8ce42f"
+        }
+      },
+      "generationStats": {
+        "compileMs": 2976.909751999998,
+        "compiledJobs": 1201,
+        "compiledProgramPeakBytes": 101547,
+        "distinctSourceKeys": 1201,
+        "elapsedMs": 3768.831414,
+        "exactProgramAliases": 1152,
+        "fingerprintWorkspacePeakBytes": 70989,
+        "identityBudgetBytes": 33554432,
+        "programBudgetBytes": 33554432,
+        "propagationCalls": 49,
+        "propagationMs": 644.814011,
+        "retainedIdentityBytes": 3955604,
+        "sourceJobs": 1201,
+        "temporaryIdentityPeakBytes": 93236,
+        "uniqueRetainedPrograms": 49
+      },
+      "jobs": 1201,
+      "name": "original-cold",
+      "nativeCalls": [
+        {
+          "elapsedMs": 4709.8010150002665,
+          "jobs": 1201,
+          "kind": "programs",
+          "uniquePrograms": 49
+        }
+      ],
+      "originalGenerationReportSha256": "c5cfe1ada2a6afa1d3cdcfccba1bcf4133c62998a2db9e81f49197e6ccf7fbc7",
+      "resumePlan": null,
+      "reusedChart": false,
+      "reusedThroughPlan": false,
+      "semanticResumeMiss": null,
+      "sharedFingerprint": "fad54a8057ab240293988546f0a4eb0ead993c2fb89edc59d27dd671fd483acd",
+      "uniquePrograms": 49,
+      "wallMs": 4983.285685004375,
+      "work": {
+        "generatedPrograms": 49,
+        "nativePlanCalls": 0,
+        "reusedCharts": 0,
+        "semanticResumeCharts": 0
+      }
+    },
+    {
+      "context": {
+        "algorithmVersion": "ournotes-luck-response/1/303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "fingerprint": "99a4e9526eab091862644fc1f6936cd6bd3118af6dac5feb1fdb3062fe4091da"
+      },
+      "currentInputSha256": {
+        "data": "76446232396ba61cbc499f9e31313a39ab635534426354197b29d81fd0a87d47",
+        "request": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+        "snapshot": "e00221d87e0feea288887e76a5e96b8a5a8e9834953dc485edb85357f72310c6"
+      },
+      "generationInputProvenance": {
+        "contextDeck": {
+          "members": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "name": "firstLegalContext",
+          "snaps": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "contextDeckPower": 55655,
+        "datasetSha256": "76446232396ba61cbc499f9e31313a39ab635534426354197b29d81fd0a87d47",
+        "inputs": {
+          "data": "data.json",
+          "request": "jp-10000300-easy.json",
+          "requestSha256": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+          "roster": "snapshot.json",
+          "rosterSha256": "e00221d87e0feea288887e76a5e96b8a5a8e9834953dc485edb85357f72310c6",
+          "spec": "spec.json",
+          "specSha256": "46650b19e3a1a26c24aca474cb75e0a1e1f12e9fb4ab2ec704cbd1083a8ce42f"
+        }
+      },
+      "generationStats": {
+        "compileMs": 2976.909751999998,
+        "compiledJobs": 1201,
+        "compiledProgramPeakBytes": 101547,
+        "distinctSourceKeys": 1201,
+        "elapsedMs": 3768.831414,
+        "exactProgramAliases": 1152,
+        "fingerprintWorkspacePeakBytes": 70989,
+        "identityBudgetBytes": 33554432,
+        "programBudgetBytes": 33554432,
+        "propagationCalls": 49,
+        "propagationMs": 644.814011,
+        "retainedIdentityBytes": 3955604,
+        "sourceJobs": 1201,
+        "temporaryIdentityPeakBytes": 93236,
+        "uniqueRetainedPrograms": 49
+      },
+      "jobs": 1201,
+      "name": "original-warm",
+      "nativeCalls": [],
+      "originalGenerationReportSha256": "c5cfe1ada2a6afa1d3cdcfccba1bcf4133c62998a2db9e81f49197e6ccf7fbc7",
+      "resumePlan": null,
+      "reusedChart": true,
+      "reusedThroughPlan": false,
+      "semanticResumeMiss": null,
+      "sharedFingerprint": "fad54a8057ab240293988546f0a4eb0ead993c2fb89edc59d27dd671fd483acd",
+      "uniquePrograms": 49,
+      "wallMs": 367.45320900081424,
+      "work": {
+        "generatedPrograms": 0,
+        "nativePlanCalls": 0,
+        "reusedCharts": 1,
+        "semanticResumeCharts": 0
+      }
+    },
+    {
+      "context": {
+        "algorithmVersion": "ournotes-luck-response/1/303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "fingerprint": "99a4e9526eab091862644fc1f6936cd6bd3118af6dac5feb1fdb3062fe4091da"
+      },
+      "currentInputSha256": {
+        "data": "45adf58cea42bd949d720acc866966a5dc487fa78b0c3a9e791d9e2dc9cf8736",
+        "request": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+        "snapshot": "0bf5edcf5e92707c3f15219fa495315e41b217359e190baeebb5b35c99450235"
+      },
+      "generationInputProvenance": {
+        "contextDeck": {
+          "members": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "name": "firstLegalContext",
+          "snaps": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "contextDeckPower": 55655,
+        "datasetSha256": "76446232396ba61cbc499f9e31313a39ab635534426354197b29d81fd0a87d47",
+        "inputs": {
+          "data": "data.json",
+          "request": "jp-10000300-easy.json",
+          "requestSha256": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+          "roster": "snapshot.json",
+          "rosterSha256": "e00221d87e0feea288887e76a5e96b8a5a8e9834953dc485edb85357f72310c6",
+          "spec": "spec.json",
+          "specSha256": "46650b19e3a1a26c24aca474cb75e0a1e1f12e9fb4ab2ec704cbd1083a8ce42f"
+        }
+      },
+      "generationStats": {
+        "compileMs": 2976.909751999998,
+        "compiledJobs": 1201,
+        "compiledProgramPeakBytes": 101547,
+        "distinctSourceKeys": 1201,
+        "elapsedMs": 3768.831414,
+        "exactProgramAliases": 1152,
+        "fingerprintWorkspacePeakBytes": 70989,
+        "identityBudgetBytes": 33554432,
+        "programBudgetBytes": 33554432,
+        "propagationCalls": 49,
+        "propagationMs": 644.814011,
+        "retainedIdentityBytes": 3955604,
+        "sourceJobs": 1201,
+        "temporaryIdentityPeakBytes": 93236,
+        "uniqueRetainedPrograms": 49
+      },
+      "jobs": 1201,
+      "name": "unrelated-member-update",
+      "nativeCalls": [
+        {
+          "elapsedMs": 313.4494719997747,
+          "jobs": 1201,
+          "kind": "plan"
+        }
+      ],
+      "originalGenerationReportSha256": "c5cfe1ada2a6afa1d3cdcfccba1bcf4133c62998a2db9e81f49197e6ccf7fbc7",
+      "resumePlan": {
+        "report": {
+          "bytes": 8995903,
+          "path": "resume/5f790813ea8c70843e6e890b789ad4677bca7cbdd041750c6a80c76ac4e5c949.report.json",
+          "sha256": "5f790813ea8c70843e6e890b789ad4677bca7cbdd041750c6a80c76ac4e5c949"
+        },
+        "spec": {
+          "bytes": 142212,
+          "path": "resume/567e51bffced8e6e03f2a0849907e34ab852fc4f98e6079151e96394e93ee14c.spec.json",
+          "sha256": "567e51bffced8e6e03f2a0849907e34ab852fc4f98e6079151e96394e93ee14c"
+        }
+      },
+      "reusedChart": true,
+      "reusedThroughPlan": true,
+      "semanticResumeMiss": null,
+      "sharedFingerprint": "fad54a8057ab240293988546f0a4eb0ead993c2fb89edc59d27dd671fd483acd",
+      "uniquePrograms": 49,
+      "wallMs": 784.9359550018562,
+      "work": {
+        "generatedPrograms": 0,
+        "nativePlanCalls": 1,
+        "reusedCharts": 1,
+        "semanticResumeCharts": 1
+      }
+    },
+    {
+      "context": {
+        "algorithmVersion": "ournotes-luck-response/1/303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "fingerprint": "99a4e9526eab091862644fc1f6936cd6bd3118af6dac5feb1fdb3062fe4091da"
+      },
+      "currentInputSha256": {
+        "data": "45adf58cea42bd949d720acc866966a5dc487fa78b0c3a9e791d9e2dc9cf8736",
+        "request": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+        "snapshot": "0bf5edcf5e92707c3f15219fa495315e41b217359e190baeebb5b35c99450235"
+      },
+      "generationInputProvenance": {
+        "contextDeck": {
+          "members": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "name": "firstLegalContext",
+          "snaps": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "contextDeckPower": 55655,
+        "datasetSha256": "76446232396ba61cbc499f9e31313a39ab635534426354197b29d81fd0a87d47",
+        "inputs": {
+          "data": "data.json",
+          "request": "jp-10000300-easy.json",
+          "requestSha256": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+          "roster": "snapshot.json",
+          "rosterSha256": "e00221d87e0feea288887e76a5e96b8a5a8e9834953dc485edb85357f72310c6",
+          "spec": "spec.json",
+          "specSha256": "46650b19e3a1a26c24aca474cb75e0a1e1f12e9fb4ab2ec704cbd1083a8ce42f"
+        }
+      },
+      "generationStats": {
+        "compileMs": 2976.909751999998,
+        "compiledJobs": 1201,
+        "compiledProgramPeakBytes": 101547,
+        "distinctSourceKeys": 1201,
+        "elapsedMs": 3768.831414,
+        "exactProgramAliases": 1152,
+        "fingerprintWorkspacePeakBytes": 70989,
+        "identityBudgetBytes": 33554432,
+        "programBudgetBytes": 33554432,
+        "propagationCalls": 49,
+        "propagationMs": 644.814011,
+        "retainedIdentityBytes": 3955604,
+        "sourceJobs": 1201,
+        "temporaryIdentityPeakBytes": 93236,
+        "uniqueRetainedPrograms": 49
+      },
+      "jobs": 1201,
+      "name": "unrelated-member-update-warm",
+      "nativeCalls": [],
+      "originalGenerationReportSha256": "c5cfe1ada2a6afa1d3cdcfccba1bcf4133c62998a2db9e81f49197e6ccf7fbc7",
+      "resumePlan": {
+        "report": {
+          "bytes": 8995903,
+          "path": "resume/5f790813ea8c70843e6e890b789ad4677bca7cbdd041750c6a80c76ac4e5c949.report.json",
+          "sha256": "5f790813ea8c70843e6e890b789ad4677bca7cbdd041750c6a80c76ac4e5c949"
+        },
+        "spec": {
+          "bytes": 142212,
+          "path": "resume/567e51bffced8e6e03f2a0849907e34ab852fc4f98e6079151e96394e93ee14c.spec.json",
+          "sha256": "567e51bffced8e6e03f2a0849907e34ab852fc4f98e6079151e96394e93ee14c"
+        }
+      },
+      "reusedChart": true,
+      "reusedThroughPlan": true,
+      "semanticResumeMiss": null,
+      "sharedFingerprint": "fad54a8057ab240293988546f0a4eb0ead993c2fb89edc59d27dd671fd483acd",
+      "uniquePrograms": 49,
+      "wallMs": 547.0756400027312,
+      "work": {
+        "generatedPrograms": 0,
+        "nativePlanCalls": 0,
+        "reusedCharts": 1,
+        "semanticResumeCharts": 1
+      }
+    },
+    {
+      "context": {
+        "algorithmVersion": "ournotes-luck-response/1/303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
+        "fingerprint": "121608725d0018b6298b363bc36e170db6c2f4732ecd8be675d0843aa6fafd16"
+      },
+      "currentInputSha256": {
+        "data": "7c3d03c3ef87694cb3951212b581350eb8e9e3de85ad81232c0d6005e2a70cf5",
+        "request": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+        "snapshot": "a0e8f5a66bbcefa4f46e07d8631254335dd0181cdadabaeab3b65fedb9149e1f"
+      },
+      "generationInputProvenance": {
+        "contextDeck": {
+          "members": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "name": "firstLegalContext",
+          "snaps": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "contextDeckPower": 55655,
+        "datasetSha256": "7c3d03c3ef87694cb3951212b581350eb8e9e3de85ad81232c0d6005e2a70cf5",
+        "inputs": {
+          "data": "data.json",
+          "request": "jp-10000300-easy.json",
+          "requestSha256": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+          "roster": "snapshot.json",
+          "rosterSha256": "a0e8f5a66bbcefa4f46e07d8631254335dd0181cdadabaeab3b65fedb9149e1f",
+          "spec": "spec.json",
+          "specSha256": "46650b19e3a1a26c24aca474cb75e0a1e1f12e9fb4ab2ec704cbd1083a8ce42f"
+        }
+      },
+      "generationStats": {
+        "compileMs": 2769.443149,
+        "compiledJobs": 1201,
+        "compiledProgramPeakBytes": 101547,
+        "distinctSourceKeys": 1201,
+        "elapsedMs": 3519.985831,
+        "exactProgramAliases": 1152,
+        "fingerprintWorkspacePeakBytes": 70989,
+        "identityBudgetBytes": 33554432,
+        "programBudgetBytes": 33554432,
+        "propagationCalls": 49,
+        "propagationMs": 611.2739819999999,
+        "retainedIdentityBytes": 3955604,
+        "sourceJobs": 1201,
+        "temporaryIdentityPeakBytes": 93236,
+        "uniqueRetainedPrograms": 49
+      },
+      "jobs": 1201,
+      "name": "selected-skill-update",
+      "nativeCalls": [
+        {
+          "elapsedMs": 271.64945199911017,
+          "jobs": 1201,
+          "kind": "plan"
+        },
+        {
+          "elapsedMs": 4443.781079004111,
+          "jobs": 1201,
+          "kind": "programs",
+          "uniquePrograms": 49
+        }
+      ],
+      "originalGenerationReportSha256": "6b593f8481b37e5eef721c303145322824127a63ea719096fd6c5a808ea82090",
+      "resumePlan": null,
+      "reusedChart": false,
+      "reusedThroughPlan": false,
+      "semanticResumeMiss": "semantic resume native context or dependencies differ from generation",
+      "sharedFingerprint": "fad54a8057ab240293988546f0a4eb0ead993c2fb89edc59d27dd671fd483acd",
+      "uniquePrograms": 49,
+      "wallMs": 5139.861170006043,
+      "work": {
+        "generatedPrograms": 49,
+        "nativePlanCalls": 1,
+        "reusedCharts": 0,
+        "semanticResumeCharts": 0
+      }
+    }
+  ],
+  "unrelatedMutation": {
+    "after": 30180,
+    "before": 30179,
+    "field": "_performancePowerMax",
+    "id": 64,
+    "reason": "Existing unowned member outside the unchanged native anchor; no new rows or skills were fabricated.",
+    "table": "MasterMemberCard"
+  }
+}
