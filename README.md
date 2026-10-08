@@ -41,13 +41,14 @@ CLI、WASM 和 harness 使用这些入口。
 当前统一入口包括含 Snap 技能的 Free Live、声明条件下的 Mission 撃奏、分数与客户端 PT。
 Power/Skip 使用专用规范队伍搜索。默认 `aggregation:"expected"` 的实打 Live/PT 以队伍（队长、另外四名成员及各自配对的 Snap）为单位，
 按 120 种等概率出场顺序的平均收益排序；除队长外的站位只是排列，不是决策。每支队伍按规范站位给出，
-并附确定性顺序的分数分布和其中最好的顺序。Expected 在撃奏关闭时将技能的概率判定按不支持拒绝；撃奏中没有 LUCK 区间时，
-概率判定控制不了任何能发生的效果，每种顺序仍只有一个确定分数；有 LUCK 区间时，按原生抽签概率给出带证明的收益区间排序，
-区间重叠而无法分出名次时返回 `RefinementRequired`。
-Free Live 和 Challenge Live 还支持 `aggregation:"maximum"`，在相同打法下搜索全部演出顺序和普通技能的独立随机支持集最高收益。
-Power/Skip 的两种聚合值相同。Maximum 的结果、进度和能力声明通过 `maximumModel` 区分确定性结果与独立随机支持集，
-后者的 `rootSeedRealizability:"notEstablished"` 表示尚未证明存在同一个原生根种子复现完整轨迹；
-`bestOrder` 只提供顺序及该结果的终值。详细契约见[推荐接口](docs/recommendation.md)。
+并附确定性顺序的分数分布和其中最好的顺序。普通 Free Live / Challenge Live 默认全 Perfect；固定卡组、打法与技能演出顺序后，
+每种顺序只有一个终值。Free Live 和 Challenge Live 还支持 `aggregation:"maximum"`，在相同打法下取全部合法演出顺序的最高收益；
+切换目标不会把自定义打法改成全 Perfect。技能的演出时点不同，覆盖的音符也可能不同，因此全 Perfect 不保证所有顺序同分。
+Power/Skip 的两种聚合值相同。已核对的四服普通技能数据没有 4011 概率条件，普通最高值搜索不需要搜索种子。
+Maximum 的结果、进度和能力声明中的 `maximumModel` 描述引擎可处理的支持域，并不表示当前数据实际发生了随机技能抽样。
+若调用方另行提供带概率条件的数据，通用 Maximum API 仍按独立支持集求值；它不保证一个根种子复现整条随机轨迹，
+但这项兼容边界不构成上述普通任务的阻塞。Expected 在撃奏关闭时拒绝不支持的概率判定；撃奏有 LUCK 区间时，
+按原生抽签概率给出认证区间，无法分出名次时返回 `RefinementRequired`。数据版本、公开证据与详细契约见[推荐接口](docs/recommendation.md#ordinary-live-data-and-fixed-play)。
 默认 `branchAndBound` 在普通 Live 中先搜索成员组合，再搜索 Snap 配对；撃奏保留联合成员／Snap 遍历。
 两者都用按位置平均的技能增益给平均分数上界，按非溢出范围内的奖金上界裁剪 PT 分支。
 默认预算为 3 秒，候选数不限；调用方可显式设置时间和候选预算，只有完成证明才返回 `Complete`。
@@ -86,8 +87,9 @@ Power/Skip 的两种聚合值相同。Maximum 的结果、进度和能力声明�
 逐帧对照，方法与复现步骤见[原生对照验证](docs/native-validation.md)；重放客户端参考向量的测试在 `native-fixtures` feature 之后。
 
 **搜索精确。** `Complete` 证明所声明候选域、打法、随机模型与结果身份下的规范 Top-K。
-非撃奏 Maximum 使用普通随机技能各次选择的独立支持集，不证明存在一个整数 PRNG 根种子实现整条最高结果路径；
-其随机域与固定打法约定见[推荐接口](docs/recommendation.md)。剪枝只使用在游戏运算下已证明可采纳的上界（证明见
+对已核对的普通技能数据，Maximum 证明固定打法的合法演出顺序最高值，不做种子搜索。
+调用方提供概率条件时的通用支持域与根种子证书边界另见[推荐接口](docs/recommendation.md#ordinary-live-data-and-fixed-play)，
+不代表真实普通卡池含有概率技能。剪枝只使用在游戏运算下已证明可采纳的上界（证明见
 [docs/search.md](docs/search.md)）。搜索结果与独立的穷举实现逐项比较，穷举不共用任何上界、分解或 Top-K 代码；含 snap 技能时，
 穷举模拟每一组成员、队长、snap 配置与演出顺序。对拍用例与复现命令见[搜索验证](docs/search.md#validation)。
 达到时间上限的搜索返回 `TimedOut`，不保证排名；数值是否精确由结果的精确值或认证区间字段说明。
