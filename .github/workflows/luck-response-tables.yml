@@ -1,6 +1,8 @@
 name: Incremental real-chart LUCK response tables
 
 on:
+  schedule:
+    - cron: '17 13 * * *'
   workflow_dispatch:
     inputs:
       scope:
