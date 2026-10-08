@@ -35,6 +35,9 @@ The one-shot deadline includes construction; execution on an already built probl
 Outcomes carry `telemetry` (`ournotes-deck.telemetry/1`, see [telemetry](docs/telemetry.en.md)) with problem construction, bound compilation and search as separate phases; reused problems have no construction phase.
 
 The facade supports Snap-inclusive Free Live, conditional Mission Gekisou, score and client event points.
+The [account recommendation facade](docs/recommendation.md) accepts Battle/Arena `goal.rank: 1..5` (default 1),
+declaring the same placement for every Gekisou range. Ranks are confirmed on completion, percentages come from Master,
+and results echo the assumption. This is independent of the final multiplayer score rank used for event settlement.
 Power/Skip retain canonical member-set identity. Played Live/PT rank teams (a leader, four other members and the Snap
 paired with each) by their mean payoff over the 120 equally likely performance orders; the positions of the four
 non-leader members are a layout, not a decision, and each team is reported in a canonical layout with its score

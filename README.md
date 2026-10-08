@@ -39,6 +39,8 @@ CLI、WASM 和 harness 使用这些入口。
 结果的 `telemetry`（`ournotes-deck.telemetry/1`，字段见 [埋点说明](docs/telemetry.md)）按阶段记录建池、上界编译与搜索；对已建问题执行时没有建池阶段。
 
 当前统一入口包括含 Snap 技能的 Free Live、声明条件下的 Mission 撃奏、分数与客户端 PT。
+[账号推荐入口](docs/recommendation.md)的 Battle/Arena 接受 `goal.rank: 1..5`（默认 1），作为每段撃奏的统一名次假设。
+各段完成时确认名次，倍率从 Master 读取，结果明确回显；它与活动结算所用的最终多人分数名次独立。
 Power/Skip 使用专用规范成员集合搜索。实打 Live/PT 以队伍（队长、另外四名成员及各自配对的 Snap）为单位，
 按 120 种等概率出场顺序的平均收益排序；除队长外的站位只是排列，不是决策。每支队伍按规范站位给出，
 并附 120 种顺序的分数分布和其中最好的顺序。撃奏关闭时，技能的概率判定按不支持拒绝；撃奏中没有 LUCK 区间时，
