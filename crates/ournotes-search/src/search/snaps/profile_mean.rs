@@ -363,10 +363,12 @@ fn pair_reward_with_history(
     cancelled: &mut impl FnMut() -> bool,
 ) -> Option<f64> {
     let gain = pair_reward(row, normal, probe, probe_enabled, cancelled)?;
-    if probe_enabled && row.opaque.is_none() && row.terms.iter().any(|term| term.probe) {
-        if let Some(original) = original_probe {
-            return Some(gain.min(pair_reward(row, normal, original, true, cancelled)?));
-        }
+    if probe_enabled
+        && row.opaque.is_none()
+        && row.terms.iter().any(|term| term.probe)
+        && let Some(original) = original_probe
+    {
+        return Some(gain.min(pair_reward(row, normal, original, true, cancelled)?));
     }
     Some(gain)
 }

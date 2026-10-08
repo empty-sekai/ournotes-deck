@@ -21,6 +21,7 @@ const MAX_PROFILES: usize = 1 + 2 * SLOTS + SLOTS * (SLOTS - 1);
 const MAX_CONTEXT_ITEMS: usize = 1_000_000;
 const MAX_CONTEXT_FRAMES: usize = 100_000;
 
+mod admission_reuse;
 mod input_reuse;
 mod probe_runs;
 mod profiles;
@@ -851,6 +852,21 @@ impl<'a> LuckFamilyContext<'a> {
         // Conversion memoizes its targets by the raw effect row ID, across source tables and owners. Keep
         // that whole-domain identity before dropping any late conversion from the judgement graph.
         let mut conversion_targets = Vec::new();
+        // This single-entry proof lives only during this admission. Original physical-pair construction and
+        // all runtime/conversion checks still execute for every choice; only an equal projected constructor
+        // that already succeeded in this exact context can avoid being compiled again.
+        let mut projected_admission = admission_reuse::PreviousProjection::new(
+            self,
+            admission_reuse::WorkingSet {
+                base: &base,
+                choices,
+                allowed: &allowed,
+                writers: &writers,
+                profiles: &profiles,
+                resources_capacity: resources.capacity(),
+            },
+            limits.max_retained_bytes,
+        );
         // Optional command-work refinement has a stricter probe lifecycle contract than controller-law
         // admission. Check every physical pair, including reward-only choices, before sharing this flag.
         let mut probe_phase = None;
@@ -865,7 +881,15 @@ impl<'a> LuckFamilyContext<'a> {
                 let model =
                     LiveModel::new_gekisou(self.master, &deck, self.notes, self.events, self.params, self.setup)
                         .map_err(|e| source_error(LuckFamilyDecline::RecorderAdmission, e))?;
-                self.admit_pair(&model, &deck)?;
+                self.admit_pair(&model)?;
+                let original =
+                    std::array::from_fn(|owner| if owner == slot { &choice.performer } else { &base[owner] });
+                if let Some(previous) = &mut projected_admission {
+                    previous.validate(original)?;
+                } else {
+                    let projected = original.map(|performer| projected(self.master, performer));
+                    self.admit_projection(&projected)?;
+                }
                 match probe_runs::phase(&model, self.skills) {
                     Some(Some(phase)) => {
                         if probe_phase.is_some_and(|old| old != phase) {
@@ -1092,7 +1116,9 @@ impl<'a> LuckFamilyContext<'a> {
         Ok(Some(family))
     }
 
-    fn admit_pair(&self, model: &LiveModel, deck: &[Performer; SLOTS]) -> Result<(), LuckFamilyError> {
+    fn admit_pair(&self, model: &LiveModel) -> Result<(), LuckFamilyError> {
+        #[cfg(test)]
+        admission_reuse::count_original();
         let gate = super::super::luck_score_bounds::check_recorder(model, self.skills)
             .map_err(|e| source_error(LuckFamilyDecline::RecorderAdmission, e))?;
         if gate.is_some_and(|gate| gate != M_LUCK) {
@@ -1214,9 +1240,14 @@ impl<'a> LuckFamilyContext<'a> {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn admit_projection(&self, projected: &[Performer; SLOTS]) -> Result<(), LuckFamilyError> {
+        #[cfg(test)]
+        admission_reuse::count_projected();
         // Compile the complete reduced program, not a hand-written writer signature. This checks exact native
         // phases, trigger/condition/release/reset shapes, support owner, row tables and every probability value.
-        let projected = deck.clone().map(|performer| projected(self.master, &performer));
         let prepared = prepare_recording::<ProbabilityMass>(
             self.master,
             &self.writer_skills,
@@ -1226,7 +1257,7 @@ impl<'a> LuckFamilyContext<'a> {
             self.setup,
             self.play,
             self.deltas,
-            &projected,
+            projected,
             None,
             None,
             false,

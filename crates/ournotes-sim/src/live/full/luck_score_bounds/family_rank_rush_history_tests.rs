@@ -2,6 +2,8 @@
 use super::*;
 use std::collections::BTreeSet;
 
+type HistoricalJoint = BTreeMap<(usize, i32, i32), [Fraction; 4]>;
+
 fn clock(trace: &BoundsTrace) -> Vec<(u8, i32, i32)> {
     trace
         .events
@@ -81,11 +83,7 @@ fn context<'a>(fixture: &'a FamilyFixture, skills: &'a LuckSkills) -> LuckFamily
     .unwrap()
 }
 
-fn native_joint_history(
-    input: &RushCase,
-    deck: &[Performer],
-    geometry: &BoundsTrace,
-) -> (BTreeMap<(usize, i32, i32), [Fraction; 4]>, bool) {
+fn native_joint_history(input: &RushCase, deck: &[Performer], geometry: &BoundsTrace) -> (HistoricalJoint, bool) {
     let skills = luck_skills(&input.master).unwrap();
     let fresh = || {
         LiveModel::new_gekisou(&input.master, deck, &input.notes, &input.events, input.params, &input.setup).unwrap()
@@ -109,7 +107,7 @@ fn native_joint_history(
         }
     }
     let mut pending = vec![(Vec::new(), Fraction::ONE)];
-    let mut joint = BTreeMap::<(usize, i32, i32), [Fraction; 4]>::new();
+    let mut joint = HistoricalJoint::new();
     let mut completed = Fraction::ZERO;
     let mut visits = 0;
     let mut same_frame_switches = false;

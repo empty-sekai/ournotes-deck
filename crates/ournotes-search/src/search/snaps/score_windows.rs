@@ -168,7 +168,7 @@ pub(super) fn windows(
     };
     let mut ramps: Vec<ComboRamp> = Vec::new();
     let mut rush_rows = Vec::new();
-    let mut push = |a: i64, b: i64, note: f64, judge: [f64; 4], ramp: u32, rush: u32| {
+    let push = |out: &mut Vec<Window>, a: i64, b: i64, note: f64, judge: [f64; 4], ramp: u32, rush: u32| {
         let (lo, hi) = geo.range(a, b);
         if hi > lo && (note != 0.0 || judge.iter().any(|&x| x != 0.0)) {
             out.push(Window { lo, hi, note, judge, ramp, rush });
@@ -200,7 +200,7 @@ pub(super) fn windows(
             let Some(i0) = geo.first_frame(ev) else { continue };
             // a second event of the position restarts the effect without removing the first factor
             let end = if events.len() >= 2 { i64::MAX } else { geo.end(ev, i0, r.act, ext, unbounded) };
-            push(ev as i64, end, note, judge, 0, 0);
+            push(&mut out, ev as i64, end, note, judge, 0, 0);
             cmds = (cmds + 2.0 * c).next_up();
             cmds_plain = (cmds_plain + 2.0 * c).next_up();
             add(&mut fac, note, judge, 1.0);
@@ -216,9 +216,13 @@ pub(super) fn windows(
         }
         let (note, judge, c) = factors(r.effect_type, r.value, &r.targets);
         if let Some(ramp) = &r.cumulative_ramp {
-            for &(a, b, value) in ramp.iter() {
-                let (note, judge, _) = factors(r.effect_type, value, &r.targets);
-                push(a, b, note, judge, 0, 0);
+            for execution in ramp.iter() {
+                for (lo, hi, value) in exclusive_ramp_ranges(geo, execution) {
+                    let (note, judge, _) = factors(r.effect_type, value, &r.targets);
+                    if note != 0.0 || judge.iter().any(|&x| x != 0.0) {
+                        out.push(Window { lo, hi, note, judge, ramp: 0, rush: 0 });
+                    }
+                }
             }
         }
         if let Some(ws) = r.gk_event_win.as_ref().map(|w| &w[position]).or(r.gk_win.as_ref()).or(r.count_win.as_ref()) {
@@ -264,7 +268,7 @@ pub(super) fn windows(
                         }
                         _ => 0,
                     };
-                    push(a, b, note * mult, judge.map(|x| x * mult), ramp, rush);
+                    push(&mut out, a, b, note * mult, judge.map(|x| x * mult), ramp, rush);
                 }
                 // Pool size bounds simultaneous factors, not lifetime starts: an
                 // updater can be returned and reused many times in this span.
@@ -331,7 +335,7 @@ pub(super) fn windows(
                 let Some(i0) = geo.first_frame(ev) else { continue };
                 let exec = geo.frames[i0];
                 let end = geo.end(exec, i0, r.act, 0.0, false);
-                push(exec as i64, end, note, judge, 0, 0);
+                push(&mut out, exec as i64, end, note, judge, 0, 0);
                 cmds = (cmds + 2.0 * c).next_up();
                 cmds_plain = (cmds_plain + 2.0 * c).next_up();
                 add(&mut fac, note, judge, 1.0);
@@ -353,7 +357,7 @@ pub(super) fn windows(
             let additions = product_up(starts, churn);
             let note_all = product_up(note, additions);
             let judge_all = judge.map(|x| product_up(x, additions));
-            push(i64::MIN, i64::MAX, note_all, judge_all, 0, 0);
+            push(&mut out, i64::MIN, i64::MAX, note_all, judge_all, 0, 0);
             let count = product_up(2.0 * c, additions);
             cmds = (cmds + count).next_up();
             cmds_plain = (cmds_plain + count).next_up();
@@ -371,6 +375,54 @@ pub(super) fn windows(
     (out, cmds, fac, ops, spans, ramps, rush_rows, ops_plain, cmds_plain)
 }
 
+/// The ideal factor of one cumulative execution at an entry, maximized over its possible historical states.
+/// Keep exactly the old start/time and closed-end score-frame coverage. Adjacent pieces of ONE execution can
+/// overlap after that widening, but cannot contribute simultaneously: native 2001 replaces -old/+new within
+/// one applier call, without a score query between them. The score queries before and after the skills see the
+/// previous or next complete state; at the replacement timestamp both same-owner commands precede any note.
+/// All native replacement, representation and undo roundoff remains in the unchanged command-work margin.
+/// Call separately for every possible lifetime start: a recycled updater can overlap an earlier execution.
+fn exclusive_ramp_ranges(geo: &Geo<'_>, pieces: &[(i64, i64, i64)]) -> Vec<(u32, u32, i64)> {
+    let mut events = Vec::with_capacity(pieces.len() * 2);
+    for &(a, b, value) in pieces {
+        let (lo, hi) = geo.range(a, b);
+        if lo < hi && value > 0 {
+            events.push((lo, value, true));
+            events.push((hi, value, false));
+        }
+    }
+    events.sort_unstable_by_key(|event| event.0);
+    let mut active = std::collections::BTreeMap::<i64, usize>::new();
+    let mut out: Vec<(u32, u32, i64)> = Vec::new();
+    let (mut i, mut previous) = (0, 0);
+    while i < events.len() {
+        let at = events[i].0;
+        if previous < at
+            && let Some((&value, _)) = active.last_key_value()
+        {
+            if let Some(last) = out.last_mut().filter(|last| last.1 == previous && last.2 == value) {
+                last.1 = at;
+            } else {
+                out.push((previous, at, value));
+            }
+        }
+        while i < events.len() && events[i].0 == at {
+            let (_, value, starts) = events[i];
+            if starts {
+                *active.entry(value).or_default() += 1;
+            } else if let Some(count) = active.get_mut(&value) {
+                *count -= 1;
+                if *count == 0 {
+                    active.remove(&value);
+                }
+            }
+            i += 1;
+        }
+        previous = at;
+    }
+    out
+}
+
 fn product_up(a: f64, b: f64) -> f64 {
     if a == 0.0 || b == 0.0 { 0.0 } else { (a * b).next_up() }
 }
@@ -386,6 +438,10 @@ fn command_count(starts: f64, concurrency: f64, frames: f64, churn: Option<f64>,
 #[cfg(test)]
 #[path = "generic_factor_overlap_tests.rs"]
 mod generic_factor_overlap_tests;
+
+#[cfg(test)]
+#[path = "cumulative_history_tests.rs"]
+mod cumulative_history_tests;
 
 #[cfg(test)]
 mod lifetime_command_tests {

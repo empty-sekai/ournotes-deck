@@ -2,7 +2,9 @@
 use super::*;
 
 pub(super) type RampKey = (GkWindowKey, i64, i64, i64);
-pub(super) type RampWindows = Rc<Vec<(i64, i64, i64)>>;
+/// Each inner vector belongs to one possible lifetime execution, not to a recycled pool slot. Its values are
+/// alternatives of the same updater; different executions may overlap in chart time and must still be added.
+pub(super) type RampWindows = Rc<Vec<Vec<(i64, i64, i64)>>>;
 
 pub(super) fn windows(env: &Env, r: &Row, event_bound: bool) -> Option<RampWindows> {
     if !r.gk || event_bound || r.effect_type != 2001 || r.trigger_type != 1 || r.value <= 0 {
@@ -17,7 +19,7 @@ pub(super) fn windows(env: &Env, r: &Row, event_bound: bool) -> Option<RampWindo
     result
 }
 
-fn compile(env: &Env, r: &Row) -> Option<Vec<(i64, i64, i64)>> {
+fn compile(env: &Env, r: &Row) -> Option<Vec<Vec<(i64, i64, i64)>>> {
     let g = env.gkf.as_ref()?;
     let c = env.master.cumulative_condition(r.cumulative)?;
     if !(1000..=1002).contains(&c.condition_type) || g.ent.len() > i32::MAX as usize {
@@ -72,7 +74,7 @@ fn compile(env: &Env, r: &Row) -> Option<Vec<(i64, i64, i64)>> {
     let ends = g.ends(env, r, &starts, &possible);
     let mut out = Vec::new();
     for (&start, end) in starts.iter().zip(ends) {
-        out.extend(execution(&g.times, &prefix, start, g.wlo[start], end.0, unit, max_count, r.value, ceiling));
+        out.push(execution(&g.times, &prefix, start, g.wlo[start], end.0, unit, max_count, r.value, ceiling));
     }
     Some(out)
 }

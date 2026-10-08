@@ -239,7 +239,7 @@ fn profile_probe_runs_tighten_actual_bindings_while_covering_every_native_descen
             assert!(result.upper <= v6_cap);
             assert!(rush_cap <= old_cap);
             for cap in [result.upper, v6_cap, rush_cap, old_cap] {
-                assert!(oracle.sum_of_order_means.at_most_integer(cap), "{:?}", physical);
+                assert!(oracle.sum_of_order_means.at_most_integer(cap), "{physical:?}");
             }
             assert_eq!(result.binding_drift_checks, 1);
             assert!(result.maximum_binding_offset_reduction >= 0.0);

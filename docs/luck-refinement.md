@@ -399,6 +399,14 @@ profile from another context or another admitted domain from being substituted. 
 after its own 120 original labels complete. Unrequested profiles remain explicitly unknown. Semantic admission
 still checks every pair: an unrequested LIFE dependency, conversion or unsupported writer refuses the domain.
 
+Within one domain-admission call, every original physical pair still constructs and checks its full native
+model. The final reduced-program validation can reuse only the previous successful validation when all five
+complete projected Performers compare equal in that same immutable context. This local proof retains borrowed
+original inputs, not a source signature or probability result. It keeps all original runtime, identity, phase
+and conversion checks, every physical choice, work guard and cancellation poll. Its metadata and extra
+single-Performer comparison scratch must fit the existing admission allowance; otherwise preparation follows
+the original path. It cannot carry a partial success into a later domain or authorize a profile or order law.
+
 A completed profile may also supply a complete canonical probability program. Its key retains the complete
 proved controller descriptors, their multiplicities, support-enable gates and immutable context; every
 normalization requires the closed dependency proof above. Each key also records its originating admitted domain, exact profile and fixed slot
