@@ -50,6 +50,7 @@ impl RecordingInput {
             &self.deck,
             self.probes.as_deref(),
             self.ranking.as_deref(),
+            false,
         )
         .unwrap()
     }

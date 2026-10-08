@@ -289,6 +289,8 @@ fn curve_bytes(curve: &LuckDpCertifiedResult) -> usize {
         .saturating_add(size_of::<LuckDpCertifiedResult>())
         .saturating_add(curve.steps.capacity().saturating_mul(size_of::<(i32, [ProbabilityMass; 4])>()))
         .saturating_add(curve.probes.capacity().saturating_mul(size_of::<bool>()))
+        .saturating_add(curve.probe_transitions.capacity().saturating_mul(size_of::<u8>()))
+        .saturating_add(curve.range_moments.capacity().saturating_mul(size_of::<LuckRangeMoments>()))
 }
 
 impl SharedRecordings {

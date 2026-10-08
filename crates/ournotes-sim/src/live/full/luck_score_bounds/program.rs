@@ -265,6 +265,8 @@ fn curve_bytes(curve: &LuckDpCertifiedResult) -> usize {
         + size_of::<LuckDpCertifiedResult>()
         + curve.steps.capacity() * size_of::<(i32, [ProbabilityMass; 4])>()
         + curve.probes.capacity() * size_of::<bool>()
+        + curve.probe_transitions.capacity() * size_of::<u8>()
+        + curve.range_moments.capacity() * size_of::<super::super::luck_dp::LuckRangeMoments>()
 }
 
 /// Power-independent factors in the original grouping. Note identity/time select a probability, not native
@@ -644,6 +646,12 @@ impl Program {
                         support: support.into(),
                         bonus_mean: bonus.into(),
                         bonus_support: bonus_support.into(),
+                        luck_points_mean: self.curve.range_moments.get(rank.range).map(|m| m.luck_points.into()),
+                        lot_results_mean: self
+                            .curve
+                            .range_moments
+                            .get(rank.range)
+                            .map(|m| m.lot_results.map(Into::into)),
                     });
                 }
                 Event::FileRank(index) => {

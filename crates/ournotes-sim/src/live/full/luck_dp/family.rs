@@ -1068,5 +1068,9 @@ fn curve_bytes(curve: &LuckDpCertifiedResult) -> Result<usize, LuckFamilyError> 
         .checked_add(curve.steps.capacity().checked_mul(size_of::<(i32, [ProbabilityMass; 4])>()).ok_or_else(overflow)?)
         .ok_or_else(overflow)?
         .checked_add(curve.probes.capacity().checked_mul(size_of::<bool>()).ok_or_else(overflow)?)
+        .ok_or_else(overflow)?
+        .checked_add(curve.probe_transitions.capacity().checked_mul(size_of::<u8>()).ok_or_else(overflow)?)
+        .ok_or_else(overflow)?
+        .checked_add(curve.range_moments.capacity().checked_mul(size_of::<LuckRangeMoments>()).ok_or_else(overflow)?)
         .ok_or_else(overflow)
 }
