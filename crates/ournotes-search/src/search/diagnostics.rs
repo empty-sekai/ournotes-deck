@@ -1323,3 +1323,72 @@ mod luck_certified_tests {
         assert_eq!(report["transitions"], 31);
     }
 }
+
+/// Maximum-score bounds of a leader-first prefix, without simulating its completions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MaximumPrefixBound {
+    pub upper: i128,
+    pub power: i64,
+    pub pool_upper: i128,
+    pub carrier_upper: Option<i128>,
+    pub carriers_placed: usize,
+    pub keyed: bool,
+}
+
+/// The caller enumerates complete legal decks and independently checks every terminal order score.
+pub fn maximum_prefix_upper(
+    built: &BuiltProblem<'_>,
+    members: [i64; 5],
+    snaps: [Option<i64>; 5],
+    depth: usize,
+) -> Result<Option<MaximumPrefixBound>, Error> {
+    if !(1..=5).contains(&depth) {
+        return Err(Error::Input("maximum bound audit depth must be 1..=5".into()));
+    }
+    let p = physical(built, members, snaps)?;
+    let Some(b) = built.context.plan.joint.as_ref() else { return Ok(None) };
+    let (pool_upper, power) = b.maximum_upper(&built.pool, built.domain(), &p, depth);
+    let carrier = b.maximum_carrier_upper(&built.pool, built.domain(), &p, depth);
+    let choices = super::joint::JointBounds::prefix_choices(built.domain(), &p, depth);
+    Ok(Some(MaximumPrefixBound {
+        upper: carrier.map_or(pool_upper, |(cap, _)| cap.min(pool_upper)),
+        power: carrier.map_or(power, |(_, cap)| cap.min(power)),
+        pool_upper,
+        carrier_upper: carrier.map(|(cap, _)| cap),
+        carriers_placed: b.carriers_placed(&p, depth, &choices),
+        keyed: carrier.is_some() && b.keyed(&p, depth, &choices, 5 - depth, 5 - depth).is_some(),
+    }))
+}
+
+/// Maximum score envelopes of every ascending-ID prefix of a legal canonical deck.
+/// This only compiles and reads bounds; it does not simulate a performance order.
+pub fn maximum_prefix_bounds(
+    built: &BuiltProblem<'_>,
+    members: [i64; 5],
+    snaps: [Option<i64>; 5],
+) -> Result<serde_json::Value, Error> {
+    let p = physical(built, members, snaps)?;
+    let Some(b) = built.context.plan.joint.as_ref() else { return Ok(serde_json::Value::Null) };
+    let nonleaders = [members[0], members[1], members[3], members[4]];
+    if nonleaders.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(Error::Input("maximum prefix audit requires ascending nonleader IDs".into()));
+    }
+    let tables = b.maximum_id_prefixes(&built.pool, built.domain(), || false);
+    let mut rows = Vec::new();
+    for depth in 1..=5 {
+        let (pool_upper, pool_power) = b.maximum_upper(&built.pool, built.domain(), &p, depth);
+        let carrier = b.maximum_carrier_upper(&built.pool, built.domain(), &p, depth);
+        let after = (depth >= 2).then(|| members[super::joint::SLOTS[depth - 1]]);
+        let id = tables
+            .as_ref()
+            .and_then(|tables| b.maximum_id_upper(tables, &built.pool, built.domain(), &p, depth, after));
+        let upper = carrier.into_iter().chain(id).fold(pool_upper, |upper, (cap, _)| upper.min(cap));
+        let power = carrier.into_iter().chain(id).fold(pool_power, |upper, (_, cap)| upper.min(cap));
+        rows.push(serde_json::json!({"depth":depth,"after":after,"poolUpper":pool_upper.to_string(),
+            "carrierUpper":carrier.map(|(upper,_)| upper.to_string()),
+            "idUpper":id.map(|(upper,_)| upper.to_string()),"upper":upper.to_string(),"power":power}));
+    }
+    Ok(serde_json::json!({"carrierLevels":b.carrier_level_count(),
+        "idSuffixTables":tables.as_ref().map(|tables| tables.table_count()),
+        "idSuffixEstimatedBytes":tables.as_ref().map(|tables| tables.estimated_bytes()),"prefixes":rows}))
+}

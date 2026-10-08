@@ -27,7 +27,9 @@ mod carrier_split;
 mod classes;
 mod composition;
 mod cutoff;
+mod id_prefix;
 mod lambda;
+pub(crate) use id_prefix::MaximumIdPrefixes;
 mod point_route;
 mod prefix_character;
 mod prefix_resource;
@@ -196,6 +198,8 @@ pub(crate) struct JointBounds {
     pub(crate) choices: Vec<(usize, usize)>,
     /// With a Gekisou combo range: the cheap bounds of decks with few combo carriers (see `CarrierLevels`).
     carrier_levels: Option<CarrierLevels>,
+    /// Carrier-conditioned maximum score caps for a schedule without LUCK ranges.
+    maximum_carrier_score: bool,
     /// With carrier keys: the node bounds split by the carriers of the slots to fill (see `carrier_split`).
     carrier_split: Option<carrier_split::CarrierSplit>,
 }
@@ -475,6 +479,11 @@ impl JointBounds {
             composition: None,
             modules: Vec::new(),
             gekisou: setup.gk.is_some(),
+            maximum_carrier_score: matches!(metric, Metric::Score)
+                && setup
+                    .gk
+                    .as_ref()
+                    .is_some_and(|g| g.setup.missions.iter().take(g.setup.fevers.len()).all(|&mission| mission != 2)),
             class_search: false,
             class_resource_caps: false,
             rules: None,
@@ -540,6 +549,7 @@ impl JointBounds {
             composition: None,
             modules: Vec::new(),
             gekisou: self.gekisou,
+            maximum_carrier_score: false,
             class_search: false,
             class_resource_caps: false,
             rules: None,
@@ -964,6 +974,32 @@ impl JointBounds {
         let gain = add_up(gain, spread).min(order_gain_bound(&best, &self.column, 0));
         let cap = ((power as f64) * add_up(self.a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
         (self.points.as_ref().map_or(cap, |pt| pt.order_payoff(bonus, cap)), power)
+    }
+
+    /// Bound every order score of every completion using its placed combo carriers. A completion
+    /// adds at most one carrier per free slot. The placed gain rows use that keyed envelope; free
+    /// rows use the enclosing carrier level. Position means plus their maximum spreads, and the
+    /// maximum injective placement of the rows, separately enclose every order's gain sum.
+    pub(crate) fn maximum_carrier_upper(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+    ) -> Option<(i128, i64)> {
+        if !self.maximum_carrier_score || self.carrier_levels.is_none() || !(1..=5).contains(&depth) {
+            return None;
+        }
+        let free = 5 - depth;
+        let choices = Self::prefix_choices(domain, p, depth);
+        let level = self.carrier_level(self.carriers_placed(p, depth, &choices) + free);
+        let keyed = self.keyed(p, depth, &choices, free, free);
+        let (power, gain, _) = level.relax(pool, domain, p, depth, &SLOTS[depth..], &[0, 1, 2, 3, 4], keyed.as_ref());
+        let (spread, best) = level.order_gain_bounds(domain, p, depth, free, keyed.as_ref());
+        let gain = add_up(gain, spread).min(order_gain_bound(&best, &level.column, 0));
+        let a0 = keyed.as_ref().map_or(level.a0, |k| k.a0);
+        let cap = ((power as f64) * add_up(a0, gain).min(level.global) * (1.0 + level.eps)).ceil() as i128;
+        Some((cap, power))
     }
 
     /// `payoff_cap` with the `A0` of some envelope at most this one's: a bound of the mean payoff over the orders when

@@ -1312,11 +1312,8 @@ impl LiveModel {
             }
         }
         for skill in &self.cond {
-            for updater in &skill.updater.updaters {
-                let effect = skill.updater.effect(updater.effect);
-                if let Some(finish) = updater.state.pending_finish_ms(effect.act) {
-                    horizon = horizon.min(finish);
-                }
+            if let Some(finish) = skill.updater.pending_finish_ms() {
+                horizon = horizon.min(finish);
             }
         }
         if let Some(gk) = &self.gk {
