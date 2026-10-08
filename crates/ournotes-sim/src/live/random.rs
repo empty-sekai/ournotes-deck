@@ -223,9 +223,10 @@ impl LiveRandom {
         if !rate.is_finite() {
             return Err(Error::Unsupported("nominal skill probability requires a finite rate".into()));
         }
+        // The native binary32 draw can equal 1.0.
         let weights = if rate <= 0.0 {
             vec![(1, 1, 0)]
-        } else if rate >= 1.0 {
+        } else if rate > 1.0 {
             vec![(1, 1, 1)]
         } else {
             vec![(1, 2, 0), (1, 2, 1)]
@@ -403,22 +404,37 @@ mod nominal_tests {
 
     #[test]
     fn support_skill_probabilities_keep_only_positive_probability_outcomes() {
-        for (rate, expected) in [(-1.0, false), (0.0, false), (1.0, true), (2.0, true)] {
+        for (rate, expected) in [(-1.0, false), (0.0, false), (f32::from_bits(1.0f32.to_bits() + 1), true), (2.0, true)]
+        {
             let mut random = LiveRandom::with_support_prefix(Vec::new());
             assert_eq!(random.support_probability(rate).unwrap(), Some(expected));
             assert!(random.nominal_prefix_consumed() && random.nominal_covers_draws());
         }
-        for rate in [f32::from_bits(1), 0.01, 0.5, f32::from_bits(1.0f32.to_bits() - 1)] {
+        for rate in [f32::from_bits(1), 0.01, 0.5, f32::from_bits(1.0f32.to_bits() - 1), 1.0] {
             for (choice, expected) in [(0, false), (1, true)] {
                 let mut random = LiveRandom::with_support_prefix(vec![choice]);
                 assert_eq!(random.support_probability(rate).unwrap(), Some(expected));
                 assert!(random.nominal_prefix_consumed() && random.nominal_covers_draws());
             }
         }
+        for rate in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut random = LiveRandom::with_support_prefix(Vec::new());
+            assert!(matches!(random.support_probability(rate), Err(Error::Unsupported(_))));
+        }
         let mut seeded = LiveRandom::new(17);
         let before = seeded.clone();
         assert_eq!(seeded.support_probability(0.5).unwrap(), None);
         assert_eq!(seeded, before);
+    }
+
+    #[test]
+    fn seeded_skill_value_can_equal_one_in_binary32() {
+        let mut random = LiveRandom::new(24_917_099);
+        assert_eq!(random.value(SKILL).to_bits(), 1.0f32.to_bits());
+        assert_eq!(random.draws(), 1);
+        let mut support = LiveRandom::with_support_prefix(vec![0]);
+        assert_eq!(support.support_probability(1.0).unwrap(), Some(false));
+        assert!(support.nominal_prefix_consumed() && support.nominal_covers_draws());
     }
 
     #[test]
