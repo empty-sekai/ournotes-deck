@@ -248,9 +248,22 @@ def prediction_rows(prediction, decks, source, hashes):
     return result
 
 
-def materialized_curves(report):
-    if report.get("format") != "ournotes-deck.luck-response-materialization/1":
-        raise ValueError("expected native program response materialization")
+def materialized_curves(report, backend="programs", source=None):
+    lookup_backend(backend)
+    expected_format = {"programs": "ournotes-deck.luck-response-materialization/1",
+                       "basis": "ournotes-deck.luck-response-materialized/1"}[backend]
+    if report.get("format") != expected_format:
+        raise ValueError(f"expected native {backend} response materialization")
+    if backend == "basis":
+        materialized_source = programs.digest(report.get("sourceVersion"))
+        if (report.get("operatorContract") != basis.CONTRACT
+                or source_version(report["table"]) != materialized_source
+                or type(report.get("propagationCalls")) is not int or report["propagationCalls"] != 0
+                or any(report.get(field) is not False for field in
+                       ("nativeExpectationProven", "rankingProven", "usesMonteCarlo"))):
+            raise ValueError("basis materialization source, operator contract or prediction scope differs")
+    if source is not None and source_version(report["table"]) != source:
+        raise ValueError("materialized response uses a different native source")
     result = {}
     for entry in report["table"]["entries"]:
         key = pipeline.canonical(entry["key"])
@@ -333,7 +346,7 @@ def validate(data, snapshot, request, decks_path, generator, output, mode="u24",
         result["sameColdWarmMaterialization"] = (output / "cold/responses.json").read_bytes() == (output / "warm/responses.json").read_bytes()
         if not result["sameColdWarmArchiveBytes"] or not result["sameColdWarmMaterialization"]:
             raise ValueError("warm query changed the materialized response or encoded archive bytes")
-        curves = materialized_curves(pipeline.read(output / "cold/responses.json"))
+        curves = materialized_curves(pipeline.read(output / "cold/responses.json"), backend, source)
         if set(curves) != {pipeline.canonical(job["entries"]) for job in jobs}:
             raise ValueError("materialization does not cover precisely the original ordered LUCK entries")
         comparisons, errors = [], {label: [] for label in predictions}

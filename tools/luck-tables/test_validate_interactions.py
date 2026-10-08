@@ -154,6 +154,43 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             subject.materialized_curves(value)
 
+    def test_basis_materialization_uses_its_actual_native_envelope_and_source_contract(self):
+        # Faithful basis-materialize envelope from the real owned-deck run;
+        # one reduced curve checks parsing only, never a simulation outcome.
+        key = [[{"source": "gekisou", "id": 14, "level": 5, "matched": None}, 0]]
+        value = {"format": "ournotes-deck.luck-response-materialized/1",
+                 "sourceVersion": SOURCE, "operatorContract": "conditional-start-minimum/1",
+                 "nativeExpectationProven": False, "rankingProven": False, "usesMonteCarlo": False,
+                 "propagationCalls": 0, "retainedResponseBytes": 128,
+                 "table": {"context": {"algorithmVersion": subject.ALGORITHM + SOURCE,
+                                       "fingerprint": "b" * 64},
+                           "entries": [{"key": key, "response": {"status": "success", "curve": curve()}}]}}
+        parsed = subject.materialized_curves(value, "basis", SOURCE)
+        self.assertEqual(parsed, {subject.pipeline.canonical(key): curve()})
+        self.assertTrue(subject.compare_curves(curve(), parsed[subject.pipeline.canonical(key)])["weightedIntervalsOverlap"])
+        with self.assertRaises(ValueError):
+            subject.materialized_curves(value, "programs", SOURCE)
+        programs_value = {"format": "ournotes-deck.luck-response-materialization/1",
+                          "table": copy.deepcopy(value["table"])}
+        self.assertEqual(subject.materialized_curves(programs_value, "programs", SOURCE), parsed)
+        with self.assertRaises(ValueError):
+            subject.materialized_curves(programs_value, "basis", SOURCE)
+        mutations = [lambda report: report.update(format="ournotes-deck.other/1"),
+                     lambda report: report.update(operatorContract="other-contract"),
+                     lambda report: report.update(sourceVersion="f" * 64),
+                     lambda report: report["table"]["context"].update(algorithmVersion=subject.ALGORITHM + "f" * 64),
+                     lambda report: report.update(propagationCalls=1),
+                     lambda report: report.update(nativeExpectationProven=True),
+                     lambda report: report["table"]["entries"][0]["response"].update(status="missing"),
+                     lambda report: report["table"]["entries"].append(copy.deepcopy(report["table"]["entries"][0]))]
+        for mutate in mutations:
+            changed = copy.deepcopy(value)
+            mutate(changed)
+            with self.assertRaises(ValueError):
+                subject.materialized_curves(changed, "basis", SOURCE)
+        with self.assertRaises(ValueError):
+            subject.materialized_curves(value, "basis", "f" * 64)
+
     def test_prediction_must_bind_original_input_bytes_and_all_physical_orders(self):
         ref, _, _ = reference()
         rows = [{"order": row["order"], "ordinal": row["ordinal"], "entries": [],
