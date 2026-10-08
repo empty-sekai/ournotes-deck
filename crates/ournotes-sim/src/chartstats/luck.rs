@@ -140,6 +140,17 @@ struct LuckProbeBatch {
     probes: Vec<Option<usize>>,
 }
 
+/// Validate holder capacity, formation compatibility and probe coverage using the same construction
+/// as generation. This does not run a native live or propagate a lottery distribution.
+pub fn luck_table_validate(
+    master: &Master,
+    skills: &LuckSkills,
+    neutral: Option<(i64, i64)>,
+    entries: &[(LuckSkillKey, usize)],
+) -> Result<(), Error> {
+    luck_probe_batches(master, skills, neutral, entries).map(|_| ())
+}
+
 /// Shared synthetic decks for nominal and certified DP. Every shape gets exactly one designated holder.
 fn luck_probe_batches(
     master: &Master,
@@ -278,19 +289,44 @@ pub fn luck_table_dp_certified(
     delta_times: &[f32],
     entries: &[(LuckSkillKey, usize)],
 ) -> Result<full::LuckDpCertifiedResult, Error> {
+    let batches = luck_probe_batches(master, skills, neutral, entries)?;
+    collect_certified_batches(batches, |deck, probes| {
+        full::luck_rush_dp_certified(master, skills, notes, params, setup, play, delta_times, deck, Some(probes))
+    })
+}
+
+/// The same complete response as [`luck_table_dp_certified`], with repeated native transcripts shared
+/// across generation jobs. Cache identity is the complete transcript consumed by the existing DP;
+/// equal skill names or levels alone never establish a hit. Passing a zero-capacity cache keeps the
+/// independent calculation. Cache statistics distinguish actual propagations from reused results.
+#[allow(clippy::too_many_arguments)]
+pub fn luck_table_dp_certified_cached(
+    master: &Master,
+    skills: &LuckSkills,
+    neutral: Option<(i64, i64)>,
+    notes: &[LiveNote],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    entries: &[(LuckSkillKey, usize)],
+    cache: &mut full::LuckDpCache,
+) -> Result<full::LuckDpCertifiedResult, Error> {
+    let batches = luck_probe_batches(master, skills, neutral, entries)?;
+    collect_certified_batches(batches, |deck, probes| {
+        cache
+            .certified(master, skills, notes, &[], params, setup, play, delta_times, deck, Some(probes), None)
+            .map(|response| (*response).clone())
+    })
+}
+
+fn collect_certified_batches(
+    batches: Vec<LuckProbeBatch>,
+    mut compute: impl FnMut(&[Performer], &[Option<usize>]) -> Result<full::LuckDpCertifiedResult, Error>,
+) -> Result<full::LuckDpCertifiedResult, Error> {
     let mut combined = None;
-    for LuckProbeBatch { deck, probes } in luck_probe_batches(master, skills, neutral, entries)? {
-        let batch = full::luck_rush_dp_certified(
-            master,
-            skills,
-            notes,
-            params,
-            setup,
-            play,
-            delta_times,
-            &deck,
-            Some(&probes),
-        )?;
+    for LuckProbeBatch { deck, probes } in batches {
+        let batch = compute(&deck, &probes)?;
         if !batch.probes.iter().copied().eq(probes.iter().map(Option::is_some)) {
             return Err(Error::Input("LUCK certified DP: a probe batch did not retain its designated holders".into()));
         }

@@ -1,0 +1,597 @@
+//! Offline inspection data from the real resolved request. No result grants search admission or a score proof.
+use super::{BuiltProblem, Error, LuckInput, luck_input};
+use ournotes_sim::chartstats::luck_response::{
+    EntryKey, Response, ResponseContext, ResponseCurve, ResponseEntry, ResponseTable, response_fingerprint,
+};
+use ournotes_sim::chartstats::{luck_neutral, luck_table_dp_certified_cached, luck_table_steps, luck_table_validate};
+use ournotes_sim::live::full::{
+    LuckDpCache, LuckSkillKey, LuckSkills, LuckSource, Performer, luck_rush_dp_certified_with_ranking,
+    luck_rush_dp_with_ranking, luck_skill_key, luck_skills,
+};
+use ournotes_sim::live::random::LiveRandom;
+use ournotes_sim::master::Master;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
+use std::time::Instant;
+
+const ALGORITHM: &str = "ournotes-luck-response/1";
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResponseDeck {
+    #[serde(default)]
+    pub name: String,
+    pub members: [i64; 5],
+    pub snaps: [Option<i64>; 5],
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResponseJob {
+    pub name: String,
+    pub entries: EntryKey,
+    #[serde(default)]
+    pub mc_runs: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResponseMode {
+    Plan,
+    #[default]
+    Generate,
+}
+
+fn default_cache_entries() -> usize {
+    4096
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LuckResponseSpec {
+    #[serde(default)]
+    pub mode: ResponseMode,
+    #[serde(default)]
+    pub context_deck: Option<ResponseDeck>,
+    pub jobs: Vec<ResponseJob>,
+    #[serde(default)]
+    pub validation_decks: Vec<ResponseDeck>,
+    #[serde(default)]
+    pub mc_runs: u32,
+    #[serde(default)]
+    pub score_samples: u32,
+    #[serde(default = "default_cache_entries")]
+    pub cache_entries: usize,
+    /// Explicit byte allowance takes precedence over the compatibility entry estimate.
+    #[serde(default)]
+    pub cache_bytes: Option<usize>,
+}
+
+fn fingerprint(value: &Value) -> String {
+    response_fingerprint(&serde_json::to_vec(value).expect("JSON dependency value"))
+}
+
+fn first_deck(built: &BuiltProblem<'_>) -> Result<ResponseDeck, Error> {
+    let domain = built.domain();
+    let pool = &built.pool;
+    let mut chosen = domain.required().to_vec();
+    for &member in domain.members() {
+        if chosen.len() == 5 {
+            break;
+        }
+        if chosen.iter().all(|&other| pool.members[other].character_id != pool.members[member].character_id) {
+            chosen.push(member);
+        }
+    }
+    let mut members: [usize; 5] = chosen.try_into().map_err(|_| Error::Input("no legal context deck".into()))?;
+    if let Some(leader) = domain.leader() {
+        let index = members
+            .iter()
+            .position(|&member| member == leader)
+            .ok_or_else(|| Error::Input("context deck omitted required leader".into()))?;
+        members.swap(index, 2);
+    }
+    Ok(ResponseDeck {
+        name: "firstLegalContext".into(),
+        members: members.map(|m| pool.members[m].id),
+        snaps: [None; 5],
+    })
+}
+
+/// Preserve selected source rows, native source order, and the complete condition/target closure. Debug
+/// images are version-bound by SOURCE_SHA256; explicit activation bits retain signed zero/nonfinite bits.
+fn source_dependencies(master: &Master, entries: &EntryKey) -> Value {
+    let mut groups = BTreeSet::new();
+    let mut targets = BTreeSet::new();
+    let mut cumulative = BTreeSet::new();
+    let sources: Vec<_> = entries
+        .iter()
+        .map(|(key, position)| {
+            let metadata = match key.source {
+                LuckSource::Gekisou => master.gekisou_skill(key.id),
+                LuckSource::GekisouSupport => master.gekisou_support_skill(key.id),
+            };
+            let rows: Vec<_> = key
+                .source
+                .rows(master)
+                .iter()
+                .filter(|row| row.skill_id == key.id && row.level == key.level)
+                .map(|row| {
+                    groups.extend([
+                        row.skill_trigger_condition_group,
+                        row.skill_condition_group,
+                        row.skill_release_condition_group,
+                        row.effect_execute_limit_reset_condition_group,
+                    ]);
+                    targets.extend(row.skill_target_ids.iter().copied());
+                    cumulative.insert(row.skill_cumulative_condition_id);
+                    json!({"row":format!("{row:?}"),"activationTimeBits":row.activation_time_second.to_bits()})
+                })
+                .collect();
+            json!({"key":key,"position":position,"metadata":format!("{metadata:?}"),"rows":rows})
+        })
+        .collect();
+    let sets: Vec<_> = master.skill_condition_sets.iter().filter(|set| groups.contains(&set.group)).collect();
+    let condition_ids: BTreeSet<_> = sets.iter().flat_map(|set| set.condition_ids.iter().copied()).collect();
+    let conditions: Vec<_> = condition_ids
+        .into_iter()
+        .map(|id| {
+            let condition = master.skill_condition(id);
+            if let Some(condition) = condition {
+                targets.extend(condition.condition_target_ids.iter().copied());
+            }
+            json!({"id":id,"row":format!("{condition:?}")})
+        })
+        .collect();
+    // Cumulative target fields can be read by Factory even when the DP ultimately refuses that row.
+    let cumulatives: Vec<_> = cumulative
+        .into_iter()
+        .filter(|&id| id != 0)
+        .map(|id| {
+            let row = master.cumulative_condition(id);
+            if let Some(row) = row {
+                targets.extend(row.condition_target_ids.iter().copied());
+            }
+            json!({"id":id,"row":format!("{row:?}")})
+        })
+        .collect();
+    let target_rows: Vec<_> =
+        targets.into_iter().map(|id| json!({"id":id,"row":format!("{:?}",master.skill_target(id))})).collect();
+    json!({"sources":sources,"groups":groups,"sets":format!("{sets:?}"),
+        "conditions":conditions,"cumulatives":cumulatives,"targets":target_rows})
+}
+
+fn dependencies(master: &Master, input: &LuckInput, skills: &LuckSkills, neutral: Option<(i64, i64)>) -> Value {
+    let (input, setup) = input;
+    let mut probes: EntryKey = skills.shapes.iter().map(|shape| (shape.probe, 0)).collect();
+    if let Some((id, level)) = neutral {
+        probes.push((LuckSkillKey { source: LuckSource::Gekisou, id, level, matched: None }, 0));
+    }
+    let notes: Vec<_> =
+        input.notes.iter().map(|n| [n.note_id, n.time_ms, n.note_operate_type, n.judgement_type]).collect();
+    let frames: Vec<_> = input
+        .play
+        .frames
+        .iter()
+        .map(|frame| {
+            json!([
+                frame.time_ms,
+                frame
+                    .judged
+                    .iter()
+                    .map(|note| [note.note_id, note.judgement, note.judgement_time_ms])
+                    .collect::<Vec<_>>()
+            ])
+        })
+        .collect();
+    let mut params = input.params;
+    params.total_power = 0;
+    let rows: Vec<_> = skills.rows.iter().map(|(key, shape)| (key, shape)).collect();
+    json!({
+        "algorithm":{"name":ALGORITHM,"simSourceSha256":ournotes_sim::SOURCE_SHA256,
+            "law":"independentNominal","value":"kernelProbability","nativeScoreCertificate":false},
+        "resolved":{"notes":notes,"events":input.events,"frames":frames,"baseSeed":input.play.base_seed,
+            "deltaBits":input.delta_times.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+            "params":format!("{params:?}"),"assistBits":params.assist_factor.to_bits(),
+            "fevers":setup.fevers,"missions":setup.missions,"rankConfirmations":input.rank_confirmations},
+        "sharedMaster":{
+            "liveSettings":format!("{:?}",master.live_settings),
+            "parameters":format!("{:?}",master.parameters),
+            "noteParameters":format!("{:?}",master.note_parameters),
+            "judgementParameters":format!("{:?}",master.judgement_parameters),
+            "comboScoreBonuses":master.combo_score_bonuses.iter().map(|r| json!({"row":format!("{r:?}"),"factorBits":r.bonus_factor.to_bits()})).collect::<Vec<_>>(),
+            "effectSettings":format!("{:?}",master.skill_effect_settings),
+            "judgementTimings":format!("{:?}",master.live_judgement_timings),
+            "luckBasePoints":format!("{:?}",master.gekisou_luck_base_points),
+            "luckBonusLots":format!("{:?}",master.gekisou_luck_bonus_lots),
+            "rankingBonuses":format!("{:?}",master.gekisou_ranking_score_bonuses)},
+        "catalogue":{"skills":skills,"rowShapes":rows},"neutral":neutral,
+        "probes":source_dependencies(master,&probes)
+    })
+}
+
+fn error_status(error: &Error) -> &'static str {
+    match error {
+        Error::Unsupported(_) => "unsupported",
+        Error::Capacity(_) => "capacity",
+        _ => "error",
+    }
+}
+
+fn actual_entries(master: &Master, skills: &LuckSkills, performers: &[Performer; 5]) -> Result<EntryKey, Error> {
+    let mut entries = Vec::new();
+    for (position, performer) in performers.iter().enumerate() {
+        let Some((id, level)) = performer.gekisou_skill else { continue };
+        for (source, (id, level)) in std::iter::once((LuckSource::Gekisou, (id, level)))
+            .chain(performer.gekisou_support_skills.iter().copied().map(|skill| (LuckSource::GekisouSupport, skill)))
+        {
+            let key = luck_skill_key(master, source, id, level, performer)?;
+            if skills.chain.contains(&key) {
+                entries.push((key, position));
+            }
+        }
+    }
+    Ok(entries)
+}
+
+fn at(curve: &ResponseCurve, time: i32) -> [[f64; 2]; 4] {
+    let index = curve.steps.partition_point(|step| step.time_ms <= time);
+    index.checked_sub(1).map_or([[1.0, 1.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]], |i| curve.steps[i].buckets)
+}
+
+fn compare(actual: &ResponseCurve, basis: &ResponseCurve) -> Value {
+    let times: BTreeSet<_> = actual.steps.iter().chain(&basis.steps).map(|step| step.time_ms).collect();
+    let mut overlap = true;
+    let mut same = true;
+    let mut maximum_gap = 0f64;
+    for time in times {
+        for (a, b) in at(actual, time).into_iter().zip(at(basis, time)) {
+            same &= a[0].to_bits() == b[0].to_bits() && a[1].to_bits() == b[1].to_bits();
+            overlap &= a[0] <= b[1] && b[0] <= a[1];
+            maximum_gap = maximum_gap.max((a[0] - b[1]).max(b[0] - a[1]).max(0.0));
+        }
+    }
+    json!({"sameJointCurve":same,"intervalsOverlap":overlap,"maximumSeparatedGap":maximum_gap,
+        "sameTransitionMasks":actual.probe_transitions==basis.probe_transitions,
+        "sameProbes":actual.probes==basis.probes,"sameRangeMoments":actual.range_moments==basis.range_moments,
+        "isProgramEquivalenceProof":false})
+}
+
+fn lookup_weights(curve: &ResponseCurve, shapes: usize) -> Result<Vec<(i32, Vec<f32>)>, Error> {
+    if curve.probes.len() != shapes || curve.probes.iter().any(|enabled| !enabled) {
+        return Err(Error::Input("lookup response does not cover every score shape".into()));
+    }
+    Ok(curve
+        .steps
+        .iter()
+        .map(|step| {
+            let midpoint = step.buckets.map(|[lo, hi]| lo + (hi - lo) * 0.5);
+            let rush = (midpoint[2] + midpoint[3]).clamp(0.0, 1.0) as f32;
+            let score = (midpoint[1] + midpoint[3]).clamp(0.0, 1.0) as f32;
+            let both = midpoint[3].clamp(0.0, 1.0) as f32;
+            let mut weights = Vec::with_capacity(1 + 2 * shapes);
+            weights.push(rush);
+            for _ in 0..shapes {
+                weights.extend([score, both]);
+            }
+            (step.time_ms, weights)
+        })
+        .collect())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scoring(
+    master: &Master,
+    input: &super::super::expectation::FiniteSeedContext,
+    setup: &ournotes_sim::live::full::GekisouSetup,
+    skills: &LuckSkills,
+    performers: &[Performer; 5],
+    basis: Option<&ResponseCurve>,
+    ordinal: usize,
+    samples: u32,
+) -> Value {
+    let started = Instant::now();
+    let result = (|| -> Result<Value, Error> {
+        let width = 1 + 2 * skills.shapes.len();
+        let mut ends = Vec::new();
+        for (rush, rest) in [(0f32, 0f32), (1.0, 0.0), (1.0, 1.0)] {
+            let mut weights = vec![rest; width];
+            weights[0] = rush;
+            let mut model = input.model(master, performers)?;
+            model.set_luck_weights(skills, vec![(i32::MIN, weights)])?;
+            ends.push(model.run_with_random(&input.play, &input.delta_times, LiveRandom::new(0))?);
+        }
+        let dp = luck_rush_dp_with_ranking(
+            master,
+            skills,
+            &input.notes,
+            &input.events,
+            input.params,
+            setup,
+            &input.play,
+            &input.delta_times,
+            performers,
+            None,
+            input.rank_confirmations.as_deref(),
+        )?;
+        let mut model = input.model(master, performers)?;
+        model.set_luck_weights(skills, dp.steps)?;
+        let weighted = model.run_with_random(&input.play, &input.delta_times, LiveRandom::new(0))?;
+        let (lookup, lookup_error) = match basis {
+            None => (None, None),
+            Some(curve) => match (|| -> Result<i32, Error> {
+                let mut model = input.model(master, performers)?;
+                model.set_luck_weights(skills, lookup_weights(curve, skills.shapes.len())?)?;
+                model.run_with_random(&input.play, &input.delta_times, LiveRandom::new(0))
+            })() {
+                Ok(score) => (Some(score), None),
+                Err(error) => (None, Some(error.to_string())),
+            },
+        };
+        let samples = if samples == 0 {
+            Value::Null
+        } else {
+            let began = Instant::now();
+            let (mut sum, mut sum_sq) = (0f64, 0f64);
+            for sample in 0..samples {
+                let mut model = input.model(master, performers)?;
+                let value = f64::from(model.run_with_random(
+                    &input.play,
+                    &input.delta_times,
+                    super::luck_seed(0, samples, ordinal, sample),
+                )?);
+                sum += value;
+                sum_sq += value * value;
+            }
+            let n = f64::from(samples);
+            let mean = sum / n;
+            let se = (samples > 1).then(|| ((sum_sq / n - mean * mean).max(0.0) / (n - 1.0)).sqrt());
+            json!({"count":samples,"sum":sum,"sumSquares":sum_sq,"mean":mean,"se":se,
+                "elapsedMs":began.elapsed().as_secs_f64()*1000.0,"statisticalOnly":true})
+        };
+        Ok(json!({"status":"success","s0":ends[0],"sBonus":ends[1],"s1":ends[2],
+            "scoreAtMean":weighted,"scoreAtMeanIsExactExpectation":false,
+            "scoreAtLookup":lookup,"lookupError":lookup_error,"lookupIsScorePrediction":true,"samples":samples}))
+    })();
+    let mut out = result.unwrap_or_else(|error| json!({"status":error_status(&error),"error":error.to_string()}));
+    out["elapsedMs"] = json!(started.elapsed().as_secs_f64() * 1000.0);
+    out
+}
+
+/// Plan performs no recording, DP or simulation. Generation produces isolated real-skill response data;
+/// optional validation retains every original order even if extraction, DP, lookup or scoring fails.
+pub fn generate_luck_response(built: &BuiltProblem<'_>, spec: &LuckResponseSpec) -> Result<Value, Error> {
+    let started = Instant::now();
+    if spec.jobs.len() > 65_536 || spec.jobs.iter().any(|job| job.entries.len() > 15) {
+        return Err(Error::Capacity("response job/key limit".into()));
+    }
+    let mut names = BTreeSet::new();
+    if spec.jobs.iter().any(|job| job.name.is_empty() || !names.insert(&job.name)) {
+        return Err(Error::Input("response job names must be nonempty and unique".into()));
+    }
+    let anchor = match &spec.context_deck {
+        Some(deck) => deck.clone(),
+        None => first_deck(built)?,
+    };
+    let master = built.pool.master;
+    let mut input = luck_input(built, anchor.members, anchor.snaps)?;
+    // This isolated controller is not a scored physical deck. Power has no consumer in its native DP.
+    let anchor_power = input.0.params.total_power;
+    input.0.params.total_power = 0;
+    let skills = luck_skills(master)?;
+    let neutral = luck_neutral(master, &skills);
+    for job in &spec.jobs {
+        if job.entries.iter().any(|(key, _)| !skills.chain.contains(key)) {
+            return Err(Error::Input(format!("job {} contains a key outside the LUCK chain catalogue", job.name)));
+        }
+        // The native holder is authoritative for formation compatibility and all positional limits.
+        // This constructs no LiveModel and performs no recording, propagation or simulation.
+        luck_table_validate(master, &skills, neutral, &job.entries)?;
+    }
+    let shared = dependencies(master, &input, &skills, neutral);
+    let shared_fingerprint = fingerprint(&shared);
+    let job_dependencies: Vec<_> = spec.jobs.iter().map(|job| source_dependencies(master, &job.entries)).collect();
+    let archive_dependencies: BTreeMap<_, _> = spec
+        .jobs
+        .iter()
+        .zip(&job_dependencies)
+        .map(|(job, deps)| (serde_json::to_string(&job.entries).expect("entry JSON"), fingerprint(deps)))
+        .collect();
+    let context = ResponseContext {
+        fingerprint: fingerprint(&json!({"shared":shared_fingerprint,"entries":archive_dependencies})),
+        algorithm_version: format!("{ALGORITHM}/{}", ournotes_sim::SOURCE_SHA256),
+    };
+    let mut table = ResponseTable { context: context.clone(), entries: Vec::new() };
+    // Existing request-sized allowance, with an explicit zero-cache experiment. No process-global cache.
+    let capacity = spec.cache_bytes.unwrap_or_else(|| spec.cache_entries.saturating_mul(8192)).min(32 << 20);
+    let mut cache = LuckDpCache::new(capacity);
+    let mut jobs = Vec::new();
+    for (job, deps) in spec.jobs.iter().zip(job_dependencies) {
+        let begin = Instant::now();
+        let before = cache.stats();
+        let mut report = json!({"name":job.name,"entries":job.entries,"dependencyFingerprint":fingerprint(&deps),
+            "dependencyDescriptor":deps,"status":"planned"});
+        if matches!(spec.mode, ResponseMode::Generate) {
+            if let Some(index) = table.entries.iter().position(|entry| entry.key == job.entries) {
+                report["entryIndex"] = json!(index);
+                report["reusedExactEntry"] = json!(true);
+                report["status"] = json!(match &table.entries[index].response {
+                    Response::Success { .. } => "success",
+                    Response::Unsupported { .. } => "unsupported",
+                });
+            } else {
+                match luck_table_dp_certified_cached(
+                    master,
+                    &skills,
+                    neutral,
+                    &input.0.notes,
+                    input.0.params,
+                    &input.1,
+                    &input.0.play,
+                    &input.0.delta_times,
+                    &job.entries,
+                    &mut cache,
+                ) {
+                    Ok(result) => {
+                        report["status"] = json!("success");
+                        report["entryIndex"] = json!(table.entries.len());
+                        report["peakStates"] = json!(result.peak_states);
+                        report["transitions"] = json!(result.transitions);
+                        table.entries.push(ResponseEntry {
+                            key: job.entries.clone(),
+                            response: Response::Success { curve: ResponseCurve::from_certified(&result) },
+                        });
+                    }
+                    Err(error) => {
+                        report["status"] = json!(error_status(&error));
+                        report["error"] = json!(error.to_string());
+                        if matches!(&error, Error::Unsupported(_)) {
+                            report["entryIndex"] = json!(table.entries.len());
+                            table.entries.push(ResponseEntry {
+                                key: job.entries.clone(),
+                                response: Response::Unsupported { reason: error.to_string() },
+                            });
+                        }
+                    }
+                }
+            }
+            let runs = job.mc_runs.unwrap_or(spec.mc_runs);
+            if runs > 0 {
+                let mc_start = Instant::now();
+                let seeds: Vec<_> = (0..u64::from(runs)).map(ournotes_sim::live::seeds::seed_candidate).collect();
+                report["mc"] = match luck_table_steps(
+                    master,
+                    &skills,
+                    neutral,
+                    &input.0.notes,
+                    input.0.params,
+                    &input.1,
+                    &input.0.play,
+                    &input.0.delta_times,
+                    &job.entries,
+                    &seeds,
+                ) {
+                    Ok(steps) => json!({"status":"sampled","runs":runs,"steps":steps,"statisticalOnly":true}),
+                    Err(error) => json!({"status":error_status(&error),"error":error.to_string(),"runs":runs}),
+                };
+                report["mc"]["elapsedMs"] = json!(mc_start.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
+        report["elapsedMs"] = json!(begin.elapsed().as_secs_f64() * 1000.0);
+        report["cacheBefore"] = json!(before);
+        report["cacheAfter"] = json!(cache.stats());
+        jobs.push(report);
+    }
+    let mut validations = Vec::new();
+    if matches!(spec.mode, ResponseMode::Generate) {
+        for deck in &spec.validation_decks {
+            let began = Instant::now();
+            let validation = luck_input(built, deck.members, deck.snaps);
+            let mut orders = Vec::with_capacity(120);
+            for (ordinal, order) in super::super::uniform::all_orders().into_iter().enumerate() {
+                let begin = Instant::now();
+                let mut row = json!({"order":order,"ordinal":ordinal,"basisEntryIndex":null,"comparison":null});
+                match &validation {
+                    Err(error) => {
+                        row["actual"] = json!({"status":error_status(error),"error":error.to_string()});
+                    }
+                    Ok((input, setup)) => {
+                        let performers = order.map(|slot| input.performers[slot].clone());
+                        let entries = actual_entries(master, &skills, &performers);
+                        let basis = match entries {
+                            Ok(entries) => {
+                                let found = table.entries.iter().position(|entry| entry.key == entries);
+                                row["entries"] = json!(entries);
+                                row["basisEntryIndex"] = json!(found);
+                                found
+                            }
+                            Err(error) => {
+                                row["entryError"] = json!(error.to_string());
+                                None
+                            }
+                        };
+                        match luck_rush_dp_certified_with_ranking(
+                            master,
+                            &skills,
+                            &input.notes,
+                            &input.events,
+                            input.params,
+                            setup,
+                            &input.play,
+                            &input.delta_times,
+                            &performers,
+                            None,
+                            input.rank_confirmations.as_deref(),
+                        ) {
+                            Ok(result) => {
+                                let curve = ResponseCurve::from_certified(&result);
+                                if let Some(ResponseEntry { response: Response::Success { curve: basis }, .. }) =
+                                    basis.map(|i| &table.entries[i])
+                                {
+                                    row["comparison"] = compare(&curve, basis);
+                                }
+                                row["actual"] = json!(Response::Success { curve });
+                            }
+                            Err(error) => {
+                                row["actual"] = json!({"status":error_status(&error),"error":error.to_string()})
+                            }
+                        }
+                        let lookup = basis.and_then(|index| match &table.entries[index].response {
+                            Response::Success { curve } => Some(curve),
+                            Response::Unsupported { .. } => None,
+                        });
+                        row["scoring"] =
+                            scoring(master, input, setup, &skills, &performers, lookup, ordinal, spec.score_samples);
+                    }
+                }
+                row["elapsedMs"] = json!(begin.elapsed().as_secs_f64() * 1000.0);
+                orders.push(row);
+            }
+            validations.push(json!({"name":deck.name,"members":deck.members,"snaps":deck.snaps,
+                "orders":orders,"elapsedMs":began.elapsed().as_secs_f64()*1000.0}));
+        }
+    }
+    Ok(json!({"format":"ournotes-deck.luck-response-generation/1","kind":"isolatedRealSkillKernelProbability",
+        "scope":"Independent nominal lottery response on the resolved real chart. Not full native score expectation, finite-seed mean, program equivalence, admission or ranking certificate.",
+        "mode":spec.mode,"context":context,"sharedFingerprint":shared_fingerprint,"dependencyDescriptor":shared,
+        "provenance":{"contextDeck":anchor,"contextDeckPower":anchor_power},"jobs":jobs,"table":table,
+        "validationDecks":validations,"cacheEntriesCompatibilityEstimateBytes":8192,"cacheBytes":capacity,"cacheStats":cache.stats(),"archives":[],
+        "elapsedMs":started.elapsed().as_secs_f64()*1000.0}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ournotes_sim::chartstats::luck_response::ResponseStep;
+
+    #[test]
+    fn response_comparison_preserves_step_semantics_and_separate_metadata() {
+        let mut a = ResponseCurve {
+            steps: vec![ResponseStep { time_ms: 10, buckets: [[0.4, 0.6], [0.0, 0.0], [0.4, 0.6], [0.0, 0.0]] }],
+            probe_transitions: vec![1],
+            probes: vec![true],
+            range_moments: vec![],
+            peak_states: 1,
+            transitions: 2,
+        };
+        let mut b = a.clone();
+        b.steps.push(ResponseStep { time_ms: 20, buckets: a.steps[0].buckets });
+        b.probes[0] = false;
+        let result = compare(&a, &b);
+        assert_eq!(result["sameJointCurve"], true);
+        assert_eq!(result["sameProbes"], false);
+        a.steps[0].buckets[0] = [0.7, 0.8];
+        let result = compare(&a, &b);
+        assert_eq!(result["intervalsOverlap"], false);
+        assert_eq!(result["isProgramEquivalenceProof"], false);
+    }
+
+    #[test]
+    fn response_spec_defaults_do_not_request_monte_carlo() {
+        let spec: LuckResponseSpec = serde_json::from_value(json!({"jobs":[{"name":"base","entries":[]}]})).unwrap();
+        assert_eq!(spec.mc_runs, 0);
+        assert_eq!(spec.score_samples, 0);
+        assert!(spec.validation_decks.is_empty());
+    }
+}

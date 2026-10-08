@@ -18,6 +18,7 @@ use serde::Serialize;
 mod aptitude;
 mod expectation;
 mod luck;
+pub mod luck_response;
 
 pub use aptitude::{
     AptitudeHeader, ChartAptitude, Condition, Cumulative, Effect, RangeDelta, RangeFactors, Shape, ShapeSkill, Variant,
@@ -26,7 +27,7 @@ pub use aptitude::{
 pub use expectation::{Estimate, ExpectationCheck, ExpectedRange, ExpectedStats};
 pub use luck::{
     LUCK_RUNS, LuckEntry, LuckOptions, LuckSteps, LuckTable, luck_compose, luck_neutral, luck_table_dp,
-    luck_table_dp_certified, luck_table_steps,
+    luck_table_dp_certified, luck_table_dp_certified_cached, luck_table_steps, luck_table_validate,
 };
 #[cfg(feature = "search-diagnostics")]
 pub use luck::{MODEL as LUCK_TABLE_MODEL, diagnostic_luck_table};
