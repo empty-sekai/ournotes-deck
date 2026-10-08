@@ -26,6 +26,44 @@ fn hash(value: &impl Hash) -> u64 {
     out.finish()
 }
 
+/// A scheduling hint only: collisions and a different chart/master scope may change the visit order,
+/// never authorize a cache hit. Every reuse still compares the complete initialized identity and scope.
+pub(super) fn terminal_order_hint<'a>(performers: impl ExactSizeIterator<Item = &'a Performer>) -> u64 {
+    let mut out = FxHasher::default();
+    performers.len().hash(&mut out);
+    for performer in performers {
+        // Exhaustive destructuring keeps the hint in step with the complete paired performer input.
+        let Performer {
+            live_skill,
+            support_skills,
+            band_id,
+            character_id,
+            card_type,
+            tag_ids,
+            live_skill_categories,
+            gekisou_skill_categories,
+            gekisou_mission_type,
+            gekisou_skill,
+            gekisou_support_skills,
+        } = performer;
+        (
+            live_skill,
+            support_skills,
+            band_id,
+            character_id,
+            card_type,
+            tag_ids,
+            live_skill_categories,
+            gekisou_skill_categories,
+            gekisou_mission_type,
+            gekisou_skill,
+            gekisou_support_skills,
+        )
+            .hash(&mut out);
+    }
+    out.finish()
+}
+
 /// Shared inputs absent from the initialized identity, including its extracted chart notes and events.
 /// Integers and binary32 clocks keep every bit and field.
 pub(super) struct Scope {
@@ -116,6 +154,8 @@ pub(super) fn identity(model: &mut LiveModel, scope: &Arc<Scope>, rush_percent: 
 struct Entry {
     identity: Option<Identity>,
     recorded: Option<RecordedIdentity>,
+    // Charged with every allocated Entry slot in the existing shared byte allowance.
+    terminal_order_hint: Option<u64>,
     value: Value,
 }
 
@@ -194,6 +234,44 @@ pub(in super::super) struct ProgramCache {
 }
 
 impl ProgramCache {
+    /// Stable partition of an already chosen complete schedule. This is deliberately independent of
+    /// proof identity: a stale hint or hash collision only gives an unhelpful order earlier priority.
+    pub(in super::super) fn prioritize_terminal_orders(
+        &self,
+        performers: &[Performer; 5],
+        orders: &[[usize; 5]],
+        schedule: &mut [usize],
+    ) -> usize {
+        const ORDERS: usize = 120;
+        if self.capacity == 0 || self.entries.is_empty() || orders.len() != ORDERS || schedule.len() != ORDERS {
+            return 0;
+        }
+        let mut seen = [false; ORDERS];
+        let mut resident = [false; ORDERS];
+        for (position, &index) in schedule.iter().enumerate() {
+            if index >= ORDERS || seen[index] || orders[index].iter().any(|&slot| slot >= performers.len()) {
+                return 0;
+            }
+            seen[index] = true;
+            let hint = terminal_order_hint(orders[index].iter().map(|&slot| &performers[slot]));
+            resident[position] = self.entries.iter().any(|entry| {
+                entry.terminal_order_hint == Some(hint) && matches!(&entry.value, Value::TerminalRecipe { .. })
+            });
+        }
+        let mut partitioned = [0; ORDERS];
+        let mut next = 0;
+        for wanted in [true, false] {
+            for (position, &index) in schedule.iter().enumerate() {
+                if resident[position] == wanted {
+                    partitioned[next] = index;
+                    next += 1;
+                }
+            }
+        }
+        schedule.copy_from_slice(&partitioned);
+        resident.into_iter().filter(|&found| found).count()
+    }
+
     #[cfg(test)]
     pub(in super::super) fn test_workspace_accounting(&self) -> (usize, Vec<usize>) {
         (self.allocated_bytes(), self.entries.iter().map(|entry| entry.value.decode_workspace_bytes()).collect())
@@ -286,7 +364,7 @@ impl ProgramCache {
 
     pub(super) fn insert(&mut self, identity: Option<Identity>, recorded: Option<RecordedIdentity>, program: Program) {
         self.stats.compilations += 1;
-        self.insert_entry(identity, recorded, Value::Program(Arc::new(program)));
+        self.insert_entry(identity, recorded, None, Value::Program(Arc::new(program)));
     }
 
     /// Store only the caller's completed capability. Price the optional copy before making it, and check
@@ -297,6 +375,7 @@ impl ProgramCache {
         identity: Identity,
         power: i32,
         terminal: &LuckTerminalRush,
+        order_hint: u64,
         cancelled: &mut impl FnMut() -> bool,
     ) -> Option<()> {
         let previous = self.entries.iter().position(|entry| {
@@ -332,7 +411,7 @@ impl ProgramCache {
         if let Some(index) = previous {
             self.entries.remove(index);
         }
-        self.insert_entry(Some(identity), None, value);
+        self.insert_entry(Some(identity), None, Some(order_hint), value);
         Some(())
     }
 
@@ -379,6 +458,7 @@ impl ProgramCache {
         power: i32,
         terminal: &LuckTerminalRush,
         recipe: prepass::TerminalRecipe,
+        order_hint: u64,
         cancelled: &mut impl FnMut() -> bool,
     ) -> Option<()> {
         let exact_bytes = self.terminal_entry_bytes(&identity, terminal);
@@ -406,12 +486,18 @@ impl ProgramCache {
                 !entry.identity.as_ref().is_some_and(|old| old.same(&identity))
                     || matches!(&entry.value, Value::Program(_))
             });
-            self.insert_entry(Some(identity), None, value);
+            self.insert_entry(Some(identity), None, Some(order_hint), value);
         }
         Some(())
     }
 
-    fn insert_entry(&mut self, mut identity: Option<Identity>, mut recorded: Option<RecordedIdentity>, value: Value) {
+    fn insert_entry(
+        &mut self,
+        mut identity: Option<Identity>,
+        mut recorded: Option<RecordedIdentity>,
+        terminal_order_hint: Option<u64>,
+        value: Value,
+    ) {
         if let Some(identity) = &mut identity
             && let Some(old) = self
                 .entries
@@ -455,7 +541,7 @@ impl ProgramCache {
         if self.entries.try_reserve_exact(1).is_err() {
             return;
         }
-        self.entries.push_back(Entry { identity, recorded, value });
+        self.entries.push_back(Entry { identity, recorded, terminal_order_hint, value });
         while self.allocated_bytes() > self.capacity {
             self.entries.pop_front();
             self.stats.evictions += 1;

@@ -112,6 +112,13 @@ pub struct LotteryRefinement {
     pub terminal_timeline_paths: u64,
     pub terminal_timeline_transitions: u64,
     pub terminal_score_fold_queries: u64,
+    /// Complete native cylinders used with an existing whole-order support certificate. These are
+    /// not complete probability laws; their remaining mass always keeps its full payoff range.
+    pub cylinder_attempted_orders: u64,
+    pub cylinder_completed_paths: u64,
+    pub cylinder_installed_bounds: u64,
+    pub cylinder_declined_orders: u64,
+    pub cylinder_declines: LotteryRefinementDeclines,
     pub attempted_orders: u64,
     /// Orders for which the provider completed every positive-mass nominal path.
     pub completed_orders: u64,

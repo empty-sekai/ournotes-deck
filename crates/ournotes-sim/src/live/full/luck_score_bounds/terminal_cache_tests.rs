@@ -3,6 +3,9 @@ use super::*;
 #[path = "terminal_recipe_tests.rs"]
 mod terminal_recipe_tests;
 
+#[path = "terminal_order_hint_tests.rs"]
+mod terminal_order_hint_tests;
+
 fn assert_same_terminal(input: &RushCase, actual: &LuckTerminalRush, expected: &LuckTerminalRush) {
     let mut times: Vec<_> = input.notes.iter().map(|note| note.time_ms).collect();
     times.sort_unstable();

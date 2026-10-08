@@ -1,0 +1,58 @@
+{
+ "constraints": {},
+ "context": {
+  "eventPayoff": null,
+  "powerSnapshot": {
+   "capturedJstTicks": 639263916000000000,
+   "eventIds": [
+    1
+   ]
+  },
+  "resultClock": null
+ },
+ "execution": {
+  "gekisou": true,
+  "kind": "live",
+  "play": {
+   "kind": "theoreticalBest"
+  },
+  "scoreId": 10001002
+ },
+ "format": "ournotes-deck.search-request/1",
+ "k": 5,
+ "limits": {
+  "cacheEntries": 2048,
+  "maxCandidates": null,
+  "timeLimitMs": 60000
+ },
+ "metric": {
+  "kind": "score"
+ },
+ "networkConfirmations": [
+  {
+   "frame": 0,
+   "percent": 250,
+   "range": 0,
+   "rank": 1
+  },
+  {
+   "frame": 0,
+   "percent": 250,
+   "range": 1,
+   "rank": 1
+  },
+  {
+   "frame": 0,
+   "percent": 250,
+   "range": 2,
+   "rank": 1
+  }
+ ],
+ "scenario": {
+  "kind": "battle",
+  "musicId": 100010
+ },
+ "strategy": {
+  "kind": "branchAndBound"
+ }
+}

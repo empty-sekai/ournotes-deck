@@ -139,6 +139,7 @@ use leaf_search::*;
 #[cfg(test)]
 pub(crate) use profile_mean::FamilyRewardTable;
 pub(crate) use profile_mean::{FamilyProfileReward, FamilyProfileTable, ProfileRewardTemplate};
+pub(crate) use raw::RawNodePacket;
 use rows::*;
 pub(crate) use rush::RushMasks;
 use score_windows::*;

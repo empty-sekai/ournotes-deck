@@ -9,6 +9,7 @@ pub(super) struct AdmittedFamilyInputs {
     pub(super) base: [Performer; SLOTS],
     pub(super) bindings: LuckFamilyBindings,
     pub(super) probe_runs_admitted: bool,
+    pub(super) controller_inputs: input_reuse::ControllerInputAdmission,
 }
 
 /// Every supplied physical pair has passed the same admission and complete-cover work guards as `prepare`.
@@ -191,6 +192,18 @@ impl LuckFamilyProfile {
     /// Geometry without complete physical phase/lifecycle admission or an entire closed order returns false.
     pub fn order_rank_probe_history_ready(&self, order: usize) -> bool {
         self.order_probe_certificates(order).is_some_and(|(_, ready)| ready)
+    }
+
+    /// Every historical rank note has the same ideal signed integer Rush prefix at its two adjacent
+    /// original queries and at the terminal query. Its Rush class may therefore use this original order's
+    /// complete `joint_at(note_time)` law. Whole-domain pair admission and every original order have already
+    /// completed; geometry from an empty recorder alone cannot authorize the substitution.
+    ///
+    /// This is independent of direct-probe phase/lifetime admission. Conditioning a historical probe term
+    /// jointly on Rush additionally requires `order_rank_probe_history_ready`. Ordinary command windows,
+    /// native arithmetic error and integer rank allowances retain their separate complete bounds.
+    pub fn order_rank_rush_history_ready(&self, order: usize) -> bool {
+        self.orders.len() == ORDERS && self.orders.get(order).is_some() && self.mapping.rank_rush_history.is_some()
     }
 
     /// The two independent optional probe certificates, with one scan of the complete original clock.
@@ -377,8 +390,16 @@ impl LuckFamilyContext<'_> {
         let recording_capacity = curves.recording_capacity();
         let mut recordings = RecordingCache::default();
         recordings.limit(recording_capacity);
-        let input_keys =
-            (recording_capacity > 0).then(|| input_reuse::InputKeys::new(self.master, &physical)).flatten();
+        let input_keys = (recording_capacity > 0)
+            .then(|| {
+                input_reuse::InputKeys::admitted_controller(
+                    self.master,
+                    &physical,
+                    &self.writer_skills,
+                    &domain.admitted.controller_inputs,
+                )
+            })
+            .flatten();
         let mut completed = LuckFamilyProfile {
             identity: Arc::clone(&domain.identity),
             mapping: Arc::clone(&self.mapping),

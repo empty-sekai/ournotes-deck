@@ -31,6 +31,25 @@ struct Packet {
     applicable: bool,
 }
 
+/// One whole physical pair's mean reward and position-wise maxima of its complete command work.
+/// The fields remain private: only all five applicable native-position packets can produce this value.
+/// Component-wise maxima for an open slot deliberately allow different pairs to attain each component.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct RawNodePacket {
+    // mean gain, executions, time peak, closed-frame peak, lifetime commands
+    values: [f64; 5],
+}
+
+impl RawNodePacket {
+    pub(crate) fn add(self, rhs: Self) -> Self {
+        Self { values: std::array::from_fn(|i| (self.values[i] + rhs.values[i]).next_up()) }
+    }
+
+    pub(crate) fn maximum(self, rhs: Self) -> Self {
+        Self { values: std::array::from_fn(|i| self.values[i].max(rhs.values[i])) }
+    }
+}
+
 // Outward overlap maximum of half-open time spans or closed native frame spans.
 pub(super) fn peak(spans: &[(i64, i64, f64)], frames: Option<ScoreFrames>) -> Option<f64> {
     let mut events = Vec::new();
@@ -149,6 +168,42 @@ impl RawEnvelope {
         }
         Some(Self { base, gains, eps, chain_extra })
     }
+
+    pub(super) fn node_packet(&self, member: usize, class: usize) -> Option<RawNodePacket> {
+        let positions = self.gains.get(member)?.get(class)?;
+        let mut result = RawNodePacket::default();
+        for packet in positions {
+            // Validate BEFORE maxima: f64::max can silently discard NaN instead of refusing unknown work.
+            if !packet.applicable
+                || [packet.gain, packet.ops, packet.peak, packet.near, packet.n]
+                    .iter()
+                    .any(|value| !value.is_finite() || *value < 0.0)
+            {
+                return None;
+            }
+            result.values[0] = (result.values[0] + packet.gain).next_up();
+            for (upper, value) in result.values[1..].iter_mut().zip([packet.ops, packet.peak, packet.near, packet.n]) {
+                *upper = upper.max(value);
+            }
+        }
+        result.values[0] = (result.values[0] / 5.0).next_up();
+        result.values.iter().all(|v| v.is_finite() && *v >= 0.0).then_some(result)
+    }
+
+    /// Uniform 120-order sum, without evaluating any order. Every member occupies every position 24 times.
+    /// Gain therefore averages linearly; command work uses a deterministic maximum over ALL those positions.
+    /// Both complete additive/relative envelopes bound the mean independently, so their minimum also does.
+    /// One extra score unit per label covers the original per-order ceiling before taking the uniform mean.
+    pub(super) fn node_upper(&self, power: i64, packet: RawNodePacket) -> Option<i128> {
+        if !(0..=i64::from(i32::MAX)).contains(&power) || packet.values.iter().any(|v| !v.is_finite() || *v < 0.0) {
+            return None;
+        }
+        let [gain, ops, peak, near, n] = packet.values;
+        let coefficient = self.coefficient_upper((self.base + gain).next_up(), ops, peak, near, n)?;
+        let mean = (((power as f64 * coefficient).next_up()) + 1.0).next_up();
+        let cap = (mean * crate::search::uniform::ORDERS as f64).next_up().ceil();
+        (cap.is_finite() && cap >= 0.0 && cap < i128::MAX as f64).then_some(cap as i128)
+    }
     pub(super) fn upper(
         &self,
         power: i64,
@@ -169,6 +224,12 @@ impl RawEnvelope {
             near = (near + p.near).next_up();
             n = (n + p.n).next_up();
         }
+        let coefficient = self.coefficient_upper(a, ops, peak, near, n)?;
+        let cap = (power.max(0) as f64 * coefficient).next_up().ceil();
+        cap.is_finite().then_some(cap as i128)
+    }
+
+    fn coefficient_upper(&self, a: f64, ops: f64, peak: f64, near: f64, n: f64) -> Option<f64> {
         // max_t sum(slot factors) <= sum(slot maxima). This is a constant-cost
         // upper envelope of cand_eps, retaining the original command drift model.
         let one = (1.0 + peak.max(near)).next_up();
@@ -182,17 +243,80 @@ impl RawEnvelope {
         // The drift is absolute in score-up units: every entry's coefficient in `base` gains at most `drift` of
         // it, the rest of the chain stays relative. The pool margin `eps` is a relative margin of its own.
         let chain = float_margin::with_chain(0.0, self.chain_extra)?;
-        let p = power.max(0) as f64;
         let additive = ((a + (drift * self.base).next_up()).next_up() * (1.0 + chain).next_up()).next_up();
         let relative = (a * (1.0 + self.eps).next_up()).next_up();
-        let cap = (p * additive.min(relative)).next_up().ceil();
-        cap.is_finite().then_some(cap as i128)
+        let upper = additive.min(relative);
+        (upper.is_finite() && upper >= 0.0).then_some(upper)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{LiveParams, Prefix, ScoreFrames, get_frame, peak};
+    use super::{LiveParams, Packet, Prefix, RawEnvelope, RawNodePacket, ScoreFrames, get_frame, peak};
+
+    #[test]
+    fn raw_node_mean_retains_ceil_slack_and_both_complete_arithmetic_envelopes() {
+        // Fractional gains intentionally put the original order caps on different integer boundaries.
+        // Each of the independent error envelopes is the tighter one in one of these two cases.
+        for eps in [0.0, 0.25] {
+            let packets = std::array::from_fn(|position| Packet {
+                gain: 0.13 * (position + 1) as f64,
+                ops: 300.0 + 30.0 * position as f64,
+                peak: 0.4 + position as f64 * 0.1,
+                near: 0.5 + position as f64 * 0.1,
+                n: 20.0 + position as f64,
+                applicable: true,
+            });
+            let raw = RawEnvelope { base: 0.37, gains: vec![vec![packets]; 5], eps, chain_extra: super::GK_CHAIN_EPS };
+            let mut packet = RawNodePacket::default();
+            for member in 0..5 {
+                packet = packet.add(raw.node_packet(member, 0).unwrap());
+            }
+            for power in [1, 7, 101, 12_345] {
+                let original: i128 = crate::search::uniform::all_orders()
+                    .iter()
+                    .map(|order| {
+                        raw.upper(power, [0, 1, 2, 3, 4], [0; 5], &crate::search::uniform::positions_of(order)).unwrap()
+                    })
+                    .sum();
+                let node = raw.node_upper(power, packet).unwrap();
+                assert!(node >= original);
+                assert!(node - original < 600, "the ceiling allowance is per label, not per note or command");
+            }
+        }
+    }
+
+    #[test]
+    fn raw_node_nonfinite_or_incomplete_packets_decline_without_publishing_a_cap() {
+        let mut raw = RawEnvelope {
+            base: 1.0,
+            gains: vec![vec![[Packet { applicable: true, ..Default::default() }; 5]]],
+            eps: 0.0,
+            chain_extra: 0.0,
+        };
+        assert!(raw.node_packet(0, 0).is_some());
+        raw.gains[0][0][4].applicable = false;
+        assert!(raw.node_packet(0, 0).is_none(), "all five positions are required, not merely the best one");
+        for field in 0..5 {
+            for invalid in [f64::NAN, f64::INFINITY, -1.0] {
+                let packet = &mut raw.gains[0][0][4];
+                *packet = Packet { applicable: true, ..Default::default() };
+                match field {
+                    0 => packet.gain = invalid,
+                    1 => packet.ops = invalid,
+                    2 => packet.peak = invalid,
+                    3 => packet.near = invalid,
+                    4 => packet.n = invalid,
+                    _ => unreachable!(),
+                }
+                assert!(raw.node_packet(0, 0).is_none(), "field {field} must refuse before max ignores {invalid}");
+            }
+        }
+        for value in [f64::INFINITY, f64::NAN, -1.0, f64::MAX] {
+            assert!(raw.node_upper(10, RawNodePacket { values: [value; 5] }).is_none());
+        }
+        assert!(raw.node_upper(i64::MAX, RawNodePacket::default()).is_none());
+    }
     #[test]
     fn per_slot_peak_covers_all_other_slots_observation_times() {
         let spans = [(0, 0, 2.0), (80, 80, 3.0), (-20, 10, 4.0), (10, 50, 7.0)];

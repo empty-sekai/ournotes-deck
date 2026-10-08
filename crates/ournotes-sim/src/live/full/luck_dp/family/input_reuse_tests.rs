@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-fn fixture() -> (Master, [Performer; SLOTS]) {
+pub(super) fn fixture() -> (Master, [Performer; SLOTS]) {
     let tables = json!({
         "MasterLiveSettings":[
             {"_id":1,"_key":"note_score_adjustment_factor","_value":"3"},

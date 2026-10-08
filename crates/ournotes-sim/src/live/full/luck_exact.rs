@@ -2,6 +2,7 @@
 //!
 //! Branches resume from complete frame checkpoints with the selected outcomes and draw cursor preserved.
 //! A law is returned after every positive-mass branch has terminated and its masses sum to one.
+//! A separate cylinder API certifies just one completed positive-mass path, without granting a full law.
 use super::{GekisouSetup, LiveModel, LiveNote, LiveParams, LivePlay, Performer};
 use crate::{Error, live::random::LiveRandom, master::Master, replay::RankConfirmation};
 use std::{
@@ -62,7 +63,7 @@ pub enum LuckExactDecline {
     Unsupported,
 }
 
-/// A nonnegative reduced rational. The provider publishes these only as atoms of a complete law.
+/// A nonnegative reduced rational, published in complete laws or completed positive-mass cylinders.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LuckExactMass {
     pub numerator: u128,
@@ -130,6 +131,40 @@ pub struct LuckExactAttempt {
     pub law: Option<LuckExactLaw>,
     pub stats: LuckExactStats,
     pub decline: Option<LuckExactDecline>,
+}
+
+/// One complete native terminal cylinder under the independent nominal event partition. Its mass is
+/// strictly positive and exact; it need not account for every outcome with this score and LIFE.
+/// This proves nothing about the execution/support of unvisited siblings. A consumer must already
+/// hold a complete-domain certificate before bounding a mapped expectation using the remaining mass.
+#[derive(Clone, Copy, Debug)]
+pub struct LuckTerminalCylinder {
+    atom: LuckExactAtom,
+}
+
+/// Deterministic selection in the native semantic table's positive-outcome order. Neither choice
+/// is asserted to minimize/maximize score, and cylinders from separate attempts must not be summed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LuckCylinderChoice {
+    First,
+    Last,
+}
+
+impl LuckTerminalCylinder {
+    pub fn atom(&self) -> LuckExactAtom {
+        self.atom
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LuckCylinderAttempt {
+    pub cylinder: Option<LuckTerminalCylinder>,
+    pub stats: LuckExactStats,
+    pub decline: Option<LuckExactDecline>,
+}
+
+fn cylinder_declined(stats: LuckExactStats, why: LuckExactDecline) -> LuckCylinderAttempt {
+    LuckCylinderAttempt { cylinder: None, stats, decline: Some(why) }
 }
 
 fn declined(stats: LuckExactStats, why: LuckExactDecline) -> LuckExactAttempt {
@@ -243,6 +278,166 @@ impl<'a> LuckExactSession<'a> {
             }
         }
         Ok(result)
+    }
+
+    /// Follow the first positive semantic outcome at each native random branch until the original
+    /// complete frame schedule terminates. This deterministic cylinder is not a sampled probability
+    /// estimate, complete law, global support admission, or exact-payoff/constant certificate.
+    ///
+    /// Unvisited siblings retain their entire possible payoff range in the caller's existing complete
+    /// domain proof. No law-cache entry is read or written. Work uses the same caller-owned allowance,
+    /// frame checkpoints, semantic partition checks and depth/run limits as complete-law enumeration.
+    pub fn first_terminal(
+        &self,
+        deck: &[Performer],
+        budget: &mut LuckExactBudget,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<LuckCylinderAttempt, Error> {
+        self.terminal_cylinder(deck, LuckCylinderChoice::First, budget, cancelled)
+    }
+
+    /// One complete positive-mass cylinder chosen by the stated deterministic policy. This has the
+    /// same limited authority as `first_terminal`; selecting a different path never asserts an extremum.
+    pub fn terminal_cylinder(
+        &self,
+        deck: &[Performer],
+        choice: LuckCylinderChoice,
+        budget: &mut LuckExactBudget,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<LuckCylinderAttempt, Error> {
+        let stats = LuckExactStats::default();
+        if cancelled() {
+            return Ok(cylinder_declined(stats, LuckExactDecline::Cancelled));
+        }
+        if budget.exhausted() || self.play.frames.len() as u128 > budget.remaining_frames as u128 {
+            return Ok(cylinder_declined(stats, LuckExactDecline::WorkBudget));
+        }
+        let fresh = if let Some(ranking) = self.ranking {
+            LiveModel::new_gekisou_external(self.master, deck, self.notes, self.events, self.params, self.setup)
+                .and_then(|mut model| {
+                    model.set_rank_confirmation_timeline(ranking)?;
+                    Ok(model)
+                })
+        } else {
+            LiveModel::new_gekisou(self.master, deck, self.notes, self.events, self.params, self.setup)
+        };
+        let fresh = match fresh {
+            Ok(fresh) => fresh,
+            Err(Error::Unsupported(_) | Error::Capacity(_)) => {
+                return Ok(cylinder_declined(stats, LuckExactDecline::Unsupported));
+            }
+            Err(error) => return Err(error),
+        };
+        terminal_cylinder_path(fresh, self.play, self.delta_times, choice, budget, &mut cancelled)
+    }
+}
+
+fn terminal_cylinder_path(
+    mut fresh: LiveModel,
+    play: &LivePlay,
+    delta_times: &[f32],
+    choice: LuckCylinderChoice,
+    budget: &mut LuckExactBudget,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<LuckCylinderAttempt, Error> {
+    let mut stats = LuckExactStats::default();
+    if cancelled() {
+        return Ok(cylinder_declined(stats, LuckExactDecline::Cancelled));
+    }
+    if fresh.draws() != 0 {
+        return Ok(cylinder_declined(stats, LuckExactDecline::UnhandledRandom));
+    }
+    if budget.exhausted() || play.frames.len() as u128 > budget.remaining_frames as u128 {
+        return Ok(cylinder_declined(stats, LuckExactDecline::WorkBudget));
+    }
+    fresh.set_random(LiveRandom::with_nominal_prefix(Vec::new()));
+    let (mut prefix, mut mass) = (Vec::<usize>::new(), LuckExactMass::ONE);
+    let (mut checkpoint_frame, mut checkpoint) = (0usize, Rc::new(fresh));
+    loop {
+        if cancelled() {
+            return Ok(cylinder_declined(stats, LuckExactDecline::Cancelled));
+        }
+        if budget.exhausted() || stats.replay_runs >= MAX_ORDER_RUNS {
+            return Ok(cylinder_declined(stats, LuckExactDecline::WorkBudget));
+        }
+        budget.remaining_runs -= 1;
+        stats.replay_runs += 1;
+        let mut model = (*checkpoint).clone();
+        model.random.extend_nominal_prefix(prefix.clone())?;
+        let mut execution_error = None;
+        let start_frame = checkpoint_frame;
+        for (frame_index, (frame, &dt)) in play.frames.iter().zip(delta_times).enumerate().skip(start_frame) {
+            if cancelled() {
+                return Ok(cylinder_declined(stats, LuckExactDecline::Cancelled));
+            }
+            if budget.remaining_frames == 0 {
+                return Ok(cylinder_declined(stats, LuckExactDecline::WorkBudget));
+            }
+            if frame_index - checkpoint_frame >= CHECKPOINT_FRAMES {
+                checkpoint_frame = frame_index;
+                checkpoint = Rc::new(model.clone());
+            }
+            budget.remaining_frames -= 1;
+            stats.frames += 1;
+            if let Err(error) = model.frame_timed(frame.time_ms, &frame.judged, dt) {
+                execution_error = Some(error);
+                break;
+            }
+        }
+        // This includes the interrupted draw. An unmodelled raw draw anywhere on this cylinder
+        // invalidates its probability product, even when the observed value appears irrelevant.
+        if !model.random.nominal_covers_draws() {
+            return Ok(cylinder_declined(stats, LuckExactDecline::UnhandledRandom));
+        }
+        if let Some(branch) = model.random.nominal_branch() {
+            if execution_error.is_none() {
+                return Err(Error::Domain("nominal terminal branch request did not stop playback".into()));
+            }
+            if prefix.len() >= MAX_BRANCH_DEPTH {
+                return Ok(cylinder_declined(stats, LuckExactDecline::BranchDepth));
+            }
+            if branch.len() > MAX_ORDER_RUNS as usize {
+                return Ok(cylinder_declined(stats, LuckExactDecline::WorkBudget));
+            }
+            // nominal_lottery already checked the whole conditional partition and removed zero
+            // weights. Select in its original semantic order; other outcomes are left unvisited.
+            let index = match choice {
+                LuckCylinderChoice::First => 0,
+                LuckCylinderChoice::Last => branch.len().saturating_sub(1),
+            };
+            let Some(outcome) = branch.get(index).filter(|outcome| outcome.weight > 0 && outcome.total > 0) else {
+                return Ok(cylinder_declined(stats, LuckExactDecline::Arithmetic));
+            };
+            let Some(next_mass) =
+                mass.multiply(LuckExactMass { numerator: outcome.weight as u128, denominator: outcome.total as u128 })
+            else {
+                return Ok(cylinder_declined(stats, LuckExactDecline::Arithmetic));
+            };
+            mass = next_mass;
+            prefix.push(index);
+            continue;
+        }
+        if let Some(error) = execution_error {
+            return match error {
+                Error::Unsupported(_) | Error::Capacity(_) => {
+                    Ok(cylinder_declined(stats, LuckExactDecline::Unsupported))
+                }
+                error => Err(error),
+            };
+        }
+        if !model.random.nominal_prefix_consumed() {
+            return Err(Error::Domain("nominal terminal did not consume its outcome prefix".into()));
+        }
+        if mass.numerator == 0 || mass.denominator == 0 || mass.numerator > mass.denominator {
+            return Ok(cylinder_declined(stats, LuckExactDecline::Arithmetic));
+        }
+        // No partial frame, unfinished suffix, or cancellation can publish a terminal cylinder.
+        if cancelled() {
+            return Ok(cylinder_declined(stats, LuckExactDecline::Cancelled));
+        }
+        let atom = LuckExactAtom { score: model.score(), final_life: model.current_life(), mass };
+        stats.terminal_paths = 1;
+        return Ok(LuckCylinderAttempt { cylinder: Some(LuckTerminalCylinder { atom }), stats, decline: None });
     }
 }
 
@@ -421,6 +616,10 @@ mod tests {
     use super::super::{JudgedNote, PlayFrame};
     use super::*;
     use serde_json::json;
+
+    mod cylinder_tests {
+        include!("luck_exact_cylinder_tests.rs");
+    }
 
     fn fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
         let lots: Vec<_> = (0..5)

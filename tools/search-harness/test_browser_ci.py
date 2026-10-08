@@ -22,12 +22,12 @@ class BrowserCIContracts(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
-    def test_full_plan_keeps_all_48_real_and_16_synthetic_cases(self):
+    def test_full_plan_keeps_full48_and_adds_one_original_reported_case(self):
         self.node(r"""
 const fs = require('node:fs');
 const matrix = JSON.parse(fs.readFileSync('fixtures/full48/matrix.json', 'utf8'));
 const full = ci.plan('all');
-assert.equal(full.matrix.include.reduce((n, shard) => n + shard.expectedCases, 0), 64);
+assert.equal(full.matrix.include.reduce((n, shard) => n + shard.expectedCases, 0), 65);
 const real = full.matrix.include.filter(shard => shard.suite === 'full48');
 assert.equal(real.length, 3);
 const seen = [];
@@ -40,9 +40,21 @@ for (const shard of real) {
 assert.equal(new Set(seen).size, 48);
 assert.equal(ci.plan('synthetic').needReal, false);
 assert.equal(ci.plan('full48').needSynthetic, false);
+assert.equal(ci.plan('full48').matrix.include.reduce((n,s)=>n+s.expectedCases,0),48);
+assert.equal(ci.plan('full48').needReported,false);
+assert.equal(ci.plan('real').matrix.include.reduce((n,s)=>n+s.expectedCases,0),49);
+assert.equal(ci.plan('real').needSynthetic,false);
+assert.equal(ci.plan('reported').matrix.include.length,1);
+assert.equal(ci.plan('reported').needFull48,false);
+assert.equal(ci.plan('reported').needReported,true);
+assert.equal(ci.plan('reported').needReal,true);
 assert.equal(ci.plan('smoke').matrix.include.length, 2);
+assert.equal(ci.plan('smoke').matrix.include.reduce((n,s)=>n+s.expectedCases,0),2);
+assert.equal(ci.plan('smoke').needSynthetic,false);
+assert.deepEqual(ci.plan('smoke').matrix.include.map(s=>s.suite),['full48','reported']);
+assert(ci.plan('smoke').matrix.include.every(s=>s.requireComplete==='none'));
 assert.throws(() => ci.plan('unknown'));
-for (const row of matrix.cases) ci.requestContract(JSON.stringify(row.request));
+for (const row of matrix.cases) ci.requestContract(JSON.stringify(row.request),'full48',row.name);
 """)
 
     def test_budget_k_and_unrestricted_domain_are_not_rewritten(self):
@@ -50,13 +62,18 @@ for (const row of matrix.cases) ci.requestContract(JSON.stringify(row.request));
 const request = {format:'ournotes-deck.search-request/1', execution:{kind:'live'}, k:3,
   limits:{timeLimitMs:60000,maxCandidates:null,cacheEntries:0}, constraints:{}};
 const text = JSON.stringify(request);
-assert.deepEqual(ci.requestContract(text), request);
+assert.deepEqual(ci.requestContract(text,'synthetic','short-score-cache0'), request);
 assert.equal(JSON.stringify(request), text);
 for (const mutate of [r=>r.k=1, r=>r.limits.timeLimitMs=60001, r=>r.limits.maxCandidates=1,
   r=>r.constraints={leader:1}, r=>r.execution.kind='skip']) {
   const changed = structuredClone(request); mutate(changed);
-  assert.throws(() => ci.requestContract(JSON.stringify(changed)));
+  assert.throws(() => ci.requestContract(JSON.stringify(changed),'synthetic','short-score-cache0'));
 }
+assert.throws(()=>ci.requestContract(text,'full48','short-newcomer-score'));
+const full48=structuredClone(request); full48.limits.cacheEntries=1024;
+ci.requestContract(JSON.stringify(full48),'full48','short-newcomer-score');
+full48.limits.cacheEntries=2048;
+assert.throws(()=>ci.requestContract(JSON.stringify(full48),'full48','short-newcomer-score'));
 const manifest = {format:'ournotes-deck.search-benchmark/1',requestTimeLimitMs:60000,timeoutMs:90000,
   cases:[{name:'one',profile:'newcomer'},{name:'two',profile:'veteran'}]};
 assert.deepEqual(ci.selectCases(manifest,'all'), manifest.cases);
@@ -65,6 +82,58 @@ assert.throws(() => ci.selectCases(manifest,'one,one'));
 assert.throws(() => ci.selectCases(manifest,'missing'));
 assert.throws(() => ci.selectCases(manifest,'profile:missing'));
 """)
+
+    def test_reported_original_request_contract_requires_every_original_byte(self):
+        self.node(r"""
+const fs=require('node:fs');
+const text=fs.readFileSync('fixtures/reported/request.json','utf8');
+const original=ci.requestContract(text,'reported','issue9-battle-original');
+assert.equal(original.k,5); assert.equal(original.limits.cacheEntries,2048);
+assert.throws(()=>ci.requestContract(text,'full48','issue9-battle-original'));
+assert.throws(()=>ci.requestContract(text,'reported','renamed'));
+assert.throws(()=>ci.requestContract(text+'\n','reported','issue9-battle-original'));
+for(const mutate of [r=>r.k=3,r=>r.limits.cacheEntries=1024,r=>r.limits.maxCandidates=1,
+ r=>r.constraints={leader:6},r=>r.networkConfirmations[0].percent=200,
+ r=>r.context.powerSnapshot.capturedJstTicks++]) {
+ const changed=structuredClone(original); mutate(changed);
+ assert.throws(()=>ci.requestContract(JSON.stringify(changed),'reported','issue9-battle-original'));
+}
+const row={completion:'TimedOut',optimality:'unproven',searchWallMs:60000,processWallMs:61000,timeLimitMs:60000,k:5};
+const run={name:'issue9-battle-original',repeat:1,finished:true,native:{passed:true,row},browser:{passed:true,row},
+ comparison:{bothComplete:false,compatibleCertificates:true}};
+const summary=ci.summarizeRuns([run],1,[]);
+assert.equal(summary.contractsPassed,true); assert.equal(summary.targetMet,false);
+assert.equal(summary.browserCompletions.TimedOut,1);
+assert.match(ci.summaryMarkdown({sourceCommit:'test',runs:[run],summary}),/reported: K=5\/cache=2048/);
+""")
+
+    def test_reported_evidence_requires_pinned_data_original_roster_and_native_audit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.node(r"""
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const root=JSON.parse(fs.readFileSync(0,'utf8'));
+const sha=v=>crypto.createHash('sha256').update(v).digest('hex');
+const provenance=fs.readFileSync('fixtures/reported/provenance.json');
+const source=JSON.parse(fs.readFileSync('fixtures/full48/source.json'));
+const p=JSON.parse(provenance);
+const hashes={...p.sha256,data:source.deckData.sha256,snapshot:'a'.repeat(64)};
+const audit={format:'ournotes-deck.reported-projection/1',datasetId:hashes.data,
+ strictResolution:true,parsedRosterEqual:true,poolFieldsEqual:true,candidateDomainEqual:true};
+fs.writeFileSync(path.join(root,'provenance.json'),provenance);
+fs.writeFileSync(path.join(root,'projection-audit.json'),JSON.stringify(audit));
+const receipt={format:'ournotes-deck.reported-preparation/1',nativeProjectionPassed:true,
+ source:{datasetId:hashes.data},inputSha256:{request:hashes.request,roster:hashes.roster,snapshot:hashes.snapshot},
+ sourceProvenanceSha256:sha(provenance),auditSha256:sha(JSON.stringify(audit)),auditBinarySha256:'b'.repeat(64)};
+const writeReceipt=()=>fs.writeFileSync(path.join(root,'preparation-receipt.json'),JSON.stringify(receipt));
+writeReceipt(); ci.reportedEvidence(root,hashes);
+assert.throws(()=>ci.reportedEvidence(root,{...hashes,roster:'c'.repeat(64)}));
+assert.throws(()=>ci.reportedEvidence(root,{...hashes,data:'c'.repeat(64)}));
+receipt.nativeProjectionPassed=false;writeReceipt();assert.throws(()=>ci.reportedEvidence(root,hashes));
+receipt.nativeProjectionPassed=true;writeReceipt();
+audit.candidateDomainEqual=false;fs.writeFileSync(path.join(root,'projection-audit.json'),JSON.stringify(audit));
+receipt.auditSha256=sha(JSON.stringify(audit));writeReceipt();assert.throws(()=>ci.reportedEvidence(root,hashes));
+fs.unlinkSync(path.join(root,'projection-audit.json'));assert.throws(()=>ci.reportedEvidence(root,hashes));
+""", directory)
 
     def test_portable_bundle_preserves_original_large_integer_and_whitespace_bytes(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -41,6 +41,7 @@ mod lambda;
 mod point_route;
 mod prefix_character;
 mod prefix_resource;
+mod raw;
 #[cfg(test)]
 mod raw_pass_tests;
 mod relax_tables;

@@ -947,6 +947,19 @@ An unresolved nonconstant enclosure preserves the threshold/truncation metadata 
 No score-law equality class is merged by a payoff-only certificate. Cancellation, unsupported emission order,
 capacity refusal and exhausted work preserve all earlier certificates and the original completion state.
 
+During traversal, once the frontier contains at least K candidates, the just-offered nonlinear candidate
+can receive one complete optional terminal-payoff stage. Its already available 120 raw-score rows are kept
+for that stage; the long-chart policy retains at most one such row set. The stage stops if the candidate
+leaves the frontier, a deadline/cancellation occurs, or a work guard refuses further computation. It does
+not close the unseen domain or invoke an exhausted-domain proof.
+
+One request-owned native work allowance is shared by early terminal work, final equality refinement and
+full native lottery laws. An attempted stage is a scheduling state, not a payoff certificate: only fully
+completed individual orders install evidence, and an unfinished stage never restarts its private fold
+counters with a new allowance. Remaining unresolved orders can still use the independent native-law
+provider. Optional work exhaustion does not stop the ordinary domain traversal. A removed candidate's
+attempt marker never suppresses proof work for a later physical candidate with an equal program.
+
 The initial candidate evaluation for these objectives can also use a complete raw-score terminal summary.
 That summary provides the score mean, native integer support and deterministic LIFE required by the existing
 per-order payoff bounds. A mean is never substituted for the expectation of a nonlinear payoff. Optional
@@ -977,8 +990,9 @@ A further capability can use the complete controller law for the direct probe's 
 For an included note, let `H` be its nonnegative historical coefficient with the full allowed Rush multiplier,
 and let `p` be the complete law's probability that the direct probe is active at that note's chart time.
 When the native historical query has the same ideal signed probe prefix as that chart-time class, `H * p`
-bounds the expected probe contribution. Ordinary reward coefficients keep `H`; the historical Rush magnitude,
-native floating-point drift and integer rank allowances retain their independent envelopes.
+bounds the expected probe contribution. Without the separate Rush-filing capability below, ordinary reward coefficients keep `H` and historical
+Rush magnitude stays unconditional. Native floating-point drift and integer rank allowances always retain
+their independent envelopes.
 
 An empty-reward recording establishes only original clock and rank-query geometry. The full physical pair
 domain must separately establish a direct positive 7021 effect, an untimed sustained lifecycle, fixed
@@ -1004,6 +1018,43 @@ hits on completed coefficient tables do not recount these profiles. A transporte
 counts the new physical reward binding it publishes. Native nominal-tree tests compare actual signed probe filings
 at both historical queries and the terminal query over all original labels; descendant tests independently
 check both the historical-only and combined upper bounds.
+
+### Historical Rush rewards
+
+A separate complete-profile capability can attach the controller's Rush class to each historical rank query.
+Its empty-reward recording certifies the original query geometry; the full admitted controller profile
+certifies which later Rush filings are possible. For every included note, every potential later filing and
+actual nonzero Luck factor after the original start-query event must lie in a strictly later native score
+frame. The comparison uses the query event, so multiple controller switches already filed in the same frame
+are retained. Missing or inconsistent geometry refuses the whole optional witness.
+
+Potential filings include pending notes, current judged Luck notes, pending lotteries and before-frame
+completion opportunities for every range, including non-Luck ranges. Actual recorded nonzero Luck factors
+are additional conservative filing opportunities. This coverage relies on complete profile
+admission, including rejection of overlapping active Luck ranges and range-clock feedback; an empty context
+recording alone never grants the capability. The fixed-rank identity/coefficient cancellation proof remains
+required for both historical queries. Probe and Rush readiness can fail independently.
+
+Let `r` be the rank-only upper multiplier compiled directly from the original rank envelope. Let `T[R]` be
+that note's terminal coefficient under Rush class `R`, including the ordinary coefficient when Rush is off.
+The normal historical contribution becomes `r * E[T[R]]`. A direct probe with both witnesses uses
+`r * E[T[R] * I(probe)]`, evaluated from the complete joint law. It never multiplies independent marginals.
+With Rush readiness alone, a possible probe keeps its full physical amplitude and uses the normal history
+coefficient. With probe readiness alone, it retains the earlier `H * P(probe)` envelope. With neither,
+it keeps the unconditional `H`.
+
+The whole new physical-pair bound is intersected with the complete earlier pair bound. The base coefficient
+also keeps the smaller complete old/new envelope. Ordinary skill windows, conversion budgets, opaque rows,
+unweighted native arithmetic drift and integer rank allowances are unchanged. Each original order still
+contributes in the same outward summation sequence; a cached curve additionally matches Rush readiness.
+
+`rankRushHistoryReadyLabels` and `rankRushHistoryDiscountedProfiles` count successful complete profile
+publications under the same accounting rules as the direct-probe diagnostics. The
+`maximumMeanBaseRushHistoryReduction` diagnostic measures only the average base coefficient decrease over
+120 original labels. It excludes team power, physical reward amplitudes and native error allowances; it is
+not a saved-score or saved-time estimate. Native tests compare historical signed Rush and probe prefixes
+with complete terminal joint laws, and the physical descendant oracle checks each independently enabled
+capability as well as the combined bound.
 
 The completed coefficient table also bounds individual physical leaves. A depth-four node may stay open
 because one remaining binding is strong, while another child can be excluded using its own singleton cap.

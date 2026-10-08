@@ -16,6 +16,9 @@ use std::cell::Cell;
 #[path = "certified_terminal_summary_tests.rs"]
 mod terminal_summary_tests;
 
+#[path = "certified_cylinder_tests.rs"]
+mod cylinder_tests;
+
 fn input() -> (Master, LuckSkills, FiniteSeedContext) {
     input_with_order_skills(false)
 }

@@ -7,7 +7,10 @@
 
 use super::terminal_prefix::{TerminalIngredients, TerminalNote};
 use super::trace_drift::Decline;
-use super::{BoundsEvent, BoundsTrace, LiveScoreCalculator, LuckDpCertifiedResult, note_bounds_at_power};
+use super::{
+    BoundsEvent, BoundsTrace, LiveScoreCalculator, LuckDpCertifiedResult, NoteCommand, NoteFactors,
+    note_bounds_at_power, note_bounds_with_factors, note_factors,
+};
 use crate::live::certified::{F32Interval, I32Interval};
 use crate::num::FxHashMap;
 
@@ -26,6 +29,25 @@ pub(super) struct Prepared {
 struct ComboInputs {
     ordinary: F32Interval,
     gekisou: F32Interval,
+}
+
+/// Only the actual inputs to the native note arithmetic. The calculator, power, Rush percent and linked
+/// admission are immutable within one `rows` call. Identity, chart time and positive LIFE magnitude are
+/// still checked/read for each occurrence, but do not affect these four integer buckets.
+fn row_key(note: &NoteCommand, factors: &NoteFactors) -> [u32; 13] {
+    let mut key = [0; 13];
+    key[..3].copy_from_slice(&[note.note_type as u32, note.score_type as u32, u32::from(note.life > 0)]);
+    for (class, factors) in factors.iter().enumerate() {
+        if let Some(factors) = factors {
+            let start = 3 + class * 5;
+            key[start] = 1;
+            for (field, value) in factors.iter().enumerate() {
+                key[start + 1 + field * 2] = value.lower().to_bits();
+                key[start + 2 + field * 2] = value.upper().to_bits();
+            }
+        }
+    }
+    key
 }
 
 /// Shared inputs for terminal notes and earlier rank queries. The complete Combo hull is built once. Rank
@@ -118,10 +140,22 @@ impl<'a> Kernel<'a> {
     pub(super) fn rows(
         &self,
         notes: &[TerminalNote],
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<Vec<[I32Interval; 4]>, Decline> {
+        self.rows_inner::<true>(notes, cancelled, &mut || {})
+    }
+
+    fn rows_inner<const MEMO: bool>(
+        &self,
+        notes: &[TerminalNote],
         mut cancelled: impl FnMut() -> bool,
+        reused: &mut impl FnMut(),
     ) -> Result<Vec<[I32Interval; 4]>, Decline> {
         let mut caps = Vec::new();
         caps.try_reserve_exact(notes.len()).map_err(|_| Decline::Capacity)?;
+        // One stack entry only, discarded before another query or power can consume the kernel.
+        // Cache validated integer buckets, never occurrence metadata or probability-weighted values.
+        let mut previous = None::<([u32; 13], [I32Interval; 4])>;
         for (at, prefix) in notes.iter().enumerate() {
             if at.is_multiple_of(64) && cancelled() {
                 return Err(Decline::Cancelled);
@@ -134,15 +168,38 @@ impl<'a> Kernel<'a> {
             }
             let combo = self.combos.get(&(*frame, *index)).ok_or(Decline::Incomplete)?;
             let fields = self.ingredients.fields_for(prefix, self.linked)?;
-            let (bounds, support) = note_bounds_at_power(
-                self.calc,
-                self.power,
-                note,
-                &fields,
-                combo.ordinary,
-                combo.gekisou,
-                self.rush_percent,
-            )
+            let factors = if MEMO {
+                Some(
+                    note_factors(note.score_type, fields, combo.ordinary, combo.gekisou)
+                        .map_err(|_| Decline::Nonfinite)?,
+                )
+            } else {
+                None
+            };
+            let key = factors.as_ref().map(|factors| row_key(note, factors));
+            if let (Some(key), Some((previous_key, row))) = (key, previous)
+                && key == previous_key
+            {
+                reused();
+                caps.push(row);
+                continue;
+            }
+            let (bounds, support) = if let Some(factors) = factors {
+                // The original grouping is unchanged. Computing each pure class expression once also
+                // avoids evaluating it twice for the Rush-off/on buckets on a cache miss.
+                note_bounds_with_factors(self.calc, self.power, note, self.rush_percent, |class| Ok(factors[class]))
+            } else {
+                // Independent original arithmetic path for the disabled-memo differential oracle.
+                note_bounds_at_power(
+                    self.calc,
+                    self.power,
+                    note,
+                    &fields,
+                    combo.ordinary,
+                    combo.gekisou,
+                    self.rush_percent,
+                )
+            }
             .map_err(|_| Decline::Nonfinite)?;
             // The optional positive comparison refuses signed scores and native overflow/saturation domains.
             // The previous factor/fine caps remain available on every such input.
@@ -160,6 +217,9 @@ impl<'a> Kernel<'a> {
             if row[..3].iter().any(|value| value.upper() > row[3].upper()) {
                 return Err(Decline::Magnitude);
             }
+            if let Some(key) = key {
+                previous = Some((key, row));
+            }
             caps.push(row);
         }
         if cancelled() {
@@ -168,6 +228,10 @@ impl<'a> Kernel<'a> {
         Ok(caps)
     }
 }
+
+#[cfg(test)]
+#[path = "terminal_kernel_tests.rs"]
+mod tests;
 
 /// The calculator's score constants remain unchanged by recording; only its explicitly supplied initial
 /// power and the certified factor prefixes enter these native note kernels. Complete-score construction is

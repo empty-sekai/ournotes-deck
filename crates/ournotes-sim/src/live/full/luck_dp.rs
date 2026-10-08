@@ -2514,6 +2514,21 @@ impl LuckDpCache {
         Self { capacity_words: capacity_bytes / std::mem::size_of::<u64>(), ..Default::default() }
     }
 
+    /// Visit resident terminal-recipe input hints first, retaining every one of the 120 labels and the
+    /// relative order within both groups. Hints never authorize reuse: full native identity/admission
+    /// checks still run for each preparation. Returns the number of hinted labels; zero capacity is a no-op.
+    pub fn prioritize_terminal_orders(
+        &self,
+        performers: &[Performer; 5],
+        orders: &[[usize; 5]],
+        schedule: &mut [usize],
+    ) -> usize {
+        if self.program_capacity() == 0 {
+            return 0;
+        }
+        self.programs.prioritize_terminal_orders(performers, orders, schedule)
+    }
+
     pub fn stats(&self) -> LuckDpCacheStats {
         let mut stats = self.stats;
         let shared = self.shared_recordings.stats;

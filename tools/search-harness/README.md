@@ -229,6 +229,33 @@ completion status. Its `passed` field means execution and answer contracts passe
 proven complete inside its declared budget. The paired mode retains its existing
 AB/BA order and default of two repetitions.
 
+## Reported original reproduction
+
+[`fixtures/reported`](fixtures/reported/README.md) adds the original issue 9 / PR 10
+Battle request as a separate one-case corpus. The issue author's supplied inventory
+is a synthetic reproduction roster, not a player account; the harness preserves it
+without generating replacement cards or cultivation. The real chart data are a
+separate input. The report did not identify its dataset version;
+preparation explicitly selects the existing pinned TW dataset. The original request
+and roster bytes are checked against fixed SHA-256 values. K=5, 2,048 cache entries,
+60,000 ms, all 15 members, all 35 Snaps, every leader and the three 250% network
+confirmations remain unchanged.
+
+```sh
+cargo build --release --locked --manifest-path tools/search-harness/Cargo.toml --bin reported_projection
+python3 tools/search-harness/reported.py prepare --no-build --cache-dir work/dataset-cache --out work/reported-inputs
+node tools/search-harness/browser-ci.cjs bundle work/reported-inputs/benchmark.json work/browser-bundle
+```
+
+The preparer derives only the schema projection of explicit values, then requires
+the native strict resolver and complete-field Pool/domain audit to pass before it
+exports a benchmark manifest. It preserves the audit, original source provenance,
+original roster, derived snapshot and executable/input hashes. `reported_projection`
+does not search or simulate a live. Copy that same-source executable to
+`work/browser-bundle/bin/reported_projection` before creating the build receipt.
+The generic native/Chromium benchmark keeps unfinished responses and compares
+compatible returned certificates; a timeout remains a timeout.
+
 ## Chromium Worker CI
 
 [Chromium Worker search](../../.github/workflows/browser-search.yml) builds the
@@ -239,9 +266,18 @@ does not substitute for that execution.
 
 | Trigger | Requests | Completion gate |
 | --- | --- | --- |
-| PR open/update, or a push to `main` | Six short synthetic requests and `short-newcomer-score` from the real matrix | Synthetic Score, Free and lottery-free controls must finish with a proof within 60 seconds; every request must satisfy transport, output and cross-runtime contracts |
-| PR label `browser-full-matrix` | All 16 synthetic requests and all 48 real requests | Every Chromium request must be proven complete within 20 seconds end to end |
-| Manual `workflow_dispatch` | `all`, `synthetic` or `full48`, with one or two serial repetitions | Complete within 20 seconds end to end by default; the explicit `require_complete=false` option collects unresolved or slower measurements while retaining their actual status |
+| PR open/update, or a push to `main` | `real`: all 48 real-chart matrix requests and the original reported reproduction | Every request must satisfy transport, output and cross-runtime contracts; the configured completion gate reports the 20-second goal separately |
+| PR label `browser-full-matrix` | The corpus selected by the workflow's full-run policy | Every planned Chromium request must be proven complete within 20 seconds end to end |
+| Manual `workflow_dispatch` | The selected declared corpus, with one or two serial repetitions | Complete within 20 seconds end to end by default; the explicit `require_complete=false` option collects unresolved or slower measurements while retaining their actual status |
+
+The harness accepts `synthetic` (16), `full48` (48), `reported` (1), `real`
+(full48 plus reported, 49), and `all` (65). `smoke` contains only
+`short-newcomer-score` and the original reported case, both with a contract-only
+gate; two cases do not establish full-matrix completion. Synthetic performance
+workloads remain explicit manual selections. The planner emits `needSynthetic`, `needFull48`, and `needReported` for
+preparation, and `needReal` when either corpus needs the pinned public dataset.
+Full48's K=3/cache=1024 contract and reported's exact original K=5/cache=2048
+contract are checked independently.
 
 The PR label permits the full run from a pull-request branch. Manual dispatch uses
 the selected workflow ref; when the workflow is available for dispatch, it can be
@@ -255,8 +291,8 @@ gh run watch RUN_ID --exit-status
 gh run download RUN_ID --dir work/chromium-run
 ```
 
-Real requests are split by the three fixed inventory profiles, with 16 cases per
-job. The synthetic corpus has its own job. Each job runs one solver at a time,
+Full48 requests are split by the three fixed inventory profiles, with 16 cases per
+job. The synthetic corpus and the reported original have separate jobs. Each job runs one solver at a time,
 alternating native-first and Chromium-first across cases. A Worker failure or
 external watchdog expiry is recorded as a runner error; the remaining declared
 cases still run. The 90-second external Worker watchdog detects stalled execution

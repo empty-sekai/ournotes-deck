@@ -167,3 +167,88 @@ fn rank_probe_history_geometry_reuses_fixed_identity_cancellation_and_refuses_pa
     *start = Some(0);
     assert!(build(&trace, &play, &setup, 200, &mut || false).unwrap().is_none());
 }
+
+#[test]
+fn rank_rush_history_geometry_keeps_current_frame_filings_and_is_independent_of_probe_clamping() {
+    let (mut trace, play, setup) = geometry();
+    let ready = trace.events.iter().position(|event| matches!(event, BoundsEvent::ProbabilityReady(80))).unwrap();
+    trace.events.insert(ready, BoundsEvent::Potential { frame: get_frame(80) as usize });
+    trace.events.insert(
+        ready,
+        BoundsEvent::Factor {
+            frame: get_frame(80) as usize,
+            command: FactorCommand { time_ms: 80, owner_id: -1, luck: 47, ..Default::default() },
+        },
+    );
+    let (probe, rush) = build_both(&trace, &play, &setup, 200, &mut || false).unwrap();
+    assert!(probe.is_some() && rush.is_some(), "same-frame commands before Ready are already historical");
+    let (probe, rush) = build_both(&trace, &play, &setup, 79, &mut || false).unwrap();
+    assert!(probe.is_none(), "the future direct probe inverse could be music-clamped");
+    assert!(rush.is_some(), "Rush FINISH uses its original frame time, not the probe's music clamp");
+    assert!(build_both(&trace, &play, &setup, 200, &mut || true).is_none());
+    let mut polls = 0;
+    assert!(
+        build_both(&trace, &play, &setup, 200, &mut || {
+            polls += 1;
+            polls >= 5
+        })
+        .is_none(),
+        "an interrupted geometry check publishes neither witness"
+    );
+}
+
+#[test]
+fn rank_rush_history_geometry_refuses_future_potential_and_before_frame_inverse_at_closed_frame() {
+    let (original, play, setup) = geometry();
+    for time in [79, 80, 81] {
+        for factor in [false, true] {
+            let mut trace = original.clone();
+            let at =
+                trace.events.iter().position(|event| matches!(event, BoundsEvent::Query { time_ms: 100, .. })).unwrap();
+            let frame = get_frame(time) as usize;
+            let event = if factor {
+                // Actual Luck commands remain conservative evidence even without companion metadata.
+                BoundsEvent::Factor {
+                    frame,
+                    command: FactorCommand { time_ms: time, owner_id: -1, luck: -47, ..Default::default() },
+                }
+            } else {
+                BoundsEvent::Potential { frame }
+            };
+            trace.events.insert(at, event);
+            let (probe, rush) = build_both(&trace, &play, &setup, 200, &mut || false).unwrap();
+            assert!(probe.is_some(), "the Rush-only defect does not erase probe geometry");
+            assert_eq!(rush.is_some(), time == 81, "factor={factor} time={time}");
+        }
+    }
+    let mut unproved = original.clone();
+    unproved.filing_gate = None;
+    let (probe, rush) = build_both(&unproved, &play, &setup, 200, &mut || false).unwrap();
+    assert!(probe.is_some() && rush.is_none(), "unclassified recorder potentials cannot prove the superset");
+}
+
+#[test]
+fn rank_rush_history_geometry_refuses_late_notes_changed_fixed_coefficients_and_partial_queries() {
+    let (mut trace, mut play, mut setup) = geometry();
+    trace.events.clear();
+    trace.queries = 0;
+    append_frame(&mut trace, 0, &[], None);
+    append_frame(&mut trace, 40, &[], None);
+    append_frame(&mut trace, 70, &[41, 60], Some((0, 0, 60)));
+    append_frame(&mut trace, 80, &[79], None);
+    play.frames = [0, 40, 70, 80].map(|time_ms| PlayFrame { time_ms, judged: Vec::new() }).into();
+    setup.fevers[0] = (0, 60);
+    assert_eq!(get_frame(60), get_frame(79));
+    assert!(build_both(&trace, &play, &setup, 200, &mut || false).unwrap().1.is_none());
+
+    let (mut trace, mut play, mut setup) = geometry();
+    append_frame(&mut trace, 120, &[120], Some((1, 40, 120)));
+    append_frame(&mut trace, 160, &[], None);
+    play.frames.extend([120, 160].map(|time_ms| PlayFrame { time_ms, judged: Vec::new() }));
+    setup.fevers.push((40, 120));
+    assert!(build_both(&trace, &play, &setup, 200, &mut || false).unwrap().1.is_none());
+
+    let (mut trace, play, setup) = geometry();
+    trace.events.pop(); // The final frame no longer has its original ProbabilityReady anchor.
+    assert!(build_both(&trace, &play, &setup, 200, &mut || false).unwrap().1.is_none());
+}

@@ -1,0 +1,4368 @@
+{
+  "artifacts": [
+    {
+      "archiveSha256": "d43f3840586d0c5ea1e0f6f665ebca059411c0ed674e33e8c4371f5ba24e08c3",
+      "baselineReportSha256": "92adea9e447c165e50ab3960e7bfa58bda1ef3499813198394224d6e6d662624",
+      "candidateReportSha256": "95d56118bb659a085a8846dac815d2b71b91315fffa2165ea13b9429b5a4d353",
+      "contractsPassed": true,
+      "inputReceiptHashUnchanged": true,
+      "inputReceiptSha256": "5c56edc3fe5a95d7d5d23849dd51eee091cbb4e8747905d551088a35f344535e",
+      "manifestHashUnchanged": true,
+      "manifestSha256": "5189b8c6d70f1416f99915940fd974b8d1fac53c1fc7a6c3d2829d48b6e72e84",
+      "profile": "newcomer",
+      "url": "https://github.com/empty-sekai/ournotes-deck/actions/runs/37779863844/artifacts/11552564726"
+    },
+    {
+      "archiveSha256": "6109aa237d3eb86949af6e81f76a187a573f3ebeb6e7af3e0a9964bccf7775e2",
+      "baselineReportSha256": "5b18f2ce306f7766821d6e5cf99a27bbca36698e83e6149c4fc49b448e2dc3b4",
+      "candidateReportSha256": "226d8ca92d8566eed04194e4915058b217b11f8af068074ed10df980351897b7",
+      "contractsPassed": true,
+      "inputReceiptHashUnchanged": true,
+      "inputReceiptSha256": "5c56edc3fe5a95d7d5d23849dd51eee091cbb4e8747905d551088a35f344535e",
+      "manifestHashUnchanged": true,
+      "manifestSha256": "5189b8c6d70f1416f99915940fd974b8d1fac53c1fc7a6c3d2829d48b6e72e84",
+      "profile": "midcore",
+      "url": "https://github.com/empty-sekai/ournotes-deck/actions/runs/37779863844/artifacts/11553371943"
+    },
+    {
+      "archiveSha256": "097c3404a8c5d3280dca2266cd2bd75aed7c6a9b4e08d56b02a2b848deb929eb",
+      "baselineReportSha256": "ad9e6e936606e709dd4ca33063839842d4ad83764c83925a4f3469f21e75fd96",
+      "candidateReportSha256": "c090d78e70b6161736d13c3f98b2fe8eab25a8d86b59ff9561ef26676ca7d117",
+      "contractsPassed": true,
+      "inputReceiptHashUnchanged": true,
+      "inputReceiptSha256": "5c56edc3fe5a95d7d5d23849dd51eee091cbb4e8747905d551088a35f344535e",
+      "manifestHashUnchanged": true,
+      "manifestSha256": "5189b8c6d70f1416f99915940fd974b8d1fac53c1fc7a6c3d2829d48b6e72e84",
+      "profile": "veteran",
+      "url": "https://github.com/empty-sekai/ournotes-deck/actions/runs/37779863844/artifacts/11553417742"
+    }
+  ],
+  "auditReceipts": {
+    "auditReceiptSha256": "7b94de6f6c1c7832bcbae8b08ceb16ed3439e70db833cc7d4f7ec0c5fa60bc36",
+    "completeComparisonSha256": "26551f82ba43c0bb4c0499d971ef67a113fab048eed2101b6db449c4bc8539dd",
+    "historicalReportSha256": "a650a0998d95ddcfcd26ca8189c3fcdf1624d82614ba34cb5e2e0d8615b05311"
+  },
+  "baselineSourceCommit": "4f30cc845eb4df78e82cf05c233c8a20c386be00",
+  "baselineWorkflow": "https://github.com/empty-sekai/ournotes-deck/actions/runs/37773916872",
+  "dataset": {
+    "bytes": 3860477,
+    "masterVersion": "0947498bc108756b2cc388d4c971105e",
+    "region": "tw",
+    "sha256": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf"
+  },
+  "environments": [
+    {
+      "arch": "x64",
+      "browser": null,
+      "cpuModel": "AMD EPYC 9V74 80-Core Processor",
+      "cpus": 4,
+      "node": "v22.23.3",
+      "platform": "linux",
+      "profile": "newcomer",
+      "runtime": "native",
+      "version": "baseline"
+    },
+    {
+      "arch": "x64",
+      "browser": null,
+      "cpuModel": "AMD EPYC 9V74 80-Core Processor",
+      "cpus": 4,
+      "node": "v22.23.3",
+      "platform": "linux",
+      "profile": "newcomer",
+      "runtime": "browser",
+      "version": "baseline"
+    },
+    {
+      "arch": "x64",
+      "browser": null,
+      "cpuModel": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "cpus": 4,
+      "node": "v22.23.3",
+      "platform": "linux",
+      "profile": "newcomer",
+      "runtime": "native",
+      "version": "candidate"
+    },
+    {
+      "arch": "x64",
+      "browser": null,
+      "cpuModel": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "cpus": 4,
+      "node": "v22.23.3",
+      "platform": "linux",
+      "profile": "newcomer",
+      "runtime": "browser",
+      "version": "candidate"
+    },
+    {
+      "arch": "x64",
+      "browser": null,
+      "cpuModel": "AMD EPYC 7763 64-Core Processor",
+      "cpus": 4,
+      "node": "v22.23.3",
+      "platform": "linux",
+      "profile": "midcore",
+      "runtime": "native",
+      "version": "baseline"
+    },
+    {
+      "arch": "x64",
+      "browser": null,
+      "cpuModel": "AMD EPYC 7763 64-Core Processor",
+      "cpus": 4,
+      "node": "v22.23.3",
+      "platform": "linux",
+      "profile": "midcore",
+      "runtime": "browser",
+      "version": "baseline"
+    },
+    {
+      "arch": "x64",
+      "browser": null,
+      "cpuModel": "AMD EPYC 7763 64-Core Processor",
+      "cpus": 4,
+      "node": "v22.23.3",
+      "platform": "linux",
+      "profile": "midcore",
+      "runtime": "native",
+      "version": "candidate"
+    },
+    {
+      "arch": "x64",
+      "browser": null,
+      "cpuModel": "AMD EPYC 7763 64-Core Processor",
+      "cpus": 4,
+      "node": "v22.23.3",
+      "platform": "linux",
+      "profile": "midcore",
+      "runtime": "browser",
+      "version": "candidate"
+    },
+    {
+      "arch": "x64",
+      "browser": null,
+      "cpuModel": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "cpus": 4,
+      "node": "v22.23.3",
+      "platform": "linux",
+      "profile": "veteran",
+      "runtime": "native",
+      "version": "baseline"
+    },
+    {
+      "arch": "x64",
+      "browser": null,
+      "cpuModel": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "cpus": 4,
+      "node": "v22.23.3",
+      "platform": "linux",
+      "profile": "veteran",
+      "runtime": "browser",
+      "version": "baseline"
+    },
+    {
+      "arch": "x64",
+      "browser": null,
+      "cpuModel": "AMD EPYC 9V45 96-Core Processor",
+      "cpus": 4,
+      "node": "v22.23.3",
+      "platform": "linux",
+      "profile": "veteran",
+      "runtime": "native",
+      "version": "candidate"
+    },
+    {
+      "arch": "x64",
+      "browser": null,
+      "cpuModel": "AMD EPYC 9V45 96-Core Processor",
+      "cpus": 4,
+      "node": "v22.23.3",
+      "platform": "linux",
+      "profile": "veteran",
+      "runtime": "browser",
+      "version": "candidate"
+    }
+  ],
+  "fixtureCommit": "9372d432e43f600d62950c88766126fc9ea21a98",
+  "format": "ournotes-deck.real-search-benchmark-evidence/1",
+  "inputVerification": {
+    "datasetSha256": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+    "definitions": [
+      {
+        "matchesPinnedGitObject": true,
+        "path": "tools/search-harness/fixtures/full48/README.md",
+        "sha256": "49f01549a73c21bbb59eff962fd8f900359fc8a7459a3723216713d96cbbc0a6"
+      },
+      {
+        "matchesPinnedGitObject": true,
+        "path": "tools/search-harness/fixtures/full48/matrix.json",
+        "sha256": "fabccc0f1c785f334c6329be54303ae26c717fcd059233f50552237be50b77e1"
+      },
+      {
+        "matchesPinnedGitObject": true,
+        "path": "tools/search-harness/fixtures/full48/profiles/midcore.json",
+        "sha256": "da18d5197b8ec05958c5158fa50c7000cbb8e95a3a7721c090bb7b9a28b2e642"
+      },
+      {
+        "matchesPinnedGitObject": true,
+        "path": "tools/search-harness/fixtures/full48/profiles/newcomer.json",
+        "sha256": "9766a5dffb545e96a75491ec2065c4464d7c6bb293526e847690a367bbe05d2c"
+      },
+      {
+        "matchesPinnedGitObject": true,
+        "path": "tools/search-harness/fixtures/full48/profiles/veteran.json",
+        "sha256": "41ddb5840baaed5acaf0396deefe30d27df418f5235902c06949f53eba34bccf"
+      },
+      {
+        "matchesPinnedGitObject": true,
+        "path": "tools/search-harness/fixtures/full48/source.json",
+        "sha256": "49b57910f4f0a4877664d914195ddb53c4afb514f7753ccf8e36a1ec69607e5a"
+      },
+      {
+        "matchesPinnedGitObject": true,
+        "path": "tools/search-harness/matrix.py",
+        "sha256": "7d6c928b06f2e7a1c71bb4269d62d45a8599be5ae5bf51629edc57f3a6c8b992"
+      },
+      {
+        "matchesPinnedGitObject": true,
+        "path": "tools/search-harness/src/bin/benchmark_prepare.rs",
+        "sha256": "d26ecbbbdf37b4962dd4c34a95a9051c2add9c371dd907b629f63afba6a52ecd"
+      }
+    ],
+    "inventoryFileCount": 89,
+    "inventorySha256": "270597baf233d4588a08484d6f4c579d4c6e1cb5a6ef44bb3d22dcf949643a9b",
+    "originalInputTriplesChecked": 192,
+    "preparedStreamsReplayed": false,
+    "profiles": [
+      {
+        "completeSnapshotAndRosterMatch": true,
+        "members": 20,
+        "profile": "newcomer",
+        "snaps": 12
+      },
+      {
+        "completeSnapshotAndRosterMatch": true,
+        "members": 23,
+        "profile": "midcore",
+        "snaps": 19
+      },
+      {
+        "completeSnapshotAndRosterMatch": true,
+        "members": 44,
+        "profile": "veteran",
+        "snaps": 42
+      }
+    ],
+    "requestsReconstructed": 48
+  },
+  "reportedIssue9": {
+    "answerSha256": "591e579b16deee11bdf8b811983d5200230484aaeb4851e66afab68472e5feb1",
+    "cacheEntries": 2048,
+    "cliSha256": "31d0f448ac7426aaf4d98d26d97a2c5c96c5e0ae7ef15adf2a8b4a4e389157e2",
+    "completion": "TimedOut",
+    "dataSha256": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+    "exitCode": 0,
+    "exitReason": "timeLimit",
+    "k": 5,
+    "members": 15,
+    "musicId": 100010,
+    "nativeSimulations": 15079,
+    "optimality": "unproven",
+    "orderBoundPruned": 491,
+    "processSeconds": 60.107722439999634,
+    "requestSha256": "38c2f8fb0d46ec60b5d2da9786a1efccd8b7d7107bd68a2b8785c24fd93dd3c3",
+    "requestTimeLimitMs": 60000,
+    "rosterSha256": "8aa45d2746a424bf12ccd2f060453007a5c593b3c7a0d6235e924fd59eef0309",
+    "scope": "Local CLI measurement on the unchanged reported request and roster with the explicitly selected pinned TW dataset; not a CI result or exact historical dataset reproduction.",
+    "scoreId": 10001002,
+    "simulationMs": 57719.031079,
+    "snaps": 35,
+    "sourceCommit": "712d7255822137e5b59cc8c15514cfc45d56d2ad",
+    "sourceTree": "9baa5ec96e82d0b84e0c085a1c2088e0b68ed9ee",
+    "sources": [
+      "https://github.com/empty-sekai/ournotes-deck/issues/9",
+      "https://github.com/empty-sekai/ournotes-deck/pull/10"
+    ],
+    "started": 494,
+    "visited": 672
+  },
+  "rows": [
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "4c3af082358f990f6a4ddcd840a6ffff7d6e42a4e266c009e2c7e5805456df73",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60699.830084,
+          "searchWallMs": 60010.29999999999,
+          "semanticProjectionSha256": "fd1efb59348b534c7f97f0e693f5d662cd887d1b6ff6684f2ca3c19c79ff17aa"
+        },
+        "native": {
+          "answerSha256": "cc01af63a25f01398a29b118f79734b9e01e1c6e10d71fd7db47e6ddd4f031ca",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60045.847196999996,
+          "searchWallMs": 60001.239304,
+          "semanticProjectionSha256": "fd1efb59348b534c7f97f0e693f5d662cd887d1b6ff6684f2ca3c19c79ff17aa"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 5
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "e931cb6603e25503fdfefd86456f0988e4edc1381f19a7d71a909b6c5da80b5b",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60702.538077000005,
+          "searchWallMs": 60013.79999999999,
+          "semanticProjectionSha256": "9311b6a3dd5ed33c5ba0c779a0bcd0c1e528b9682c2039414a5d27dbe3ad2cf2"
+        },
+        "native": {
+          "answerSha256": "ec049fda0bca7bf2b0ccf241002c4cc2292371f8c71c6ba13d74cfbb4060b018",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60046.743244,
+          "searchWallMs": 60002.245768,
+          "semanticProjectionSha256": "9311b6a3dd5ed33c5ba0c779a0bcd0c1e528b9682c2039414a5d27dbe3ad2cf2"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa"
+      ],
+      "name": "short-newcomer-score",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "d80ebaa6ed666a1169493562190c14dcd2c8f3fd1aa68e056e4aa5c7bbcf13a3",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60949.723387,
+          "searchWallMs": 60015,
+          "semanticProjectionSha256": "ae64c977ea10fa802bfb39591e0d4bfa66524a651ccafc098e9cde49941a46a4"
+        },
+        "native": {
+          "answerSha256": "c8d809fe0414d6365636fb93ef521c587881dcab83d2535868c0440dea5bbee0",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60059.965737,
+          "searchWallMs": 60002.820479,
+          "semanticProjectionSha256": "ae64c977ea10fa802bfb39591e0d4bfa66524a651ccafc098e9cde49941a46a4"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 19
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "2106ef3b70421adf9f0bbe67624eacfef06f0cc2395d8b6f2988dc535e2483dd",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60964.797827999995,
+          "searchWallMs": 60014.899999999994,
+          "semanticProjectionSha256": "e4bb24730445c3deb7a7e69cd3eeaad7dc1758b6ebe8fbf9d13a68080e9ae704"
+        },
+        "native": {
+          "answerSha256": "d41d6c2538fefb642a026c6227be891424ec41a4cd78e70757638c1241bf5cdf",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60057.491774999995,
+          "searchWallMs": 60002.589258,
+          "semanticProjectionSha256": "611e94001d64d30f02c16f54b98fe184663b0684ece858f82780d93cc74c3cee"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa"
+      ],
+      "name": "short-midcore-score",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "91cfdd6d6e63069bda744fd9729d1d8cfade5b47f4bc88611bfef3f31e440ae4",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60754.863038999996,
+          "searchWallMs": 60015.600000000006,
+          "semanticProjectionSha256": "71c901031bf0481ec55c8d8e96bef9c683a51ea85b64129be25f2c1b47777cd5"
+        },
+        "native": {
+          "answerSha256": "f683f262a90b525de5b8c53eaf26f39ad1ef08840d108a59e976f7fc663ce165",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60057.206054999995,
+          "searchWallMs": 60002.444077,
+          "semanticProjectionSha256": "71c901031bf0481ec55c8d8e96bef9c683a51ea85b64129be25f2c1b47777cd5"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 12
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 12
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 12
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 12
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "c71bfb8e295809eb853bd738fe1ecfb9dee57a1151248a2210bb56fb0254fe9f",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60543.475223,
+          "searchWallMs": 60011.5,
+          "semanticProjectionSha256": "71c901031bf0481ec55c8d8e96bef9c683a51ea85b64129be25f2c1b47777cd5"
+        },
+        "native": {
+          "answerSha256": "1100287e085cc30df1fee2ab35e62d6b316c9cbdd41ee5c6d8480548a72a6b05",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60041.203143000006,
+          "searchWallMs": 60003.744982000004,
+          "semanticProjectionSha256": "71c901031bf0481ec55c8d8e96bef9c683a51ea85b64129be25f2c1b47777cd5"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa"
+      ],
+      "name": "short-veteran-score",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "a208f1042ea63f9b9b9db84553a7273e8c32adbbcf058310602b321b35de3315",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60728.425454,
+          "searchWallMs": 60013.100000000006,
+          "semanticProjectionSha256": "f0f822f633f922d7d74a68aa050cf76c9abfdb99e47f97881d960b22e74a6798"
+        },
+        "native": {
+          "answerSha256": "4e507dc01ccd6ac7496fe32151ea1df2da27be253af0eb2c1ab893ed1f36e135",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60044.068746,
+          "searchWallMs": 60001.871590999996,
+          "semanticProjectionSha256": "f0f822f633f922d7d74a68aa050cf76c9abfdb99e47f97881d960b22e74a6798"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "200b17be83374846612d9c1d20d270d1cd23f3e934e48c545171df8bbd4879e4",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60725.866652000004,
+          "searchWallMs": 60015.899999999994,
+          "semanticProjectionSha256": "f0f822f633f922d7d74a68aa050cf76c9abfdb99e47f97881d960b22e74a6798"
+        },
+        "native": {
+          "answerSha256": "80429e9421f625ac1c718ed33f022d5e63889a834019a1c1d8e17be22ef8a069",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60046.170561,
+          "searchWallMs": 60002.894460999996,
+          "semanticProjectionSha256": "320d0709a375d07ac99e165b5270384a1539e496539c8014fede20089176be3f"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "f98368aeac2d6a370638e320a6d25b789c6f3c5015d545621d7cbbfa3cc8567e"
+      ],
+      "name": "long-newcomer-score",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "27b289871e941137c2d0318315966f9b137d9ab02c3b46441ea5e791bce57567",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60945.084294,
+          "searchWallMs": 60016.80000000002,
+          "semanticProjectionSha256": "8c4e828c4be6ebe70a161211260c235cee08737547fdd4adda1f62c9699c05d2"
+        },
+        "native": {
+          "answerSha256": "eeaa0d33b2117f23fc2ed4af92fc7f3a298abfa886d5fe26e576698b50594a1f",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60056.027114000004,
+          "searchWallMs": 60002.337547,
+          "semanticProjectionSha256": "8c4e828c4be6ebe70a161211260c235cee08737547fdd4adda1f62c9699c05d2"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 20
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 20
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 20
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 20
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "9d6c13a56badf661a300ea7f5569e2088caaeee8fe8203367f8f73d2d4860a5e",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60945.218369,
+          "searchWallMs": 60015.20000000001,
+          "semanticProjectionSha256": "8c4e828c4be6ebe70a161211260c235cee08737547fdd4adda1f62c9699c05d2"
+        },
+        "native": {
+          "answerSha256": "801c49eb787cb79d8337980816de357ad3a3f6bce4566e57e74c257aa21eca9e",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60053.276719999994,
+          "searchWallMs": 60001.947268,
+          "semanticProjectionSha256": "8c4e828c4be6ebe70a161211260c235cee08737547fdd4adda1f62c9699c05d2"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "5716ce5637ded361e9ed5e4cea3361c129849696f524135311d986617d39ea7b"
+      ],
+      "name": "long-midcore-score",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "e004e11ebaec904a5a6f6c0e19558f78dfaf73e188a3cc79ce9a31f62e806d21",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60779.531541000004,
+          "searchWallMs": 60016.29999999999,
+          "semanticProjectionSha256": "367e55d0831b71b8743768c5291a899c01342d70fd25ad130ca2af4cc0d10016"
+        },
+        "native": {
+          "answerSha256": "3bb40e70916d44ec299bb97f6aa4a3530d4cc662de4f69b8896f8595112fd3e5",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60049.572918,
+          "searchWallMs": 60002.579308,
+          "semanticProjectionSha256": "7fd972bfd9e9b3a4f43d04515bdb5eab61f581ae3e7b587bd4d9f468a3f484cd"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 19
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 19
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 25
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 22
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "e3dd7ed12157e0873fea60fd48bf12938f03b68f10aba4c0076bdc72f5fdf76e",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60559.355786,
+          "searchWallMs": 60010.89999999991,
+          "semanticProjectionSha256": "1a453022d4cedfa51089ee1ffa4b60c0f71f6579e2b02e64dfc001f15a30bf3f"
+        },
+        "native": {
+          "answerSha256": "55e4c496ee3f3c5a1ab370079f1da7b7edf9a0b0e07b804224516424610a60ab",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60034.718918,
+          "searchWallMs": 60002.31474,
+          "semanticProjectionSha256": "a2f9d8f88c117784bc46a9e5863a159e0eb1405a03543151fb9833b23663db9e"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "5716ce5637ded361e9ed5e4cea3361c129849696f524135311d986617d39ea7b"
+      ],
+      "name": "long-veteran-score",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "1cc61bcb75c92583f46e1829fdb2bb94a93ed5b103e3f9fdea9d64a4a9eb484a",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60721.416422,
+          "searchWallMs": 60013,
+          "semanticProjectionSha256": "6167fb6782c55de6f3d600e45d4d5d46b3f70fef5b9cf3db56824bf17a7d2979"
+        },
+        "native": {
+          "answerSha256": "999cecdb172c21f481590c0303f21744866cafd839ced32461fd073fd8f5cd27",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60047.714373,
+          "searchWallMs": 60002.000005,
+          "semanticProjectionSha256": "f0b652b7f4e54a3efe91a362d0dcba0504d6bf60f462268afcf0a1bc69e575bf"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 53
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 52
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 52
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 66
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "bc562b1a6142e3e5cc062a5d4f6cd33f5c8633a98e3df5996d5749e9be1de967",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60707.021571000005,
+          "searchWallMs": 60014.899999999965,
+          "semanticProjectionSha256": "878885c8d4e85bb5d476fbc30fa300956625fd2df510a83b6053b3f927072cd2"
+        },
+        "native": {
+          "answerSha256": "bff29865974c004e0a76f959e6713dea02207db530bfc593f8cd22e98842c957",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60048.343957,
+          "searchWallMs": 60002.922911,
+          "semanticProjectionSha256": "5dd13e1e4b0d6fe6c85e08a4778d77db4045f97ec423db41ee263af9d16df21c"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "7f2f3fd9e8f09a400ca007af6eacf7737fd48366f9a8c63fd0d29d2e0573528d"
+      ],
+      "name": "mixed-short-newcomer-score",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "e09c6e5ac6b99846e28e5fd882a44737ed958ed64a63f7f3dd0adfad85079a98",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60964.130016,
+          "searchWallMs": 60018.29999999999,
+          "semanticProjectionSha256": "5010d91c59c71936d380492ecc7169fe64b2b3929b3ba9a7b9984e1e71bf0b38"
+        },
+        "native": {
+          "answerSha256": "67e3d7a550564a07a5049936197bad7e131d9a4abdf4c208d84d038c8c341629",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60060.758978,
+          "searchWallMs": 60003.444569,
+          "semanticProjectionSha256": "5010d91c59c71936d380492ecc7169fe64b2b3929b3ba9a7b9984e1e71bf0b38"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 27
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 27
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 27
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 27
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "793813046982e421e3f8730dc7fa5db3df80cf0ed91a11ca4d91bdc307f58f42",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60972.095950999996,
+          "searchWallMs": 60017.399999999965,
+          "semanticProjectionSha256": "5010d91c59c71936d380492ecc7169fe64b2b3929b3ba9a7b9984e1e71bf0b38"
+        },
+        "native": {
+          "answerSha256": "9713f07d0e8f5593b3854210e2b0187972f5a9ac25f4d1eb7aa06e0fe4e44075",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60057.953058,
+          "searchWallMs": 60002.733413999995,
+          "semanticProjectionSha256": "5010d91c59c71936d380492ecc7169fe64b2b3929b3ba9a7b9984e1e71bf0b38"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "be19f41e55149318f9b23e7a750883b704fd3756e33392c34b2381566be7bcb1"
+      ],
+      "name": "mixed-short-midcore-score",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "57cadde7b0495403e75e1ee77eaeed2b3a7363cb48a52e86632fb9e4fc21c448",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60791.1513,
+          "searchWallMs": 60024.79999999999,
+          "semanticProjectionSha256": "7d8c0228c0e506a34ba696b398d6689f154b2efacb6b277a780365744b4416d6"
+        },
+        "native": {
+          "answerSha256": "3ff865828f97e43d099fb7e26042472e133b6ed6ac923232fbb1b0c0c6677ab3",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60063.51669,
+          "searchWallMs": 60011.151118999995,
+          "semanticProjectionSha256": "0a0513676dcfd67b5eeb721ab57ed0ee4f9235a985c5d6392844a3372b739e59"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 39
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 39
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 62
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 52
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "204c3929fbd8551e5b3582595db3a3ba505a1aeda188141fc10d36b80d0618d7",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60554.088289,
+          "searchWallMs": 60016.799999999814,
+          "semanticProjectionSha256": "d2dfd25d1b99b324329c593643c650474983111f028b92b73eedd5e75b546dbb"
+        },
+        "native": {
+          "answerSha256": "d01a0075c0c70b533a2e34e99ec7e88c582f777af4e1c747295192f91bb9c0e5",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60048.440596,
+          "searchWallMs": 60008.513191,
+          "semanticProjectionSha256": "65cb3f900ff20b8b3988d3fcb1916774534b4c9c39375c70bb5b62933b86b16b"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "7f2f3fd9e8f09a400ca007af6eacf7737fd48366f9a8c63fd0d29d2e0573528d"
+      ],
+      "name": "mixed-short-veteran-score",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "acae429771b3efbec10ad9cf7b4ae85290ffcea82f8b0a791831b0939b5792d3",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60709.018817,
+          "searchWallMs": 60010.5,
+          "semanticProjectionSha256": "812e0f698acc53f089963ec165cee0bcde91e8db322cfd706a62f84f0870823b"
+        },
+        "native": {
+          "answerSha256": "b95b5279e6521387d564d68243945b580717929eb3ae81ecdfc9fdc1b3abc64f",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60043.18327,
+          "searchWallMs": 60001.824569,
+          "semanticProjectionSha256": "812e0f698acc53f089963ec165cee0bcde91e8db322cfd706a62f84f0870823b"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 7
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "822a59ad8c5d0e43583bdffe4f63593c8d462254e9cbc5e979c32207ebc9c883",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60704.939557,
+          "searchWallMs": 60013.30000000005,
+          "semanticProjectionSha256": "3d8879d1f737a211dbf194a34f09b3bf517d1bb7e01caf5528faef1fd510d404"
+        },
+        "native": {
+          "answerSha256": "444a96bed1763fa8d720eb5a0544df9426726a30c3bf2a14bdde7b922dcb422d",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60044.04422900001,
+          "searchWallMs": 60002.825047,
+          "semanticProjectionSha256": "8468b7f977ed9c9cca486c2ab5a9d65a0ddbb74b19c556c21af030f2b770798d"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "bdc31377feaaadd9ff4256a3c9d8bc41a07e2909bf95f7f7bb3a94b61106c3a9"
+      ],
+      "name": "sparse-newcomer-score",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "19e2c35d1c3b06e47e57c78984c25fc93728402f2403c17fc073d35c9d09b8b3",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60921.568425,
+          "searchWallMs": 60015.70000000001,
+          "semanticProjectionSha256": "b63f7033734155746f282aec26cbeecdf9341ad2c6295270be36fc699d36bb8c"
+        },
+        "native": {
+          "answerSha256": "1bff9808336a045d93abbc49e88439d2918ef95817444e9a9806839c6fb0b3b7",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60054.798467,
+          "searchWallMs": 60002.209907000004,
+          "semanticProjectionSha256": "b63f7033734155746f282aec26cbeecdf9341ad2c6295270be36fc699d36bb8c"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 19
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 19
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 23
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 19
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "b1c7e73cbf2d040b4764e1d093080174676d04f57dd088645fe1a30d33f5d6fe",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60937.513359,
+          "searchWallMs": 60015.20000000007,
+          "semanticProjectionSha256": "a34860de96cb697221a68e86027b63e1adbd3bde913e950fbffabee1552341aa"
+        },
+        "native": {
+          "answerSha256": "956e8ae7bf6e329c5e51d3b1a012561d5ebc7d6f9d88a4f3188bdbd880e0414a",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60053.141293,
+          "searchWallMs": 60002.279895,
+          "semanticProjectionSha256": "96d2cdba50e549112dc629e843dac82f7a6ea49df97e8e58ec9a65f422cd3510"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "bdc31377feaaadd9ff4256a3c9d8bc41a07e2909bf95f7f7bb3a94b61106c3a9"
+      ],
+      "name": "sparse-midcore-score",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "c18bf6f65dcf1a811b6669ef9df5cb3c38e63ce654ef29e7ffcd2017b9a64b18",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60800.040204000004,
+          "searchWallMs": 60017.70000000001,
+          "semanticProjectionSha256": "5a459298bcfa7482b4504b0a50a5660500540c86b241f21a1714f16e64383e91"
+        },
+        "native": {
+          "answerSha256": "72d5e37eec5d90a3f248a70eb7fe642d0114d64115daa9de6c692b6955d42d18",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60052.100691,
+          "searchWallMs": 60003.407735,
+          "semanticProjectionSha256": "5a459298bcfa7482b4504b0a50a5660500540c86b241f21a1714f16e64383e91"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "2de4d7d82419da810d37865911d42ca1ccb327eac838274130f50be138939e99",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60545.55214299999,
+          "searchWallMs": 60012.39999999991,
+          "semanticProjectionSha256": "5a459298bcfa7482b4504b0a50a5660500540c86b241f21a1714f16e64383e91"
+        },
+        "native": {
+          "answerSha256": "74312133ae5023a10247989a8475cb24ed1581c89fce9ad2994de2b79f4dbf21",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60035.473136,
+          "searchWallMs": 60002.712377,
+          "semanticProjectionSha256": "5a459298bcfa7482b4504b0a50a5660500540c86b241f21a1714f16e64383e91"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "920adf82f861dcc4df5e4ecf61ccf912dde8d00207276864c157b5c5b09233f4"
+      ],
+      "name": "sparse-veteran-score",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "8863ad526cb7ef50c538b5423cf77a494b541f8036f6b63a0cad636871ac8ba2",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60724.247676,
+          "searchWallMs": 60011.5,
+          "semanticProjectionSha256": "341d7295713c40dbb3f3177fcd689ff942959172c23d936c129ccc49cc0eaf47"
+        },
+        "native": {
+          "answerSha256": "77615c3c6c154aa3254a9acc68345960d5243f17842d3277b52addd56b6dec32",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60046.826384,
+          "searchWallMs": 60001.615245,
+          "semanticProjectionSha256": "341d7295713c40dbb3f3177fcd689ff942959172c23d936c129ccc49cc0eaf47"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "396304c0af4f03efaead104760fac3c78659030fc398048e57758dfaa1d2c5a6",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60710.522686,
+          "searchWallMs": 60014.19999999995,
+          "semanticProjectionSha256": "341d7295713c40dbb3f3177fcd689ff942959172c23d936c129ccc49cc0eaf47"
+        },
+        "native": {
+          "answerSha256": "27d3aa0ce43ba0a83e89588d1df68718db45483bc67d937ca1f39dc895903704",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60046.568121000004,
+          "searchWallMs": 60002.514427,
+          "semanticProjectionSha256": "341d7295713c40dbb3f3177fcd689ff942959172c23d936c129ccc49cc0eaf47"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "784bf8a9bf82c15d45d6d2f6fd1fb4f5f70c58866c2bf0a8128d993c03a2a55f"
+      ],
+      "name": "dense-newcomer-score",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "33f4f5fd31e89f4b64342fece4362cff97c08b8a22c54d55bec1677f7f82cb44",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60945.906828,
+          "searchWallMs": 60014.79999999993,
+          "semanticProjectionSha256": "fba50db3b347141a8c833f1670154a139c6ad1a5eaf32dbfbb177962d32f2fe4"
+        },
+        "native": {
+          "answerSha256": "0b894b56ee9729f90082dd206859a52d67340c5c26180f61684ca51bea646ce2",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60060.099436,
+          "searchWallMs": 60002.815347,
+          "semanticProjectionSha256": "fba50db3b347141a8c833f1670154a139c6ad1a5eaf32dbfbb177962d32f2fe4"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 19
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 19
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 19
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 19
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "ddc31edb63c0c21782a05ba517878ca4dbda63f5dfdbe6ae3576d5070c15b46d",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60939.845201000004,
+          "searchWallMs": 60014,
+          "semanticProjectionSha256": "fba50db3b347141a8c833f1670154a139c6ad1a5eaf32dbfbb177962d32f2fe4"
+        },
+        "native": {
+          "answerSha256": "d1e8dae1c00a2e74c0e46757baeb444a8a0529bbbfd06bc574d95c85a83f2c19",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60057.728226,
+          "searchWallMs": 60002.312680999996,
+          "semanticProjectionSha256": "fba50db3b347141a8c833f1670154a139c6ad1a5eaf32dbfbb177962d32f2fe4"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "784bf8a9bf82c15d45d6d2f6fd1fb4f5f70c58866c2bf0a8128d993c03a2a55f"
+      ],
+      "name": "dense-midcore-score",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "62bdfe25d236f5cdbadafe8cbe8b8d8484866e5c3d372860d23f06370d83e9d5",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60772.123845,
+          "searchWallMs": 60017.69999999995,
+          "semanticProjectionSha256": "9a1f4a29f1c22c6d349e5b20775b728bc8ddaf56b6ce9cc14f39c33822ced345"
+        },
+        "native": {
+          "answerSha256": "d62e38688f9c2f9bc5654b0b659dddae39c29a86cd753b251d0103b5860afe07",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60050.250923,
+          "searchWallMs": 60002.746533,
+          "semanticProjectionSha256": "9a1f4a29f1c22c6d349e5b20775b728bc8ddaf56b6ce9cc14f39c33822ced345"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 19
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "d838079fbfbe89e0049c385c1ec01887ad9cdd07f1d1230d3cd5ef352921124d",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60521.027659,
+          "searchWallMs": 60010.40000000014,
+          "semanticProjectionSha256": "6f699f0e79e75341ab5b98658aec605b8d9c7ea3d923948136abd2455114d218"
+        },
+        "native": {
+          "answerSha256": "a6b5c207c9f30125582784e412365f59d9e14a9c6d7fd3e04f1943ffaae9fc23",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60035.227371,
+          "searchWallMs": 60003.026887,
+          "semanticProjectionSha256": "29d683a539b4f6e3d49055d62514963c5e74a1395efdae45892c58386b302980"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "784bf8a9bf82c15d45d6d2f6fd1fb4f5f70c58866c2bf0a8128d993c03a2a55f"
+      ],
+      "name": "dense-veteran-score",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "b2b9ef8833c44fa414efb9c0a4758f88115239ff4cc89d610ce36ef593966a6c",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60729.465400999994,
+          "searchWallMs": 60014.90000000002,
+          "semanticProjectionSha256": "4745307ca4a70e6deb80248a7e72c5bf40166fec9c9397882b533b23029c20b1"
+        },
+        "native": {
+          "answerSha256": "738a24f7804b68d614091a5ed07c24618a3579562f3ccc511d366eac14da5898",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60045.266818000004,
+          "searchWallMs": 60003.064454,
+          "semanticProjectionSha256": "f8681264a6a1c3c86d1a075b884ed05eaf42a59c07d7db4066d9bbba0a18492e"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 39
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 39
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 39
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 56
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "f5698507d548d8bd2cc98f01d46b5fc7caaac816fa639b73a55e91906303d5ed",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60736.797395,
+          "searchWallMs": 60017.30000000005,
+          "semanticProjectionSha256": "4745307ca4a70e6deb80248a7e72c5bf40166fec9c9397882b533b23029c20b1"
+        },
+        "native": {
+          "answerSha256": "7dafda64f6675e2a3578aa69cfb371f1f744960b68be356159d415b0dcf0e1c0",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60047.880257,
+          "searchWallMs": 60003.065308,
+          "semanticProjectionSha256": "45d8947ef2e21d4ffa4763630dafaaa509898c1485d715f91365d2532b28843a"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "ec6fbceb1eef86a1c92ebc10473d3ae2ff5b2c41a4a99bd5f4e7610152e93580"
+      ],
+      "name": "mixed-long-newcomer-score",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "8599bda9edf5f2b37b22cbd39e6283e163acb1e6c642f423822df1b98531c5aa",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60935.352501,
+          "searchWallMs": 60015.5,
+          "semanticProjectionSha256": "a1b30142e66d1e8c1771fa6340a21bd2e2b0add781253f89403e1ad767fbfb75"
+        },
+        "native": {
+          "answerSha256": "a18c1cf09bfe4fac563f50fa6f080bd0ade3e3562506e2095d8c27b985c1ab5d",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60054.389594,
+          "searchWallMs": 60002.794725,
+          "semanticProjectionSha256": "a1b30142e66d1e8c1771fa6340a21bd2e2b0add781253f89403e1ad767fbfb75"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 24
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 24
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 24
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 24
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "73d4f9aac300bd6ff59c765e91d29f361b00205636d1dda261c6f35198c29103",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60949.534661,
+          "searchWallMs": 60016,
+          "semanticProjectionSha256": "a1b30142e66d1e8c1771fa6340a21bd2e2b0add781253f89403e1ad767fbfb75"
+        },
+        "native": {
+          "answerSha256": "c01824775af05d623e3f52939eb070f8511ec6ecab759943fe44529cf2e30610",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60053.863997,
+          "searchWallMs": 60002.763005,
+          "semanticProjectionSha256": "a1b30142e66d1e8c1771fa6340a21bd2e2b0add781253f89403e1ad767fbfb75"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "c3768ef83547c0ae4cbd0ec41b9f12f7054fed4c911e5a1936ef6b3b5f022e93"
+      ],
+      "name": "mixed-long-midcore-score",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "0ff009568244632a0c03aebe8d8a7d5ec813ddb0fd659eef210cf0615b03c38c",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60786.450655,
+          "searchWallMs": 60025.30000000005,
+          "semanticProjectionSha256": "526aa9819d3e85a43abe8e7db23660e0470b0b7c79b065c9205634e1451f1ad1"
+        },
+        "native": {
+          "answerSha256": "0edc60a607105c692544e7f113ab6ac43e5da6ef047ec8a18f4c41cbeed11fa5",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60063.194589,
+          "searchWallMs": 60010.751169,
+          "semanticProjectionSha256": "f59ddc7a0dc005874c85ddafe968b713230b12129b56539f6d2bd03ce2072ba0"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 32
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 32
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 51
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 43
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "aa718cda52fb4df133d8c662084f542745fc627471601b3cf94f00cd2fd782d9",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60552.114741,
+          "searchWallMs": 60017.60000000009,
+          "semanticProjectionSha256": "bdc62a7ad15c582ed57b74155c604eb52b5e446bdc27a8cb7de176246bdde629"
+        },
+        "native": {
+          "answerSha256": "e6c8d22017babccd3f71890d467a6f7ca3506bf3c2d454a044aff35b80835c3f",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60047.413764,
+          "searchWallMs": 60009.061834,
+          "semanticProjectionSha256": "ac93ea4bfd91ec41448aa2e907bfd79c39d608a22cffb9ef7893d361e50d35d9"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "c3768ef83547c0ae4cbd0ec41b9f12f7054fed4c911e5a1936ef6b3b5f022e93"
+      ],
+      "name": "mixed-long-veteran-score",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "b17dfb4b50395a1ed83e1929d684124b60732d190cdd272faf8d6e1f4f61acda",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60717.065505,
+          "searchWallMs": 60012,
+          "semanticProjectionSha256": "bc93dc9143ade3a9ba28b8ca0db2ea88b2da3cd4b8aa77edf206538e17142d03"
+        },
+        "native": {
+          "answerSha256": "b50184e6c709f7750489fe918d3d02e7aae678133c7c81e222407d75d9401aeb",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60047.728635,
+          "searchWallMs": 60001.887135,
+          "semanticProjectionSha256": "db5896c4355f8a3e0465a82268491cf1e6d5e36ad2f07678b2866d5bcb017c6e"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 51
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 25
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "9b07c4db8a572515ce0837ae83352a8a739e681d0c4a50fa32a2ea24edcb8116",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60721.293572,
+          "searchWallMs": 60014.80000000005,
+          "semanticProjectionSha256": "c7c0fef8307e9bd7dd5c40577788c5b84f11a1acf8ac288ebb70d1245105416a"
+        },
+        "native": {
+          "answerSha256": "add8a4c0f27b70fe60e17c331b49d956df594eab967183b4177e5b07169b32ab",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60045.162367000004,
+          "searchWallMs": 60002.086511,
+          "semanticProjectionSha256": "c60432bc9e0b5f63b2fd0e13698e10dfb9d165b6b0d49c3e14887c03657e634e"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "d628b4c263f6956be690e8c8a591b4c3340d597322ee2495830d1bacd3d83612"
+      ],
+      "name": "short-newcomer-probability",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "e44f56e4e16017f695892b39a85ae4de3a42a8961fe5595288088dab7cb58f1b",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60934.414557000004,
+          "searchWallMs": 60013.59999999998,
+          "semanticProjectionSha256": "9e4b339c46750357314d4c8463e6be07b0a932d0cbb1a17b218027627395fa07"
+        },
+        "native": {
+          "answerSha256": "027fef682bde621b2c9bf31a2f72cfa08c7bac3480552387e805d22673f7d81b",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60057.854413,
+          "searchWallMs": 60001.880632,
+          "semanticProjectionSha256": "56078b42d4f559c8630c380f3cbcf44a0283afe54312f74107f34b7d5da86344"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 16
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 16
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 31
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 22
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "36a714d3d69e64366aaf683b63b4d5c4179b9963d1fea08a5812e019176a70f8",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60929.305953,
+          "searchWallMs": 60014.79999999993,
+          "semanticProjectionSha256": "037370dc6a5dc1e897facb4ca1911e6e823bbd45dee2bcd29abb0425713fbb93"
+        },
+        "native": {
+          "answerSha256": "9001296b9b801e019296d3b29a16c456961ee198396d2d96661ec6b9c113912a",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60056.84376,
+          "searchWallMs": 60001.725321000005,
+          "semanticProjectionSha256": "6a38b29dfd5af20e17c56d4a34ba9e7bc0891d996ba91abe364f006b45bd4e61"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "8dac6b3630aea29f263c47e63fee21af79ed46a7e3bf79b75c2116f75ba1987e"
+      ],
+      "name": "short-midcore-capped",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "047e7066d7c10d6ef8c75c88ff5e9ba837891cd4fc1b305083baf4938e28e822",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 8568.125881,
+          "searchWallMs": 7781.600000000093,
+          "semanticProjectionSha256": "21a303c2019b375e9a785d30e93bcf16cf97d39b47fe7b9cf6388ecc7fe86933"
+        },
+        "native": {
+          "answerSha256": "3b2fc177acfcd0ef587abbac87d3cd7d5fa4bc309a7e290fc65a569b2e7a44f5",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 6643.213173,
+          "searchWallMs": 6593.7447090000005,
+          "semanticProjectionSha256": "21a303c2019b375e9a785d30e93bcf16cf97d39b47fe7b9cf6388ecc7fe86933"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "3aa2ef7ba2575b5a4c1bad383e46fae0e34f9bdc2fdcc337e68e6634ff88c5b6",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 5453.209443,
+          "searchWallMs": 4935.300000000047,
+          "semanticProjectionSha256": "21a303c2019b375e9a785d30e93bcf16cf97d39b47fe7b9cf6388ecc7fe86933"
+        },
+        "native": {
+          "answerSha256": "c10ae3b3be67a9aed47a5302c371a3ba9ceb7b7b3455a9bf765a72c987893191",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 4026.197864,
+          "searchWallMs": 3991.496122,
+          "semanticProjectionSha256": "21a303c2019b375e9a785d30e93bcf16cf97d39b47fe7b9cf6388ecc7fe86933"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "058a7ec06cf571a54e6fc91480517bac542303d7a35bc564f8e7823e36761b08"
+      ],
+      "name": "short-veteran-pt",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "75c4adb61c54a864577c03d98947d3a2a6fe3a79e4f8e0544f454a42a0c5ea91",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60740.277781,
+          "searchWallMs": 60013.5,
+          "semanticProjectionSha256": "f591db840484a1aad3027663a12199ed8a921a87185422f1a1f7d4281ca51220"
+        },
+        "native": {
+          "answerSha256": "430bd30e3ed76fc752bdf56b869dcf51c4d05a9eca1428b6f0b692e7002555fb",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60049.52932,
+          "searchWallMs": 60003.279397,
+          "semanticProjectionSha256": "3cf2197ebef526786a51e17a38a6e1e85d9c9c316fba17a79a2d1c353d161d2b"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 9
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 9
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 26
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 12
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "d8acf7937b209a3330f08be2ef67b093ac868114c4458d1c0b5a5d3d3f288f55",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60741.327097,
+          "searchWallMs": 60016.59999999998,
+          "semanticProjectionSha256": "fec54ef9351bca86a153f790ec5c4c8b53377a05f5c5e99fca4de2d74235f861"
+        },
+        "native": {
+          "answerSha256": "bc174c445ab56b732e8c28ca0ac789072795a17ff12a2e7109498d07cf7edf7e",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60045.833347,
+          "searchWallMs": 60002.121717999995,
+          "semanticProjectionSha256": "c8fec0f2a3961407eb242edcdd61faa5ba07141772df04bf10999c905f27995b"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "da2be894ae248ddec0f68c6d12169b006d390ebe35720c4c9940c318043d16bb"
+      ],
+      "name": "long-newcomer-life",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "08bc112782932f519fe62aa52e6296ff77179558becc9d294bd8821df420cd1f",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60942.786763000004,
+          "searchWallMs": 60020.90000000002,
+          "semanticProjectionSha256": "68fa510721eb68eaf2e62c38b58d6fb37b1c259e82e19d7eb1cd80649d98aaa7"
+        },
+        "native": {
+          "answerSha256": "f39a2d63c4768be8a6ea5274b657bb0524907468e6962f6ba462656fa84827e8",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60064.168819,
+          "searchWallMs": 60002.246479,
+          "semanticProjectionSha256": "9290b1d32f8a9e32c8583ff0cc4be4b2c97fa65164d76c42541142777b13e05d"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 12
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 12
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 30
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 16
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "f829feeb483f7eb55454bab05f73c04dc7ed95c51e840abe98e137fc74fa0454",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60935.668316999996,
+          "searchWallMs": 60014.59999999998,
+          "semanticProjectionSha256": "753152378f84521b7f60c8e6342dadffb5e4abe17a9b8d8e7929174fe0e260ae"
+        },
+        "native": {
+          "answerSha256": "0cdfc7e8f4aec08aad31a7756d703ebf6cf775a64c3fb8aee0d3f9594e717803",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60052.941442,
+          "searchWallMs": 60001.533580999996,
+          "semanticProjectionSha256": "499d626cb952eba524cb5a59cc2fa2f27a1aaa65f1f79a3dacd4ce0a7f7093f9"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "07d6a71c43b8d11ba78ea3a05d1e6f2e6744df2771fa8fa5c728cc63022c3cab"
+      ],
+      "name": "long-midcore-probability",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "6b788377ac855972ce18391f56ebe4d256d81f244567edc7dd21b8e84beaa5bd",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60829.126248,
+          "searchWallMs": 60025.80000000005,
+          "semanticProjectionSha256": "7c9f8c8f32dc1678b1fdc26e5858f253e47b59b5b4e439ac1baf31e303dfe9e0"
+        },
+        "native": {
+          "answerSha256": "f5f39d2b2013e5f3fd7625cf4239e16547991713cdfaa0213b54b16d26c929c9",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60057.134585,
+          "searchWallMs": 60009.742599,
+          "semanticProjectionSha256": "d75b64597bbead85997dc71085f899c18971fa45cc45423ebcdca32106b113eb"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 12
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 12
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 33
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 14
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "708009b760660cf270bbf583b952ec167138b7cecd8ba01e1e2694e35370ef85",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60524.149922000004,
+          "searchWallMs": 60010.19999999995,
+          "semanticProjectionSha256": "fd06159411311022d6b67f47051650e590fa351db7ce06bcd9c313498e25eb05"
+        },
+        "native": {
+          "answerSha256": "10b65ee6d87665ba2dd2b5e4d56d585960253f43e8e7be546c2e353828cfbc4c",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60034.25950199999,
+          "searchWallMs": 60002.387493999995,
+          "semanticProjectionSha256": "dade2ebf00dba94886bf31e2be2ec8461308cf23b70b88fb0659df4ebcf52865"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "2c56c89f80dac531e05cc67644b01a58d3f02aad0d061a0d9aa8e98d8d097403"
+      ],
+      "name": "long-veteran-capped",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "f48cd0a9140f857de681d016ddf830a4193ad98f80376cce048c976329ddadba",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60710.879088999995,
+          "searchWallMs": 60011.90000000014,
+          "semanticProjectionSha256": "0981fa7440cee390c06e2c6bcf7c588586ec56884a7af359bd1de85853cc162f"
+        },
+        "native": {
+          "answerSha256": "b3a02a0c4c25ff2a998712089e9127c6bdc5dac2c3ba043e054003515fd8c189",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60047.735650999995,
+          "searchWallMs": 60001.904363,
+          "semanticProjectionSha256": "0981fa7440cee390c06e2c6bcf7c588586ec56884a7af359bd1de85853cc162f"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "effbe3fac528093b7c753545d0b074191e86c9a4f49ef24188fafac0f15afdcd",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60718.172416,
+          "searchWallMs": 60015.30000000005,
+          "semanticProjectionSha256": "0981fa7440cee390c06e2c6bcf7c588586ec56884a7af359bd1de85853cc162f"
+        },
+        "native": {
+          "answerSha256": "f65ad0af38bcd5b663c036e6098830e1c9ebf8195dd7824131d82f4dcdae69b8",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60045.175305000004,
+          "searchWallMs": 60001.76431,
+          "semanticProjectionSha256": "0981fa7440cee390c06e2c6bcf7c588586ec56884a7af359bd1de85853cc162f"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "182ae4405ce61380886c0a33335912898f81cde6614eda5f7da96a84edabf339"
+      ],
+      "name": "mixed-short-newcomer-pt",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "cb2a44d4ad73ee5e11892e28b9598624d773e683939054648dc33b30039ed8dd",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60941.412564,
+          "searchWallMs": 60017.5,
+          "semanticProjectionSha256": "049c4397bdf567138d62f97118b2dc59ca68ab569dd1854bf57ae1ac4cdcc8ac"
+        },
+        "native": {
+          "answerSha256": "02eed750276c1acb11346104805738914fd8775b23f23299c357a862ba9e254c",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60059.967196,
+          "searchWallMs": 60003.131412,
+          "semanticProjectionSha256": "dddc5153f5f97830d60c8cf27b63e9f45ebb804a76326dbb97adacfcefd8ac7a"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 41
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 20
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "9db6e4ae1b38392c3aa72da818c03dcff76837b3dabb0533f0d7b30b505bd052",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60966.326834,
+          "searchWallMs": 60017.299999999814,
+          "semanticProjectionSha256": "f682b07266848e17fa3a82e207b72546762ebf3adb547a5671140878efabd26b"
+        },
+        "native": {
+          "answerSha256": "749f85c0394d23f65af0da1e4eeac6830c7a3c2f9efe6bbfc9a13d474e4ab8ee",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60058.706375,
+          "searchWallMs": 60003.089651,
+          "semanticProjectionSha256": "1a546febc3252b458f44f642e9e82e508cf2e7bec8cb2d1f8474ebe200fbdfc1"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "1ffd7481d6fa831658ed685af0a038b82d50b20b6ca0b969b8f580b198be38fc"
+      ],
+      "name": "mixed-short-midcore-life",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "3d8b33942c029008887f6e6d3d16c8ef2835d8629afe879c17e7d372271fe467",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60782.604711,
+          "searchWallMs": 60024.99999999988,
+          "semanticProjectionSha256": "84c651d72199ea9deb18ed7d357e7fea33d82dd80f7a7749c4ab3c01117a4eb3"
+        },
+        "native": {
+          "answerSha256": "5b7e8cc6b5767e858c61b047d462cdc0c28089d1f6c08d75cc870d4a0b036a11",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60057.507768999996,
+          "searchWallMs": 60009.302199,
+          "semanticProjectionSha256": "d6b08d457d3eb851aa7ee0d11c991a6e5934a5a6ddea8fd0169de501247ca056"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 17
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 17
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 66
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 23
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "8d8bbd5c54b40e84613fa1f049798267c9f25a272f466f8c6832e06dd102b4a1",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60565.594215,
+          "searchWallMs": 60016,
+          "semanticProjectionSha256": "6ed4f9d560828fad6bc38979154133df19d892a34ad8a2000006acddcbbe492b"
+        },
+        "native": {
+          "answerSha256": "8735b8fd87eed2e5c2a32338a9bd307a642299708e431a702c20c795929c33b1",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60045.121569999996,
+          "searchWallMs": 60006.537665,
+          "semanticProjectionSha256": "dae8f9b2bbfcc9850fe85d1d8d809a9a38eb8bdb2bab78537a9f051760a4d25c"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "df43c5c7f2067ab47b23039ea79c6d19b8872531e8d194b881ab378b100f0392"
+      ],
+      "name": "mixed-short-veteran-probability",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "2447f01f964e76bc96556c7a8c89b340554021f565043c81805664c6286cbea2",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60724.4742,
+          "searchWallMs": 60012.10000000009,
+          "semanticProjectionSha256": "5629f4aa5c2e82a3eb0fc72cf3fd04de66d95d132f706982fd8ce8282b1e85cf"
+        },
+        "native": {
+          "answerSha256": "28e5175f82a4efe231fd0cfa4ec2223fe5b335462ce052b1627bc50d61a71b65",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60043.34288,
+          "searchWallMs": 60001.727358,
+          "semanticProjectionSha256": "3d6df0368a1ec3fc397fd4a717d9c3faa4c37fc37a84c8ca2791e328478f850a"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 21
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 21
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 53
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 28
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "6b5ed5486eed7e9fa56b73c3b7d82e25ee44db82603b1da3e4a258524ac0baff",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60715.759760999994,
+          "searchWallMs": 60013.89999999991,
+          "semanticProjectionSha256": "e6bda27b522065919d7151e497600aafa3f4015209afe254d47d13effc847c40"
+        },
+        "native": {
+          "answerSha256": "cb1648bd19725d4c85414e0a3b3cbe122fff981f7f9161b245d3593857f11844",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60044.067272,
+          "searchWallMs": 60001.611508,
+          "semanticProjectionSha256": "f0e9db5863c84a0ae2445c1f7644bc34739009b5039a5a5c98d1730e3fef31d2"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "5f1d070fc5d63e79b14961a1fd8bfbe0502621fc9e1d040b4b96883a5eab3f6e"
+      ],
+      "name": "sparse-newcomer-capped",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "d4fa5750901d7f3f79349f5c44ed6d7e954cc70e652e231fcbab3d5e18ab3692",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60934.97962,
+          "searchWallMs": 60015.40000000014,
+          "semanticProjectionSha256": "87974b91880feef41ff41a5b108af0777a6c763988f2398a8ea90bff5f751aab"
+        },
+        "native": {
+          "answerSha256": "b4e3265d5dbff1a93626999aba00b9a426a2742f23e76f95b1152af7f73fc59c",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60053.408401,
+          "searchWallMs": 60001.796366,
+          "semanticProjectionSha256": "98d2a17b8acd4b48f77ee28d5d8a38c182087f3640756777ac79be0533b100ae"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 15
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 15
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 15
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 20
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "7c0c09daa91ffa457402e75fda0b4fd0a44ebfa902a2cc96daffb47006851502",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60945.62152,
+          "searchWallMs": 60015.09999999986,
+          "semanticProjectionSha256": "87974b91880feef41ff41a5b108af0777a6c763988f2398a8ea90bff5f751aab"
+        },
+        "native": {
+          "answerSha256": "048d78bc1d65dcfceaeba32380bca689a28fa00c7285e539837d3a0b3885f3bc",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60056.061382,
+          "searchWallMs": 60001.687689,
+          "semanticProjectionSha256": "98d2a17b8acd4b48f77ee28d5d8a38c182087f3640756777ac79be0533b100ae"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "3d743f0c3da2fbde55e20272c3ba936e2b0ecd018deca0268d486038c25dc064"
+      ],
+      "name": "sparse-midcore-pt",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "227c129b8629bb04cc71f29011c6857b55e46eaa3411ed369a8472aae8968188",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60830.093455999995,
+          "searchWallMs": 60031.299999999814,
+          "semanticProjectionSha256": "a2802794690308839ae469858682817b60ef35396279718f95f6d982b4001395"
+        },
+        "native": {
+          "answerSha256": "3caff09f3f51f2d97d54ef71b552ea5b9c78e38d1014ae7176238b4b0a66acfb",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60050.436099,
+          "searchWallMs": 60002.774406,
+          "semanticProjectionSha256": "e49a0eeadafdb7f2b6ffb389cb5d87d61df27a75dd13be26d25529e2fa9862c6"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 15
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 15
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 47
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 20
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "05e6fe1c3a142a0c86e10494016a67a3d55d829e5538ece6d2ab257ca3904176",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60552.95532,
+          "searchWallMs": 60012.30000000005,
+          "semanticProjectionSha256": "737115bbc8aab0f3c3be46f8d5f2c4bc9c5b43fbe73873884ea2875c72ff7272"
+        },
+        "native": {
+          "answerSha256": "01335dc76560ac5b62de88335ff821b3e5aa488f5de0911863e0ce869653a649",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60033.09343,
+          "searchWallMs": 60001.995968999996,
+          "semanticProjectionSha256": "bccaa8dc950850735f52268bf938cb2fa55c00587ac120e76b77453e7a22330b"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "f0e05138170196d2244f4dbc8768eb5b933cb2d1ce0f8826eb2cd0b509bcb7f8"
+      ],
+      "name": "sparse-veteran-life",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "dfbf46adb6502519998f65da09de1d7e4cb4c038207917342dea8b40d369acc6",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60728.506362,
+          "searchWallMs": 60013.799999999814,
+          "semanticProjectionSha256": "edb650835c0d9d7b3bea3a4fa29586732cf588730a4173e0d063f9ac9223ddbd"
+        },
+        "native": {
+          "answerSha256": "ac8b1a4559ca162eaf59a4061ade7eeb9eaf2863a11183f847423ce34e1e381d",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60049.031915,
+          "searchWallMs": 60002.522618,
+          "semanticProjectionSha256": "9e1086fed8c8f8d64face3b2ab962b510045c9de8f6f90d772db77d37347e682"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 15
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 15
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 35
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "1fab2ff08b08e6794f8a6bf64fb66e06ca9606adddc15a1ad0ce717b1e305289",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60736.44351,
+          "searchWallMs": 60013.39999999991,
+          "semanticProjectionSha256": "b4b6466f0b4afdaa551f2525f20402e70266e759eae7b3a26adba3f3f1c0b073"
+        },
+        "native": {
+          "answerSha256": "00343e8d5fa473373afe7c3bfa5e1db5d6b474cf782ab86ddef688d69d2ccd55",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60047.162832,
+          "searchWallMs": 60001.451019,
+          "semanticProjectionSha256": "c563624a3a39321bb738ed10f068dc6dc670fcd8d2b96ad14a97113459dcc736"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "033b908971f2358fd46b8c5b9eee007f2b55f748c87e1994d2e272b5bd31b108"
+      ],
+      "name": "dense-newcomer-probability",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "140d4fbdf8d87f17fb48366d6ebe23d26f9bf42a5b38c274e593a5f0e2283a58",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60933.361495,
+          "searchWallMs": 60019.89999999991,
+          "semanticProjectionSha256": "4f30101eaebbbb4dedaa72011c4a412ef105c9dd494903dc90d10e09e276693f"
+        },
+        "native": {
+          "answerSha256": "0ff61ba4220c264034e8d1fb02ca0ed0767ec89ff8eeed35f90a30d1610103d8",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60053.256251,
+          "searchWallMs": 60001.779504,
+          "semanticProjectionSha256": "0f0886adf359f6160d7558780b559d002fc7bd2145a74f05825c6d2ca916bc2e"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 12
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 12
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 26
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 15
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "6376d4251779ac49aeabc82edc59f9999d0fb5a7032acf033deb94e940b9a096",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60934.38162,
+          "searchWallMs": 60014.299999999814,
+          "semanticProjectionSha256": "6ea1e7c6976dbe7a83b303214b0d5913cf68373f06f6e6313af1f3ce554386aa"
+        },
+        "native": {
+          "answerSha256": "c7ac879b9dd80b0ccdecc7b0863e009503c4b4539c52c92bceec71c7d5e0401a",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60057.477793,
+          "searchWallMs": 60001.516949,
+          "semanticProjectionSha256": "ec01d0c152b873c26d8485bfcc1ab02d6fc4209774838858331eeca5a88fbeab"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "d55cae2c1bfc06a344e4c70526921e248722c8c435f544323903d9096fd5ffe4"
+      ],
+      "name": "dense-midcore-capped",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "ddf04d1f5d6917f2b9845772e4388d17299a77f69df965792606d238f1e859d2",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 11713.650292999999,
+          "searchWallMs": 10945.399999999907,
+          "semanticProjectionSha256": "1f356c85963f86804469dfa93efbe26739726fa7862d699c38fde88e8a3ecaec"
+        },
+        "native": {
+          "answerSha256": "5ab881154f14d96c9bf735094a847ac20741390853ee5eaf694ca8d22d4f9519",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 10306.149191999999,
+          "searchWallMs": 10256.239565,
+          "semanticProjectionSha256": "1f356c85963f86804469dfa93efbe26739726fa7862d699c38fde88e8a3ecaec"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "23d1365f6e0d235cf57d6b0e8c710d6dbee43f676be2d1e2f3637b100af60e5f",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 7971.278651,
+          "searchWallMs": 7436.299999999814,
+          "semanticProjectionSha256": "1f356c85963f86804469dfa93efbe26739726fa7862d699c38fde88e8a3ecaec"
+        },
+        "native": {
+          "answerSha256": "e3f8bb7351c8537e7998e7e1f6d80e117904c74a3fd9d14e1ee4cdc0961b10e2",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 6690.069386,
+          "searchWallMs": 6654.081673000001,
+          "semanticProjectionSha256": "1f356c85963f86804469dfa93efbe26739726fa7862d699c38fde88e8a3ecaec"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "07d3bdcab7441f03c3acff62172edfce8d4ca4cad9967e6e2cf7e16daaf289b7"
+      ],
+      "name": "dense-veteran-pt",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "e9aef2b72962c08734299306628c1378640fce5ec9351df78f742f0a980576dd",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60708.170903000006,
+          "searchWallMs": 60012.799999999814,
+          "semanticProjectionSha256": "1000cf528acc9499a21c083f7a4b2daa7a0c7df90f70f72bca01cf3f3eab876b"
+        },
+        "native": {
+          "answerSha256": "ec938aee72cd99e98b31df6e82fd7993272b2f3c2fb33c8769192cb6aa2bce52",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60044.396347,
+          "searchWallMs": 60002.798833,
+          "semanticProjectionSha256": "770fbe62ff8a8cc95dffb765d89dbf879581d3d5170804dea83ed6632ccdfaf4"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 9
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 10
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 30
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 11
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "a5a80adf8aade2cdb9828428b8b4780c91d52bd21bc3da61d6b147c1f67214f7",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60734.253871,
+          "searchWallMs": 60015.200000000186,
+          "semanticProjectionSha256": "ca69cb2f4168087fb60e378068e285620dbd30ab0d853be3b101dec5f4bff3c0"
+        },
+        "native": {
+          "answerSha256": "709e058dc4b1d6ffa6c818e894271498bfddcc34eb3a14a27157c29beff74a38",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60044.830407,
+          "searchWallMs": 60002.245023,
+          "semanticProjectionSha256": "2efb98fb5ea98e8b56cdff87b47a9986313cf768b5f6a3b0dd6bc632ec459232"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "be0494c5fbc1652365326557614b1079fceb6e4b02e6bda4f9bca2a7be1c9d44"
+      ],
+      "name": "mixed-long-newcomer-life",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "c6bb901a2093b4a4ceecd1e6b90ce41b5422166234d0d18def7f35bca4fcf517",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60929.793764,
+          "searchWallMs": 60014.60000000009,
+          "semanticProjectionSha256": "8a65d9c49f87614aed9bd079384a73dcfd6e1a332fe6204c0c73695b6825bee1"
+        },
+        "native": {
+          "answerSha256": "a02e1bce259cfb568473a633b7e17e56e17d40bdb5bf6ae360db7783e3cf3f0d",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60060.932495,
+          "searchWallMs": 60003.985654,
+          "semanticProjectionSha256": "4de8e093b724a2d251a0ccd98316a8afbb4f02909c1e99cba80a73fffa1b36ca"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 6
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 6
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 18
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 8
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "8d86545a5a320237e968970c79b29327bef36010a335d24c9164640740795c0a",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60956.741993,
+          "searchWallMs": 60013.89999999991,
+          "semanticProjectionSha256": "4770f28cd9e2069339ce383b19d1ca8396e26d432b87f02b1fdad33f17593a01"
+        },
+        "native": {
+          "answerSha256": "9a6adb12e84b5edbd30ac2c92aae3a2cf258151a7603df2cf87f3e626c50ad8c",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60052.549665,
+          "searchWallMs": 60002.038697,
+          "semanticProjectionSha256": "25b1084cfc125610c4b7df9fee98588282686d41c26e4d519c3f10990d451534"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "35a948f310396a38fa07bfab8f6a63d36f74d6a36770b2916494af7b6d3e4f22"
+      ],
+      "name": "mixed-long-midcore-capped",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "8e4f544d48721ae73826884a04bd3af82b5bcd165966d488fa4f74a3a33ab0e9",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 10289.124036000001,
+          "searchWallMs": 9521.399999999907,
+          "semanticProjectionSha256": "f0320e9c8333deeea0f02570ec7677b4ff980a7fdb49a78970a80b636f4dc925"
+        },
+        "native": {
+          "answerSha256": "9ad9c69d8b3200dc29b185419ff47e9ed4abad3b51b882dc31779d6201781980",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 8282.986065000001,
+          "searchWallMs": 8233.224025,
+          "semanticProjectionSha256": "f0320e9c8333deeea0f02570ec7677b4ff980a7fdb49a78970a80b636f4dc925"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "96db210ca6360645bc50bee3aede38771708db3da9422d86fb2b410d20289b2f",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 6601.524974,
+          "searchWallMs": 6067.399999999907,
+          "semanticProjectionSha256": "f0320e9c8333deeea0f02570ec7677b4ff980a7fdb49a78970a80b636f4dc925"
+        },
+        "native": {
+          "answerSha256": "bf772fb8def6a86a9ac5778c5de2dfe3fd5f8d13faa13d5c68c90dfc2c4ea992",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 5256.040626,
+          "searchWallMs": 5215.620246,
+          "semanticProjectionSha256": "f0320e9c8333deeea0f02570ec7677b4ff980a7fdb49a78970a80b636f4dc925"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "6a8e36cc672aa30460b76060224a08f99435d903009c727563437b800be79c89"
+      ],
+      "name": "mixed-long-veteran-pt",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "464e7e853d510be4cf30652cd431dae242279e66edbc027a58f75f5b9586cc16",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 1355.450462,
+          "searchWallMs": 650.8000000000466,
+          "semanticProjectionSha256": "9240ceb48f3a7467b83799157104c8d85211a2aeca72a8c9717a1b2ff9afe0eb"
+        },
+        "native": {
+          "answerSha256": "10dbcd45ddc95296cc12277ce5882c831d2e8fbb06430268cb90c3d6ae955796",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 395.29305999999997,
+          "searchWallMs": 352.82055,
+          "semanticProjectionSha256": "9240ceb48f3a7467b83799157104c8d85211a2aeca72a8c9717a1b2ff9afe0eb"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "23400e32d830b6acd88d4351b61aa676e4e2ce31f27e0cb39186f800ae6a6e01",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 1363.93989,
+          "searchWallMs": 662,
+          "semanticProjectionSha256": "9240ceb48f3a7467b83799157104c8d85211a2aeca72a8c9717a1b2ff9afe0eb"
+        },
+        "native": {
+          "answerSha256": "12e6d39af3329e1aefa932d2c31682d4176578df17ffe5f8e934d69cb9bcd0f7",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 389.047785,
+          "searchWallMs": 346.80912800000004,
+          "semanticProjectionSha256": "9240ceb48f3a7467b83799157104c8d85211a2aeca72a8c9717a1b2ff9afe0eb"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "a7d46a1ad6e51269b2f5a162cf9469d9a0131cf7e077c657248e1507435154dd"
+      ],
+      "name": "free-short-newcomer",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "66ac15da4baa4aee94c977c3d1a5f43ce28f978a6160edf341aae59a0b2955c5",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 2213.1667500000003,
+          "searchWallMs": 1295.5,
+          "semanticProjectionSha256": "786aaa245d412715da01b014d38e42b3b1ffc63d9b3fc6c1d476e8fb23129e67"
+        },
+        "native": {
+          "answerSha256": "6bee976331e1bc538a91d2b674966f8202ea479cc9d2322af4b959ebe9cb36e2",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 804.335105,
+          "searchWallMs": 751.69968,
+          "semanticProjectionSha256": "786aaa245d412715da01b014d38e42b3b1ffc63d9b3fc6c1d476e8fb23129e67"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "1f04dbabe77075195846c7b416e2baac56cc2e19fad2200b319e00c09fd7bbd3",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 2172.799796,
+          "searchWallMs": 1254.8999999999069,
+          "semanticProjectionSha256": "786aaa245d412715da01b014d38e42b3b1ffc63d9b3fc6c1d476e8fb23129e67"
+        },
+        "native": {
+          "answerSha256": "c65a8551e2f3b4f7d6c8fc86bd78a5eaa00683f5dd1d0665eda4a2a7e0c74347",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 786.769072,
+          "searchWallMs": 734.581454,
+          "semanticProjectionSha256": "786aaa245d412715da01b014d38e42b3b1ffc63d9b3fc6c1d476e8fb23129e67"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "a7d46a1ad6e51269b2f5a162cf9469d9a0131cf7e077c657248e1507435154dd"
+      ],
+      "name": "free-short-midcore",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "e549784886c0b6642047ffd6227c930c43f334eb6541c5497e08b8f6adb0cab5",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 1653.17075,
+          "searchWallMs": 863.1999999999534,
+          "semanticProjectionSha256": "1d4435c37329f8715a931cc8a4171ab27e8f45c451831eac29393c7dacaff0b2"
+        },
+        "native": {
+          "answerSha256": "e664518de51f827f2d456f7e9a80873830a8792972617cd5273ab306f5ce89db",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 490.32607400000006,
+          "searchWallMs": 442.40857700000004,
+          "semanticProjectionSha256": "1d4435c37329f8715a931cc8a4171ab27e8f45c451831eac29393c7dacaff0b2"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "da9df9eb3c90f7649f4a0101cefc1c0713b0e5130cb7903b6c3a8e19146a88fe",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 1059.2781870000001,
+          "searchWallMs": 531.5,
+          "semanticProjectionSha256": "1d4435c37329f8715a931cc8a4171ab27e8f45c451831eac29393c7dacaff0b2"
+        },
+        "native": {
+          "answerSha256": "b8057daaefad33d1369c6704568064cf730ed42628863d90b11450042d7622a4",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 307.204566,
+          "searchWallMs": 274.012095,
+          "semanticProjectionSha256": "1d4435c37329f8715a931cc8a4171ab27e8f45c451831eac29393c7dacaff0b2"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "a7d46a1ad6e51269b2f5a162cf9469d9a0131cf7e077c657248e1507435154dd"
+      ],
+      "name": "free-short-veteran",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "d80f17cae344cc0ecd89d93db68af03e386b20ab94ad29b1186f1a14c51957fa",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 1893.2434170000001,
+          "searchWallMs": 1177.6999999999534,
+          "semanticProjectionSha256": "83e45511f6128630892ebe1ab15f635d9f153e932432fed9852dcf1d0165d2ec"
+        },
+        "native": {
+          "answerSha256": "ac8b649eaa73c204667a59d906bc01e22c1252f4e2721a29334d7578d53cd3b8",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 741.947765,
+          "searchWallMs": 699.459387,
+          "semanticProjectionSha256": "83e45511f6128630892ebe1ab15f635d9f153e932432fed9852dcf1d0165d2ec"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "ff34f2a99ddcdb53356b799b082ca3a2fbda1293be10820f1ed9fd7cb168ae9b",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 1898.5726849999999,
+          "searchWallMs": 1190.8000000000466,
+          "semanticProjectionSha256": "83e45511f6128630892ebe1ab15f635d9f153e932432fed9852dcf1d0165d2ec"
+        },
+        "native": {
+          "answerSha256": "ed194697fe5113dba4daa520e0d3ca292dc4eeffed4f0366f48dfa3bd90dab80",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 729.6862729999999,
+          "searchWallMs": 686.1434429999999,
+          "semanticProjectionSha256": "83e45511f6128630892ebe1ab15f635d9f153e932432fed9852dcf1d0165d2ec"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "7f5b1a60ad3a41c8805c277acdede597611d6756b09d320cf680f2361b04645d"
+      ],
+      "name": "free-long-newcomer",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "9e0613cb90568d0591ad8cb3fdc3763b72d24a42a3d26000b9119e825e78a48e",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 2510.2975930000002,
+          "searchWallMs": 1577.5,
+          "semanticProjectionSha256": "8b31adac275f27235503fa54477bc8039f5692f50ef75eddd7e45cae13d76c0a"
+        },
+        "native": {
+          "answerSha256": "61391b1a7f4acb9fcc3de175c7b03366b9b8e8de4d52afe5ca8c76feb3d171fd",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 974.474005,
+          "searchWallMs": 921.436322,
+          "semanticProjectionSha256": "8b31adac275f27235503fa54477bc8039f5692f50ef75eddd7e45cae13d76c0a"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "bd233974b076846b6e9e2dae8b3c4bd5eb8909e3a8e30b1d17dda740c1ed52fa",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 2492.8011119999996,
+          "searchWallMs": 1578,
+          "semanticProjectionSha256": "8b31adac275f27235503fa54477bc8039f5692f50ef75eddd7e45cae13d76c0a"
+        },
+        "native": {
+          "answerSha256": "3666a643b6f0256248d244bac2e4e5d3f5da7e26d8f3da8480409a08fde6c2a7",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 965.4936049999999,
+          "searchWallMs": 913.569275,
+          "semanticProjectionSha256": "8b31adac275f27235503fa54477bc8039f5692f50ef75eddd7e45cae13d76c0a"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "7f5b1a60ad3a41c8805c277acdede597611d6756b09d320cf680f2361b04645d"
+      ],
+      "name": "free-long-midcore",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "f4f802c143905ffa2a8ec7eca5208db00e0f1ec8ae7ebfee6e675372f334ddf5",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 2297.314174,
+          "searchWallMs": 1520.1000000000931,
+          "semanticProjectionSha256": "f82f906d48c34e4a0ef91aa245081d19ab32d3f8d05313d76ea894e387af7097"
+        },
+        "native": {
+          "answerSha256": "680fee7b7eb885185ed47153dcf20b25a2457c945df49e1ecf4173a8cc2af109",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 946.1869889999999,
+          "searchWallMs": 897.976237,
+          "semanticProjectionSha256": "f82f906d48c34e4a0ef91aa245081d19ab32d3f8d05313d76ea894e387af7097"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "d44de46fb4aa55a7f6df1515fd799768ea54f1e441dc4473da03350430bd164d",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 1557.785723,
+          "searchWallMs": 1016.1000000000931,
+          "semanticProjectionSha256": "f82f906d48c34e4a0ef91aa245081d19ab32d3f8d05313d76ea894e387af7097"
+        },
+        "native": {
+          "answerSha256": "c08f537172ea5017b2ec6eea9b242073cd1997c551a353e48bc9f1f7c5219910",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 594.677761,
+          "searchWallMs": 561.842886,
+          "semanticProjectionSha256": "f82f906d48c34e4a0ef91aa245081d19ab32d3f8d05313d76ea894e387af7097"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "7f5b1a60ad3a41c8805c277acdede597611d6756b09d320cf680f2361b04645d"
+      ],
+      "name": "free-long-veteran",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "c1f5dbbda34309522fcfa34388cb7c96f5b1558a4a2d8dde7b0fc86ada579b52",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 2435.75315,
+          "searchWallMs": 1737.3000000000466,
+          "semanticProjectionSha256": "9419116e87acb493530b46443ccbb622de1a026f35f8dcaed12d40df77cd2863"
+        },
+        "native": {
+          "answerSha256": "c66e9988eff0a2cb3cb64a84213e499148b47796e29002a775e14550debf585f",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 1084.956775,
+          "searchWallMs": 1041.872596,
+          "semanticProjectionSha256": "9419116e87acb493530b46443ccbb622de1a026f35f8dcaed12d40df77cd2863"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "69d20b5b0c480061fb829fab3b98a6c430924dfe34997c3ac0ae7a409b7a3deb",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 2446.147597,
+          "searchWallMs": 1755.6999999999534,
+          "semanticProjectionSha256": "9419116e87acb493530b46443ccbb622de1a026f35f8dcaed12d40df77cd2863"
+        },
+        "native": {
+          "answerSha256": "e00fb04b2bea63700c259fd3526d0002b7b549e66fcdf675f04f67f79e5fb5f1",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 1095.899684,
+          "searchWallMs": 1053.003769,
+          "semanticProjectionSha256": "9419116e87acb493530b46443ccbb622de1a026f35f8dcaed12d40df77cd2863"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "c47ddc55d602f4dcb96b3242abb886f18c7d8fce40c84e0146d7e1749bf243a1"
+      ],
+      "name": "no-luck-short-newcomer",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "5542290af08bdc7ae66ca302b2de33dc0e17a24a27fbff71511962b9f043ee0e",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 8843.037236,
+          "searchWallMs": 7918.09999999986,
+          "semanticProjectionSha256": "e4bd4a0e87100ca2a1c9c49450214d5b5cb4950827ea987e45aba341ab50cbf5"
+        },
+        "native": {
+          "answerSha256": "0e843e7cf19236df1271aa5f3595158635ab51adafc1217067895cf6b035925e",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 5197.096018,
+          "searchWallMs": 5142.687059,
+          "semanticProjectionSha256": "e4bd4a0e87100ca2a1c9c49450214d5b5cb4950827ea987e45aba341ab50cbf5"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "83feb2a2784d152d70c3c50825adc74975f998e1dea04d35301a1a99affb7fe0",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 8724.086551,
+          "searchWallMs": 7798.399999999907,
+          "semanticProjectionSha256": "e4bd4a0e87100ca2a1c9c49450214d5b5cb4950827ea987e45aba341ab50cbf5"
+        },
+        "native": {
+          "answerSha256": "2c0ff1c5f58a8153b077682d32ed4c01a7e2c759c6656fcfb04c44a8ffd50b74",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 5118.559612,
+          "searchWallMs": 5065.686546,
+          "semanticProjectionSha256": "e4bd4a0e87100ca2a1c9c49450214d5b5cb4950827ea987e45aba341ab50cbf5"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "c47ddc55d602f4dcb96b3242abb886f18c7d8fce40c84e0146d7e1749bf243a1"
+      ],
+      "name": "no-luck-short-midcore",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "871a61de7cbb614d69ba8203ac139846f7a9219fd2c2682aa18c4ddc84370c01",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 6314.827964,
+          "searchWallMs": 5547.5,
+          "semanticProjectionSha256": "65cad091988626525e5f4b9209fad543ef4a15d564d8f255f7721862711edd10"
+        },
+        "native": {
+          "answerSha256": "22e71f2cbc38115897c181602fa81df58d0437551065b85be2d158173679bdee",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 3905.401061,
+          "searchWallMs": 3857.17936,
+          "semanticProjectionSha256": "65cad091988626525e5f4b9209fad543ef4a15d564d8f255f7721862711edd10"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": true,
+          "canonicalTopKEqual": true,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "50a9c2047177226f70d2de909e454612cd307ea0f9f0ab7d9b698ef59b0eefe9",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 4038.41796,
+          "searchWallMs": 3510.4000000001397,
+          "semanticProjectionSha256": "65cad091988626525e5f4b9209fad543ef4a15d564d8f255f7721862711edd10"
+        },
+        "native": {
+          "answerSha256": "3ded5cb23c83697a9a752a1382faff1ddf51bb9bbd9054d012f9228e5797fa86",
+          "completeProvenWithin20sEndToEnd": true,
+          "completion": "Complete",
+          "exitReason": "exhausted",
+          "optimality": "proven",
+          "processWallMs": 2365.664217,
+          "searchWallMs": 2331.558182,
+          "semanticProjectionSha256": "65cad091988626525e5f4b9209fad543ef4a15d564d8f255f7721862711edd10"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "c47ddc55d602f4dcb96b3242abb886f18c7d8fce40c84e0146d7e1749bf243a1"
+      ],
+      "name": "no-luck-short-veteran",
+      "profile": "veteran"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "d78a30afbed8cc55621a0e9ead7acecf16c5d8ca02142e6705bdf5be1f7ef221",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60732.35838400001,
+          "searchWallMs": 60013.39999999991,
+          "semanticProjectionSha256": "4430e1f21312e0f04f4a7731fddf65efa77584692f383737f2d9ab4c405b111e"
+        },
+        "native": {
+          "answerSha256": "3b60b41a07d6704936ba721bbd72ec2c000cee8d228e9ac8d38d05f1cca4774d",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60052.392945,
+          "searchWallMs": 60002.806605000005,
+          "semanticProjectionSha256": "4430e1f21312e0f04f4a7731fddf65efa77584692f383737f2d9ab4c405b111e"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "7acf8eeebc51a01278b82d3944e45401b83c531de6b9f386fefe3b9a2ea96b7b",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60724.623752,
+          "searchWallMs": 60016.59999999986,
+          "semanticProjectionSha256": "4430e1f21312e0f04f4a7731fddf65efa77584692f383737f2d9ab4c405b111e"
+        },
+        "native": {
+          "answerSha256": "d9d457844b82b13647fa0ee47b563719733d918ffe9224a81741bddb03b54287",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60048.624425999995,
+          "searchWallMs": 60003.566116999995,
+          "semanticProjectionSha256": "4430e1f21312e0f04f4a7731fddf65efa77584692f383737f2d9ab4c405b111e"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242",
+        "6c3eed169c9dd157a3e6f49c3ceea65fd0bfedc731a32d567315d14ae847d249"
+      ],
+      "name": "no-luck-long-newcomer",
+      "profile": "newcomer"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "02f13bd4f0786789a266dfd1459cd7ba6ce6969fc118e34f78652ada54443205",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60973.748348999994,
+          "searchWallMs": 60016.89999999991,
+          "semanticProjectionSha256": "8892548e505c2bb3a1caa26d8b896b81caccf6ea457fe8b13efa04a80d4d6efd"
+        },
+        "native": {
+          "answerSha256": "ad5be335fe0e5c74f68e04f041e0d8645d818dc5fe1c89a0110f957a389e7ed1",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60056.059425,
+          "searchWallMs": 60003.363739,
+          "semanticProjectionSha256": "8892548e505c2bb3a1caa26d8b896b81caccf6ea457fe8b13efa04a80d4d6efd"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "a853937ace2fc44fc09c4cd066a9c2b4c67e74a66c9c4002f948acb5b7f0c145",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60992.990952,
+          "searchWallMs": 60016.80000000005,
+          "semanticProjectionSha256": "8892548e505c2bb3a1caa26d8b896b81caccf6ea457fe8b13efa04a80d4d6efd"
+        },
+        "native": {
+          "answerSha256": "83f8f64abf54027723d3afd0ee6822d80824e94757f5ff883131d54fb569db72",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60061.600479,
+          "searchWallMs": 60004.382149000005,
+          "semanticProjectionSha256": "8892548e505c2bb3a1caa26d8b896b81caccf6ea457fe8b13efa04a80d4d6efd"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "9c42e04ba8b919c69edd94b86e30a936a72721b2daf1210fa50203ce3666abaa",
+        "6c3eed169c9dd157a3e6f49c3ceea65fd0bfedc731a32d567315d14ae847d249"
+      ],
+      "name": "no-luck-long-midcore",
+      "profile": "midcore"
+    },
+    {
+      "baseline": {
+        "browser": {
+          "answerSha256": "c70d779755cd5ea80d955b8a1136eb59830a84d52ab7190cf77db40a92a1ca0c",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60822.394163,
+          "searchWallMs": 60018.40000000014,
+          "semanticProjectionSha256": "df04128ff47175c17640d73d950b86558f5ce1c23e5a4bacdcb3f033b61bdd25"
+        },
+        "native": {
+          "answerSha256": "0a49e18cf361f6e8bcccc343e2ee9304b1557e32ad8cf3510f1d36cbe934e315",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60058.567523,
+          "searchWallMs": 60004.060309,
+          "semanticProjectionSha256": "df04128ff47175c17640d73d950b86558f5ce1c23e5a4bacdcb3f033b61bdd25"
+        }
+      },
+      "comparisons": {
+        "baselineNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "browserCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 3
+        },
+        "candidateNativeBrowser": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 1
+        },
+        "nativeCrossVersion": {
+          "bothComplete": false,
+          "canonicalTopKEqual": null,
+          "compatibleCertificates": true,
+          "sharedTeams": 1
+        }
+      },
+      "current": {
+        "browser": {
+          "answerSha256": "a4ba276bef3499efc319c427f648924c0a3e07b3735c567e8451e3e384b233e3",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60546.227632,
+          "searchWallMs": 60011.90000000014,
+          "semanticProjectionSha256": "df04128ff47175c17640d73d950b86558f5ce1c23e5a4bacdcb3f033b61bdd25"
+        },
+        "native": {
+          "answerSha256": "b92e095beb61dc904142d42f722c5f161e59f5f633b40410aca63fa976eb819a",
+          "completeProvenWithin20sEndToEnd": false,
+          "completion": "TimedOut",
+          "exitReason": "timeLimit",
+          "optimality": "unproven",
+          "processWallMs": 60044.207321,
+          "searchWallMs": 60003.321315,
+          "semanticProjectionSha256": "ba0bb2912542a9adc51e8509cbce13bcddc5640fe27dfe87876c78cf0533f21a"
+        }
+      },
+      "inputSha256": [
+        "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+        "724e94a61808cef1c2eb0e790aafbbbc2bf8f1c36cbbbf189984ec353c1ac71d",
+        "6c3eed169c9dd157a3e6f49c3ceea65fd0bfedc731a32d567315d14ae847d249"
+      ],
+      "name": "no-luck-long-veteran",
+      "profile": "veteran"
+    }
+  ],
+  "scope": {
+    "baselineExecutions": 96,
+    "candidateExecutions": 96,
+    "causality": "One CI repetition, non-identical CPU models across newcomer/veteran revisions and multiple source changes. TimedOut times are right-censored; no completed speedup ratio is computed for them.",
+    "inputProvenance": "PR40 real published game charts/tables with three fixed hypothetical inventories, not player-account exports",
+    "method": "Rehashed archives, every FILES inventory entry, pinned PR40 git definitions, snapshot/roster/request pure reconstruction against existing native preparation; read every per-case report and answer; exact-rational certificate intersections and complete canonical ordered team comparisons. No solver, build, native preparation or performance run.",
+    "oracle": "notRun; agreement and non-disjoint certificates are compatibility evidence, not an independent global ranking or game-parity oracle",
+    "repetitionsPerCasePerRuntime": 1,
+    "requestTimeLimitMs": 60000,
+    "requests": 48,
+    "runtimes": [
+      "native",
+      "actualChromiumWorker"
+    ],
+    "syntheticPerformanceIncluded": false,
+    "targetEndToEndMs": 20000,
+    "timingScope": {
+      "browser": "processWallMs: Node page.evaluate invocation through the final Worker response; includes input transport, Worker creation, WASM initialization, dataset/DeckSolver construction and recommendation. Excludes host fixture reads, HTTP server/browser startup and browser installation.",
+      "native": "processWallMs: native process spawn through process exit; includes process startup, input reads, dataset construction, recommendation and output persistence. Excludes benchmark runner startup and host-side result validation."
+    }
+  },
+  "sourceCommit": "21954072ce7c8a0b66b564dc2a1b96bd2519ad98",
+  "summary": {
+    "baseline": {
+      "browser": {
+        "completeProven": 12,
+        "completeProvenWithin20sEndToEnd": 12,
+        "completedCases": [
+          "free-short-newcomer",
+          "free-long-newcomer",
+          "no-luck-short-newcomer",
+          "free-short-midcore",
+          "free-long-midcore",
+          "no-luck-short-midcore",
+          "short-veteran-pt",
+          "dense-veteran-pt",
+          "mixed-long-veteran-pt",
+          "free-short-veteran",
+          "free-long-veteran",
+          "no-luck-short-veteran"
+        ],
+        "completion": {
+          "Complete": 12,
+          "TimedOut": 36
+        },
+        "requests": 48,
+        "timedOutCases": [
+          "short-newcomer-score",
+          "long-newcomer-score",
+          "mixed-short-newcomer-score",
+          "sparse-newcomer-score",
+          "dense-newcomer-score",
+          "mixed-long-newcomer-score",
+          "short-newcomer-probability",
+          "long-newcomer-life",
+          "mixed-short-newcomer-pt",
+          "sparse-newcomer-capped",
+          "dense-newcomer-probability",
+          "mixed-long-newcomer-life",
+          "no-luck-long-newcomer",
+          "short-midcore-score",
+          "long-midcore-score",
+          "mixed-short-midcore-score",
+          "sparse-midcore-score",
+          "dense-midcore-score",
+          "mixed-long-midcore-score",
+          "short-midcore-capped",
+          "long-midcore-probability",
+          "mixed-short-midcore-life",
+          "sparse-midcore-pt",
+          "dense-midcore-capped",
+          "mixed-long-midcore-capped",
+          "no-luck-long-midcore",
+          "short-veteran-score",
+          "long-veteran-score",
+          "mixed-short-veteran-score",
+          "sparse-veteran-score",
+          "dense-veteran-score",
+          "mixed-long-veteran-score",
+          "long-veteran-capped",
+          "mixed-short-veteran-probability",
+          "sparse-veteran-life",
+          "no-luck-long-veteran"
+        ]
+      },
+      "native": {
+        "completeProven": 12,
+        "completeProvenWithin20sEndToEnd": 12,
+        "completedCases": [
+          "free-short-newcomer",
+          "free-long-newcomer",
+          "no-luck-short-newcomer",
+          "free-short-midcore",
+          "free-long-midcore",
+          "no-luck-short-midcore",
+          "short-veteran-pt",
+          "dense-veteran-pt",
+          "mixed-long-veteran-pt",
+          "free-short-veteran",
+          "free-long-veteran",
+          "no-luck-short-veteran"
+        ],
+        "completion": {
+          "Complete": 12,
+          "TimedOut": 36
+        },
+        "requests": 48,
+        "timedOutCases": [
+          "short-newcomer-score",
+          "long-newcomer-score",
+          "mixed-short-newcomer-score",
+          "sparse-newcomer-score",
+          "dense-newcomer-score",
+          "mixed-long-newcomer-score",
+          "short-newcomer-probability",
+          "long-newcomer-life",
+          "mixed-short-newcomer-pt",
+          "sparse-newcomer-capped",
+          "dense-newcomer-probability",
+          "mixed-long-newcomer-life",
+          "no-luck-long-newcomer",
+          "short-midcore-score",
+          "long-midcore-score",
+          "mixed-short-midcore-score",
+          "sparse-midcore-score",
+          "dense-midcore-score",
+          "mixed-long-midcore-score",
+          "short-midcore-capped",
+          "long-midcore-probability",
+          "mixed-short-midcore-life",
+          "sparse-midcore-pt",
+          "dense-midcore-capped",
+          "mixed-long-midcore-capped",
+          "no-luck-long-midcore",
+          "short-veteran-score",
+          "long-veteran-score",
+          "mixed-short-veteran-score",
+          "sparse-veteran-score",
+          "dense-veteran-score",
+          "mixed-long-veteran-score",
+          "long-veteran-capped",
+          "mixed-short-veteran-probability",
+          "sparse-veteran-life",
+          "no-luck-long-veteran"
+        ]
+      }
+    },
+    "candidate": {
+      "browser": {
+        "completeProven": 12,
+        "completeProvenWithin20sEndToEnd": 12,
+        "completedCases": [
+          "free-short-newcomer",
+          "free-long-newcomer",
+          "no-luck-short-newcomer",
+          "free-short-midcore",
+          "free-long-midcore",
+          "no-luck-short-midcore",
+          "short-veteran-pt",
+          "dense-veteran-pt",
+          "mixed-long-veteran-pt",
+          "free-short-veteran",
+          "free-long-veteran",
+          "no-luck-short-veteran"
+        ],
+        "completion": {
+          "Complete": 12,
+          "TimedOut": 36
+        },
+        "requests": 48,
+        "timedOutCases": [
+          "short-newcomer-score",
+          "long-newcomer-score",
+          "mixed-short-newcomer-score",
+          "sparse-newcomer-score",
+          "dense-newcomer-score",
+          "mixed-long-newcomer-score",
+          "short-newcomer-probability",
+          "long-newcomer-life",
+          "mixed-short-newcomer-pt",
+          "sparse-newcomer-capped",
+          "dense-newcomer-probability",
+          "mixed-long-newcomer-life",
+          "no-luck-long-newcomer",
+          "short-midcore-score",
+          "long-midcore-score",
+          "mixed-short-midcore-score",
+          "sparse-midcore-score",
+          "dense-midcore-score",
+          "mixed-long-midcore-score",
+          "short-midcore-capped",
+          "long-midcore-probability",
+          "mixed-short-midcore-life",
+          "sparse-midcore-pt",
+          "dense-midcore-capped",
+          "mixed-long-midcore-capped",
+          "no-luck-long-midcore",
+          "short-veteran-score",
+          "long-veteran-score",
+          "mixed-short-veteran-score",
+          "sparse-veteran-score",
+          "dense-veteran-score",
+          "mixed-long-veteran-score",
+          "long-veteran-capped",
+          "mixed-short-veteran-probability",
+          "sparse-veteran-life",
+          "no-luck-long-veteran"
+        ]
+      },
+      "native": {
+        "completeProven": 12,
+        "completeProvenWithin20sEndToEnd": 12,
+        "completedCases": [
+          "free-short-newcomer",
+          "free-long-newcomer",
+          "no-luck-short-newcomer",
+          "free-short-midcore",
+          "free-long-midcore",
+          "no-luck-short-midcore",
+          "short-veteran-pt",
+          "dense-veteran-pt",
+          "mixed-long-veteran-pt",
+          "free-short-veteran",
+          "free-long-veteran",
+          "no-luck-short-veteran"
+        ],
+        "completion": {
+          "Complete": 12,
+          "TimedOut": 36
+        },
+        "requests": 48,
+        "timedOutCases": [
+          "short-newcomer-score",
+          "long-newcomer-score",
+          "mixed-short-newcomer-score",
+          "sparse-newcomer-score",
+          "dense-newcomer-score",
+          "mixed-long-newcomer-score",
+          "short-newcomer-probability",
+          "long-newcomer-life",
+          "mixed-short-newcomer-pt",
+          "sparse-newcomer-capped",
+          "dense-newcomer-probability",
+          "mixed-long-newcomer-life",
+          "no-luck-long-newcomer",
+          "short-midcore-score",
+          "long-midcore-score",
+          "mixed-short-midcore-score",
+          "sparse-midcore-score",
+          "dense-midcore-score",
+          "mixed-long-midcore-score",
+          "short-midcore-capped",
+          "long-midcore-probability",
+          "mixed-short-midcore-life",
+          "sparse-midcore-pt",
+          "dense-midcore-capped",
+          "mixed-long-midcore-capped",
+          "no-luck-long-midcore",
+          "short-veteran-score",
+          "long-veteran-score",
+          "mixed-short-veteran-score",
+          "sparse-veteran-score",
+          "dense-veteran-score",
+          "mixed-long-veteran-score",
+          "long-veteran-capped",
+          "mixed-short-veteran-probability",
+          "sparse-veteran-life",
+          "no-luck-long-veteran"
+        ]
+      }
+    }
+  },
+  "validation": {
+    "allCompleteSetsUnchanged": true,
+    "answersReadAndSha256Checked": 192,
+    "candidateCompleteCanonicalPairsCompared": 12,
+    "candidateNativeBrowserCompatibleCases": 48,
+    "completeSemanticProjectionHashesUnchanged": 24,
+    "crossVersionCompatibleRuntimePairs": 96,
+    "errors": [],
+    "passed": true,
+    "perCaseReportsChecked": 192
+  },
+  "workflow": "https://github.com/empty-sekai/ournotes-deck/actions/runs/37779863844"
+}

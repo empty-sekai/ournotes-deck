@@ -352,6 +352,83 @@ pub(super) fn refine_order_with_terminal_payoff(
     })
 }
 
+/// A completed positive-mass native cylinder restricts just that event. Every unvisited outcome
+/// retains the complete order's pathwise payoff support, independently of its prior expectation.
+/// Separate cylinders are intersected, never added: their events may overlap or be identical.
+pub(super) fn refine_order_with_terminal_cylinder(
+    order: &mut OrderScoreInterval,
+    map: &PayoffMap,
+    cylinder: &ournotes_sim::live::full::LuckTerminalCylinder,
+) -> Result<bool, Error> {
+    order.validate()?;
+    if !order.evaluated {
+        return Err(invalid("a terminal cylinder requires a complete order certificate"));
+    }
+    let atom = cylinder.atom();
+    if atom.score < order.support.0
+        || atom.score > order.support.1
+        || order.final_life.is_some_and(|(lo, hi)| atom.final_life < lo || atom.final_life > hi)
+    {
+        return Err(invalid("terminal cylinder contradicts complete score/life support"));
+    }
+    let (lower, upper, value) = match *map {
+        PayoffMap::ScoreAtLeast { threshold } => (0, 1, i128::from(atom.score >= threshold)),
+        PayoffMap::ScoreAndLifeAtLeast { threshold, min_final_life } => {
+            (0, 1, i128::from(atom.score >= threshold && atom.final_life >= min_final_life))
+        }
+        PayoffMap::CappedScore { threshold } => (
+            i128::from(order.support.0.min(threshold)),
+            i128::from(order.support.1.min(threshold)),
+            i128::from(atom.score.min(threshold)),
+        ),
+        _ => return Err(invalid("terminal cylinder requires a bounded terminal payoff map")),
+    };
+    let prior = order_payoff(order, map)?;
+    let Some(bounds) = cylinder_enclosure(atom.mass, value, lower, upper) else { return Ok(false) };
+    let bounds = prior
+        .bounds
+        .intersect(bounds)
+        .ok_or_else(|| invalid("terminal cylinder contradicts its complete payoff certificate"))?;
+    if let Some(exact) = prior.exact
+        && !exact_in_interval(exact, bounds)?
+    {
+        return Err(invalid("terminal cylinder contradicts an existing exact payoff"));
+    }
+    if bounds == prior.bounds {
+        return Ok(false);
+    }
+    // Even mass one does not fabricate exact metadata through this path. Existing exact evidence
+    // remains attached to the complete original law, and raw score/life summaries are untouched.
+    order.refine_payoff(PayoffRefinement { map: map.clone(), bounds, exact: prior.exact })?;
+    Ok(true)
+}
+
+fn cylinder_enclosure(
+    mass: ournotes_sim::live::full::LuckExactMass,
+    value: i128,
+    lower: i128,
+    upper: i128,
+) -> Option<F64Interval> {
+    if mass.numerator == 0
+        || mass.denominator == 0
+        || mass.numerator > mass.denominator
+        || lower > value
+        || value > upper
+    {
+        return None;
+    }
+    let mass = ExactExpectation { numerator: i128::try_from(mass.numerator).ok()?, denominator: mass.denominator };
+    // L + p(y-L) <= E[Y] <= U - p(U-y). Checked rational endpoints precede outward
+    // conversion, so a deficit too small for binary64 remains unresolved rather than rounded away.
+    let lo = add_exact(fraction(lower), scale_exact(mass, value.checked_sub(lower)?)?)?;
+    let hi = add_exact(fraction(upper), scale_exact(mass, value.checked_sub(upper)?)?)?;
+    F64Interval::new(exact_enclosure(lo)?.lower(), exact_enclosure(hi)?.upper()).ok()
+}
+
+#[cfg(test)]
+#[path = "certified_cylinder_arithmetic_tests.rs"]
+mod cylinder_arithmetic_tests;
+
 fn exact_enclosure(value: ExactExpectation) -> Option<F64Interval> {
     let denominator = i128::try_from(value.denominator).ok()?;
     F64Interval::integer(value.numerator).divide(F64Interval::integer(denominator)).ok()

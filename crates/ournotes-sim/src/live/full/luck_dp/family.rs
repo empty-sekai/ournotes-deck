@@ -146,6 +146,8 @@ struct DomainTerminalMapping {
     /// Historical rank-query geometry only. Full physical probe lifecycle/phase and complete order
     /// evidence are still required before this may condition any actual probe-score contribution.
     rank_probe_history: Option<rank_history::Geometry>,
+    /// Independent historical Rush filing geometry, usable only after full pair/controller admission.
+    rank_rush_history: Option<rank_history::RushGeometry>,
 }
 
 /// One immutable request context. The master, selected skill catalogue, declared frame stream, deltas and setup
@@ -704,7 +706,8 @@ impl<'a> LuckFamilyContext<'a> {
         {
             return Err(fail(LuckFamilyDecline::TerminalMapping, "terminal query has incomplete native filings"));
         }
-        let Some(rank_probe_history) = rank_history::build(&trace, play, setup, params.music_length_ms, &mut cancelled)
+        let Some((rank_probe_history, rank_rush_history)) =
+            rank_history::build_both(&trace, play, setup, params.music_length_ms, &mut cancelled)
         else {
             return Ok(None);
         };
@@ -730,6 +733,7 @@ impl<'a> LuckFamilyContext<'a> {
             frame_work: play.frames.len() as u64,
             first_late_frame: play.frames.partition_point(|frame| frame.time_ms <= params.music_length_ms),
             rank_probe_history,
+            rank_rush_history,
         });
         if cancelled() {
             return Ok(None);
@@ -935,6 +939,7 @@ impl<'a> LuckFamilyContext<'a> {
             base,
             bindings: LuckFamilyBindings { allowed, writers, profiles },
             probe_runs_admitted,
+            controller_inputs: input_reuse::ControllerInputAdmission::after_complete_pairs(),
         }))
     }
 
@@ -953,7 +958,12 @@ impl<'a> LuckFamilyContext<'a> {
         let Some(admitted) = self.admit_inputs(choices, limits, CoverWork::Complete, &mut cancelled)? else {
             return Ok(None);
         };
-        let AdmittedFamilyInputs { base, bindings: LuckFamilyBindings { allowed, writers, profiles }, .. } = admitted;
+        let AdmittedFamilyInputs {
+            base,
+            bindings: LuckFamilyBindings { allowed, writers, profiles },
+            controller_inputs,
+            ..
+        } = admitted;
         let required = profiles.len() * ORDERS;
         let mut family = LuckControllerFamily {
             mapping: Arc::clone(&self.mapping),
@@ -990,8 +1000,16 @@ impl<'a> LuckFamilyContext<'a> {
             let physical = physical.map(|performer| projected(self.master, &performer));
             // Whole-pair admission, conversion closure and all labelled-cover budgets have already passed.
             // This optional proof concerns only repeated construction of the projected input below.
-            let input_keys =
-                (recording_capacity > 0).then(|| input_reuse::InputKeys::new(self.master, &physical)).flatten();
+            let input_keys = (recording_capacity > 0)
+                .then(|| {
+                    input_reuse::InputKeys::admitted_controller(
+                        self.master,
+                        &physical,
+                        &self.writer_skills,
+                        &controller_inputs,
+                    )
+                })
+                .flatten();
             let mut order = [0, 1, 2, 3, 4];
             for ordinal in 0..ORDERS {
                 if cancelled() {

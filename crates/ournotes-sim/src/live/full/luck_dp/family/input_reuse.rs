@@ -10,13 +10,49 @@ use std::fmt::Write;
 
 // Compiled recording keys start with their Debug row list; this binary prefix cannot alias that namespace.
 const PREFIX: &[u8] = b"\0family-complete-projected-input\0\x02";
+const CONTROLLER_PREFIX: &[u8] = b"\0family-admitted-controller-input\0\x01";
+
+/// Created only after every original physical pair and the complete labelled work guards have passed.
+/// This permits a controller-only key; it is neither a completed profile nor a probability certificate.
+#[derive(Debug)]
+pub(super) struct ControllerInputAdmission {
+    _complete_pairs: (),
+}
+
+impl ControllerInputAdmission {
+    pub(super) fn after_complete_pairs() -> Self {
+        Self { _complete_pairs: () }
+    }
+}
 
 pub(super) struct InputKeys {
     physical: [Performer; SLOTS],
+    prefix: &'static [u8],
 }
 
 impl InputKeys {
     pub(super) fn new(master: &Master, physical: &[Performer; SLOTS]) -> Option<Self> {
+        Self::build(master, physical, false)
+    }
+
+    /// The family uses the empty writer catalogue, whose native `related` predicate keeps only chain rows.
+    /// Three closed bonus types are removed before Factory constructs their conditions/cumulative counters.
+    /// Conversion rows still refuse this proof, and retained writers keep the original closed read analysis.
+    /// Thus no omitted bonus can enter a LIFE interpreter: no conversion is held and no writer reads LIFE.
+    /// Sources, levels and ordered support vectors remain exact, including sources with no retained rows.
+    pub(super) fn admitted_controller(
+        master: &Master,
+        physical: &[Performer; SLOTS],
+        writers: &LuckSkills,
+        _admitted: &ControllerInputAdmission,
+    ) -> Option<Self> {
+        if !writers.chain.is_empty() || !writers.shapes.is_empty() || !writers.rows.is_empty() {
+            return None;
+        }
+        Self::new(master, physical).or_else(|| Self::build(master, physical, true))
+    }
+
+    fn build(master: &Master, physical: &[Performer; SLOTS], controller: bool) -> Option<Self> {
         let mut reads = AttributeReads::default();
         for performer in physical {
             if performer.live_skill.is_some() || !performer.support_skills.is_empty() {
@@ -28,6 +64,7 @@ impl InputKeys {
                     master,
                     master.gekisou_skill_effects.iter().filter(|row| row.skill_id == id && row.level == level),
                     &mut reads,
+                    controller,
                 ) {
                     return None;
                 }
@@ -38,6 +75,7 @@ impl InputKeys {
                     master,
                     master.gekisou_support_skill_effects.iter().filter(|row| row.skill_id == id && row.level == level),
                     &mut reads,
+                    controller,
                 ) {
                     return None;
                 }
@@ -47,7 +85,7 @@ impl InputKeys {
         for performer in &mut physical {
             reads.erase_unread(performer);
         }
-        Some(Self { physical })
+        Some(Self { physical, prefix: if controller { CONTROLLER_PREFIX } else { PREFIX } })
     }
 
     /// Sort the complete normalized descriptors, with multiplicities. The inverse is a fixed slot
@@ -79,7 +117,7 @@ impl InputKeys {
         if out.bytes.capacity() > capacity {
             return None;
         }
-        out.append(PREFIX).ok()?;
+        out.append(self.prefix).ok()?;
         // Performer derives Eq and Debug from integer/optional/vector fields. Keep its complete normalized
         // ordered image, including empty sources and the exact vectors of every potentially read attribute.
         write!(&mut out, "{ordered:?}").ok()?;
@@ -142,10 +180,23 @@ fn admit_rows<'a>(
     master: &Master,
     rows: impl Iterator<Item = &'a crate::master::GekisouSkillEffectRow>,
     reads: &mut AttributeReads,
+    controller: bool,
 ) -> bool {
     let mut selected = false;
     for row in rows {
         selected = true;
+        // These rows are absent from the actual family controller before checker/cumulative construction.
+        // Whole-pair admission has already constructed the original sources. Do not reinterpret their
+        // predicates, erase their source identities, or extend this branch to converters/unknown effects.
+        if controller && matches!(row.skill_effect_type, 12000 | 13000 | 13002) {
+            if row.skill_target_ids.iter().any(|&id| master.skill_target(id).is_none()) {
+                return false;
+            }
+            continue;
+        }
+        if controller && matches!(row.skill_effect_type, 12006 | 13005) {
+            return false;
+        }
         if !admit_row(master, row, reads) {
             return false;
         }
@@ -232,3 +283,7 @@ impl std::fmt::Write for KeyBytes {
 #[cfg(test)]
 #[path = "input_reuse_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "controller_input_tests.rs"]
+mod controller_tests;

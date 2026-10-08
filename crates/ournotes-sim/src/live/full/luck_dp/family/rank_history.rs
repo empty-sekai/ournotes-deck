@@ -1,4 +1,4 @@
-//! Historical-query readiness for one separately admitted direct-probe command class.
+//! Independent historical-query readiness for Rush and a separately admitted direct-probe command class.
 //!
 //! An empty-reward recording supplies only the native clock and solo rank-query topology. It does NOT
 //! supply an actual binding's ordinary command prefix or prove that its score probes have filed. That
@@ -8,9 +8,16 @@ use super::*;
 use crate::live::full::luck_score_bounds::{BoundsEvent, BoundsTrace};
 use crate::live::score::get_frame;
 
-/// Private geometry witness; only `build` can construct it. Retaining it adds no trace or query cache.
+/// Private probe geometry witness; only `build_both` can construct it. No trace or query cache is retained.
 #[derive(Debug)]
 pub(super) struct Geometry {
+    _complete: (),
+}
+
+/// A separate Rush witness. It does not require a direct probe, its phase or its music-clamped lifetime.
+/// Only a complete admitted profile can attach a controller law to this empty-recording geometry.
+#[derive(Debug)]
+pub(super) struct RushGeometry {
     _complete: (),
 }
 
@@ -49,8 +56,8 @@ struct Query {
 /// controller law may be attached to this probe prefix; merely observing an empty trace is never enough.
 ///
 /// Ordinary timed/removal commands can still backfill old times. Their historical window/magnitude bounds
-/// remain untouched, as does the unweighted full native floating-point drift. This witness cannot authorize
-/// a Rush-law/history substitution, an ordinary recipe transport, score equivalence or a candidate value.
+/// remain untouched, as does the unweighted full native floating-point drift.
+#[cfg(test)]
 pub(super) fn build(
     trace: &BoundsTrace,
     play: &LivePlay,
@@ -58,24 +65,45 @@ pub(super) fn build(
     music_length: i32,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Option<Option<Geometry>> {
+    build_both(trace, play, setup, music_length, cancelled).map(|(probe, _)| probe)
+}
+
+/// The two optional witnesses share the original query/note/fixed-bonus proof, but fail independently.
+/// For Rush, every possible filing AFTER the original start query must lie in a strictly later native score
+/// frame than each included note. Potential covers after-frame pending notes, judged notes and pending lots,
+/// plus every before-frame COMPLETE -> FINISH opportunity, including non-LUCK ranges' shared-handle inverses.
+/// Weighted actual Luck factors are retained as extra conservative filings, including START commands.
+/// Complete family admission rejects overlapping active LUCK
+/// ranges, range-clock/score feedback and changed LUCK judgement classes, so this filing superset applies to
+/// every legal physical binding, not just the empty deck. The completed profile is still required to use it.
+///
+/// Earlier filings, including a note and multiple Rush switches in the same frame before ProbabilityReady,
+/// are retained. No future native command can change their exact signed integer Rush prefix at the note;
+/// hence both adjacent historical queries use its complete chart-time Rush class. This certifies only ideal
+/// nonnegative coefficients: ordinary history, integer rank and floating-point error keep their old bounds.
+pub(super) fn build_both(
+    trace: &BoundsTrace,
+    play: &LivePlay,
+    setup: &GekisouSetup,
+    music_length: i32,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Option<(Option<Geometry>, Option<RushGeometry>)> {
     if cancelled() {
         return None;
     }
     // Adjacent queries can still consume a pending fixed bonus or cross its native frame. Reuse the
     // complete fixed-(identity, coefficient) cancellation proof instead of inferring it from no commands.
     if !super::super::super::luck_score_bounds::rank_history_structure_ready(trace, cancelled)? {
-        return Some(None);
+        return Some((None, None));
     }
     let Some(last) = i32::try_from(trace.frames).ok().and_then(|frames| frames.checked_sub(1)) else {
-        return Some(None);
+        return Some((None, None));
     };
-    if last < 0
-        || play.frames.is_empty()
-        || music_length <= 0
-        || play.frames.windows(2).any(|pair| pair[0].time_ms >= pair[1].time_ms)
-    {
-        return Some(None);
+    if last < 0 || play.frames.is_empty() || play.frames.windows(2).any(|pair| pair[0].time_ms >= pair[1].time_ms) {
+        return Some((None, None));
     }
+    let mut probe_ready = music_length > 0;
+    let mut rush_ready = trace.has_luck && trace.filing_gate == Some(Some(M_LUCK));
     let (mut next_frame, mut query_count, mut rank_count) = (0usize, 0usize, 0usize);
     let (mut ready, mut previous, mut latest) = (None::<Ready>, None::<Query>, None::<Query>);
     let mut last_filing = None;
@@ -92,14 +120,14 @@ pub(super) fn build(
             BoundsEvent::Combo { .. } => {}
             BoundsEvent::ProbabilityReady(time) => {
                 if play.frames.get(next_frame).is_none_or(|frame| frame.time_ms != *time) {
-                    return Some(None);
+                    return Some((None, None));
                 }
                 ready = Some(Ready { time: *time, event: event_index, frame: next_frame });
                 next_frame += 1;
             }
             BoundsEvent::Query { time_ms, to } => {
                 if *to < 0 || *to > last || *to != get_frame(*time_ms).min(last) {
-                    return Some(None);
+                    return Some((None, None));
                 }
                 previous = latest;
                 latest = Some(Query {
@@ -116,10 +144,10 @@ pub(super) fn build(
             BoundsEvent::Rank { range, time_ms, percent, start, end } => {
                 rank_count += 1;
                 let (Some(a), Some(b), Some(current)) = (previous, latest, ready) else {
-                    return Some(None);
+                    return Some((None, None));
                 };
                 let Some(&(range_start, range_end)) = setup.fevers.get(*range) else {
-                    return Some(None);
+                    return Some((None, None));
                 };
                 if *start != Some(a.ordinal)
                     || *end != Some(b.ordinal)
@@ -135,27 +163,55 @@ pub(super) fn build(
                     || a.time > current.time
                     || b.time > current.time
                 {
-                    return Some(None);
+                    return Some((None, None));
                 }
                 // This is a superset of ACTUAL future probe filings, not the empty recorder's observed
                 // commands. Keep the music clamp even when the empty deck has no holder that could use it.
                 let earliest_future = play.frames.get(current.frame + 1).map(|frame| frame.time_ms.min(music_length));
+                // Use the original query event, not the note's filing event: this frame's controller
+                // updates are already reflected by Ready and may legitimately target that same note.
+                let mut future_rush_frame = None::<usize>;
+                if rush_ready {
+                    for (ordinal, event) in trace.events.iter().enumerate().skip(a.event + 1) {
+                        if ordinal.is_multiple_of(64) && cancelled() {
+                            return None;
+                        }
+                        let frame = match event {
+                            BoundsEvent::Potential { frame } => Some(*frame),
+                            BoundsEvent::Factor { frame, command } if command.luck != 0 => {
+                                if i32::try_from(*frame).ok() != Some(get_frame(command.time_ms).min(last)) {
+                                    rush_ready = false;
+                                }
+                                Some(*frame)
+                            }
+                            _ => None,
+                        };
+                        if let Some(frame) = frame {
+                            if frame >= trace.frames {
+                                rush_ready = false;
+                            }
+                            future_rush_frame = Some(future_rush_frame.map_or(frame, |old| old.min(frame)));
+                        }
+                    }
+                }
                 for (ordinal, event) in trace.events.iter().enumerate() {
                     if ordinal.is_multiple_of(64) && cancelled() {
                         return None;
                     }
                     let BoundsEvent::Note { frame, note, .. } = event else { continue };
-                    let Ok(frame) = i32::try_from(*frame) else { return Some(None) };
+                    let Ok(frame) = i32::try_from(*frame) else { return Some((None, None)) };
                     if frame != get_frame(note.time_ms).min(last) {
-                        return Some(None);
+                        return Some((None, None));
                     }
                     if a.to < frame && frame <= b.to {
-                        if ordinal >= a.event
-                            || note.time_ms > current.time
-                            || music_length <= note.time_ms
-                            || earliest_future.is_some_and(|time| time <= note.time_ms)
-                        {
-                            return Some(None);
+                        if ordinal >= a.event || note.time_ms > current.time {
+                            return Some((None, None));
+                        }
+                        if music_length <= note.time_ms || earliest_future.is_some_and(|time| time <= note.time_ms) {
+                            probe_ready = false;
+                        }
+                        if future_rush_frame.is_some_and(|future| future <= frame as usize) {
+                            rush_ready = false;
                         }
                     }
                 }
@@ -174,9 +230,9 @@ pub(super) fn build(
         || latest.is_none()
         || pending_rank
     {
-        return Some(None);
+        return Some((None, None));
     }
-    Some(Some(Geometry { _complete: () }))
+    Some((probe_ready.then_some(Geometry { _complete: () }), rush_ready.then_some(RushGeometry { _complete: () })))
 }
 
 #[cfg(test)]

@@ -636,6 +636,14 @@ impl JointFineBounds {
         let classes = std::array::from_fn(|s| self.choice_class(members[s], choices[s]));
         self.raw.as_ref()?.upper(power, members, classes, positions)
     }
+
+    pub(crate) fn raw_node_packet(&self, member: usize, choice: usize) -> Option<raw::RawNodePacket> {
+        self.raw.as_ref()?.node_packet(member, self.choice_class(member, choice))
+    }
+
+    pub(crate) fn raw_node_upper(&self, power: i64, packet: raw::RawNodePacket) -> Option<i128> {
+        self.raw.as_ref()?.node_upper(power, packet)
+    }
     /// This is bound-metadata identity, not a claim of native simulation equivalence.
     pub(crate) fn choice_class(&self, member: usize, choice: usize) -> usize {
         if choice == 0 { 0 } else { self.class_of[member][choice - 1] as usize }

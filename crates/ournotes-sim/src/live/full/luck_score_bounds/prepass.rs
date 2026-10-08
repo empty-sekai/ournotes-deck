@@ -584,6 +584,7 @@ fn prepare_policy(
         .as_ref()
         .filter(|_| capacity > 0)
         .and_then(|scope| program::identity(&mut model, scope, rush));
+    let order_hint = identity.as_ref().map(|_| program::terminal_order_hint(deck.iter()));
     // The identity above describes the fresh native model. Every request, including recipe hits, repeats
     // ordinary/full-model admission and the private no-score-feedback gate before skipping any recording.
     model.set_luck_weights(session.skills, Vec::new()).map_err(|error| (LuckRushDecline::RecorderAdmission, error))?;
@@ -616,7 +617,10 @@ fn prepare_policy(
         match recipe.evaluate(&model.score.calc, native_power, rush, cancelled) {
             Ok(Some(terminal)) => {
                 if let Some(identity) = identity
-                    && curves.programs.insert_terminal(identity, native_power, &terminal, cancelled).is_none()
+                    && curves
+                        .programs
+                        .insert_terminal(identity, native_power, &terminal, order_hint.unwrap(), cancelled)
+                        .is_none()
                 {
                     return Ok(None);
                 }
@@ -832,7 +836,14 @@ fn prepare_policy(
             match StoredTerminalTrace::encode(trace, trace_room, &mut *cancelled) {
                 Ok(trace) => {
                     let recipe = TerminalRecipe { trace, ingredients, linked, base };
-                    curves.programs.insert_terminal_recipe(identity, native_power, &terminal, recipe, cancelled)
+                    curves.programs.insert_terminal_recipe(
+                        identity,
+                        native_power,
+                        &terminal,
+                        recipe,
+                        order_hint.unwrap(),
+                        cancelled,
+                    )
                 }
                 Err(trace_drift::Decline::Cancelled) => return Ok(None),
                 Err(error) => {
@@ -845,11 +856,11 @@ fn prepare_policy(
                     let _ = error;
                     // The completed exact-power capability does not need a recipe. Codec admission and
                     // capacity cannot invalidate that independently completed result.
-                    curves.programs.insert_terminal(identity, native_power, &terminal, cancelled)
+                    curves.programs.insert_terminal(identity, native_power, &terminal, order_hint.unwrap(), cancelled)
                 }
             }
         } else {
-            curves.programs.insert_terminal(identity, native_power, &terminal, cancelled)
+            curves.programs.insert_terminal(identity, native_power, &terminal, order_hint.unwrap(), cancelled)
         };
         if retained.is_none() {
             return Ok(None);

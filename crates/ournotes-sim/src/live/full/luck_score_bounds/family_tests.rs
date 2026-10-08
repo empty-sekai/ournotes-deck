@@ -854,11 +854,17 @@ mod lazy_profile_tests;
 #[path = "family_program_tests.rs"]
 mod program_tests;
 
+#[path = "family_controller_program_tests.rs"]
+mod controller_program_tests;
+
 #[path = "family_probe_runs_tests.rs"]
 mod probe_run_tests;
 
 #[path = "family_rank_history_tests.rs"]
 mod rank_history_tests;
+
+#[path = "family_rank_rush_history_tests.rs"]
+mod rank_rush_history_tests;
 
 #[path = "score_equivalence_tests.rs"]
 mod score_equivalence_tests;

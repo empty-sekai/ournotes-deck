@@ -1,10 +1,10 @@
 //! Uniform expected-score envelopes of an admitted fixed-member controller family.
 //!
 //! These coefficients are exclusions, never candidate values. The native family owns the complete writer-profile
-//! and original-order cover and the common terminal-query mapping. Ordinary history, Rush magnitude and
-//! conversion allowances retain their original complete-domain envelopes. A separate historical-query
-//! capability may weight only the direct probe's ideal rank contribution. Integer probe-work evidence may
-//! tighten the unweighted floating-point drift allowance for the actual five physical bindings.
+//! and original-order cover and the common terminal-query mapping. Separate historical-query capabilities
+//! may weight the ideal Rush and direct-probe rank contributions. Ordinary window/magnitude, conversion and
+//! integer-rank allowances remain intact; integer probe-work evidence may tighten only the unweighted
+//! floating-point drift allowance for the actual five physical bindings.
 
 use super::*;
 use ournotes_sim::live::{
@@ -46,6 +46,8 @@ pub(crate) struct ProfileRewardTemplate {
     /// Original terminal coefficient without/with the unconditional native Rush allowance.
     terminal: Vec<[f64; 2]>,
     history: Vec<f64>,
+    /// Rank-only upper multiplier compiled directly from the original rank envelope, never H / Rush.
+    rank_extra: Vec<f64>,
     z: Vec<f64>,
     jp: Vec<[f64; 5]>,
     class_of: Vec<Vec<usize>>,
@@ -95,18 +97,37 @@ pub(crate) struct FamilyProfileReward {
     /// Diagnostic upper-coefficient reduction for a unit probe covering every note, averaged over all 120 labels.
     /// This is neither an actual binding's saved score nor native work avoided.
     pub(crate) mean_unit_probe_history_reduction: f64,
+    /// Original labels with the independent complete historical Rush-filing certificate.
+    pub(crate) rank_rush_history_ready_orders: usize,
+    /// Mean reduction of the full-chart base coefficient from Rush-history weighting alone; no power,
+    /// physical reward amplitude or native error allowance is included in this diagnostic.
+    pub(crate) mean_base_rush_history_reduction: f64,
+}
+
+/// Tests may disable either independent capability; no selection can grant unproved readiness.
+#[derive(Clone, Copy)]
+struct HistorySelection {
+    probe: bool,
+    rush: bool,
+}
+
+impl HistorySelection {
+    const ALL: Self = Self { probe: true, rush: true };
 }
 
 /// Reward arithmetic for one immutable complete probability result, with every physical choice at all five
 /// positions. The Arc identity authorizes `joint_at` and original-frame probe masks under this bind call's fixed
-/// template, members, gate and lifecycle admission. It certifies no program/path equivalence; every original
-/// profile/order still contributes its own scalar, integer work maximum and coverage label.
+/// template, members, gate, lifecycle and history selection. Rush readiness is additionally compared at
+/// lookup. It certifies no program/path equivalence; every original profile/order still contributes its own
+/// scalar, integer work maximum and coverage label.
 struct CurveRewards {
     a0: f64,
     base_a0: f64,
     probe_runs: Option<u64>,
     rank_probe_history_ready: bool,
     unit_probe_history_reduction: f64,
+    rank_rush_history_ready: bool,
+    base_rush_history_reduction: f64,
     gains: [Vec<[f64; 5]>; 5],
 }
 
@@ -153,8 +174,13 @@ impl<'a> CurveRewardCache<'a> {
                 .is_some_and(|bytes| bytes <= self.byte_limit)
     }
 
-    fn get(&self, law: &LuckFamilyOrderLaw) -> Option<&CurveRewards> {
-        self.entries.iter().find(|entry| entry.law.shares_joint_curve(law)).map(|entry| &entry.reward)
+    fn get(&self, law: &LuckFamilyOrderLaw, rank_rush_history_ready: bool) -> Option<&CurveRewards> {
+        self.entries
+            .iter()
+            .find(|entry| {
+                entry.reward.rank_rush_history_ready == rank_rush_history_ready && entry.law.shares_joint_curve(law)
+            })
+            .map(|entry| &entry.reward)
     }
 
     fn insert(&mut self, law: &'a LuckFamilyOrderLaw, reward: CurveRewards) {
@@ -180,6 +206,8 @@ struct ProfileSums {
     max_probe_runs: Option<u64>,
     rank_probe_history_ready_orders: usize,
     unit_probe_history_reduction: F64Interval,
+    rank_rush_history_ready_orders: usize,
+    base_rush_history_reduction: F64Interval,
     gains: [Vec<F64Interval>; 5],
 }
 
@@ -197,6 +225,8 @@ impl ProfileSums {
             max_probe_runs: None,
             rank_probe_history_ready_orders: 0,
             unit_probe_history_reduction: F64Interval::ZERO,
+            rank_rush_history_ready_orders: 0,
+            base_rush_history_reduction: F64Interval::ZERO,
             gains,
         })
     }
@@ -229,6 +259,9 @@ impl ProfileSums {
         self.rank_probe_history_ready_orders += usize::from(reward.rank_probe_history_ready);
         self.unit_probe_history_reduction =
             self.unit_probe_history_reduction.add(point(reward.unit_probe_history_reduction)?);
+        self.rank_rush_history_ready_orders += usize::from(reward.rank_rush_history_ready);
+        self.base_rush_history_reduction =
+            self.base_rush_history_reduction.add(point(reward.base_rush_history_reduction)?);
         for (slot, sums) in self.gains.iter_mut().enumerate() {
             if sums.len() != reward.gains[slot].len() {
                 return None;
@@ -258,6 +291,8 @@ impl ProfileSums {
             max_probe_runs: self.max_probe_runs,
             rank_probe_history_ready_orders: self.rank_probe_history_ready_orders,
             mean_unit_probe_history_reduction: uniform_upper(self.unit_probe_history_reduction)?,
+            rank_rush_history_ready_orders: self.rank_rush_history_ready_orders,
+            mean_base_rush_history_reduction: uniform_upper(self.base_rush_history_reduction)?,
         })
     }
 }
@@ -336,6 +371,63 @@ fn pair_reward_with_history(
     Some(gain)
 }
 
+/// The previous probe-history envelope remains complete, including its unweighted normal history and its explicit
+/// direct-probe min. A Rush-ready envelope must beat that entire pair (ordinary/judgement terms included).
+struct RewardPrefixes<'a> {
+    normal: &'a [Vec<F64Interval>; 5],
+    probe: &'a [F64Interval],
+    previous_normal: &'a [Vec<F64Interval>; 5],
+    previous_probe: &'a [F64Interval],
+    original_probe: Option<&'a [F64Interval]>,
+    rush_ready: bool,
+}
+
+impl RewardPrefixes<'_> {
+    fn gain(&self, row: &Pair, probe_enabled: bool, cancelled: &mut impl FnMut() -> bool) -> Option<f64> {
+        let previous = pair_reward_with_history(
+            row,
+            self.previous_normal,
+            self.previous_probe,
+            self.original_probe,
+            probe_enabled,
+            cancelled,
+        )?;
+        if self.rush_ready && row.opaque.is_none() {
+            Some(previous.min(pair_reward(row, self.normal, self.probe, probe_enabled, cancelled)?))
+        } else {
+            Some(previous)
+        }
+    }
+}
+
+struct HistoryCoefficients {
+    normal: F64Interval,
+    probe: F64Interval,
+    previous_probe: F64Interval,
+}
+
+fn history_coefficients(
+    history: f64,
+    extra: f64,
+    weighted: F64Interval,
+    weighted_probe: F64Interval,
+    probe_mass: F64Interval,
+    probe_ready: bool,
+    rush_ready: bool,
+) -> Option<HistoryCoefficients> {
+    let full = point(history)?;
+    let possible = F64Interval::new(0.0, history).ok()?;
+    let previous_probe = if probe_ready { full.multiply(probe_mass).intersect(possible)? } else { full };
+    let normal = if rush_ready { point(extra)?.multiply(weighted).intersect(possible)? } else { full };
+    let probe = match (probe_ready, rush_ready) {
+        (true, true) => point(extra)?.multiply(weighted_probe).intersect(possible)?,
+        // Rush readiness alone grants no historical probe class: keep its entire possible amplitude.
+        (false, true) => normal,
+        (_, false) => previous_probe,
+    };
+    Some(HistoryCoefficients { normal, probe, previous_probe })
+}
+
 impl ProfileRewardTemplate {
     pub(crate) fn compile(live: &SnapLive<'_>) -> Result<Rc<Self>, crate::search::telemetry::FamilyTemplateRefusal> {
         use crate::search::telemetry::FamilyTemplateRefusal as Refusal;
@@ -365,7 +457,7 @@ impl ProfileRewardTemplate {
             .checked_add(2 * std::mem::size_of::<usize>())
             .ok_or(Refusal::CapacityArithmetic)?
             .checked_add(
-                n.checked_mul(std::mem::size_of::<i32>() + 9 * std::mem::size_of::<f64>())
+                n.checked_mul(std::mem::size_of::<i32>() + 10 * std::mem::size_of::<f64>())
                     .ok_or(Refusal::CapacityArithmetic)?,
             )
             .ok_or(Refusal::CapacityArithmetic)?;
@@ -373,6 +465,7 @@ impl ProfileRewardTemplate {
             return Err(Refusal::Capacity);
         }
         let mut history = reserve(n).ok_or(Refusal::Allocation)?;
+        let mut rank_extra = reserve(n).ok_or(Refusal::Allocation)?;
         let mut jp = reserve(n).ok_or(Refusal::Allocation)?;
         for e in 0..n {
             let [plain, rush] = live.coef.family_terminal[e];
@@ -384,6 +477,7 @@ impl ProfileRewardTemplate {
             }
             point(plain).ok_or(Refusal::CoefficientDomain)?;
             let extra = point(live.fine.rank[e]).ok_or(Refusal::CoefficientDomain)?.subtract(F64Interval::ONE);
+            rank_extra.push(finite_nonnegative(extra.upper()).ok_or(Refusal::CoefficientDomain)?);
             history.push(
                 finite_nonnegative(point(rush).ok_or(Refusal::CoefficientDomain)?.multiply(extra).upper())
                     .ok_or(Refusal::CoefficientDomain)?,
@@ -479,6 +573,7 @@ impl ProfileRewardTemplate {
             times: copy_slice(&live.coef.times).ok_or(Refusal::Allocation)?,
             terminal: copy_slice(&live.coef.family_terminal).ok_or(Refusal::Allocation)?,
             history,
+            rank_extra,
             z: copy_slice(&live.coef.z).ok_or(Refusal::Allocation)?,
             jp,
             class_of,
@@ -500,6 +595,7 @@ impl ProfileRewardTemplate {
             vector_bytes(&self.times)?,
             vector_bytes(&self.terminal)?,
             vector_bytes(&self.history)?,
+            vector_bytes(&self.rank_extra)?,
             vector_bytes(&self.z)?,
             vector_bytes(&self.jp)?,
             vector_bytes(&self.class_of)?,
@@ -561,6 +657,7 @@ impl ProfileRewardTemplate {
             family.orders(),
             family.probe_gate() == Some(MISSION_LUCK),
             None,
+            HistorySelection::ALL,
             cache_entries,
             cache_bytes,
             cancelled,
@@ -608,13 +705,32 @@ impl ProfileRewardTemplate {
         profile: &LuckFamilyProfile,
         cancelled: &mut impl FnMut() -> bool,
     ) -> Option<FamilyProfileReward> {
+        self.bind_profile_with_history(members, domain, profile, true, true, cancelled)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bind_profile_with_history(
+        &self,
+        members: [usize; 5],
+        domain: &LuckFamilyDomain,
+        profile: &LuckFamilyProfile,
+        probe_history: bool,
+        rush_history: bool,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Option<FamilyProfileReward> {
         if !domain.owns_profile(profile)
             || domain.note_times() != self.times
             || profile.orders().len() != crate::search::uniform::ORDERS
         {
             return None;
         }
-        self.bind_complete_profile(members, profile, domain.probe_gate(), cancelled)
+        self.bind_complete_profile(
+            members,
+            profile,
+            domain.probe_gate(),
+            HistorySelection { probe: probe_history, rush: rush_history },
+            cancelled,
+        )
     }
 
     pub(crate) fn bind_budgeted_profile(
@@ -630,7 +746,7 @@ impl ProfileRewardTemplate {
         {
             return None;
         }
-        self.bind_complete_profile(members, profile, domain.probe_gate(), cancelled)
+        self.bind_complete_profile(members, profile, domain.probe_gate(), HistorySelection::ALL, cancelled)
     }
 
     fn bind_complete_profile(
@@ -638,6 +754,7 @@ impl ProfileRewardTemplate {
         members: [usize; 5],
         profile: &LuckFamilyProfile,
         probe_gate: Option<i64>,
+        history_selection: HistorySelection,
         cancelled: &mut impl FnMut() -> bool,
     ) -> Option<FamilyProfileReward> {
         let mut bound = self.bind_laws(
@@ -646,6 +763,7 @@ impl ProfileRewardTemplate {
             profile.orders(),
             probe_gate == Some(MISSION_LUCK),
             Some(profile),
+            history_selection,
             MAX_CURVE_REWARDS,
             MAX_CURVE_REWARD_BYTES,
             cancelled,
@@ -661,6 +779,7 @@ impl ProfileRewardTemplate {
         laws: &[LuckFamilyOrderLaw],
         probe_enabled: bool,
         probe_profile: Option<&LuckFamilyProfile>,
+        history_selection: HistorySelection,
         cache_entries: usize,
         cache_bytes: usize,
         cancelled: &mut impl FnMut() -> bool,
@@ -677,11 +796,14 @@ impl ProfileRewardTemplate {
         }
         let n = self.times.len();
         let mut normal: [Vec<F64Interval>; 5] = std::array::from_fn(|_| Vec::new());
+        let mut previous_normal: [Vec<F64Interval>; 5] = std::array::from_fn(|_| Vec::new());
         let mut probe = reserve(n + 1)?;
         probe.resize(n + 1, F64Interval::ZERO);
+        let mut previous_probe = reserve(n + 1)?;
+        previous_probe.resize(n + 1, F64Interval::ZERO);
         let mut original_probe = reserve(n + 1)?;
         original_probe.resize(n + 1, F64Interval::ZERO);
-        for prefix in &mut normal {
+        for prefix in normal.iter_mut().chain(&mut previous_normal) {
             prefix.try_reserve_exact(n + 1).ok()?;
             prefix.resize(n + 1, F64Interval::ZERO);
         }
@@ -692,18 +814,25 @@ impl ProfileRewardTemplate {
             }
             let sums = profiles.get_mut(profile_ids.iter().position(|&id| id == law.profile)?)?;
             sums.record(&law.positions)?;
-            if let Some(reward) = rewards.get(law) {
+            let rank_rush_history_ready = history_selection.rush
+                && probe_profile.is_some_and(|profile| profile.order_rank_rush_history_ready(law_index));
+            // Rush geometry is checked explicitly. Probe readiness and integer work follow from the same
+            // immutable complete result's original transition masks under this bind's unchanged physical
+            // phase/lifecycle/mapping and HistorySelection; a hit cannot transport them to another bind.
+            if let Some(reward) = rewards.get(law, rank_rush_history_ready) {
                 sums.add_curve(&law.positions, reward)?;
                 continue;
             }
-            for row in &mut normal {
+            for row in normal.iter_mut().chain(&mut previous_normal) {
                 row[0] = F64Interval::ZERO;
             }
             probe[0] = F64Interval::ZERO;
+            previous_probe[0] = F64Interval::ZERO;
             original_probe[0] = F64Interval::ZERO;
             let probe_certificates = probe_profile.and_then(|profile| profile.order_probe_certificates(law_index));
             let probe_runs = probe_certificates.map(|(runs, _)| runs);
-            let rank_probe_history_ready = probe_enabled && probe_certificates.is_some_and(|(_, ready)| ready);
+            let rank_probe_history_ready =
+                probe_enabled && history_selection.probe && probe_certificates.is_some_and(|(_, ready)| ready);
             for e in 0..n {
                 if e.is_multiple_of(64) && cancelled() {
                     return None;
@@ -719,34 +848,53 @@ impl ProfileRewardTemplate {
                         probe_mass = probe_mass.add(mass.interval());
                     }
                 }
-                let k = point(self.history[e])?.add(weighted).multiply(point(self.z[e])?);
                 let history = point(self.history[e])?;
-                // Only a historical QUERY/FILING capability permits this probability factor. The Rush
-                // multiplier inside `history` stays unconditional; ordinary history and the complete
-                // native error offset remain independent of this terminal/direct-probe probability.
-                let probe_history = if rank_probe_history_ready {
-                    history.multiply(probe_mass).intersect(F64Interval::new(0.0, self.history[e]).ok()?)?
-                } else {
-                    history
-                };
-                let kp = probe_history.add(weighted_probe).multiply(point(self.z[e])?);
+                // Separate complete historical filing witnesses authorize the two bits. No product of
+                // marginals is used, and neither conversion budgets nor native error is probability-scaled.
+                let coefficients = history_coefficients(
+                    self.history[e],
+                    self.rank_extra[e],
+                    weighted,
+                    weighted_probe,
+                    probe_mass,
+                    rank_probe_history_ready,
+                    rank_rush_history_ready,
+                )?;
+                let k = coefficients.normal.add(weighted).multiply(point(self.z[e])?);
+                let previous_k = history.add(weighted).multiply(point(self.z[e])?);
+                let kp = coefficients.probe.add(weighted_probe).multiply(point(self.z[e])?);
+                let previous_kp = coefficients.previous_probe.add(weighted_probe).multiply(point(self.z[e])?);
                 let original_kp = history.add(weighted_probe).multiply(point(self.z[e])?);
                 for (j, prefix) in normal.iter_mut().enumerate() {
                     prefix[e + 1] = prefix[e].add(k.multiply(point(self.jp[e][j])?));
+                    previous_normal[j][e + 1] = previous_normal[j][e].add(previous_k.multiply(point(self.jp[e][j])?));
                 }
                 probe[e + 1] = probe[e].add(kp.multiply(point(self.jp[e][0])?));
+                previous_probe[e + 1] = previous_probe[e].add(previous_kp.multiply(point(self.jp[e][0])?));
                 original_probe[e + 1] = original_probe[e].add(original_kp.multiply(point(self.jp[e][0])?));
             }
-            let base_a0 = finite_nonnegative(normal[0][n].upper())?;
-            let a0 = finite_nonnegative(normal[0][n].add(point(self.offset)?).upper())?;
+            let previous_base = finite_nonnegative(previous_normal[0][n].upper())?;
+            let base_a0 = finite_nonnegative(normal[0][n].upper())?.min(previous_base);
+            let a0 = finite_nonnegative(normal[0][n].add(point(self.offset)?).upper())?
+                .min(finite_nonnegative(previous_normal[0][n].add(point(self.offset)?).upper())?);
+            let base_rush_history_reduction =
+                if rank_rush_history_ready { (previous_base - base_a0).max(0.0) } else { 0.0 };
             let unit_probe_history_reduction = if rank_probe_history_ready {
                 // Compare the two actually used upper endpoints, not overlapping interval widths: an
                 // unchanged envelope must not register a positive diagnostic discount from roundoff alone.
-                finite_nonnegative((original_probe[n].upper() - probe[n].upper()).max(0.0))?
+                // Preserve the existing probe-history diagnostic: direct-probe readiness alone, before Rush weighting.
+                finite_nonnegative((original_probe[n].upper() - previous_probe[n].upper()).max(0.0))?
             } else {
                 0.0
             };
-            let original = rank_probe_history_ready.then_some(original_probe.as_slice());
+            let prefixes = RewardPrefixes {
+                normal: &normal,
+                probe: &probe,
+                previous_normal: &previous_normal,
+                previous_probe: &previous_probe,
+                original_probe: rank_probe_history_ready.then_some(original_probe.as_slice()),
+                rush_ready: rank_rush_history_ready,
+            };
             if rewards.can_store(counts) {
                 let prepared = self.curve_rewards(
                     members,
@@ -755,9 +903,9 @@ impl ProfileRewardTemplate {
                     probe_runs,
                     rank_probe_history_ready,
                     unit_probe_history_reduction,
-                    &normal,
-                    &probe,
-                    original,
+                    rank_rush_history_ready,
+                    base_rush_history_reduction,
+                    &prefixes,
                     probe_enabled,
                     cancelled,
                 );
@@ -778,12 +926,15 @@ impl ProfileRewardTemplate {
             sums.rank_probe_history_ready_orders += usize::from(rank_probe_history_ready);
             sums.unit_probe_history_reduction =
                 sums.unit_probe_history_reduction.add(point(unit_probe_history_reduction)?);
+            sums.rank_rush_history_ready_orders += usize::from(rank_rush_history_ready);
+            sums.base_rush_history_reduction =
+                sums.base_rush_history_reduction.add(point(base_rush_history_reduction)?);
             for slot in 0..5 {
                 let member = members[slot];
                 let position = law.positions[slot];
                 for (choice, &class) in self.class_of[member].iter().enumerate() {
                     let row = self.pairs.get(member)?.get(class)?.get(position)?;
-                    let gain = pair_reward_with_history(row, &normal, &probe, original, probe_enabled, cancelled)?;
+                    let gain = prefixes.gain(row, probe_enabled, cancelled)?;
                     sums.gains[slot][choice] = sums.gains[slot][choice].add(point(gain)?);
                 }
             }
@@ -814,9 +965,9 @@ impl ProfileRewardTemplate {
         probe_runs: Option<u64>,
         rank_probe_history_ready: bool,
         unit_probe_history_reduction: f64,
-        normal: &[Vec<F64Interval>; 5],
-        probe: &[F64Interval],
-        original_probe: Option<&[F64Interval]>,
+        rank_rush_history_ready: bool,
+        base_rush_history_reduction: f64,
+        prefixes: &RewardPrefixes<'_>,
         probe_enabled: bool,
         cancelled: &mut impl FnMut() -> bool,
     ) -> Option<CurveRewards> {
@@ -831,12 +982,21 @@ impl ProfileRewardTemplate {
                 let rows = self.pairs.get(member)?.get(class)?;
                 let mut values = [0.0; 5];
                 for (value, row) in values.iter_mut().zip(rows) {
-                    *value = pair_reward_with_history(row, normal, probe, original_probe, probe_enabled, cancelled)?;
+                    *value = prefixes.gain(row, probe_enabled, cancelled)?;
                 }
                 gains[slot].push(values);
             }
         }
-        Some(CurveRewards { a0, base_a0, probe_runs, rank_probe_history_ready, unit_probe_history_reduction, gains })
+        Some(CurveRewards {
+            a0,
+            base_a0,
+            probe_runs,
+            rank_probe_history_ready,
+            unit_probe_history_reduction,
+            rank_rush_history_ready,
+            base_rush_history_reduction,
+            gains,
+        })
     }
 }
 
@@ -857,6 +1017,62 @@ impl FamilyProfileTable {
 #[cfg(test)]
 mod profile_mean_tests {
     use super::*;
+
+    #[test]
+    fn rank_rush_history_weights_the_joint_law_and_preserves_each_missing_capability() {
+        // Half the paths have a probe without Rush; half have Rush without a probe. Terminal factors are
+        // 1 and 2, and rank-extra is 3. A product of marginal probabilities would give the wrong joint term.
+        let weighted = point(1.5).unwrap();
+        let weighted_probe = point(0.5).unwrap();
+        let probe_mass = point(0.5).unwrap();
+        for (probe, rush, normal, specific) in
+            [(false, false, 6.0, 6.0), (true, false, 6.0, 3.0), (false, true, 4.5, 4.5), (true, true, 4.5, 1.5)]
+        {
+            let result = history_coefficients(6.0, 3.0, weighted, weighted_probe, probe_mass, probe, rush).unwrap();
+            assert!(result.normal.contains(normal));
+            assert!(result.probe.contains(specific));
+            assert!(result.previous_probe.contains(if probe { 3.0 } else { 6.0 }));
+            if !probe {
+                assert_eq!(result.probe, result.normal);
+            }
+            if !rush {
+                assert_eq!(result.probe, result.previous_probe);
+            }
+            if probe && rush {
+                assert!(result.probe.upper() < 2.25, "do not multiply independent marginals");
+            }
+        }
+        let no_rush =
+            history_coefficients(6.0, 3.0, F64Interval::ONE, F64Interval::ZERO, F64Interval::ZERO, false, true)
+                .unwrap();
+        assert!(no_rush.normal.contains(3.0), "Rush expectation includes the no-Rush base coefficient");
+        assert_eq!(no_rush.probe, no_rush.normal, "missing probe filing proof keeps its entire possible amplitude");
+    }
+
+    #[test]
+    fn rank_rush_history_keeps_the_entire_previous_pair_and_unchanged_budget() {
+        let row = Pair {
+            terms: vec![Term { lo: 0, hi: 1, note: 1.0, judge: [1.0, 0.0, 0.0, 0.0], probe: false }],
+            budget: 7.0,
+            opaque: None,
+            work: None,
+        };
+        let previous: [Vec<F64Interval>; 5] = std::array::from_fn(|_| vec![F64Interval::ZERO, point(2.0).unwrap()]);
+        let wider: [Vec<F64Interval>; 5] = std::array::from_fn(|_| vec![F64Interval::ZERO, point(3.0).unwrap()]);
+        let probe = vec![F64Interval::ZERO, point(4.0).unwrap()];
+        let prefixes = RewardPrefixes {
+            normal: &wider,
+            probe: &probe,
+            previous_normal: &previous,
+            previous_probe: &probe,
+            original_probe: None,
+            rush_ready: true,
+        };
+        let old = pair_reward(&row, &previous, &probe, true, &mut || false).unwrap();
+        assert_eq!(prefixes.gain(&row, true, &mut || false), Some(old));
+        assert!(old >= 11.0, "the fixed conversion/unclassified budget is never probability-weighted");
+        assert!(prefixes.gain(&row, true, &mut || true).is_none());
+    }
 
     fn table_bits(table: &FamilyRewardTable) -> Vec<u64> {
         let mut bits = vec![table.eps.to_bits(), table.global.to_bits()];
@@ -936,11 +1152,14 @@ mod profile_mean_tests {
                 probe_runs: None,
                 rank_probe_history_ready: false,
                 unit_probe_history_reduction: 0.0,
+                rank_rush_history_ready: false,
+                base_rush_history_reduction: 0.0,
                 gains: std::array::from_fn(|_| Vec::new()),
             },
         );
-        assert_eq!(cache.get(shared).unwrap().a0, 123.0);
-        assert!(cache.get(different).is_none());
+        assert_eq!(cache.get(shared, false).unwrap().a0, 123.0);
+        assert!(cache.get(shared, true).is_none(), "same complete curve cannot substitute different Rush readiness");
+        assert!(cache.get(different, false).is_none());
         assert!(cache.bytes().unwrap() <= MAX_CURVE_REWARD_BYTES);
         assert!(!CurveRewardCache::new(0, MAX_CURVE_REWARD_BYTES).can_store([0; 5]));
         assert!(!CurveRewardCache::new(MAX_CURVE_REWARDS, 0).can_store([0; 5]));

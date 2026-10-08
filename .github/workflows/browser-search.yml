@@ -10,8 +10,8 @@ on:
       corpus:
         description: Declared completion corpus
         type: choice
-        options: [all, synthetic, full48]
-        default: all
+        options: [real, full48, reported, all, synthetic]
+        default: real
         required: true
       repeats:
         description: Serial measurements per request and runtime
@@ -61,7 +61,7 @@ jobs:
       - name: Select immutable request shards
         id: plan
         env:
-          CORPUS: ${{ inputs.corpus || (contains(github.event.pull_request.labels.*.name, 'browser-full-matrix') && 'all' || 'smoke') }}
+          CORPUS: ${{ inputs.corpus || (contains(github.event.pull_request.labels.*.name, 'browser-full-matrix') && 'real' || 'smoke') }}
           REPEATS: ${{ inputs.repeats || '1' }}
         run: |
           mkdir -p work
@@ -73,7 +73,8 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               for key, value in [('matrix', json.dumps(plan['matrix'], separators=(',', ':'))),
                                  ('mode', plan['mode']), ('source', source), ('repeats', os.environ['REPEATS']),
-                                 ('synthetic', str(plan['needSynthetic']).lower()), ('real', str(plan['needReal']).lower())]:
+                                 ('synthetic', str(plan['needSynthetic']).lower()), ('real', str(plan['needReal']).lower()),
+                                 ('full48', str(plan['needFull48']).lower()), ('reported', str(plan['needReported']).lower())]:
                   output.write(f'{key}={value}\n')
           PY
       - name: Check harness contracts
@@ -85,13 +86,14 @@ jobs:
           key: browser-matrix-data-${{ hashFiles('tools/search-harness/fixtures/full48/source.json') }}
       - name: Build native harness and same-source recommendation WASM
         run: |
-          cargo build --release --locked --manifest-path tools/search-harness/Cargo.toml --bin benchmark_prepare --bin profile_case
+          cargo build --release --locked --manifest-path tools/search-harness/Cargo.toml --bin benchmark_prepare --bin profile_case --bin reported_projection
           cargo build --release --locked --target wasm32-unknown-unknown --manifest-path wasm/recommend/Cargo.toml
           bindgen_version=$(python3 -c 'import tomllib; print(tomllib.load(open("wasm/recommend/Cargo.toml", "rb"))["dependencies"]["wasm-bindgen"].removeprefix("="))')
           cargo install wasm-bindgen-cli --version "$bindgen_version" --locked
           wasm-bindgen --target web --out-dir work/browser-bundle/pkg wasm/recommend/target/wasm32-unknown-unknown/release/ournotes_recommend_wasm.wasm
           mkdir -p work/browser-bundle/bin
           cp tools/search-harness/target/release/profile_case work/browser-bundle/bin/profile_case
+          cp tools/search-harness/target/release/reported_projection work/browser-bundle/bin/reported_projection
       - name: Export the complete synthetic completion corpus
         if: steps.plan.outputs.synthetic == 'true'
         env:
@@ -100,10 +102,15 @@ jobs:
           cargo test --release --locked --test adapter_fixture_export export_luck_search_benchmarks -- --ignored --exact
           node tools/search-harness/browser-ci.cjs bundle work/synthetic-inputs/benchmark.json work/browser-bundle
       - name: Materialize the complete pinned real-chart matrix
-        if: steps.plan.outputs.real == 'true'
+        if: steps.plan.outputs.full48 == 'true'
         run: |
           python3 tools/search-harness/matrix.py prepare --suite full48 --cases all --no-build --cache-dir work/dataset-cache --out work/full48-inputs
           node tools/search-harness/browser-ci.cjs bundle work/full48-inputs/benchmark.json work/browser-bundle
+      - name: Materialize the original issue 9 request and audited full inventory
+        if: steps.plan.outputs.reported == 'true'
+        run: |
+          python3 tools/search-harness/reported.py prepare --no-build --cache-dir work/dataset-cache --out work/reported-inputs
+          node tools/search-harness/browser-ci.cjs bundle work/reported-inputs/benchmark.json work/browser-bundle
       - name: Record source and artifact identities
         run: |
           cp work/browser-plan.json work/browser-bundle/plan.json

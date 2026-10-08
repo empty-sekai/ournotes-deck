@@ -219,6 +219,19 @@ fn paired_leaders(pool: &super::Pool, domain: &CandidateDomain, d: &PhysicalDeck
         .collect()
 }
 
+fn reusable_leader_family(e: &Engine<'_, '_>, physical: &PhysicalDeck) -> Result<bool, Error> {
+    if !matches!(e.metric, crate::types::Metric::Score) || e.limits.cache_entries == 0 {
+        return Ok(false);
+    }
+    if e.certified.is_some() {
+        return Ok(true);
+    }
+    // A deterministic cold group must not add four native replays merely to create reuse. Propose
+    // its other leaders only after the first required evaluation retained every original order.
+    let input = super::expectation::context(e.pool, physical, &e.request.objective)?;
+    Ok(e.programs.has_complete(physical.members, &input.performers))
+}
+
 /// The best distinct decks by leaf bound seen by the local search.
 struct Shortlist {
     rows: Vec<((i128, i64), PhysicalDeck)>,
@@ -354,7 +367,8 @@ impl Engine<'_, '_> {
 /// Certified requests allow POOL proposals for a domain with one empty Snap binding,
 /// POOL for bounded score targets, and min(K, DIVES) otherwise.
 /// Cached certified score searches try the best legal leader variants of each dive within those same
-/// proposal and time allowances. Each proposal still evaluates all orders or receives an ordinary leaf proof.
+/// proposal and time allowances. Deterministic score searches do so only with a complete retained native
+/// program. Each proposal still evaluates all orders or receives an ordinary leaf proof.
 /// The complete-domain traversal handles subsequent candidates.
 pub(super) fn seed(e: &mut Engine<'_, '_>) -> Result<(), Error> {
     let Some(w) = e.warm.take() else { return Ok(()) };
@@ -429,7 +443,7 @@ fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>, deadline: Option<Instant>) -
             return Ok(());
         }
         shortlist.offer(value, current);
-        if e.certified.is_some() && matches!(e.metric, crate::types::Metric::Score) && e.limits.cache_entries > 0 {
+        if reusable_leader_family(e, &current)? {
             let mut family = Vec::new();
             for next in paired_leaders(e.pool, w.domain, &current) {
                 if paused(e) {

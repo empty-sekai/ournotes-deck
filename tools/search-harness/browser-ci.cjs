@@ -20,31 +20,73 @@ const safeName = name => {
   assert.match(name, /^[A-Za-z0-9_-]+$/);
   return name;
 };
-const requestContract = text => {
+const reportedName = 'issue9-battle-original';
+const reportedHashes = {
+  request: '38c2f8fb0d46ec60b5d2da9786a1efccd8b7d7107bd68a2b8785c24fd93dd3c3',
+  roster: '8aa45d2746a424bf12ccd2f060453007a5c593b3c7a0d6235e924fd59eef0309',
+};
+const requestContract = (text, suite = 'synthetic', name = 'short-score') => {
+  assert(['synthetic', 'full48', 'reported'].includes(suite), 'unknown request suite');
   const request = JSON.parse(text);
   assert.equal(request.format, 'ournotes-deck.search-request/1');
   assert.equal(request.execution?.kind, 'live', 'played Live request required');
-  assert.equal(request.k, 3, 'the declared K must remain 3');
+  assert.equal(request.k, suite === 'reported' ? 5 : 3, 'the original suite K must be preserved');
+  assert.equal(request.limits?.cacheEntries, suite === 'reported' ? 2048
+    : suite === 'synthetic' && name === 'short-score-cache0' ? 0 : 1024, 'the original cache limit must be preserved');
   assert.equal(request.limits?.timeLimitMs, 60000, 'the declared search budget must remain 60,000 ms');
   assert.equal(request.limits?.maxCandidates, null, 'no candidate limit may be introduced');
   assert.deepEqual(request.constraints, {}, 'the complete declared candidate domain must remain available');
+  if (suite === 'reported') {
+    assert.equal(name, reportedName, 'only the fixed original reported case is admitted');
+    assert.equal(sha(text), reportedHashes.request, 'every original reported request byte must be preserved');
+  }
   return request;
 };
 
 function plan(mode) {
-  assert(['smoke', 'all', 'synthetic', 'full48'].includes(mode), 'unknown CI corpus selection');
+  assert(['smoke', 'all', 'synthetic', 'full48', 'real', 'reported'].includes(mode), 'unknown CI corpus selection');
   const include = mode === 'smoke' ? [
-    { name: 'synthetic-smoke', suite: 'synthetic', cases: 'short-score,short-probability,short-capped,short-life,short-free,short-no-luck',
-      expectedCases: 6, requireComplete: 'short-score,short-free,short-no-luck' },
     { name: 'real-smoke', suite: 'full48', cases: 'short-newcomer-score', expectedCases: 1, requireComplete: 'none' },
+    { name: 'reported-smoke', suite: 'reported', cases: 'all', expectedCases: 1, requireComplete: 'none' },
   ] : [
-    ...(mode !== 'full48' ? [{ name: 'synthetic', suite: 'synthetic', cases: 'all', expectedCases: 16, requireComplete: 'all' }] : []),
-    ...(mode !== 'synthetic' ? ['newcomer', 'midcore', 'veteran'].map(profile => ({
+    ...(['all', 'synthetic'].includes(mode) ? [{ name: 'synthetic', suite: 'synthetic', cases: 'all', expectedCases: 16, requireComplete: 'all' }] : []),
+    ...(['all', 'full48', 'real'].includes(mode) ? ['newcomer', 'midcore', 'veteran'].map(profile => ({
       name: `full48-${profile}`, suite: 'full48', cases: `profile:${profile}`, expectedCases: 16, requireComplete: 'all',
     })) : []),
+    ...(['all', 'real', 'reported'].includes(mode) ? [{ name: 'reported', suite: 'reported', cases: 'all',
+      expectedCases: 1, requireComplete: 'all' }] : []),
   ];
   return { mode, needSynthetic: include.some(row => row.suite === 'synthetic'),
-    needReal: include.some(row => row.suite === 'full48'), matrix: { include } };
+    needReal: include.some(row => row.suite === 'full48' || row.suite === 'reported'),
+    needFull48: include.some(row => row.suite === 'full48'), needReported: include.some(row => row.suite === 'reported'),
+    matrix: { include } };
+}
+
+const suiteOf = manifest => manifest.synthetic === true ? 'synthetic' : manifest.matrixId;
+function reportedEvidence(root, hashes) {
+  assert.equal(hashes.request, reportedHashes.request, 'reported original request identity');
+  assert.equal(hashes.roster, reportedHashes.roster, 'reported original roster identity');
+  const source = json(path.join(__dirname, 'fixtures/full48/source.json'));
+  assert.equal(hashes.data, source.deckData.sha256, 'reported corpus uses its explicitly selected TW pin');
+  const receipt = json(path.join(root, 'preparation-receipt.json'));
+  assert.equal(receipt.format, 'ournotes-deck.reported-preparation/1');
+  assert.equal(receipt.nativeProjectionPassed, true, 'reported inputs require a successful native projection');
+  assert.equal(receipt.source.datasetId, hashes.data);
+  for (const field of ['request', 'roster', 'snapshot']) assert.equal(receipt.inputSha256[field], hashes[field]);
+  assert.equal(receipt.sourceProvenanceSha256, sha(fs.readFileSync(path.join(root, 'provenance.json'))));
+  assert.equal(receipt.auditSha256, sha(fs.readFileSync(path.join(root, 'projection-audit.json'))));
+  assert.match(receipt.auditBinarySha256, /^[a-f0-9]{64}$/);
+  const provenance = json(path.join(root, 'provenance.json'));
+  assert.equal(provenance.case, reportedName);
+  assert.equal(provenance.originalDatasetIdentityProvided, false);
+  assert.deepEqual(provenance.sha256, reportedHashes);
+  const audit = json(path.join(root, 'projection-audit.json'));
+  assert.equal(audit.format, 'ournotes-deck.reported-projection/1');
+  assert.equal(audit.datasetId, hashes.data);
+  for (const field of ['strictResolution', 'parsedRosterEqual', 'poolFieldsEqual', 'candidateDomainEqual']) {
+    assert.equal(audit[field], true, `${field} must pass before reported export`);
+  }
+  return receipt;
 }
 
 function selectCases(manifest, selection) {
@@ -70,9 +112,9 @@ function selectCases(manifest, selection) {
 function bundle(manifestFile, outputDirectory) {
   const source = path.resolve(manifestFile), root = path.dirname(source), manifest = json(source);
   const cases = selectCases(manifest, 'all');
-  const suite = manifest.synthetic === true ? 'synthetic' : manifest.matrixId;
-  assert(['synthetic', 'full48'].includes(suite), 'only the declared synthetic and full48 corpora are accepted');
-  assert.equal(cases.length, suite === 'synthetic' ? 16 : 48, 'the full corpus must be exported before selection');
+  const suite = suiteOf(manifest);
+  assert(['synthetic', 'full48', 'reported'].includes(suite), 'only declared corpora are accepted');
+  assert.equal(cases.length, { synthetic: 16, full48: 48, reported: 1 }[suite], 'the full corpus must be exported before selection');
   const output = path.resolve(outputDirectory), directory = path.join(output, 'inputs', suite);
   assert(!fs.existsSync(directory), 'input bundle already exists');
   fs.mkdirSync(directory, { recursive: true });
@@ -80,7 +122,7 @@ function bundle(manifestFile, outputDirectory) {
   for (const entry of cases) {
     const copied = { ...entry }, hashes = {};
     for (const field of ['data', 'snapshot', 'request', 'roster']) {
-      if (field === 'roster' && !entry[field]) continue;
+      if (field === 'roster' && !entry[field] && suite !== 'reported') continue;
       assert.equal(typeof entry[field], 'string', `${entry.name}: missing ${field}`);
       const bytes = fs.readFileSync(path.resolve(root, entry[field]));
       const digest = sha(bytes), destination = path.join(output, 'inputs', 'blobs', `${digest}.json`);
@@ -90,23 +132,28 @@ function bundle(manifestFile, outputDirectory) {
       copied[field] = `../blobs/${digest}.json`;
       hashes[field] = digest;
     }
-    requestContract(read(path.resolve(directory, copied.request)));
+    requestContract(read(path.resolve(directory, copied.request)), suite, entry.name);
     assert.equal(json(path.resolve(directory, copied.snapshot)).datasetId, hashes.data, 'owned snapshot dataset identity');
+    if (suite === 'reported') reportedEvidence(root, hashes);
     entries.push(copied);
     receipts.push({ name: entry.name, sha256: hashes });
   }
   const manifestPath = path.join(directory, 'benchmark.json');
   write(manifestPath, { ...manifest, cases: entries });
   fs.copyFileSync(source, path.join(directory, 'source-manifest.json'));
+  const evidence = { 'source-manifest.json': sha(fs.readFileSync(source)) };
+  // Preserve native materialization evidence when the corpus has it.
+  for (const name of ['preparation-receipt.json', 'preparation-specs.json', 'preparation.json', 'provenance.json', 'projection-audit.json']) {
+    const file = path.join(root, name);
+    if (fs.existsSync(file)) {
+      fs.copyFileSync(file, path.join(directory, name));
+      evidence[name] = sha(fs.readFileSync(file));
+    }
+  }
   write(path.join(directory, 'inputs-receipt.json'), {
     format: 'ournotes-deck.browser-input-bundle/1', suite, sourceManifestSha256: sha(fs.readFileSync(source)),
-    manifestSha256: sha(fs.readFileSync(manifestPath)), cases: receipts,
+    manifestSha256: sha(fs.readFileSync(manifestPath)), cases: receipts, evidence,
   });
-  // Preserve native materialization evidence when the corpus has it.
-  for (const name of ['preparation-receipt.json', 'preparation-specs.json', 'preparation.json']) {
-    const file = path.join(root, name);
-    if (fs.existsSync(file)) fs.copyFileSync(file, path.join(directory, name));
-  }
   return manifestPath;
 }
 
@@ -116,13 +163,14 @@ function buildReceipt(sourceDirectory, bundleDirectory) {
   assert.equal(execFileSync('git', ['-C', source, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim(), '',
     'CI binaries must be built from an unmodified checkout');
   const artifacts = ['bin/profile_case', 'pkg/ournotes_recommend_wasm.js', 'pkg/ournotes_recommend_wasm_bg.wasm'];
+  if (fs.existsSync(path.join(directory, 'inputs/reported'))) artifacts.push('bin/reported_projection');
   const receipt = {
     format: 'ournotes-deck.browser-build/1', source: identity,
     artifacts: Object.fromEntries(artifacts.map(file => [file, sha(fs.readFileSync(path.join(directory, file)))])),
     rustc: execFileSync('rustc', ['-Vv'], { encoding: 'utf8' }),
     wasmBindgen: execFileSync('wasm-bindgen', ['--version'], { encoding: 'utf8' }).trim(), node: process.version,
     buildCommands: [
-      'cargo build --release --locked --manifest-path tools/search-harness/Cargo.toml --bin benchmark_prepare --bin profile_case',
+      'cargo build --release --locked --manifest-path tools/search-harness/Cargo.toml --bin benchmark_prepare --bin profile_case --bin reported_projection',
       'cargo build --release --locked --target wasm32-unknown-unknown --manifest-path wasm/recommend/Cargo.toml',
       'wasm-bindgen --target web --out-dir work/browser-bundle/pkg wasm/recommend/target/wasm32-unknown-unknown/release/ournotes_recommend_wasm.wasm',
     ],
@@ -137,11 +185,15 @@ function verifyBundle(manifestFile, bundleDirectory, sourceDirectory) {
   assert.equal(inputs.format, 'ournotes-deck.browser-input-bundle/1');
   assert.equal(inputs.manifestSha256, sha(fs.readFileSync(manifestPath)), 'portable manifest identity');
   assert.deepEqual(inputs.cases.map(entry => entry.name), manifest.cases.map(entry => entry.name), 'complete input cover');
+  for (const [file, expected] of Object.entries(inputs.evidence || {})) {
+    assert.equal(sha(fs.readFileSync(path.join(root, file))), expected, `${file}: projection/preparation evidence changed`);
+  }
   for (const [index, entry] of manifest.cases.entries()) {
     for (const [field, expected] of Object.entries(inputs.cases[index].sha256)) {
       assert.equal(sha(fs.readFileSync(path.resolve(root, entry[field]))), expected, `${entry.name}: ${field} bytes changed`);
     }
-    requestContract(read(path.resolve(root, entry.request)));
+    requestContract(read(path.resolve(root, entry.request)), suiteOf(manifest), entry.name);
+    if (suiteOf(manifest) === 'reported') reportedEvidence(root, inputs.cases[index].sha256);
   }
   const build = json(path.join(bundleDirectory, 'build-receipt.json'));
   assert.equal(build.format, 'ournotes-deck.browser-build/1');
@@ -150,6 +202,10 @@ function verifyBundle(manifestFile, bundleDirectory, sourceDirectory) {
   assert.equal(current.manifestSha256, build.source.manifestSha256, 'runner and binary source trees differ');
   for (const [file, expected] of Object.entries(build.artifacts)) {
     assert.equal(sha(fs.readFileSync(path.join(bundleDirectory, file))), expected, `${file}: binary identity changed`);
+  }
+  if (suiteOf(manifest) === 'reported') {
+    assert.equal(json(path.join(root, 'preparation-receipt.json')).auditBinarySha256, build.artifacts['bin/reported_projection'],
+      'the projection audit must come from the same recorded source build');
   }
   return { manifest, build, inputs };
 }
@@ -201,7 +257,8 @@ function summaryMarkdown(report) {
       + `Within the separate 60-second search budget: Chromium ${s.browserProvenWithinBudget60s}/${s.planned}, native ${s.nativeProvenWithinBudget60s}/${s.planned}.`, '',
     `Browser timing: ${endToEndScope.browser}`, '',
     `Native timing: ${endToEndScope.native}`, '',
-    'Every case keeps K=3, no candidate limit, the complete declared ownership domain and all 120 uniform performance orders. '
+    'Each case keeps its original K and cache limit (full48: K=3/cache=1024; reported: K=5/cache=2048), no candidate limit, '
+      + 'the complete declared eligible domain and all 120 uniform performance orders. '
       + 'Complete pairs compare the canonical Top-K; incomplete pairs compare common returned certificates and retain their incomplete status.', '',
     '| Case | Native status | Native end-to-end ms | Chromium status | Chromium search ms | Chromium end-to-end ms | Canonical Top-K compared |',
     '| --- | --- | ---: | --- | ---: | ---: | --- |',
@@ -298,7 +355,9 @@ async function run(manifestFile, bundleDirectory, outputDirectory, options) {
         assert.equal(row.variant, 'candidate');
         assert.equal(row.runtime, runtime);
         assert.equal(row.timeLimitMs, 60000);
-        assert.equal(row.k, 3);
+        const entry = cases.find(entry => entry.name === current.name);
+        const original = requestContract(read(path.resolve(path.dirname(manifestPath), entry.request)), suiteOf(manifest), entry.name);
+        assert.equal(row.k, original.k);
         const outcome = json(path.join(destination, `${current.name}-1-candidate.json`)).result;
         assert.equal(outcome.probabilityLaw?.kind, 'uniformMemberOrder');
         assert.equal(outcome.probabilityLaw?.orders, 120, 'all original uniform labels are required');
@@ -396,4 +455,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => { console.error(error.stack); process.exitCode = 1; });
-module.exports = { plan, requestContract, selectCases, bundle, provenInBudget, provenIn20sEndToEnd, summarizeRuns, summaryMarkdown, collect };
+module.exports = { plan, requestContract, selectCases, bundle, reportedEvidence, provenInBudget, provenIn20sEndToEnd, summarizeRuns, summaryMarkdown, collect };

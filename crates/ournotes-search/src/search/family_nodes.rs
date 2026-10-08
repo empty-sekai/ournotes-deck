@@ -110,6 +110,13 @@ pub(crate) struct FamilyNodeStats {
     pub(crate) rank_probe_history_discounted_profiles: u64,
     /// Maximum profile mean upper-coefficient reduction for a unit probe covering every note, not saved score.
     pub(crate) maximum_mean_unit_probe_history_reduction: f64,
+    /// Rush-ready original labels in published complete profile rewards, including repeated physical
+    /// families/bindings and rebuilt profiles. Existing coefficient-table hits add none.
+    pub(crate) rank_rush_history_ready_labels: u64,
+    /// Published profiles with a positive full-chart base-coefficient reduction from Rush history.
+    pub(crate) rank_rush_history_discounted_profiles: u64,
+    /// Maximum 120-label mean base-coefficient reduction; excludes power, held-row amplitudes and drift.
+    pub(crate) maximum_mean_base_rush_history_reduction: f64,
     /// Complete-mask binding checks, including repeated coefficient-table hits.
     pub(crate) binding_drift_checks: u64,
     pub(crate) binding_drift_tightened: u64,
@@ -594,6 +601,11 @@ impl<'a> FamilyNodeCache<'a> {
                 u64::from(reward.mean_unit_probe_history_reduction > 0.0);
             self.stats.maximum_mean_unit_probe_history_reduction =
                 self.stats.maximum_mean_unit_probe_history_reduction.max(reward.mean_unit_probe_history_reduction);
+            self.stats.rank_rush_history_ready_labels += reward.rank_rush_history_ready_orders as u64;
+            self.stats.rank_rush_history_discounted_profiles +=
+                u64::from(reward.mean_base_rush_history_reduction > 0.0);
+            self.stats.maximum_mean_base_rush_history_reduction =
+                self.stats.maximum_mean_base_rush_history_reduction.max(reward.mean_base_rush_history_reduction);
             state.table.profiles[profile] = Some(reward);
         }
         if cancelled() {

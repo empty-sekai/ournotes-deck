@@ -3,17 +3,29 @@ use super::*;
 use crate::search::{
     certified_search::{
         BestOrderWitness, CertifiedEvaluation, PayoffMap, aggregate_orders, canonicalize_performers,
-        canonicalize_performers_with_basis, refine_order_with_exact_law, refine_order_with_terminal_payoff,
-        refinement_uncertainty,
+        canonicalize_performers_with_basis, refine_order_with_exact_law, refine_order_with_terminal_cylinder,
+        refine_order_with_terminal_payoff, refinement_uncertainty,
     },
     interval_topk::{CandidateInterval, CanonicalTie, IntervalTopK, RankingProof, RemainingDomain},
 };
 use ournotes_sim::live::certified::F64Interval;
 use std::collections::BTreeSet;
 
-/// Work deduplication only: the immutable Engine fixes the full scenario, master, clock and order law.
-/// Full program bytes, exact power and all mapping parameters remain in each retained key.
-type TerminalProgramKey = (Vec<u8>, i32, ournotes_sim::live::full::LuckTerminalPayoff);
+/// Scheduling state only. Attempted does not certify any payoff: only individually completed orders
+/// install evidence. A stopped/refused stage is not restarted with fresh private score-fold counters;
+/// the independent exact-law stage remains available for every unresolved order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum TerminalStage {
+    #[default]
+    Pending,
+    Attempted,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TerminalPhase {
+    DuringSearch,
+    AfterTraversal,
+}
 
 /// How a played Gekisou request treats the lottery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +101,8 @@ pub(super) struct CertifiedEntry {
     power: i32,
     refinement: Option<Box<RetainedRefinement>>,
     best_order: Option<Box<BestOrderWitness>>,
+    terminal_stage: TerminalStage,
+    cylinder_attempted: bool,
 }
 
 struct RetainedRefinement {
@@ -182,6 +196,11 @@ pub(super) struct CertifiedState {
     domain_exhausted: bool,
     /// Small charts retain order state eagerly; other charts materialize one boundary candidate at a time.
     retain_refinement: Option<bool>,
+    /// The sole request allowance for early terminal folds, final equality and native exact laws.
+    /// None means a non-reentrant refinement call currently owns it, never an invitation to reset it.
+    exact_work: Option<ournotes_sim::live::full::LuckExactBudget>,
+    #[cfg(test)]
+    early_terminal_enabled: bool,
     /// The master's lottery-related skills, classified once per request.
     luck_skills: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
     /// Certified lottery curves of this request, shared by every performance order and team.
@@ -201,6 +220,9 @@ impl CertifiedState {
             score_caps: ScoreCapCache::default(),
             domain_exhausted: false,
             retain_refinement: None,
+            exact_work: Some(ournotes_sim::live::full::LuckExactBudget::default()),
+            #[cfg(test)]
+            early_terminal_enabled: true,
             luck_skills: None,
             luck_curves: ournotes_sim::live::full::LuckDpCache::new(curve_bytes),
         })
@@ -398,7 +420,16 @@ impl Engine<'_, '_> {
         let id = self.tel.leaves.visited;
         let best_order = evaluation.best_order.clone();
         let partial = best_order.as_ref().is_some_and(|best| best.evaluated_orders < ORDERS && !best.optimal);
-        let retained_program = (state.retain_refinement == Some(true)).then(|| program_identity.clone());
+        // A new nonlinear candidate already owns all 120 complete raw rows. On large charts retain
+        // just this one transient witness, rather than dropping it before its immediate optional stage.
+        let temporary_rows = map.terminal_payoff().is_some();
+        if temporary_rows && state.retain_refinement != Some(true) {
+            for entry in state.entries.values_mut() {
+                entry.refinement = None;
+            }
+        }
+        let retain_rows = state.retain_refinement == Some(true) || temporary_rows;
+        let retained_program = retain_rows.then(|| program_identity.clone());
         let equality =
             state.frontier.certify_equal_program(equality_identity.unwrap_or(program_identity), power, payoff_identity);
         state.frontier.insert(CandidateInterval {
@@ -415,12 +446,24 @@ impl Engine<'_, '_> {
         let exact = state.frontier.get(id).map_or(evaluation.exact_payoff, |c| c.exact_payoff);
         self.offered = Some(super::Offered { payoff: exact.map(|x| (x.numerator, x.denominator)), power, score: None });
         let refinement = RetainedRefinement::new(
-            state.retain_refinement == Some(true) && state.frontier.get(id).is_some(),
+            retain_rows && state.frontier.get(id).is_some(),
             evaluation,
             map,
             retained_program.unwrap_or_default(),
         );
-        state.entries.insert(id, CertifiedEntry { physical, members, snaps, power, refinement, best_order });
+        state.entries.insert(
+            id,
+            CertifiedEntry {
+                physical,
+                members,
+                snaps,
+                power,
+                refinement,
+                best_order,
+                terminal_stage: TerminalStage::Pending,
+                cylinder_attempted: false,
+            },
+        );
         state.entries.retain(|id, _| state.frontier.get(*id).is_some());
         state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
         self.tel.leaves.peak_retained = self.tel.leaves.peak_retained.max(state.entries.len());
@@ -428,7 +471,61 @@ impl Engine<'_, '_> {
         self.tel.leaves.partial += u64::from(partial);
         self.remember(physical);
         self.rec.clock.lap(resume);
+        self.refine_new_terminal_candidate(id)?;
+        // Warm-start callers observe the physical candidate just offered, even if refinement removed it.
+        if let Some(candidate) = self.certified.as_ref().expect("certified request").frontier.get(id) {
+            self.offered = Some(super::Offered {
+                payoff: candidate.exact_payoff.map(|x| (x.numerator, x.denominator)),
+                power,
+                score: None,
+            });
+        }
         self.report_progress();
+        Ok(())
+    }
+
+    fn with_exact_work<T>(
+        &mut self,
+        run: impl FnOnce(&mut Self, &mut ournotes_sim::live::full::LuckExactBudget) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        let mut work = self
+            .certified
+            .as_mut()
+            .expect("certified request")
+            .exact_work
+            .take()
+            .expect("non-reentrant request refinement allowance");
+        let result = run(self, &mut work);
+        self.certified.as_mut().expect("certified request").exact_work = Some(work);
+        result
+    }
+
+    /// At most the just-offered complete candidate receives one terminal stage. This only strengthens
+    /// incumbents against the still-open domain; work exhaustion leaves normal traversal available.
+    fn refine_new_terminal_candidate(&mut self, id: u64) -> Result<(), Error> {
+        #[cfg(test)]
+        if !self.certified.as_ref().expect("certified request").early_terminal_enabled {
+            return Ok(());
+        }
+        if self.cylinder_eligible(id)? && !self.expired() {
+            self.with_exact_work(|engine, work| {
+                engine.refine_certified_terminal_cylinders(id, TerminalPhase::DuringSearch, work).map(|_| ())
+            })?;
+        }
+        let state = self.certified.as_ref().expect("certified request");
+        let eligible = !state.domain_exhausted
+            && state.frontier.len() >= self.request.k
+            && state.frontier.get(id).is_some_and(|candidate| candidate.exact_payoff.is_none())
+            && state.entries.get(&id).is_some_and(|entry| {
+                entry.terminal_stage == TerminalStage::Pending
+                    && entry.refinement.as_ref().is_some_and(|rows| rows.map.terminal_payoff().is_some())
+            })
+            && state.exact_work.as_ref().is_some_and(|work| !work.exhausted());
+        if eligible && !self.expired() {
+            self.with_exact_work(|engine, work| {
+                engine.refine_certified_terminal_payoff(id, TerminalPhase::DuringSearch, work).map(|_| ())
+            })?;
+        }
         Ok(())
     }
 
@@ -436,22 +533,22 @@ impl Engine<'_, '_> {
     /// overlaps. Complete score enclosures precede native path expansion; partial trees keep the proved bounds.
     pub(super) fn refine_certified_frontier(&mut self) -> Result<(), Error> {
         let (_, resume) = self.rec.clock.lap(slot::INTERVAL_FRONTIER);
-        let result = self.refine_certified_frontier_inner();
+        let result = self.with_exact_work(|engine, work| engine.refine_certified_frontier_inner(work));
         self.rec.clock.lap(resume);
         result
     }
 
-    fn refine_certified_frontier_inner(&mut self) -> Result<(), Error> {
-        use ournotes_sim::live::full::{LuckExactBudget, LuckExactDecline, LuckExactSession};
+    fn refine_certified_frontier_inner(
+        &mut self,
+        work: &mut ournotes_sim::live::full::LuckExactBudget,
+    ) -> Result<(), Error> {
+        use ournotes_sim::live::full::{LuckExactDecline, LuckExactSession};
         let state = self.certified.as_mut().expect("certified request");
         state.domain_exhausted = true;
-        let mut work = LuckExactBudget::default();
         let mut attempted = std::collections::BTreeSet::<(u64, usize)>::new();
         let mut materialized = std::collections::BTreeSet::new();
         let mut summarized = std::collections::BTreeSet::new();
         let mut residue_attempted = std::collections::BTreeSet::new();
-        let mut terminal_attempted = BTreeSet::new();
-        let mut terminal_programs = BTreeSet::<TerminalProgramKey>::new();
         let mut equality_attempted = false;
         loop {
             let state = self.certified.as_ref().expect("certified request");
@@ -466,7 +563,7 @@ impl Engine<'_, '_> {
                 if let Some(pair) = &proof.refinement
                     && let Some(other) = pair.competitor
                 {
-                    match self.refine_certified_equality(pair.candidate, other, &mut work)? {
+                    match self.refine_certified_equality(pair.candidate, other, work)? {
                         EqualityRefinement::Merged => continue,
                         EqualityRefinement::Declined => {}
                         EqualityRefinement::Stopped => return Ok(()),
@@ -487,6 +584,19 @@ impl Engine<'_, '_> {
                     .total_cmp(&state.frontier.get(*b).expect("live candidate").payoff.upper())
                     .then(a.cmp(b))
             });
+            let mut cylinder_candidate = None;
+            for &id in &candidates {
+                if self.cylinder_eligible(id)? {
+                    cylinder_candidate = Some(id);
+                    break;
+                }
+            }
+            if let Some(id) = cylinder_candidate {
+                if !self.refine_certified_terminal_cylinders(id, TerminalPhase::AfterTraversal, work)? {
+                    return Ok(());
+                }
+                continue;
+            }
             // Finish factor histories across the overlapping score frontier, then refine their native
             // rank residues before any candidate can consume the shared native path budget.
             if matches!(self.metric, Metric::Score | Metric::BestOrderExpectedScore)
@@ -520,10 +630,10 @@ impl Engine<'_, '_> {
             if matches!(
                 self.metric,
                 Metric::ScoreAtLeast { .. } | Metric::CappedScore { .. } | Metric::ScoreAndLifeAtLeast { .. }
-            ) && let Some(id) = candidates.iter().copied().find(|id| !terminal_attempted.contains(id))
+            ) && let Some(id) =
+                candidates.iter().copied().find(|id| state.entries[id].terminal_stage == TerminalStage::Pending)
             {
-                terminal_attempted.insert(id);
-                if !self.refine_certified_terminal_payoff(id, &mut terminal_programs, &mut work)? {
+                if !self.refine_certified_terminal_payoff(id, TerminalPhase::AfterTraversal, work)? {
                     return Ok(());
                 }
                 continue;
@@ -649,7 +759,7 @@ impl Engine<'_, '_> {
                 });
                 self.tel.lottery_refinement.attempted_orders += 1;
                 let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
-                let result = session.law(&performers, &mut work, || self.expired());
+                let result = session.law(&performers, work, || self.expired());
                 self.rec.clock.lap(resume);
                 let result = result?;
                 let telemetry = &mut self.tel.lottery_refinement;
@@ -693,16 +803,177 @@ impl Engine<'_, '_> {
         }
     }
 
+    /// Reaching the objective's ceiling is only a work priority. It neither resolves a tie with an
+    /// unknown contender nor proves anything about the still-open physical domain.
+    fn cylinder_eligible(&self, id: u64) -> Result<bool, Error> {
+        let ceiling = match self.metric {
+            Metric::ScoreAtLeast { .. } | Metric::ScoreAndLifeAtLeast { .. } => 1,
+            Metric::CappedScore { threshold } => i128::from(*threshold),
+            _ => return Ok(false),
+        };
+        let state = self.certified.as_ref().expect("certified request");
+        if state.entries.get(&id).is_none_or(|entry| entry.cylinder_attempted)
+            || state.frontier.get(id).is_none_or(|candidate| candidate.exact_payoff.is_some())
+        {
+            return Ok(false);
+        }
+        let mut attained = 0;
+        for &other in state.entries.keys() {
+            let Some(exact) = state.frontier.get(other).and_then(|candidate| candidate.exact_payoff) else {
+                continue;
+            };
+            if crate::search::interval_topk::compare_exact(
+                exact,
+                expectation::ExactExpectation { numerator: ceiling, denominator: 1 },
+            )?
+            .is_eq()
+            {
+                attained += 1;
+                if attained >= self.request.k {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// One uncertain original order gets two deterministic positive-mass cylinders before the full
+    /// payoff provider. A failure can exclude a contender below K known ceiling incumbents. Success,
+    /// refusal or insufficient numerical separation preserves all ordinary refinement paths.
+    fn refine_certified_terminal_cylinders(
+        &mut self,
+        id: u64,
+        phase: TerminalPhase,
+        work: &mut ournotes_sim::live::full::LuckExactBudget,
+    ) -> Result<bool, Error> {
+        use ournotes_sim::live::full::{LuckCylinderChoice, LuckExactDecline, LuckExactSession};
+        if self.expired() || work.exhausted() {
+            return Ok(false);
+        }
+        if !self.cylinder_eligible(id)? {
+            return Ok(true);
+        }
+        self.certified
+            .as_mut()
+            .expect("certified request")
+            .entries
+            .get_mut(&id)
+            .expect("eligible")
+            .cylinder_attempted = true;
+        if self.certified.as_ref().expect("certified request").entries[&id].refinement.is_none() {
+            for entry in self.certified.as_mut().expect("certified request").entries.values_mut() {
+                entry.refinement = None;
+            }
+            if !self.materialize_certified_refinement(id, false)? {
+                return Ok(false);
+            }
+        }
+        let state = self.certified.as_ref().expect("certified request");
+        let Some(entry) = state.entries.get(&id) else { return Ok(true) };
+        let retained = entry.refinement.as_ref().expect("complete cylinder boundary");
+        if retained.evaluation.orders.len() != ORDERS || retained.evaluation.orders.iter().any(|row| !row.evaluated) {
+            return Err(Error::Domain("terminal cylinder requires all original complete order certificates".into()));
+        }
+        let index = retained.evaluation.refinements.iter().map(|refinement| refinement.order_index).min_by(|&a, &b| {
+            retained.evaluation.orders[a]
+                .mean
+                .lower()
+                .total_cmp(&retained.evaluation.orders[b].mean.lower())
+                .then(a.cmp(&b))
+        });
+        let Some(index) = index else { return Ok(true) };
+        let (physical, program, map) = (entry.physical, retained.program.clone(), retained.map.clone());
+        let order = retained.evaluation.orders[index].order;
+        let mut input = expectation::context(self.pool, &physical, &self.request.objective)?;
+        if let Some(value) = self.simulation.music_length_ms {
+            input.params.music_length_ms = value;
+        }
+        if let Some(value) = self.simulation.score_music_length_ms {
+            input.params.score_music_length_ms = Some(value);
+        }
+        if canonicalize_performers(&mut input) != program || map.terminal_payoff().is_none() {
+            return Err(Error::Domain("terminal cylinder changed its original program or payoff mapping".into()));
+        }
+        let setup = input.gekisou.as_ref().ok_or_else(|| Error::Domain("LUCK cylinder requires Gekisou".into()))?;
+        let session = LuckExactSession::new(
+            self.pool.master,
+            &input.notes,
+            &input.events,
+            input.params,
+            setup,
+            &input.play,
+            &input.delta_times,
+            input.rank_confirmations.as_deref(),
+            0,
+        )?;
+        let performers = order.map(|slot| input.performers[slot].clone());
+        for choice in [LuckCylinderChoice::Last, LuckCylinderChoice::First] {
+            let state = self.certified.as_ref().expect("certified request");
+            if state.frontier.get(id).is_none() {
+                return Ok(true);
+            }
+            if phase == TerminalPhase::AfterTraversal {
+                let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
+                if proof.complete || !proof.ambiguous.contains(&id) {
+                    return Ok(true);
+                }
+            }
+            if self.expired() || work.exhausted() {
+                return Ok(false);
+            }
+            self.tel.lottery_refinement.cylinder_attempted_orders += 1;
+            let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+            let result = session.terminal_cylinder(&performers, choice, work, || self.expired());
+            self.rec.clock.lap(resume);
+            let result = result?;
+            let telemetry = &mut self.tel.lottery_refinement;
+            telemetry.replay_runs += result.stats.replay_runs;
+            telemetry.frames += result.stats.frames;
+            telemetry.budget_exhausted |= work.exhausted();
+            let Some(cylinder) = result.cylinder else {
+                telemetry.cylinder_declined_orders += 1;
+                if let Some(decline) = result.decline {
+                    telemetry.cylinder_declines.record(decline);
+                }
+                if result.decline == Some(LuckExactDecline::Cancelled) {
+                    return Ok(false);
+                }
+                continue;
+            };
+            telemetry.cylinder_completed_paths += 1;
+            let state = self.certified.as_mut().expect("certified request");
+            let retained =
+                state.entries.get_mut(&id).expect("live cylinder boundary").refinement.as_mut().expect("retained");
+            if refine_order_with_terminal_cylinder(&mut retained.evaluation.orders[index], &map, &cylinder)? {
+                let evaluation = aggregate_orders(retained.evaluation.orders.clone(), &map)?;
+                state.install_refinement(id, evaluation)?;
+                self.tel.lottery_refinement.cylinder_installed_bounds += 1;
+                self.report_progress();
+            }
+        }
+        Ok(true)
+    }
+
     /// A per-program terminal-law stage, independent of pairwise score-law equality. Each installed
     /// result still aggregates all original 120 labels; an unfinished optional order installs nothing.
     fn refine_certified_terminal_payoff(
         &mut self,
         id: u64,
-        attempted_programs: &mut BTreeSet<TerminalProgramKey>,
+        phase: TerminalPhase,
         work: &mut ournotes_sim::live::full::LuckExactBudget,
     ) -> Result<bool, Error> {
         use ournotes_sim::live::full::{LuckScoreEquivalenceDecline, LuckTerminalPayoffSession};
-        let entry = &self.certified.as_ref().expect("certified request").entries[&id];
+        if self.expired() || work.exhausted() {
+            return Ok(false);
+        }
+        let state = self.certified.as_mut().expect("certified request");
+        let Some(entry) = state.entries.get_mut(&id) else { return Ok(true) };
+        if entry.terminal_stage != TerminalStage::Pending {
+            return Ok(true);
+        }
+        // One stage owns one session and its private fold guards. Complete, refused and interrupted
+        // attempts never restart those counters; unresolved payoffs retain the native exact-law fallback.
+        entry.terminal_stage = TerminalStage::Attempted;
         let (physical, power) = (entry.physical, entry.power);
         let mut input = expectation::context(self.pool, &physical, &self.request.objective)?;
         if input.rank_confirmations.is_some() || input.gekisou.is_none() {
@@ -725,15 +996,6 @@ impl Engine<'_, '_> {
             (i32::MIN, i32::MAX),
         )?;
         let Some(mapping) = map.terminal_payoff() else { return Ok(true) };
-        let key = (program.clone(), power, mapping);
-        if attempted_programs.contains(&key) {
-            return Ok(true);
-        }
-        // This optional bounded ledger only avoids duplicate work for already equal complete programs.
-        // A full ledger or disabled cache simply repeats the work; it never discards a physical candidate.
-        if attempted_programs.len() < self.limits.cache_entries.min(64) && program.len() <= 512 * 1024 {
-            attempted_programs.insert(key);
-        }
         if self.certified.as_ref().expect("certified request").entries[&id].refinement.is_none() {
             for entry in self.certified.as_mut().expect("certified request").entries.values_mut() {
                 entry.refinement = None;
@@ -741,6 +1003,11 @@ impl Engine<'_, '_> {
             if !self.materialize_certified_refinement(id, false)? {
                 return Ok(false);
             }
+        }
+        // Reconstructing complete raw rows can itself prove the mapped payoff and remove this
+        // candidate. Its aggregate is installed before any optional provider work is selected.
+        if !self.certified.as_ref().expect("certified request").entries.contains_key(&id) {
+            return Ok(true);
         }
         let retained = self.certified.as_ref().expect("certified request").entries[&id]
             .refinement
@@ -774,12 +1041,19 @@ impl Engine<'_, '_> {
         );
         for (index, _) in priorities {
             let state = self.certified.as_ref().expect("certified request");
-            let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
-            if proof.complete || !proof.ambiguous.contains(&id) {
+            if state.frontier.get(id).is_none() {
                 return Ok(true);
+            }
+            if phase == TerminalPhase::AfterTraversal {
+                let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
+                if proof.complete || !proof.ambiguous.contains(&id) {
+                    return Ok(true);
+                }
             }
             let order =
                 state.entries[&id].refinement.as_ref().expect("terminal boundary").evaluation.orders[index].order;
+            #[cfg(test)]
+            crate::search::budget::test_clock::stage("terminal-payoff-order");
             if self.expired() || work.exhausted() {
                 return Ok(false);
             }
@@ -916,7 +1190,9 @@ impl Engine<'_, '_> {
 
     /// Existing order rows allow each completed summary to survive a later cancellation.
     fn refine_certified_summary(&mut self, id: u64, stage: SummaryStage) -> Result<bool, Error> {
-        let entry = &self.certified.as_ref().expect("certified request").entries[&id];
+        let Some(entry) = self.certified.as_ref().expect("certified request").entries.get(&id) else {
+            return Ok(true);
+        };
         let retained = entry.refinement.as_ref().expect("retained boundary candidate");
         let (physical, program, map) = (entry.physical, retained.program.clone(), retained.map.clone());
         let mut indices: Vec<_> = retained
@@ -1122,11 +1398,14 @@ impl Engine<'_, '_> {
         let entry = state.entries.get_mut(&id).expect("boundary candidate");
         entry.best_order = evaluation.best_order.clone();
         entry.refinement = RetainedRefinement::new(true, evaluation.clone(), map, program);
+        // Even ordinary reconstruction may newly prove a mapped constant or a tighter support. If
+        // it leaves no unresolved orders, no later provider will install that complete aggregate.
+        // Intersect through the frontier so previously retained exact and interval evidence survives.
+        state.install_refinement(id, evaluation)?;
         if fresh_summary {
-            state.install_refinement(id, evaluation)?;
             self.tel.lottery_refinement.summary_refinements += 1;
-            self.report_progress();
         }
+        self.report_progress();
         Ok(true)
     }
 
@@ -1184,6 +1463,10 @@ impl Engine<'_, '_> {
         Ok((results, proof))
     }
 }
+
+#[cfg(test)]
+#[path = "certified_early_terminal_tests.rs"]
+mod early_terminal_tests;
 
 #[cfg(test)]
 mod refinement_tests {
@@ -1294,6 +1577,8 @@ mod refinement_tests {
                 snaps: [None; 5],
                 power: 100,
                 best_order: None,
+                terminal_stage: TerminalStage::Pending,
+                cylinder_attempted: false,
                 refinement: RetainedRefinement::new(true, evaluation, PayoffMap::Score, vec![1]),
             },
         );
@@ -1646,6 +1931,8 @@ mod refinement_tests {
                 snaps: [None; 5],
                 power: 1,
                 best_order: None,
+                terminal_stage: TerminalStage::Pending,
+                cylinder_attempted: false,
                 refinement: RetainedRefinement::new(
                     retain_order_state(notes, frames),
                     evaluation,

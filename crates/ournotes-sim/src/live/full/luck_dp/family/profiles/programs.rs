@@ -72,9 +72,10 @@ impl LuckFamilyContext<'_> {
         self.profile_program_key(&domain.domain, profile, capacity, cancelled)
     }
 
-    /// Optional identity proof. Every selected source row passes the closed attribute-read proof, including
-    /// omitted score rows. The whole-deck target union retains every potentially read member field, while
-    /// source identities, levels and vector order stay exact. Only the private key erases unread attributes.
+    /// Optional identity proof after full physical-pair admission. Retained writers and omitted score rows
+    /// pass the closed attribute-read proof; three known bonus types are filtered before native Factory
+    /// construction. Converters still refuse the key. The whole-deck target union retains every potentially
+    /// read member field, while source identities, levels and vector order stay exact.
     pub fn profile_program_key(
         &self,
         domain: &LuckFamilyDomain,
@@ -94,7 +95,12 @@ impl LuckFamilyContext<'_> {
             }
         }
         let physical = physical.map(|performer| projected(self.master, &performer));
-        let keys = input_reuse::InputKeys::new(self.master, &physical)?;
+        let keys = input_reuse::InputKeys::admitted_controller(
+            self.master,
+            &physical,
+            &self.writer_skills,
+            &domain.admitted.controller_inputs,
+        )?;
         let (bytes, physical_to_canonical) = keys.canonical(capacity)?;
         if cancelled() {
             return None;

@@ -163,6 +163,11 @@ impl Engine<'_, '_> {
                 }
                 let prepare_upper =
                     order_cutoff.is_some() && cut.is_some_and(|(bounds, _)| bounds.supports_rush_mean_upper());
+                if prepare_upper {
+                    // Consume resident recipes before a full scan can evict them. The hints affect only
+                    // this sequence; each unfinished label keeps its cap and native proof checks.
+                    curves.prioritize_terminal_orders(&input.performers, &self.orders, &mut schedule);
+                }
                 // `basis[canonical slot]` is the original physical slot. The exact native DP deck and the fine
                 // cap must put that same complete performer, including its Snap, at the same event position.
                 let physical_positions = canonical_order_positions(basis);
@@ -387,8 +392,18 @@ impl Engine<'_, '_> {
         let missing: Vec<usize> = (0..ORDERS).filter(|&i| outcomes[i].is_none()).collect();
         let missing_orders: Vec<[usize; 5]> = missing.iter().map(|&i| performance_orders[i]).collect();
         let orders: Vec<Vec<usize>> = missing_orders.iter().map(|o| o.to_vec()).collect();
-        let capture_budget =
-            self.programs.capture_budget_for(physical.members, &performers, &mut self.tel.caches.program_admissions);
+        // An initial score incumbent already needs all original orders. When another legal leader
+        // can reuse this complete paired input, retain that first required replay; other cold groups
+        // keep the ordinary second-encounter policy and its unchanged memory allowance.
+        let first_use_leader_reuse = matches!(self.metric, Metric::Score)
+            && kth.is_none()
+            && cut.is_some_and(|(_, domain)| program_cache::has_legal_leader_sibling(self.pool, domain, physical));
+        let capture_budget = self.programs.capture_budget_for(
+            physical.members,
+            &performers,
+            first_use_leader_reuse,
+            &mut self.tel.caches.program_admissions,
+        );
         self.tel.caches.program_bytes = self.programs.allocated_bytes();
         self.tel.caches.program_recordings += u64::from(capture_budget > 0);
         let live = input.into_ordered();

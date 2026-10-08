@@ -1591,6 +1591,28 @@ fn joint_rec(
         if numerator == threshold {
             joint.node_ties[depth] += 1;
         }
+        if (3..=4).contains(&depth) && matches!(e.metric, Metric::Score) {
+            // The raw packet gate covers every allowed suffix pair at all five performance positions.
+            // A conversion-capable choice refuses this optional module; it never disappears from traversal.
+            let raw =
+                bounds.raw_node_upper(e.pool, domain, p, depth, start, power, numerator, &mut || e.budget.expired());
+            let Some(raw) = raw else {
+                e.expired();
+                e.unexplored_node(p, depth, domain, bounds, orders)?;
+                return Ok(false);
+            };
+            match raw {
+                Some(cap) => {
+                    let module = joint.modules.entry("rawNode").or_default();
+                    module.checks += 1;
+                    if cap < threshold || (exact_ties && cap == threshold && power < i64::from(cutoff_power)) {
+                        module.pruned += 1;
+                        return Ok(true);
+                    }
+                }
+                None => joint.modules.entry("rawNodeUnavailable").or_default().checks += 1,
+            }
+        }
         // The open slots take ascending candidate indices from `start` on.
         if depth < 5
             && node_bounds.order_steps_prepare(

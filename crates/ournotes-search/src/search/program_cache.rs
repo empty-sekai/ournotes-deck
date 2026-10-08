@@ -18,6 +18,24 @@ pub(crate) const DEFAULT_PROGRAM_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const ENTRY_OVERHEAD: usize = 1024;
 const ADMISSION_BUDGET: usize = 2 * 1024 * 1024;
 
+/// An existing legal deck has another legal leader with exactly the same member/Snap pairs.
+/// This is only a recording admission hint: no sibling is evaluated or removed from the traversal here.
+pub(super) fn has_legal_leader_sibling(
+    pool: &ournotes_sim::pool::Pool,
+    domain: &crate::domain::CandidateDomain,
+    physical: &crate::search::expectation::PhysicalDeck,
+) -> bool {
+    if domain.leader().is_some() || domain.check_fixed(pool, physical).is_err() {
+        return false;
+    }
+    crate::search::uniform::NONLEADER.iter().any(|&other| {
+        let mut sibling = *physical;
+        sibling.members.swap(2, other);
+        sibling.snaps.swap(2, other);
+        domain.check_fixed(pool, &sibling).is_ok()
+    })
+}
+
 struct Identity<'a> {
     members: [usize; 5],
     performers: &'a [Performer],
@@ -167,12 +185,30 @@ impl ProgramCache {
         self.evaluation_ms
     }
 
-    /// Called only after the leaf bounds admit a native order-tree evaluation. The first encounter records
-    /// only full identity; the second may record a program. This cache policy never removes a candidate.
+    /// Whether every order of this exact paired-performer set has a complete native program. This query
+    /// evaluates no power and supplies no score; scheduling can use it to avoid speculative native siblings.
+    pub(crate) fn has_complete(&self, members: [usize; 5], performers: &[Performer]) -> bool {
+        if self.budget == 0 {
+            return false;
+        }
+        let Some(identity) = Identity::new(members, performers) else { return false };
+        self.rows.get(&identity.hash()).is_some_and(|rows| {
+            rows.iter().any(|row| {
+                row.key.matches(&identity) && row.orders.len() == ORDERS && row.orders.iter().all(Option::is_some)
+            })
+        })
+    }
+
+    /// Called only after the leaf bounds admit a native order-tree evaluation. Usually the first encounter
+    /// records only full identity and the second may record a program. The caller may request first-use
+    /// capture for an initial Score incumbent with a legal paired-leader sibling, before a full cutoff exists.
+    /// That already-required complete run can then serve the sibling's different power without another live.
+    /// The hint changes neither the capacity nor the complete-identity lookup, and never removes a candidate.
     pub(crate) fn capture_budget_for(
         &mut self,
         members: [usize; 5],
         performers: &[Performer],
+        first_use_leader_reuse: bool,
         telemetry: &mut CacheUse,
     ) -> usize {
         if self.budget == 0 {
@@ -211,7 +247,7 @@ impl ProgramCache {
         self.seen.entry(hash).or_default().push(Box::new(Seen { id, key, bytes }));
         self.seen_fifo.push_back((hash, id));
         telemetry.peak_entries = telemetry.peak_entries.max(self.seen_fifo.len());
-        0
+        if first_use_leader_reuse { self.capture_budget() } else { 0 }
     }
 
     #[cfg(test)]
@@ -494,6 +530,7 @@ mod tests {
         for layout in all_orders() {
             let moved_members = layout.map(|slot| members[slot]);
             let moved_performers = layout.map(|slot| performers[slot].clone());
+            assert!(cache.has_complete(moved_members, &moved_performers));
             let results = cache.get(moved_members, &moved_performers, 137, &mut telemetry).unwrap();
             for (order, &(score, life)) in orders.iter().zip(&results) {
                 assert_eq!(score, program.evaluate(137));
@@ -564,8 +601,12 @@ mod tests {
         for changed in variants {
             let mut other = performers.clone();
             other[2] = changed;
+            assert!(!cache.has_complete(members, &other));
             assert!(cache.get(members, &other, 100, &mut telemetry).is_none());
         }
+        assert!(!cache.has_complete([0, 1, 2, 3, 5], &performers));
+        assert!(!cache.has_complete([0, 1, 2, 3, 3], &performers));
+        assert!(!cache.has_complete(members, &performers[..4]));
         assert!(cache.get([0, 1, 2, 3, 5], &performers, 100, &mut telemetry).is_none());
     }
 
@@ -645,23 +686,147 @@ mod tests {
         for _ in 0..3 {
             assert!(cache.get_partial(members, &performers, 317, &mut lookups).is_none());
         }
-        assert_eq!(cache.capture_budget_for(members, &performers, &mut admissions), 0);
+        assert_eq!(cache.capture_budget_for(members, &performers, false, &mut admissions), 0);
         assert_eq!(admissions.hits, 0);
         let layout = [4, 2, 0, 1, 3];
         let moved = layout.map(|slot| performers[slot].clone());
-        assert!(cache.capture_budget_for(layout.map(|slot| members[slot]), &moved, &mut admissions) > 0);
+        assert!(cache.capture_budget_for(layout.map(|slot| members[slot]), &moved, false, &mut admissions) > 0);
         assert_eq!(admissions.hits, 1);
         assert!(cache.get_partial(members, &performers, 411, &mut lookups).is_none());
         assert_eq!(lookups.hits, 0, "seen identity is not a program hit");
         let retained = cache.allocated_bytes();
         cache.budget = retained;
         performers[0].support_skills.reverse();
-        assert_eq!(cache.capture_budget_for(members, &performers, &mut admissions), 0);
+        assert_eq!(cache.capture_budget_for(members, &performers, false, &mut admissions), 0);
         assert_eq!(admissions.hits, 1, "Vec order remains part of complete program identity");
         assert_eq!(admissions.evictions, 1);
         assert!(cache.allocated_bytes() <= cache.budget);
         // FIFO admission eviction only loses a recording opportunity; a fresh first encounter stays native.
         performers[0].support_skills.reverse();
-        assert_eq!(cache.capture_budget_for(members, &performers, &mut admissions), 0);
+        assert_eq!(cache.capture_budget_for(members, &performers, false, &mut admissions), 0);
+    }
+
+    #[test]
+    fn first_use_leader_recording_requires_a_legal_paired_sibling() {
+        use crate::domain::CandidateDomain;
+        use crate::search::Constraints;
+        use crate::search::expectation::PhysicalDeck;
+        use crate::search::gate_tests::common::{Rng, roster, set_column, synth_snaps};
+        use ournotes_sim::pool::Pool;
+
+        let mut source = synth_snaps(&mut Rng::new(81), 5, 2, &[]);
+        set_column(&mut source, "MasterMemberCard", &mut |row| row["_characterID"] = row["_id"].clone());
+        let master = source.master();
+        let owned = roster(&mut Rng::new(82), &master);
+        let pool = Pool::new(&master, &owned).unwrap();
+        let constraints = Constraints { include_members: vec![pool.members[0].id], ..Default::default() };
+        let domain = CandidateDomain::build(&pool, &constraints).unwrap();
+        let deck = PhysicalDeck { members: [0, 1, 2, 3, 4], snaps: [Some(0), None, Some(1), None, None] };
+        for order in all_orders() {
+            let current = PhysicalDeck {
+                members: order.map(|slot| deck.members[slot]),
+                snaps: order.map(|slot| deck.snaps[slot]),
+            };
+            assert!(has_legal_leader_sibling(&pool, &domain, &current));
+            let fixed = Constraints { leader: Some(pool.members[current.members[2]].id), ..constraints.clone() };
+            let fixed = CandidateDomain::build(&pool, &fixed).unwrap();
+            assert!(!has_legal_leader_sibling(&pool, &fixed, &current));
+        }
+        let excluded = Constraints { exclude_snaps: vec![pool.snaps[0].id], ..constraints };
+        let excluded = CandidateDomain::build(&pool, &excluded).unwrap();
+        assert!(!has_legal_leader_sibling(&pool, &excluded, &deck));
+        let mut duplicate_resource = deck;
+        duplicate_resource.snaps[1] = duplicate_resource.snaps[0];
+        assert!(!has_legal_leader_sibling(&pool, &domain, &duplicate_resource));
+    }
+
+    #[test]
+    fn first_use_leader_recording_keeps_seen_identity_and_only_reuses_complete_orders() {
+        let members = [9, 3, 7, 1, 5];
+        let performers: [Performer; 5] = std::array::from_fn(|slot| Performer {
+            character_id: members[slot] as i64,
+            support_skills: vec![(11, 1), (12, 2)],
+            ..Default::default()
+        });
+        let mut cache = ProgramCache::new(DEFAULT_PROGRAM_CACHE_BYTES);
+        let mut admissions = CacheUse::default();
+        let mut lookups = CacheUse::default();
+        let capture = cache.capture_budget_for(members, &performers, true, &mut admissions);
+        assert!(capture > 0);
+        assert!(capture < DEFAULT_PROGRAM_CACHE_BYTES);
+        assert_eq!(capture, cache.capture_budget());
+        assert_eq!(cache.seen_fifo.len(), 1);
+        assert_eq!(admissions.hits, 0, "first-use capture is not a reuse hit");
+        assert!(!cache.has_complete(members, &performers));
+        assert!(cache.get_partial(members, &performers, 317, &mut lookups).is_none());
+        // A cancelled or otherwise unsuccessful recording leaves only Seen, never an order certificate.
+        assert_eq!(cache.capture_budget_for(members, &performers, false, &mut admissions), capture);
+        assert_eq!(admissions.hits, 1);
+        assert!(cache.get_partial(members, &performers, 317, &mut lookups).is_none());
+
+        let program = program();
+        let orders = all_orders();
+        assert!(cache.insert_partial(
+            members,
+            &performers,
+            &orders,
+            records(&program).into_iter().take(45).collect(),
+            &mut lookups,
+        ));
+        let layout = [0, 2, 1, 3, 4];
+        let moved_members = layout.map(|slot| members[slot]);
+        let moved = layout.map(|slot| performers[slot].clone());
+        assert!(!cache.has_complete(moved_members, &moved));
+        assert!(cache.get(moved_members, &moved, 733, &mut lookups).is_none());
+        let partial = cache.get_partial(moved_members, &moved, 733, &mut lookups).unwrap();
+        for (order, actual) in orders.iter().zip(&partial) {
+            let origin = order_index(&order.map(|slot| layout[slot]));
+            assert_eq!(*actual, (origin < 45).then(|| (program.evaluate(733), origin as i32)));
+        }
+        let remaining = records(&program)
+            .into_iter()
+            .skip(45)
+            .map(|mut row| {
+                row.index -= 45;
+                row
+            })
+            .collect();
+        assert!(cache.insert_partial(members, &performers, &orders[45..], remaining, &mut lookups));
+        assert!(cache.has_complete(moved_members, &moved));
+        let complete = cache.get(moved_members, &moved, 733, &mut lookups).unwrap();
+        for (order, &(score, life)) in orders.iter().zip(&complete) {
+            assert_eq!(score, program.evaluate(733));
+            assert_eq!(life, order_index(&order.map(|slot| layout[slot])) as i32);
+        }
+        let mut changed = moved;
+        changed[2].support_skills.reverse();
+        assert!(cache.get_partial(moved_members, &changed, 733, &mut lookups).is_none());
+        assert!(cache.allocated_bytes() <= DEFAULT_PROGRAM_CACHE_BYTES);
+    }
+
+    #[test]
+    fn first_use_leader_recording_never_bypasses_capacity_or_identity_admission() {
+        let members = [0, 1, 2, 3, 4];
+        let performers: [Performer; 5] = Default::default();
+        for budget in [0, 1, ENTRY_OVERHEAD] {
+            let mut cache = ProgramCache::new(budget);
+            let mut telemetry = CacheUse::default();
+            assert_eq!(cache.capture_budget_for(members, &performers, true, &mut telemetry), 0);
+            assert_eq!(cache.allocated_bytes(), 0);
+            assert!(cache.rows.is_empty());
+            assert!(cache.seen.is_empty());
+            assert!(!cache.has_complete(members, &performers));
+        }
+        let mut cache = ProgramCache::new(DEFAULT_PROGRAM_CACHE_BYTES);
+        let mut telemetry = CacheUse::default();
+        assert_eq!(cache.capture_budget_for([0, 1, 2, 3, 3], &performers, true, &mut telemetry), 0);
+        assert_eq!(cache.capture_budget_for(members, &performers[..4], true, &mut telemetry), 0);
+        assert_eq!(cache.allocated_bytes(), 0);
+        assert_eq!(cache.capture_budget_for(members, &performers, false, &mut telemetry), 0);
+        let retained = cache.allocated_bytes();
+        cache.budget = retained;
+        assert_eq!(cache.capture_budget_for(members, &performers, true, &mut telemetry), 0);
+        assert_eq!(cache.allocated_bytes(), retained);
+        assert!(cache.get_partial(members, &performers, 100, &mut telemetry).is_none());
     }
 }
