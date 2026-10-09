@@ -22,6 +22,8 @@ const EVENT_ID: i64 = 7;
 mod combo_integer;
 #[path = "fixtures/conversion_partitions.rs"]
 mod conversion_partitions;
+#[path = "fixtures/cp_priorities.rs"]
+mod cp_priorities;
 #[path = "fixtures/effect_identity.rs"]
 mod effect_identity;
 #[path = "fixtures/luck_refinement.rs"]
@@ -2444,16 +2446,35 @@ fn export_account_transport_corpus() {
         requests.push((name.to_string(), request));
         coverage.push(json!({"name":name,"scene":kind,"metric":"scoreAndLife","scope":"synthetic","play":"pattern"}));
     }
-    assert_eq!(requests.len(), 49, "46 scene/metric pairs plus accuracy and two explicit patterns");
+    for scene in ["free", "mission", "battle", "arena", "skip"] {
+        let base_name =
+            if scene == "free" { "challenge-points".to_string() } else { format!("{scene}-challengePoints") };
+        let base = requests.iter().find(|(name, _)| name == &base_name).unwrap().1.clone();
+        for priority in ["eventPointsFirst", "eventItemsFirst"] {
+            let mut request = base.clone();
+            request["metric"]["secondaryPriority"] = json!(priority);
+            request["metric"]["resourceType"] = json!(11);
+            request["metric"]["resourceId"] = json!(9);
+            let name = format!("{scene}-cp-{priority}");
+            coverage.push(json!({"name":name,"scene":scene,"metric":"challengePoints","secondaryPriority":priority,"scope":"synthetic"}));
+            requests.push((name, request));
+        }
+    }
+    assert_eq!(requests.len(), 59, "46 scene/metric pairs, accuracy, two explicit patterns and ten reward priorities");
     let mut names = BTreeSet::new();
     for (name, request) in requests {
         assert!(names.insert(name.clone()), "duplicate corpus identity");
+        let priority = request["metric"]["secondaryPriority"].is_string();
         let request = request.to_string();
         let answer = engine::recommend_account(&data, &account.to_string(), &request, None);
         assert!(matches!(answer.status, ournotes_search::recommendation::Status::Ok), "{name}: {:?}", answer.errors);
         let result = answer.result.as_ref().unwrap();
         assert!(answer.is_final && result.optimality.proven, "{name}: unproven");
-        assert_eq!(result.teams.len(), 5, "{name}: complete K=5");
+        if priority {
+            assert!(!result.teams.is_empty() && result.teams.len() <= 5, "{name}: maximum-CP layer");
+        } else {
+            assert_eq!(result.teams.len(), 5, "{name}: complete K=5");
+        }
         assert!(result.teams.iter().any(|team| team.layout.snaps.iter().any(Option::is_some)), "{name}: nonempty Snap");
         fs::write(root.join(format!("{name}.request.json")), &request).unwrap();
         fs::write(root.join(format!("{name}.expected.json")), serde_json::to_string(&answer).unwrap()).unwrap();

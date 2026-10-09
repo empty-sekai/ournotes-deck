@@ -42,6 +42,7 @@ fn fixture() -> (Parsed, RecommendationOutcome) {
             power: 100,
             expected_score: None,
             expected_payoff: None,
+            event_rewards: None,
             score_interval: Some(FractionInterval::from_f64(150.0, 151.0).unwrap()),
             payoff_interval: Some(FractionInterval::from_f64(150.0, 151.0).unwrap()),
             rank_certified: Some(false),

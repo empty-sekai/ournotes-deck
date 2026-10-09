@@ -60,6 +60,13 @@ for (const name of names) {
     assert.equal(answer.final, false);
     assert.equal(answer.result.optimality.proven, false);
     assert(answer.result.teams.every(team => team.orders === null));
+    if (JSON.parse(request).metric?.secondaryPriority) {
+      assert.equal(answer.result.telemetry.proof.bestGap, null);
+      assert.equal(answer.result.telemetry.proof.kthGap, null);
+      for (const team of answer.result.teams) {
+        assert.deepEqual(team.eventRewards.challengePoints.exact, team.value.payoff.exact);
+      }
+    }
     assertPrivate(raw);
     reports++;
     caseReports++;
@@ -69,7 +76,18 @@ for (const name of names) {
   assert.equal(actual.status, 'ok');
   assert.equal(actual.final, true);
   assert.equal(actual.result.optimality.proven, true);
-  assert.equal(actual.result.teams.length, 5, `${name}: complete K=5`);
+  if (JSON.parse(request).metric?.secondaryPriority) {
+    assert(actual.result.teams.length > 0 && actual.result.teams.length <= 5, `${name}: maximum-CP layer`);
+    for (const team of actual.result.teams) {
+      assert.deepEqual(team.eventRewards.challengePoints.exact, team.value.payoff.exact);
+      for (const kind of ['challengePoints', 'eventPoints', 'eventItems']) {
+        assert.equal(typeof team.eventRewards[kind].exact.numerator, 'string');
+        assert.equal(team.eventRewards[kind].interval, null);
+      }
+    }
+  } else {
+    assert.equal(actual.result.teams.length, 5, `${name}: complete K=5`);
+  }
   assert(actual.result.teams.some(team => team.layout.snaps.some(snap => snap !== null)), `${name}: nonempty Snap`);
   if (JSON.parse(request).goal.kind === 'freeLive') {
     assert(caseReports > 0, `${name}: progress reports`);

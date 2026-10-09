@@ -1034,7 +1034,8 @@ pub(crate) fn luck_score_expectation_for_chart(
     })
 }
 
-/// Prepares a Gekisou live without a LUCK range for a run that draws no random value. A deck that reads no lottery
+/// Prepares a live for a run that draws no random value. Without Gekisou, all ordinary skill predicates
+/// must be independent of probability and lottery state. With Gekisou, the live must have no LUCK range. A deck that reads no lottery
 /// or probability is left as it is; any other deck becomes a LUCK weighted live without probabilities
 /// ([`LiveModel::set_luck_weights`] with no steps). Without a LUCK range the controller consumes no lottery
 /// (`luck_score_bounds_internal`): a probability predicate gates only luck chain effects, which write the unread luck
@@ -1042,7 +1043,13 @@ pub(crate) fn luck_score_expectation_for_chart(
 /// of these states. The prepared live therefore has the native score, judgements, life and rank arrivals of every
 /// seed. Call it before the first frame.
 pub fn prepare_lottery_free(model: &mut LiveModel, skills: &LuckSkills) -> Result<(), Error> {
-    let Some(gk) = model.gk.as_ref() else { return Ok(()) };
+    let Some(gk) = model.gk.as_ref() else {
+        return if model.reads_lottery() {
+            Err(refuse("ordinary skill conditions read an unproved probability or lottery state"))
+        } else {
+            Ok(())
+        };
+    };
     if gk.ctrl.ranges.iter().any(|range| range.mission == gekisou::M_LUCK) {
         return Err(refuse("a LUCK range draws lotteries"));
     }

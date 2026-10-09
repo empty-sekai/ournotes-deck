@@ -187,9 +187,7 @@ impl Engine<'_, '_> {
             self.team_scores.insert(physical, power, &evaluation, &final_lives, &mut self.tel.caches.team_scores);
             return Ok(Leaf::Evaluated(evaluation));
         }
-        let kth = (self.top.len() == self.request.k)
-            .then(|| self.top.last().map(|e| (e.evaluation.expected_payoff.numerator, e.power)))
-            .flatten();
+        let kth = self.safe_cutoff();
         let below = |total: i128| {
             kth.is_some_and(|(threshold, kth_power)| total < threshold || (total == threshold && power < kth_power))
         };

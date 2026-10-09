@@ -56,18 +56,47 @@ struct Entry {
     snaps: [Option<i64>; 5],
     power: i32,
     evaluation: FiniteEvaluation,
+    secondary: Option<SecondaryRewards>,
 }
+#[derive(Clone)]
+struct SecondaryRewards {
+    priority: EventRewardPriority,
+    event_points: i128,
+    event_items: i128,
+}
+impl SecondaryRewards {
+    fn key(&self) -> [i128; 2] {
+        match self.priority {
+            EventRewardPriority::EventPointsFirst => [self.event_points, self.event_items],
+            EventRewardPriority::EventItemsFirst => [self.event_items, self.event_points],
+        }
+    }
+    fn wire(&self, primary: &expectation::ExactExpectation) -> EventRewardExpectation {
+        let fraction =
+            |value: i128| Fraction { numerator: value.to_string(), denominator: primary.denominator.to_string() };
+        EventRewardExpectation {
+            challenge_points: fraction(primary.numerator),
+            event_points: fraction(self.event_points),
+            event_items: fraction(self.event_items),
+        }
+    }
+}
+
 fn compare(a: &Entry, b: &Entry) -> Ordering {
     b.evaluation
         .expected_payoff
         .numerator
         .cmp(&a.evaluation.expected_payoff.numerator)
+        .then_with(|| {
+            b.secondary.as_ref().map(SecondaryRewards::key).cmp(&a.secondary.as_ref().map(SecondaryRewards::key))
+        })
         .then_with(|| b.power.cmp(&a.power))
         .then_with(|| a.members.cmp(&b.members))
         .then_with(|| a.snaps.cmp(&b.snaps))
 }
 impl Entry {
     fn wire(self, metric: &Metric) -> Result<RecommendedDeck, Error> {
+        let event_rewards = self.secondary.as_ref().map(|value| value.wire(&self.evaluation.expected_payoff));
         if matches!(metric, Metric::Power) {
             return Ok(RecommendedDeck {
                 members: self.members,
@@ -75,6 +104,7 @@ impl Entry {
                 power: self.power,
                 expected_score: None,
                 expected_payoff: Some(self.evaluation.expected_payoff.into()),
+                event_rewards,
                 score_interval: None,
                 payoff_interval: None,
                 rank_certified: None,
@@ -104,6 +134,7 @@ impl Entry {
             power: self.power,
             expected_score: Some(self.evaluation.expected_score.into()),
             expected_payoff: Some(self.evaluation.expected_payoff.into()),
+            event_rewards,
             score_interval: None,
             payoff_interval: None,
             rank_certified: None,
@@ -190,6 +221,7 @@ impl Engine<'_, '_> {
                     self.metric,
                     Metric::ClientEventPoints { .. }
                         | Metric::ClientChallengePoints { .. }
+                        | Metric::ClientChallengePointsWithBonuses { .. }
                         | Metric::RankedEventItems { .. }
                 ))
             || (!matches!(traversal, Traversal::Session | Traversal::Fixed)
@@ -236,6 +268,36 @@ impl Engine<'_, '_> {
     fn payoff(&self, p: &PhysicalDeck, score: i32, power: i32, final_life: Option<i32>) -> Result<i128, Error> {
         payoff_of(self.pool, self.request, self.metric, self.event_input, p, score, power, final_life)
     }
+    fn secondary_rewards(
+        &self,
+        p: &PhysicalDeck,
+        evaluation: &FiniteEvaluation,
+    ) -> Result<Option<SecondaryRewards>, Error> {
+        let Metric::ClientChallengePointsWithBonuses { event_id, priority, resource_type, resource_id } = *self.metric
+        else {
+            return Ok(None);
+        };
+        let context = self.request.objective.context().expect("validated event context");
+        let input = self.event_input.expect("validated event input");
+        let deck = p.as_deck();
+        let mut value = SecondaryRewards { priority, event_points: 0, event_items: 0 };
+        for (&score, &mass) in &evaluation.score_mass {
+            let points = context.preview_event_points(self.pool, &deck, input, event_id, score)?.points_for(event_id);
+            let items = context.preview_event_items(self.pool, &deck, input, event_id, score)?;
+            let items = ournotes_sim::scenario::item_payoff(&items, event_id, resource_type, resource_id)?;
+            let mass = i128::try_from(mass).map_err(|_| arithmetic())?;
+            value.event_points = value
+                .event_points
+                .checked_add(i128::from(points).checked_mul(mass).ok_or_else(arithmetic)?)
+                .ok_or_else(arithmetic)?;
+            value.event_items = value
+                .event_items
+                .checked_add(items.checked_mul(mass).ok_or_else(arithmetic)?)
+                .ok_or_else(arithmetic)?;
+        }
+        Ok(Some(value))
+    }
+
     fn consider(&mut self, physical: PhysicalDeck) -> Result<bool, Error> {
         self.consider_with(physical, None)
     }
@@ -306,7 +368,18 @@ impl Engine<'_, '_> {
             power,
             score: evaluation.score_mass.last_key_value().map(|(&score, _)| score),
         });
+        let secondary = self.secondary_rewards(&physical, &evaluation)?;
+        if secondary.is_some()
+            && let Some(best) = self.top.first()
+        {
+            match evaluation.expected_payoff.numerator.cmp(&best.evaluation.expected_payoff.numerator) {
+                Ordering::Less => return Ok(true),
+                Ordering::Greater => self.top.clear(),
+                Ordering::Equal => {}
+            }
+        }
         let entry = Entry {
+            secondary,
             physical,
             members: physical.members.map(|i| self.pool.members[i].id),
             snaps: physical.snaps.map(|i| i.map(|i| self.pool.snaps[i].id)),
@@ -494,6 +567,10 @@ impl Engine<'_, '_> {
             proof.best_gap = (filled > 0).then(|| gap(best)).flatten();
             proof.kth_gap = kth.and_then(gap);
         }
+        if self.metric.secondary_priority().is_some() && !complete {
+            proof.best_gap = None;
+            proof.kth_gap = None;
+        }
         if self.certified.is_some() {
             // Scalar incumbent fields are exact numerators, not interval endpoints. The result carries bounds.
             proof.best = None;
@@ -677,12 +754,14 @@ pub(crate) fn payoff_of(
             .expect("validated context")
             .preview_event_points(pool, &p.as_deck(), event_input.expect("validated event input"), event_id, score)?
             .points_for(event_id) as i128),
-        Metric::ClientChallengePoints { event_id } => Ok(request
-            .objective
-            .context()
-            .expect("validated context")
-            .preview_event_points(pool, &p.as_deck(), event_input.expect("validated event input"), event_id, score)?
-            .challenge_points_for(event_id) as i128),
+        Metric::ClientChallengePoints { event_id } | Metric::ClientChallengePointsWithBonuses { event_id, .. } => {
+            Ok(request
+                .objective
+                .context()
+                .expect("validated context")
+                .preview_event_points(pool, &p.as_deck(), event_input.expect("validated event input"), event_id, score)?
+                .challenge_points_for(event_id) as i128)
+        }
         Metric::RankedEventItems { event_id, resource_type, resource_id } => {
             let items = request.objective.context().expect("validated context").preview_event_items(
                 pool,
@@ -953,6 +1032,9 @@ pub(crate) fn solve_physical_impl(
         env.bounds.choices = b.members.len();
     }
     let lottery = certified_engine::lottery_mode(pool, request, &plan.domain)?;
+    if metric.secondary_priority().is_some() && lottery == certified_engine::LotteryMode::Certified {
+        return Err(Error::Unsupported("Challenge-point priorities require lottery-free terminal outcomes".into()));
+    }
     let mut engine = Engine {
         pool,
         request,
@@ -978,7 +1060,9 @@ pub(crate) fn solve_physical_impl(
         } else {
             None
         },
-        lottery_free: if lottery == certified_engine::LotteryMode::Free {
+        lottery_free: if lottery == certified_engine::LotteryMode::Free
+            || (live && metric.secondary_priority().is_some())
+        {
             Some(std::sync::Arc::new(ournotes_sim::live::full::luck_skills(pool.master)?))
         } else {
             None
@@ -1082,7 +1166,7 @@ pub(crate) fn solve_physical_impl(
                                     pool,
                                     request,
                                     domain,
-                                    metric,
+                                    &metric.primary_bound_metric(),
                                     event_input,
                                     simulation,
                                 );
@@ -1370,7 +1454,14 @@ fn joint_regimes(
         }
         e.rec.begin(&mut e.tel, "conversionCompile", None);
         let prepare = Instant::now();
-        let result = JointBounds::compile(e.pool, e.request, &domain, e.metric, e.event_input, e.simulation);
+        let result = JointBounds::compile(
+            e.pool,
+            e.request,
+            &domain,
+            &e.metric.primary_bound_metric(),
+            e.event_input,
+            e.simulation,
+        );
         e.tel.environment.bounds.conversion.as_mut().expect("conversion context").compile_ms +=
             prepare.elapsed().as_secs_f64() * 1000.0;
         e.rec.end(&mut e.tel);
@@ -1934,4 +2025,59 @@ fn simulate_current<F: FnMut() -> bool>(
     }
     let network_applications = terminal.model.rank_confirmation_applications().to_vec();
     Ok(Some(CurrentDeclaredOutcome { terminal, network_applications }))
+}
+
+#[cfg(test)]
+mod reward_priority_tests {
+    use super::*;
+
+    fn entry(cp: i128, pt: i128, items: i128, power: i32, id: i64, priority: EventRewardPriority) -> Entry {
+        let expectation = expectation::ExactExpectation { numerator: cp, denominator: 120 };
+        Entry {
+            physical: PhysicalDeck { members: [0, 1, 2, 3, 4], snaps: [None; 5] },
+            members: [id, 20, 30, 40, 50],
+            snaps: [None; 5],
+            power,
+            evaluation: FiniteEvaluation {
+                expected_score: expectation,
+                expected_payoff: expectation,
+                score_mass: BTreeMap::new(),
+                payoff_mass: BTreeMap::new(),
+                outcomes: Vec::new(),
+            },
+            secondary: Some(SecondaryRewards { priority, event_points: pt, event_items: items }),
+        }
+    }
+
+    #[test]
+    fn one_order_cp_increment_precedes_all_secondary_rewards() {
+        for priority in [EventRewardPriority::EventPointsFirst, EventRewardPriority::EventItemsFirst] {
+            let primary = entry(1201, 0, 0, 1, 2, priority);
+            let secondary = entry(1200, 120_000_000, 120_000_000, 1_000_000, 1, priority);
+            assert_eq!(compare(&primary, &secondary), Ordering::Less);
+        }
+    }
+
+    #[test]
+    fn secondary_order_precedes_power_and_scalar_top_five() {
+        for priority in [EventRewardPriority::EventPointsFirst, EventRewardPriority::EventItemsFirst] {
+            let mut rows = (1..=6)
+                .map(|id| entry(1200, id.into(), (7 - id).into(), (100 - id) as i32, id, priority))
+                .collect::<Vec<_>>();
+            rows.sort_by(compare);
+            assert_eq!(rows[0].members[0], if priority == EventRewardPriority::EventPointsFirst { 6 } else { 1 });
+        }
+    }
+
+    #[test]
+    fn equal_rewards_use_power_then_canonical_ids() {
+        let priority = EventRewardPriority::EventPointsFirst;
+        let mut rows = [
+            entry(1200, 2400, 120, 100, 2, priority),
+            entry(1200, 2400, 120, 101, 3, priority),
+            entry(1200, 2400, 120, 100, 1, priority),
+        ];
+        rows.sort_by(compare);
+        assert_eq!(rows.map(|row| row.members[0]), [3, 1, 2]);
+    }
 }

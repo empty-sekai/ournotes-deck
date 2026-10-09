@@ -43,7 +43,9 @@ pub(crate) fn validate_payoff(
             .ok_or_else(|| Error::Input("event metrics require resolved scenario".into()))?;
         let input = input.ok_or_else(|| Error::Input("event metrics require context.eventPayoff".into()))?;
         ctx.event_request(pool.master, input, id)?;
-        if matches!(metric, Metric::ClientChallengePoints { .. }) && matches!(ctx.scenario, Scenario::Challenge(_)) {
+        if matches!(metric, Metric::ClientChallengePoints { .. } | Metric::ClientChallengePointsWithBonuses { .. })
+            && matches!(ctx.scenario, Scenario::Challenge(_))
+        {
             return Err(Error::Input(
                 "challenge-point earnings require an ordinary played/skip result; challenge Live spends points".into(),
             ));
@@ -59,6 +61,7 @@ pub(crate) fn validate_payoff(
             | Metric::ScoreAndLifeAtLeast { .. }
             | Metric::ClientEventPoints { .. }
             | Metric::ClientChallengePoints { .. }
+            | Metric::ClientChallengePointsWithBonuses { .. }
             | Metric::RankedEventItems { .. },
         ) => Ok(()),
         _ => Err(Error::Input("metric does not match execution".into())),
@@ -70,7 +73,10 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
         (Execution::Power { .. }, _) => PlayerGoal::Power,
         (
             _,
-            Metric::ClientEventPoints { .. } | Metric::ClientChallengePoints { .. } | Metric::RankedEventItems { .. },
+            Metric::ClientEventPoints { .. }
+            | Metric::ClientChallengePoints { .. }
+            | Metric::ClientChallengePointsWithBonuses { .. }
+            | Metric::RankedEventItems { .. },
         ) => PlayerGoal::EventFarming,
         (_, Metric::ScoreAtLeast { .. } | Metric::CappedScore { .. } | Metric::ScoreAndLifeAtLeast { .. }) => {
             PlayerGoal::StableTarget
@@ -123,6 +129,12 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
         Metric::ClientChallengePoints { .. } => {
             "maximize expected newly earned client challenge points per declared Live Boost consumption; no deck event-point bonus"
         }
+        Metric::ClientChallengePointsWithBonuses { priority: EventRewardPriority::EventPointsFirst, .. } => {
+            "maximize expected Challenge points, then expected event points, then expected exact-grade event items"
+        }
+        Metric::ClientChallengePointsWithBonuses { priority: EventRewardPriority::EventItemsFirst, .. } => {
+            "maximize expected Challenge points, then expected exact-grade event items, then expected event points"
+        }
         Metric::RankedEventItems { .. } => "maximize expected resource quantity selected by each terminal result grade",
     };
     let mut assumptions = vec!["supplied roster progression and player bonuses; no upgrades or costs inferred"];
@@ -135,11 +147,16 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
             }
         });
         assumptions.push("the five members perform in a uniformly random order; paired snaps follow their members");
-        assumptions.push(
-            "native lottery probability law; certified intervals remain explicit until sufficient to prove ranking",
-        );
+        if r.metric.secondary_priority().is_some() {
+            assumptions
+                .push("lottery-free terminal outcomes; only the maximum expected Challenge-point layer is returned");
+        } else {
+            assumptions.push(
+                "native lottery probability law; certified intervals remain explicit until sufficient to prove ranking",
+            );
+        }
     }
-    if matches!(r.metric, Metric::RankedEventItems { .. }) {
+    if matches!(r.metric, Metric::RankedEventItems { .. } | Metric::ClientChallengePointsWithBonuses { .. }) {
         assumptions.push("one reward row per exact grade with probability marker 10000; quantities include EventItem effects and the declared item multiplier");
     } else if r.metric.event().is_some() {
         assumptions

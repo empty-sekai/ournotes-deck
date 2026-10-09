@@ -82,7 +82,7 @@ fn least_identity(p: &PhysicalDeck, depth: usize, e: &Engine<'_, '_>) -> ([i64; 
 
 fn inferior(cap: i128, power: i64, p: Option<(&PhysicalDeck, usize)>, e: &Engine<'_, '_>) -> bool {
     let Some((threshold, kth_power)) = e.safe_cutoff() else { return false };
-    if cap != threshold {
+    if cap != threshold || e.metric.secondary_priority().is_some() {
         return cap < threshold;
     }
     // The interval cutoff proves power ties only. It does not identify an exact K-th team whose public-ID tie
@@ -306,7 +306,7 @@ fn team(
     let canonical = super::uniform::canonical(e.pool, &proposal);
     let cap_attained = e.certified.is_none()
         && e.top.iter().any(|entry| entry.physical == canonical && entry.evaluation.expected_payoff.numerator == cap);
-    if bounds.has_terminal_payoff_cap() && cap_attained {
+    if e.metric.secondary_priority().is_none() && bounds.has_terminal_payoff_cap() && cap_attained {
         let proposals = bounds.layout_power_frontier(e.pool, domain, p, e.request.k);
         let exhausted = proposals.len() < e.request.k;
         let last = proposals.last().copied();
