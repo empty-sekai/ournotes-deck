@@ -94,6 +94,7 @@ pub use luck_shapes::{
 };
 pub use orders::{OrderSharing, OrderedLive, OrdersOutcome, RecordedOrder};
 mod raw_runtime;
+mod replay_rank;
 mod score_program;
 pub use raw_runtime::{RELAX_TARGET_JUDGEMENTS, RawJudgedNote, RawJudgementRuntime};
 pub use score_program::ScoreProgram;

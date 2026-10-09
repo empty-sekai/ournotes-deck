@@ -3,6 +3,13 @@
 //! A supplied judgement is a completed simulator result before skill conversion. This API does not infer
 //! physical touch eligibility. Its clock, result order, skill order, seed and ranking policy are explicit.
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
+
+mod rank;
+pub use rank::{
+    PowerDomain, RankAnalysisJob, RankAnalysisProgress, RankAnalysisRequest, RankAnalysisResult, RankAnalysisStatus,
+    RankTarget, RequiredPower,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -306,13 +313,14 @@ pub struct ChartDescription {
 }
 
 /// A parsed, reusable data session. The WASM bridge owns one of these per loaded data version.
+#[derive(Clone)]
 pub struct ReplaySession {
-    data: DeckData,
+    data: Arc<DeckData>,
 }
 
 impl ReplaySession {
     pub fn new(data: DeckData) -> Self {
-        Self { data }
+        Self { data: Arc::new(data) }
     }
     pub fn from_json(data_json: &str) -> Result<Self, Error> {
         Ok(Self::new(DeckData::from_json(data_json)?))
@@ -447,6 +455,14 @@ impl ReplaySession {
     }
 
     pub fn run(&self, r: &ReplayRequest) -> Result<ReplayResult, Error> {
+        self.run_inner(r, false).map(|(result, _)| result)
+    }
+
+    fn run_inner(
+        &self,
+        r: &ReplayRequest,
+        record: bool,
+    ) -> Result<(ReplayResult, Option<Arc<crate::live::full::ScoreProgram>>), Error> {
         if r.format != REQUEST_FORMAT {
             return Err(Error::Input(format!("unsupported replay format {}", r.format)));
         }
@@ -627,6 +643,10 @@ impl ReplaySession {
                 confirmations.entry(c.frame).or_default().push(c);
             }
         }
+        if record {
+            model.check_replay_order_domain()?;
+            model.begin_score_program_recording()?;
+        }
         model.set_seed(r.seed);
         let mut counts = JudgementCounts::default();
         let mut trace = Vec::new();
@@ -703,7 +723,7 @@ impl ReplaySession {
         {
             return Err(Error::Input("complete Gekisou replay ends before every range and rank confirmation settled; extend the explicit clock/input".into()));
         }
-        Ok(ReplayResult {
+        let result = ReplayResult {
             format: RESULT_FORMAT,
             input_kind: if r.raw_runtime.is_some() {
                 "givenRawResultsBeforeSkillConversion"
@@ -726,7 +746,8 @@ impl ReplaySession {
             ranges: final_ranges,
             bonus_events: bonuses,
             frames: trace,
-        })
+        };
+        Ok((result, model.recorded_score_program()?))
     }
 }
 

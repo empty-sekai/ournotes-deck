@@ -59,7 +59,10 @@ jobs:
         working-directory: source
         env:
           OURNOTES_ACCOUNT_CORPUS: ${{ github.workspace }}/source/work/account-corpus
-        run: cargo test --release --locked --test adapter_fixture_export export_account_transport_corpus -- --ignored --exact
+          OURNOTES_REPLAY_RANK_CORPUS: ${{ github.workspace }}/source/work/replay-rank-corpus.json
+        run: |
+          cargo test --release --locked --test adapter_fixture_export export_account_transport_corpus -- --ignored --exact
+          cargo test --release --locked -p ournotes-sim --test replay rank_analysis::export_rank_analysis_corpus -- --ignored --exact
       - name: Package and verify extracted WASM in Node and Chromium
         env:
           NODE_PATH: ${{ github.workspace }}/automation/work/browser/node_modules
@@ -70,6 +73,7 @@ jobs:
           recommend="work/unpacked/ournotes-recommend-wasm-$TAG"
           replay="work/unpacked/ournotes-replay-wasm-$TAG"
           node source/tools/search-harness/account-wasm.cjs "$recommend/nodejs/ournotes_recommend_wasm.js" source/work/account-corpus
+          node source/wasm/replay/tests/replay-rank.cjs "$replay/nodejs/ournotes_replay_wasm.js" source/work/replay-rank-corpus.json
           node automation/scripts/release/smoke-wasm.cjs "$recommend" "$replay" source/work/account-corpus
       - uses: actions/upload-artifact@v4
         with:
