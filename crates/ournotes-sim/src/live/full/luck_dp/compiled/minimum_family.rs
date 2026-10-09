@@ -5,6 +5,8 @@
 //! Those updaters never file an applier, consume random state, or change another updater. The original
 //! ordered minimum Plan is retained separately for its independent nominal distribution. All remaining
 //! initialized model fields and non-minimum actions compare exactly inside one immutable context.
+//! Each retained row keeps its original native index. Interleaved minimum slots may vary only while
+//! those indices remain equal; a suffix of erased minimum rows does not constrain row multiplicity.
 use super::*;
 use crate::live::full::build_context::BuildContext;
 
@@ -202,12 +204,12 @@ fn admit(prepared: &mut PreparedRecording<ProbabilityMass>, virtual_observer: bo
         return None;
     }
     let model = &mut prepared.model;
-    // The optional proof erases whole updaters only. Requiring a row suffix leaves every retained
-    // effect's native row index untouched; interleaved/mixed sources use the original compiler.
-    let first_minimum = model.rows.iter().position(|row| row.effect_type == 11005).unwrap_or(model.rows.len());
-    if model.rows[first_minimum..].iter().any(|row| row.effect_type != 11005) {
+    // The reduced native constructor owns every lottery row in a condition updater. Preserve that
+    // boundary explicitly: no live effect may refer to a row whose metadata this key omits.
+    if model.live.iter().flat_map(|skill| &skill.effects).any(|effect| model.rows[effect.row].effect_type == 11005) {
         return None;
     }
+    let mut erased = vec![false; model.rows.len()];
     for skill in &model.cond {
         let effects = skill.updater.effects();
         let minimum = effects.iter().filter(|effect| model.rows[effect.row].effect_type == 11005).count();
@@ -222,6 +224,12 @@ fn admit(prepared: &mut PreparedRecording<ProbabilityMass>, virtual_observer: bo
         {
             return None;
         }
+        for effect in effects {
+            erased[effect.row] = true;
+        }
+    }
+    if model.rows.iter().zip(&erased).any(|(row, &erased)| (row.effect_type == 11005) != erased) {
+        return None;
     }
     let mut actions = Vec::new();
     let mut other_actions = Vec::new();
@@ -234,31 +242,35 @@ fn admit(prepared: &mut PreparedRecording<ProbabilityMass>, virtual_observer: bo
             _ => other_actions.push((*phase, action, checker)),
         }
     }
-    // Only fixed context inputs are omitted. Restore the complete original native model before the
-    // caller can record it. Every other current/future initialized field is included automatically.
+    // Keep the complete retained row metadata with its original index in a separate identity view.
+    // Erased slots never change a retained row's coordinates. An erased trailing suffix contributes
+    // no coordinates, so its count can vary. The remaining model still includes every live/condition
+    // reference and other current/future initialized field automatically. No projected model executes.
     let rows = std::mem::take(&mut model.rows);
     let conditions = std::mem::take(&mut model.cond);
     let notes = std::mem::take(&mut model.notes);
     let events = std::mem::take(&mut model.events);
-    model.rows.extend_from_slice(&rows[..first_minimum]);
     model.cond.extend(
-        conditions
-            .iter()
-            .filter(|skill| skill.updater.effects().iter().all(|effect| effect.row < first_minimum))
-            .cloned(),
+        conditions.iter().filter(|skill| skill.updater.effects().iter().all(|effect| !erased[effect.row])).cloned(),
     );
     let state = super::super::super::luck_exact::initialized_identity(model);
+    let indexed_rows = rows.iter().enumerate().filter(|&(index, _)| !erased[index]).collect::<Vec<_>>();
+    let row_state = super::super::super::luck_exact::state_identity(&indexed_rows);
+    // Every failure below leaves the original admitted model ready for complete native recording.
     model.events = events;
     model.notes = notes;
     model.cond = conditions;
     model.rows = rows;
     let state = state?;
+    let row_state = row_state?;
     let plan =
         super::super::super::luck_exact::state_identity(&(&prepared.plan.probes, other_actions, virtual_observer))?;
     let mut key = Vec::new();
-    key.extend_from_slice(b"\0conditional-minimum-initialized-family\0\x01");
+    key.extend_from_slice(b"\0conditional-minimum-initialized-family\0\x02");
     key.extend_from_slice(&(state.len() as u64).to_le_bytes());
     key.extend_from_slice(state.as_bytes());
+    key.extend_from_slice(&(row_state.len() as u64).to_le_bytes());
+    key.extend_from_slice(row_state.as_bytes());
     key.extend_from_slice(plan.as_bytes());
     Some(MinimumFamilyAdmission { key, actions })
 }

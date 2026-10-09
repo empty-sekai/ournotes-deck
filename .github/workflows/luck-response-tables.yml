@@ -299,6 +299,65 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  joint-families:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - region: tw
+            chart: tw-10006103-expert
+          - region: tw
+            chart: tw-10010703-expert
+          - region: jp
+            chart: jp-10000300-easy
+    env:
+      REGION: ${{ matrix.region }}
+      CHART: ${{ matrix.chart }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: luck-catalogue-pinned-inputs-and-generator
+          path: work/shared
+      - name: Verify complete real inputs and the shared native generator
+        id: verify-inputs
+        run: |
+          chmod +x work/shared/bin/luck_response
+          python3 tools/luck-tables/aggregate_catalogue.py verify-bundle --inputs work/shared/catalogue \
+            --generator work/shared/bin/luck_response --source . --bundle work/shared/bundle.json
+      - name: Compare every joint Miss and minimum level request with independent recording
+        run: |
+          python3 tools/luck-tables/validate_joint_families.py "work/shared/catalogue/$REGION/inputs/data.json" \
+            "work/shared/catalogue/$REGION/inputs/snapshot.json" \
+            "work/shared/catalogue/$REGION/inputs/requests/$CHART.json" \
+            --generator work/shared/bin/luck_response --source . \
+            --output work/joint-validation/families --timeout-seconds 1200
+      - name: Validate the complete two-source speed grid and independent native witnesses
+        if: always() && steps.verify-inputs.outcome == 'success'
+        run: |
+          python3 tools/luck-tables/validate_speed_profiles.py "work/shared/catalogue/$REGION/inputs/data.json" \
+            "work/shared/catalogue/$REGION/inputs/snapshot.json" \
+            "work/shared/catalogue/$REGION/inputs/requests/$CHART.json" \
+            --generator work/shared/bin/luck_response --source . \
+            --output work/joint-validation/speed --timeout-seconds 1200
+      - name: Preserve complete mappings, original-DP references and cold/warm dictionaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luck-joint-families-${{ matrix.chart }}
+          path: work/joint-validation/
+          if-no-files-found: warn
+          retention-days: 30
+
   aggregate:
     needs: [prepare, catalogue]
     if: always() && needs.prepare.result == 'success'

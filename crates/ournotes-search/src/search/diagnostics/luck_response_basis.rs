@@ -70,7 +70,7 @@ pub(super) fn identify_basis(
     let response_limit = options.response_bytes.min(256 << 20);
     let max_terms = options.max_terms.min(64);
     let family_limit = options.family_bytes.min(256 << 20);
-    let family_requested = options.family_reuse && !options.canonical_miss_gauge && family_limit >= 1 << 20;
+    let family_requested = options.family_reuse && family_limit >= 1 << 20;
     let operator_contract = if options.canonical_miss_gauge {
         "conditional-start-minimum+canonical-miss-gauge-deltas/1"
     } else {
@@ -91,6 +91,9 @@ pub(super) fn identify_basis(
                 program_limit,
                 family_limit,
             )
+            .and_then(|session| {
+                if options.canonical_miss_gauge { session.with_canonical_miss_gauge() } else { Ok(session) }
+            })
         })
         .and_then(Result::ok);
     let family_reuse = families.is_some();
@@ -340,8 +343,6 @@ pub(super) fn identify_basis(
     let family_stats = families.as_ref().map(LuckTableMinimumFamilySession::stats).unwrap_or_default();
     let family_reuse_decline = if !options.family_reuse {
         Some("disabled")
-    } else if options.canonical_miss_gauge {
-        Some("canonicalMissGauge")
     } else if family_limit < 1 << 20 {
         Some("familyBudgetBelowOneMiB")
     } else if !family_reuse {
@@ -350,7 +351,7 @@ pub(super) fn identify_basis(
         None
     };
     let family_identity_index_bytes = family_term_indices.capacity() * std::mem::size_of::<[Option<usize>; 64]>();
-    let stats = json!({"requestedJobs":jobs.len(),"compiledJobs":compiled,"basisTermReferences":term_references,
+    let mut stats = json!({"requestedJobs":jobs.len(),"compiledJobs":compiled,"basisTermReferences":term_references,
         "uniquePrograms":responses.len(),"exactTermAliases":aliases,"propagationCalls":propagations,
         "reconstructedJobs":reconstructions,"compileMs":compile_ms,"propagationMs":propagation_ms,
         "mixtureMs":mixture_ms,"verificationCalls":verification_calls,"verifiedJobs":verified_jobs,"verificationMs":verification_ms,
@@ -370,6 +371,7 @@ pub(super) fn identify_basis(
         "responseArcCounterBytes":responses.iter().filter(|response| response.is_some()).count() * 2 * std::mem::size_of::<usize>(),
         "compiledProgramPeakBytes":program_peak,"temporaryIdentityPeakBytes":identity_peak,
         "fingerprintWorkspacePeakBytes":fingerprint_peak,"elapsedMs":began.elapsed().as_secs_f64()*1000.0});
+    stats["familyRecordingContract"] = json!(family_reuse.then_some("minimum-only-original-row-indices/2"));
     json!({"format":"ournotes-deck.luck-response-basis/1",
         "identificationComplete":identification_complete,"probabilityComplete":propagation_complete,
         "complete":identification_complete && missing_selected.is_empty() && (!options.propagate || propagation_complete) && verification_complete,

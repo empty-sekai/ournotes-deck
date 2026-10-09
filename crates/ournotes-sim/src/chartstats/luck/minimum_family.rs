@@ -43,6 +43,7 @@ pub struct LuckTableMinimumFamilySession<'a> {
     neutral: Option<(i64, i64)>,
     recorder: full::MinimumFamilyRecorder<'a>,
     max_terms: usize,
+    canonical_miss_gauge: bool,
     capacity: usize,
     program_capacity: usize,
     families: Vec<Family>,
@@ -71,6 +72,7 @@ impl<'a> LuckTableMinimumFamilySession<'a> {
             neutral,
             recorder: full::MinimumFamilyRecorder::new(master, skills, notes, params, setup, play, deltas),
             max_terms: max_terms.min(64),
+            canonical_miss_gauge: false,
             capacity: capacity.min(256 << 20),
             program_capacity: program_capacity.min(256 << 20),
             // Stable preallocated slots avoid retained index growth after a cache admission.
@@ -85,6 +87,18 @@ impl<'a> LuckTableMinimumFamilySession<'a> {
             return Err(Error::Capacity("LUCK minimum family context exceeds its allowance".into()));
         }
         Ok(session)
+    }
+
+    /// Select the Miss identity quotient before the first request. Each retained family's original
+    /// recording must pass its complete Miss-domain admission once. Later minimum-only reweighting
+    /// preserves that domain because every non-minimum initialized field and action remains equal.
+    /// The source rows, holders and original Miss values remain part of the recording-family key.
+    pub fn with_canonical_miss_gauge(mut self) -> Result<Self, Error> {
+        if self.stats.family_admission_calls != 0 {
+            return Err(Error::Input("LUCK minimum family identity mode is fixed before its first request".into()));
+        }
+        self.canonical_miss_gauge = true;
+        Ok(self)
     }
 
     pub fn stats(&self) -> LuckTableMinimumFamilyStats {
@@ -153,13 +167,16 @@ impl<'a> LuckTableMinimumFamilySession<'a> {
             self.stats.native_batch_recordings += 1;
             batches.push(self.recorder.record(prepared)?);
         }
-        let program = CompiledLuckTableProgram { batches };
+        let mut program = CompiledLuckTableProgram { batches };
         let original_bytes = program
             .allocated_bytes()
             .ok_or_else(|| Error::Capacity("LUCK minimum family original program allocation".into()))?;
         self.stats.original_program_peak_bytes = self.stats.original_program_peak_bytes.max(original_bytes);
         if original_bytes > self.program_capacity {
             return Err(Error::Capacity("LUCK minimum family original program exceeds its allowance".into()));
+        }
+        if self.canonical_miss_gauge {
+            program = program.canonicalize_miss_gauge()?;
         }
         let mut basis = program.start_minimum_basis(self.max_terms)?;
         self.check_program_bytes(&basis)?;

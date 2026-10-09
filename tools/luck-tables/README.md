@@ -1,5 +1,11 @@
 # Incremental real-chart LUCK response tables
 
+The [joint controller extension](../../docs/luck-joint-controller-reuse.md) enables bounded recording
+reuse with `canonicalMissGauge`, including admitted interleaved minimum rows. Its validator checks
+all 15,625 declared Miss/minimum level combinations per chart against independent recording, then
+verifies a covering set of original-DP mixtures and cold/warm U24 queries. A separate speed-profile
+validator checks all 421 zero/one/two-source kernels and the actual source effects and schedules.
+
 The [recording-family extension](../../docs/luck-response-family-reuse.md) adds bounded minimum-family
 recording reuse, opt-in Miss-gauge canonical identities, complete-chart family validation and
 independent same-binary dictionary auditing. The [2026-10-09 audit](../../docs/luck-response-family-audit.json)
@@ -16,6 +22,25 @@ The nominal DP probability intervals and archive score replay remain diagnostic 
 The [complete catalogue audit](../../docs/luck-response-catalogue-audit.json) accounts for **692/692 regional chart/difficulty records**. Its 350,692 base/single labels required 14,236 native DP propagations across chart jobs and produce **7,216 distinct stored programs** after cross-region merging. The complete U24 dictionary occupies **16,429,514 bytes** as index plus unique blobs, or **4,591,788 bytes** in a deterministic XZ bundle. These measurements belong to [the completed catalogue run at `de589e3`](https://github.com/empty-sekai/ournotes-deck/actions/runs/37820020030).
 
 The newer [conditional interaction audit](../../docs/luck-response-conditional-audit.json) identifies **1,250 full-capacity skill combinations as 27 conditional programs in each of three real chart contexts**. Two warmup jobs generate the complete 27-program family; new levels and multiplicities then query it with zero additional DP. The three families occupy **27,104 bytes together in U24/XZ**, with their own source and coverage recorded separately from the complete catalogue. The [research and measurement record](../../docs/luck-response-tables.md) explains both algorithms, compression scope and earlier limited experiments.
+
+## Validate joint recording families and speed profiles
+
+The supplied data, snapshot and request are used unchanged. Use a new output directory for each run:
+
+```sh
+python3 tools/luck-tables/validate_joint_families.py DATA SNAPSHOT REQUEST \
+  --generator tools/search-harness/target/release/luck_response --source . \
+  --output work/joint-families --timeout-seconds 1200
+python3 tools/luck-tables/validate_speed_profiles.py DATA SNAPSHOT REQUEST \
+  --generator tools/search-harness/target/release/luck_response --source . \
+  --output work/speed-profiles --timeout-seconds 1200
+```
+
+The joint grid uses five 125-family shards, with the native 256-family limit intact. Its receipts
+separate identification, original-reference DP, cold conditional generation and generation-disabled
+warm lookup. The speed-only source grid retains GK22's additional damage-reduction row in its source
+audit; equal speed profiles do not authorize merging controllers with LIFE dependencies.
+CI runs both gates on the pinned TW short/long and JP Easy contexts using the shared catalogue bundle.
 
 ## Acquire and generate the complete published catalogues
 

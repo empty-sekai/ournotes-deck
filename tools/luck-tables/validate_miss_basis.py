@@ -41,6 +41,9 @@ pipeline, storage, compare = basis.pipeline, basis.storage, miss.compare
 FORMAT = 'ournotes-deck.luck-miss-basis-validation/1'
 CONTRACT = 'conditional-start-minimum+canonical-miss-gauge-deltas/1'
 MAX_TERMS = 64
+FAMILY_COUNTS = ('nativeRecordings', 'familyAdmissionCalls', 'familyHits', 'familyMisses',
+                 'familyFallbacks', 'retainedFamilies', 'familyCacheBytes',
+                 'familyIdentityComputations', 'familyIdentityHits')
 
 
 def require(condition, message):
@@ -74,7 +77,32 @@ def make_specs(data):
     return jobs, original, query, source_receipt
 
 
-def query_gate(result, label, hashes, spec_sha, binary_sha, source, jobs):
+def family_counts(stats, jobs, reuse, expected_families=None):
+    """Require complete recording work, including independently compiled jobs."""
+    require(type(reuse) is bool and stats.get('familyReuseEnabled') is reuse
+            and stats.get('familyReuseDecline') == (None if reuse else 'disabled')
+            and stats.get('requestedJobs') == stats.get('compiledJobs') == len(jobs)
+            and all(type(stats.get(field)) is int and stats[field] >= 0
+                    for field in (*FAMILY_COUNTS, 'requestedJobs', 'compiledJobs')),
+            'native family statistics omit admitted jobs or have a different reuse mode')
+    if reuse:
+        require(type(expected_families) is int and 1 <= expected_families <= len(jobs)
+                and stats['familyAdmissionCalls'] == len(jobs)
+                and stats['nativeRecordings'] == stats['familyMisses'] == stats['retainedFamilies']
+                == expected_families
+                and stats['familyHits'] == len(jobs) - expected_families
+                and stats['familyFallbacks'] == 0,
+                'native recording reuse differs from the declared exact nonminimum families')
+    else:
+        require(stats['nativeRecordings'] == len(jobs)
+                and all(stats[field] == 0 for field in ('familyAdmissionCalls', 'familyHits',
+                    'familyMisses', 'familyFallbacks', 'retainedFamilies', 'familyCacheBytes',
+                    'familyIdentityHits')),
+                'independently recorded jobs unexpectedly reused a retained family')
+    return {field: stats[field] for field in FAMILY_COUNTS}
+
+
+def query_gate(result, label, hashes, spec_sha, binary_sha, source, jobs, expected_families=None):
     require(result.get('format') == basis.QUERY and result.get('complete') is True
             and result.get('status') == 'success' and result.get('inputsUnchanged') is True
             and result.get('operatorContract') == CONTRACT and result.get('sourceVersion') == source
@@ -104,10 +132,16 @@ def query_gate(result, label, hashes, spec_sha, binary_sha, source, jobs):
         raise ValueError('unknown cold/warm phase')
     identified = result['identificationStats']
     require(identified['propagationCalls'] == identified['verificationCalls'] == 0
-            and identified['requestedJobs'] == identified['compiledJobs'] == len(jobs)
-            and identified['familyReuseEnabled'] is False
-            and identified['familyReuseDecline'] == 'canonicalMissGauge',
-            label + ' identification has unexpected propagation or unproved Miss-family reuse')
+            and identified['requestedJobs'] == identified['compiledJobs'] == len(jobs),
+            label + ' identification has unexpected propagation or incomplete admission')
+    expected_families = len(jobs) if expected_families is None else expected_families
+    family_counts(identified, jobs, True, expected_families)
+    if label == 'cold':
+        generated = result['generationStats']
+        require(generated.get('propagationCalls') == stats['propagationCalls']
+                and generated.get('verificationCalls') == 0,
+                'cold generation hides propagation or verification work')
+        family_counts(generated, jobs, True, expected_families)
 
 
 def curves(table, context, jobs):
@@ -121,7 +155,7 @@ def curves(table, context, jobs):
         compare.validate_curve(curve)
         by_key[key] = curve
     require(set(by_key) == {pipeline.canonical(job['entries']) for job in jobs},
-            'materialized/decoded table did not retain all six exact ordered source keys')
+            'materialized/decoded table did not retain every exact ordered source key')
     return {job['name']: {'curve': by_key[pipeline.canonical(job['entries'])]} for job in jobs}
 
 
@@ -148,7 +182,8 @@ def compare_gate(reference, values):
     return value
 
 
-def run(data, snapshot, request, generator, source, output, timeout=None):
+def run(data, snapshot, request, generator, source, output, timeout=None, *,
+        kernel_specs=None, expected_families=None, scope=None):
     started = time.monotonic()
     paths = {name: Path(path).resolve() for name, path in
              (('data', data), ('snapshot', snapshot), ('request', request))}
@@ -167,7 +202,16 @@ def run(data, snapshot, request, generator, source, output, timeout=None):
     actual_data = pipeline.read(paths['data'])
     require(pipeline.luck_case(actual_data, pipeline.read(paths['request'])),
             'the unchanged supplied real chart has no declared LUCK mission')
-    jobs, reference_spec, query_spec, source_receipt = make_specs(actual_data)
+    witness_check = kernel_specs is None
+    jobs, reference_spec, query_spec, source_receipt = (make_specs(actual_data) if witness_check else kernel_specs)
+    require(jobs == reference_spec.get('jobs') == query_spec.get('jobs') and jobs
+            and reference_spec.get('mode') == 'programs'
+            and reference_spec.get('canonicalMissGauge') is False
+            and reference_spec.get('canonicalStartMinimum') is False
+            and query_spec.get('canonicalMissGauge') is True
+            and query_spec.get('basisFamilyReuse') is True,
+            'independent whole-live reference and conditional query need the same original source jobs')
+    scope = scope or 'Six actual-master Miss/minimum/speed parameter kernels on the unchanged supplied real LUCK chart; not owned decks, all legal combinations, or a full search benchmark.'
     output.mkdir(parents=True, exist_ok=True)
     pipeline.write(output / 'reference-spec.json', reference_spec)
     pipeline.write(output / 'query-spec.json', query_spec)
@@ -180,7 +224,7 @@ def run(data, snapshot, request, generator, source, output, timeout=None):
         'sourceSha256': {name: before['script:' + name]['sha256'] for name in sorted(scripts)},
         'specs': {name: receipt(output / name, output) for name in ('reference-spec.json', 'query-spec.json')},
         'realSourceReceipt': receipt(output / 'real-source-receipt.json', output),
-        'scope': 'Six actual-master Miss/minimum/speed parameter kernels on the unchanged supplied real LUCK chart; not owned decks, all legal combinations, or a full search benchmark.',
+        'scope': scope,
         'nativeExpectationProven': False, 'rankingProven': False, 'usesMonteCarlo': False,
         'allTeamCombinationsCovered': False, 'changesChartsOrMissions': False,
         'timingScope': 'Observed wall time; no claim of isolated CPU execution or cold speedup.',
@@ -204,7 +248,7 @@ def run(data, snapshot, request, generator, source, output, timeout=None):
             pipeline.write(output / 'validation.json', result)
 
     try:
-        # No imported response or conditional compilation in this reference.
+        # Each reference is propagated from its original whole-live controller.
         call([generator, paths['data'], paths['snapshot'], paths['request'], output / 'reference-spec.json',
               output / 'reference.json'], output / 'reference.log', timeout)
         raw = pipeline.read(output / 'reference.json')
@@ -213,7 +257,7 @@ def run(data, snapshot, request, generator, source, output, timeout=None):
         reference = miss.program_report(raw, reference_spec, hashes, miss.file_hash(output / 'reference-spec.json'),
                                         expected_source)
         require(raw['stats']['propagationCalls'] == len(jobs) == len(raw['programs']),
-                'independent reference did not propagate six distinct original programs')
+                'independent reference did not propagate every distinct original program')
         result['reference'] = {'stats': raw['stats'], 'report': receipt(output / 'reference.json', output),
                                'operatorContract': 'native-ordered-actions/1', 'independentWholeLiveDP': True}
         materializations, decoded, mappings_by_phase = {}, {}, {}
@@ -223,7 +267,7 @@ def run(data, snapshot, request, generator, source, output, timeout=None):
                                 timeout=timeout, run_command=call)
             result['queries'][label] = query
             query_gate(query, label, hashes, miss.file_hash(output / 'query-spec.json'), binary_sha,
-                       expected_source, jobs)
+                       expected_source, jobs, expected_families)
             identified = pipeline.read(output / label / 'identify.json')
             found_source, _programs, mappings, _references = basis.identification(identified, jobs, MAX_TERMS, CONTRACT)
             require(found_source == expected_source and all(identified.get(field) == raw.get(field)
@@ -237,15 +281,18 @@ def run(data, snapshot, request, generator, source, output, timeout=None):
                  output / label / 'unpack.log', timeout)
             decoded[label] = curves(pipeline.read(output / label / 'decoded.json'), raw['context'], jobs)
             result['comparisons'][label + 'FinalU24VsOriginalDP'] = compare_gate(reference, decoded[label])
+            require(result['comparisons'][label + 'FinalU24VsOriginalDP']['allLookupEncloseReferenceEndpoints'],
+                    label + ' final U24 archive did not enclose the independent original reference')
             codec = compare_gate(materializations[label], decoded[label])
             result['comparisons'][label + 'FinalU24VsMaterialized'] = codec
             require(codec['allLookupEncloseReferenceEndpoints'],
                     label + ' final U24 archive did not outward-enclose the materialized response')
-            witness_input = {name: {**value, 'fingerprint': pipeline.sha(pipeline.canonical(mappings[name]))}
-                             for name, value in materializations[label].items()}
-            witness = miss.witness_gate(witness_input)
-            witness['identityScope'] = 'SHA256 of complete native conditional mappings: program fingerprint, interval weight and start choices.'
-            result.setdefault('witnessIdentity', {})[label] = witness
+            if witness_check:
+                witness_input = {name: {**value, 'fingerprint': pipeline.sha(pipeline.canonical(mappings[name]))}
+                                 for name, value in materializations[label].items()}
+                witness = miss.witness_gate(witness_input)
+                witness['identityScope'] = 'SHA256 of complete native conditional mappings: program fingerprint, interval weight and start choices.'
+                result.setdefault('witnessIdentity', {})[label] = witness
             pipeline.write(output / 'validation.json', result)
         require(mappings_by_phase['cold'] == mappings_by_phase['warm'],
                 'cold/warm conditional identities, choices or interval weights changed')

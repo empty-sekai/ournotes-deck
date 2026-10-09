@@ -22,10 +22,14 @@ now retains a bounded recording family for one immutable master, chart, play and
 
 Every request still passes the original holder construction, source/capacity/formation checks,
 native model initialization and mechanism admission. The fast path erases only whole minimum-only
-updaters that form a suffix of the initialized updater rows and whose effect predicates are
-statically false in the native weighted recorder. Empty updaters, mixed effects, LIFE-dependent
-predicates, unknown predicates and shifted nonminimum row indices do not qualify. The complete
+updaters whose effect predicates are statically false in the native weighted recorder. Every retained
+row keeps its original native index and complete metadata. Mixed effects, LIFE-dependent predicates,
+unknown predicates and shifted nonminimum row indices do not qualify for the same family. The complete
 remaining initialized model, nonminimum actions and observer plan must compare equal in process.
+
+The current indexed-row admission and joint Miss mode are specified in
+[joint controller reuse](luck-joint-controller-reuse.md). The measurements in this document retain
+their explicitly pinned source and input identities.
 
 The first member records its complete original live and checks that its minimum actions match the
 admitted static plan at every actual start. Later members reuse that recording, reweight the
@@ -63,8 +67,10 @@ The original native tape is retained for propagation. Interval endpoints can dif
 association rounding, so independent original comparisons require overlapping joint enclosures,
 equal probes and equal transition masks rather than bitwise endpoint equality.
 
-This mode explicitly disables minimum-family recording reuse and cannot be combined with the older
-CDF canonicalization. Its complete-program contract is `canonical-miss-gauge-deltas/1`; the
+This mode supports the bounded minimum-family session with the complete indexed-row admission
+described in [joint controller reuse](luck-joint-controller-reuse.md). Its original Miss controls
+remain in each recording-family key. It cannot be combined with the CDF canonicalization.
+Its complete-program contract is `canonical-miss-gauge-deltas/1`; the
 conditional transport contract is `conditional-start-minimum+canonical-miss-gauge-deltas/1`.
 Materialization binds the requested contract and refuses mixed or missing contracts.
 
