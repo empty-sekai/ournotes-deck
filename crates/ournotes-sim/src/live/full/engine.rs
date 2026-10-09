@@ -405,6 +405,16 @@ impl ConditionSkillUpdater {
         &self.effects
     }
 
+    /// Relabel identities on a private cache-key snapshot, never on an executing model. Keep the
+    /// already compiled order and all aliases: native wrapping may make that order differ from row
+    /// order, and distinct updater pools can share the same actual state key.
+    pub(super) fn canonicalize_cache_ids(&mut self, label: &mut impl FnMut(i64) -> i64) {
+        for effect in &mut self.effects {
+            effect.effect_id = label(effect.effect_id);
+        }
+        self.execute_count = self.execute_count.drain().map(|(id, count)| (label(id), count)).collect();
+    }
+
     /// Installs semantic probability checks on the selected score rows before recording. Replacing
     /// probability leaves preserves every trigger/reset property used to compile the idle plan.
     pub(super) fn condition_score_probabilities(&mut self, score_rows: &[bool]) -> Result<bool, Error> {

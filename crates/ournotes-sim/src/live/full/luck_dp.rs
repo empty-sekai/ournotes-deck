@@ -1272,6 +1272,51 @@ pub fn luck_rush_dp_certified_with_moments(
     certified_mode(master, skills, notes, skill_events, params, setup, play, delta_times, deck, probes, ranking, true)
 }
 
+/// Chart measurements persist the propagation by the complete recorded transcript. Recording still validates
+/// the current dependency closure; a hit may share the same curve between different ordinary score programs.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn luck_rush_dp_certified_with_moments_cached(
+    master: &Master,
+    skills: &LuckSkills,
+    notes: &[LiveNote],
+    skill_events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    deck: &[Performer],
+    probes: Option<&[Option<usize>]>,
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+    cache: &crate::chartstats::ChartStatsCache,
+) -> Result<LuckDpCertifiedResult, Error> {
+    let transcript = record::<ProbabilityMass>(
+        master,
+        skills,
+        notes,
+        skill_events,
+        params,
+        setup,
+        play,
+        delta_times,
+        deck,
+        probes,
+        ranking,
+        true,
+    )?;
+    let identity = transcript.key().map(|words| words.into_iter().flat_map(u64::to_le_bytes).collect::<Vec<_>>());
+    cache.curve(identity.as_deref(), play.frames.len(), transcript.probes.len(), setup.fevers.len(), || {
+        let result = propagate(&transcript)?;
+        Ok(LuckDpCertifiedResult {
+            probe_transitions: result.probe_transitions,
+            steps: result.steps,
+            probes: result.probes,
+            range_moments: result.range_moments,
+            peak_states: result.peak_states,
+            transitions: result.transitions,
+        })
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn certified_mode(
     master: &Master,

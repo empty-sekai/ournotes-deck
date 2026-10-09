@@ -3,6 +3,9 @@
 #[path = "../../ournotes-sim/tests/common/mod.rs"]
 mod common;
 
+#[path = "chartstats/program_cache.rs"]
+mod program_cache;
+
 use ournotes_sim::chartstats::{self, POWER};
 use ournotes_sim::data::{DeckData, FORMAT};
 use ournotes_sim::live::full::{self, GekisouSetup, LiveNote, LiveParams, Performer};

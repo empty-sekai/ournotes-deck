@@ -36,6 +36,15 @@ fn mill(m: i32) -> f32 {
 }
 
 impl FrameDiff {
+    fn is_cache_zero(&self) -> bool {
+        // Exhaustive destructuring forces new fields to be reviewed before empty frame storage can
+        // be compacted in a cache-key snapshot. In particular, negative zero is not positive zero.
+        let Self { band_total_power, combo, note, just, perfect, great, good, luck } = *self;
+        band_total_power == 0
+            && luck == 0
+            && [combo, note, just, perfect, great, good].into_iter().all(|value| value.to_bits() == 0)
+    }
+
     fn add(&mut self, cmd: &FactorCommand) {
         self.band_total_power = self.band_total_power.wrapping_add(cmd.band_total_power);
         self.luck = self.luck.wrapping_add(cmd.luck);
@@ -137,6 +146,25 @@ pub(crate) struct IncrementalCalculator {
 }
 
 impl IncrementalCalculator {
+    /// Compact only untouched frame storage in a private identity snapshot. Original lengths are
+    /// part of that identity; all other calculator fields still use their complete representation.
+    /// Never call this on a model that will execute.
+    pub(super) fn compact_cache_snapshot(&mut self) -> Option<[usize; 3]> {
+        if self.program.is_some()
+            || self.bounds_trace.is_some()
+            || self.notes.iter().any(|frame| !frame.is_empty())
+            || self.factors.iter().any(|frame| !frame.is_empty())
+            || self.diffs.iter().any(|diff| !diff.is_cache_zero())
+        {
+            return None;
+        }
+        let lengths = [self.notes.len(), self.factors.len(), self.diffs.len()];
+        self.notes.clear();
+        self.factors.clear();
+        self.diffs.clear();
+        Some(lengths)
+    }
+
     pub(crate) fn new(calc: LiveScoreCalculator, music_length_ms: i32) -> IncrementalCalculator {
         let max_frame = get_frame(music_length_ms) + EXTRA_FRAMES;
         let n = max_frame as usize;

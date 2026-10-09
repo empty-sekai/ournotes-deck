@@ -206,49 +206,104 @@ impl<'a, 'm> Evaluator<'a, 'm> {
         let g = live.gekisou.as_ref().ok_or_else(|| Error::Input("expectation without Gekisou".into()))?;
         let play = if perfect { &g.perfect } else { &live.play };
         let params = full::LiveParams { total_power: power, ..live.params };
-        let key = format!("{formation:?}/{power}/{perfect}/{ranking:?}");
-        let probability = match self.curves.get(&key) {
-            Some(value) => value.clone(),
-            None => {
-                let value = if g.setup.missions.iter().take(g.setup.fevers.len()).any(|&m| m == 2) {
-                    full::luck_rush_dp_certified_with_moments(
-                        self.master,
-                        &self.skills,
-                        live.notes,
-                        live.events,
-                        params,
-                        &g.setup,
-                        play,
-                        &g.dt,
-                        formation,
-                        None,
-                        ranking,
-                    )?
-                } else {
-                    LuckDpCertifiedResult {
-                        probe_transitions: vec![1; play.frames.len()],
-                        steps: Vec::new(),
-                        probes: vec![false; self.skills.shapes.len()],
-                        range_moments: vec![LuckRangeMoments::default(); g.setup.fevers.len()],
-                        peak_states: 1,
-                        transitions: 0,
-                    }
-                };
-                self.curves.entry(key).or_insert_with(|| Arc::new(value)).clone()
-            }
-        };
         let deck: Vec<_> = (0..live.positions.max(formation.len()).max(1))
             .map(|k| Performer {
                 live_skill: live_skills.get(k).copied().flatten().map(|id| (id, 1)),
                 ..formation.get(k).cloned().unwrap_or_default()
             })
             .collect();
-        let run = if full::has_nominal_score_probabilities(master, &deck, &self.skills) {
-            full::nominal_score_expectation_for_chart
-        } else {
-            full::luck_score_expectation_for_chart
+        let nominal = full::has_nominal_score_probabilities(master, &deck, &self.skills);
+        let identity = match live.cache {
+            Some(_) => full::chart_program_identity(
+                master,
+                &deck,
+                live.notes,
+                live.events,
+                params,
+                Some(&g.setup),
+                play,
+                Some(&g.dt),
+                ranking,
+            )?
+            .map(|mut identity| {
+                identity.push(u8::from(nominal));
+                identity
+            }),
+            None => None,
         };
-        run(master, &self.skills, &deck, live.notes, live.events, params, &g.setup, play, &g.dt, ranking, probability)
+        // Consult the complete program result before constructing its probability curve. A warm expectation
+        // therefore skips both probability propagation and score recording.
+        let mut compute = || {
+            let key = format!("{formation:?}/{power}/{perfect}/{ranking:?}");
+            let probability = match self.curves.get(&key) {
+                Some(value) => value.clone(),
+                None => {
+                    let value = if g.setup.missions.iter().take(g.setup.fevers.len()).any(|&m| m == 2) {
+                        match live.cache {
+                            Some(cache) => full::luck_rush_dp_certified_with_moments_cached(
+                                self.master,
+                                &self.skills,
+                                live.notes,
+                                live.events,
+                                params,
+                                &g.setup,
+                                play,
+                                &g.dt,
+                                formation,
+                                None,
+                                ranking,
+                                cache,
+                            )?,
+                            None => full::luck_rush_dp_certified_with_moments(
+                                self.master,
+                                &self.skills,
+                                live.notes,
+                                live.events,
+                                params,
+                                &g.setup,
+                                play,
+                                &g.dt,
+                                formation,
+                                None,
+                                ranking,
+                            )?,
+                        }
+                    } else {
+                        LuckDpCertifiedResult {
+                            probe_transitions: vec![1; play.frames.len()],
+                            steps: Vec::new(),
+                            probes: vec![false; self.skills.shapes.len()],
+                            range_moments: vec![LuckRangeMoments::default(); g.setup.fevers.len()],
+                            peak_states: 1,
+                            transitions: 0,
+                        }
+                    };
+                    self.curves.entry(key).or_insert_with(|| Arc::new(value)).clone()
+                }
+            };
+            let run = if nominal {
+                full::nominal_score_expectation_for_chart
+            } else {
+                full::luck_score_expectation_for_chart
+            };
+            run(
+                master,
+                &self.skills,
+                &deck,
+                live.notes,
+                live.events,
+                params,
+                &g.setup,
+                play,
+                &g.dt,
+                ranking,
+                probability,
+            )
+        };
+        match live.cache {
+            Some(cache) => cache.expectation(identity.as_deref(), g.setup.fevers.len(), compute),
+            None => compute(),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

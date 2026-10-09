@@ -16,6 +16,7 @@
 use serde::Serialize;
 
 mod aptitude;
+mod cache;
 mod expectation;
 mod luck;
 
@@ -23,6 +24,7 @@ pub use aptitude::{
     AptitudeHeader, ChartAptitude, Condition, Cumulative, Effect, RangeDelta, RangeFactors, Shape, ShapeSkill, Variant,
     aptitude_header, shapes,
 };
+pub use cache::{ChartStatsCache, ChartStatsCacheStats};
 pub use expectation::{Estimate, ExpectationCheck, ExpectedRange, ExpectedStats};
 pub use luck::{
     LUCK_RUNS, LuckEntry, LuckOptions, LuckSteps, LuckTable, luck_compose, luck_neutral, luck_table_dp,
@@ -387,6 +389,7 @@ struct Live<'m> {
     gekisou: Option<Gekisou>,
     play: LivePlay,
     positions: usize,
+    cache: Option<&'m ChartStatsCache>,
 }
 
 /// A check deck: `(kind, value)` per position, and its effect rows `(live skill id, kind, value)`.
@@ -512,8 +515,15 @@ impl Live<'_> {
                 return Err(Error::Input("ranks without Gekisou".into()));
             }
             let mut lm = full::LiveModel::new(master, &deck, self.notes, self.events, params)?;
-            let score = lm.run(&play)?;
-            return Ok((score, Vec::new(), lm.converted_judgements()));
+            let identity = self.cache.and_then(|_| full::initialized_chart_program_identity(&mut lm, &play, None));
+            let mut compute = || {
+                let score = lm.run(&play)?;
+                Ok((score, Vec::new(), lm.converted_judgements()))
+            };
+            return match self.cache {
+                Some(cache) => cache.counted(identity.as_deref(), 0, compute),
+                None => compute(),
+            };
         };
         let mut lm = match ranks {
             None => full::LiveModel::new_gekisou(master, &deck, self.notes, self.events, params, &g.setup)?,
@@ -526,8 +536,15 @@ impl Live<'_> {
                 lm
             }
         };
-        let score = lm.run_timed(&play, &g.dt)?;
-        Ok((score, lm.gekisou_ranges(), lm.converted_judgements()))
+        let identity = self.cache.and_then(|_| full::initialized_chart_program_identity(&mut lm, &play, Some(&g.dt)));
+        let mut compute = || {
+            let score = lm.run_timed(&play, &g.dt)?;
+            Ok((score, lm.gekisou_ranges(), lm.converted_judgements()))
+        };
+        match self.cache {
+            Some(cache) => cache.counted(identity.as_deref(), g.setup.fevers.len().min(MAX_GEKISOU_FEVERS), compute),
+            None => compute(),
+        }
     }
 
     /// A master with these skills added, `(live skill id, kind, value)`, one effect row each.
@@ -648,6 +665,28 @@ pub fn chart_stats_with(
     kinds: &[Kind],
     options: &Options,
 ) -> Result<ChartStats, Error> {
+    chart_stats_impl(master, chart, kinds, options, None)
+}
+
+/// [`chart_stats_with`] with persistent reuse of individual simulation programs. Current metadata and checks
+/// are assembled on every call; this does not cache a chart document or a skill's global index.
+pub fn chart_stats_with_cache(
+    master: &Master,
+    chart: &DataChart,
+    kinds: &[Kind],
+    options: &Options,
+    cache: &ChartStatsCache,
+) -> Result<ChartStats, Error> {
+    chart_stats_impl(master, chart, kinds, options, Some(cache))
+}
+
+fn chart_stats_impl(
+    master: &Master,
+    chart: &DataChart,
+    kinds: &[Kind],
+    options: &Options,
+    cache: Option<&ChartStatsCache>,
+) -> Result<ChartStats, Error> {
     options.validate()?;
     let settings = LiveScoreSettings::from_master(master)?;
     let c: Chart = chart.chart(&settings)?;
@@ -746,6 +785,7 @@ pub fn chart_stats_with(
         gekisou: None,
         play: JudgementStream::theoretical_best(&c).to_live_play()?,
         positions,
+        cache,
     };
     let mut off_rng = Rng(OFF_CHECK_SALT ^ chart.score_id as u64);
     out.off_seeds.push(off.off_seed_stats(kinds, OFF_SEED, &mut off_rng, judged)?);
@@ -772,6 +812,7 @@ pub fn chart_stats_with(
         gekisou: Some(Gekisou { setup, dt: stream.delta_times()?, perfect: perfect.to_live_play()? }),
         play: stream.to_live_play()?,
         positions,
+        cache,
     };
     let setup = &live.gekisou.as_ref().expect("Gekisou on").setup;
     let luck = setup.missions.iter().take(setup.fevers.len()).any(|&m| m == MISSION_LUCK);
@@ -815,11 +856,29 @@ pub fn document(data: &DeckData, replay_seeds: Option<usize>) -> Result<serde_js
 
 /// [`document`] with these options.
 pub fn document_with(data: &DeckData, options: &Options) -> Result<serde_json::Value, Error> {
+    document_impl(data, options, None)
+}
+
+/// [`document_with`] with a persistent program cache. Header provenance, kinds and shapes always describe
+/// `data`, including a run whose simulation programs all hit the cache.
+pub fn document_with_cache(
+    data: &DeckData,
+    options: &Options,
+    cache: &ChartStatsCache,
+) -> Result<serde_json::Value, Error> {
+    document_impl(data, options, Some(cache))
+}
+
+fn document_impl(
+    data: &DeckData,
+    options: &Options,
+    cache: Option<&ChartStatsCache>,
+) -> Result<serde_json::Value, Error> {
     options.validate()?;
     let kinds = kinds(&data.master);
     let mut charts = Vec::with_capacity(data.charts.len());
     for c in &data.charts {
-        charts.push(chart_stats_with(&data.master, c, &kinds, options).map_err(|e| match e {
+        charts.push(chart_stats_impl(&data.master, c, &kinds, options, cache).map_err(|e| match e {
             Error::Domain(m) => Error::Domain(format!("chart {}: {m}", c.score_id)),
             e => e,
         })?);
