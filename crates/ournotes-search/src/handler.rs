@@ -71,6 +71,7 @@ impl<'m> BuiltProblem<'m> {
 }
 
 pub(crate) struct ExecutionPlan {
+    pub(crate) aggregation: Aggregation,
     pub(crate) joint: Option<crate::search::joint::JointBounds>,
     pub(crate) deck_payoff: Option<crate::search::deck_payoff::DeckPayoffBounds>,
     pub(crate) team_power: Option<crate::search::team_power::TeamPowerBounds>,
@@ -162,6 +163,7 @@ pub(crate) fn compile_execution(
     let bound_compile_ms =
         if matches!(strategy, Strategy::BranchAndBound) { started.elapsed().as_secs_f64() * 1000.0 } else { 0.0 };
     Ok(ExecutionPlan {
+        aggregation: Aggregation::Expected,
         joint,
         deck_payoff,
         team_power,
@@ -182,6 +184,9 @@ pub fn build_card_pool<'m>(
     roster: &Roster,
     r: &RecommendationRequest,
 ) -> Result<BuiltProblem<'m>, Error> {
+    if r.aggregation == Aggregation::Maximum && matches!(r.execution, Execution::Live { gekisou: true, .. }) {
+        return Err(Error::Unsupported("maximum aggregation is unavailable for Gekisou lives".into()));
+    }
     // Explicitly unavailable in the unchanged current numerical core.
     reject_unsupported_lifecycle(r.network_confirmations.as_deref(), r.simulation.live_finished_from_frame)?;
 
@@ -271,6 +276,7 @@ pub fn build_card_pool<'m>(
         &r.simulation,
         &r.strategy,
     )?;
+    let plan = ExecutionPlan { aggregation: r.aggregation, ..plan };
     let route = match &r.strategy {
         Strategy::Exhaustive => SolverRoute::PhysicalExhaustive,
         Strategy::BranchAndBound => SolverRoute::PhysicalBranchAndBound,

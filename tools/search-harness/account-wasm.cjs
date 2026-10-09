@@ -36,6 +36,9 @@ assert.equal(capabilities.luckMissions, true);
 assert.equal(capabilities.support.freeLive.scoreAndLife, 'proven');
 assert.equal(capabilities.scoreAndLife.requiresCompleteJudgementStream, true);
 assert.equal(capabilities.skip.musicIdOrChallengeMusicId, true);
+assert.equal(capabilities.defaultAggregation, 'expected');
+assert.deepEqual(capabilities.aggregations.expected, capabilities.metrics);
+assert.deepEqual(capabilities.aggregations.maximum, capabilities.metrics);
 const privateValues = ['PRIVATE_NAME_SENTINEL', '9007199254740993', '9223372036854775806',
   '9007199254740992', '9223372036854776000', '"_name"', '"_accountid"', '"_profileId"'];
 const assertPrivate = raw => {
@@ -51,6 +54,8 @@ let reports = 0;
 const names = JSON.parse(read('cases.json'));
 for (const name of names) {
   const request = read(name + '.request.json');
+  const requestValue = JSON.parse(request);
+  const aggregation = requestValue.aggregation ?? 'expected';
   const expected = JSON.parse(read(name + '.expected.json'));
   let caseReports = 0;
   const raw = solver.recommend(account, request, raw => {
@@ -59,6 +64,7 @@ for (const name of names) {
     assert.equal(answer.datasetId, datasetId);
     assert.equal(answer.final, false);
     assert.equal(answer.result.optimality.proven, false);
+    assert.equal(answer.result.aggregation, aggregation);
     assert(answer.result.teams.every(team => team.orders === null));
     assertPrivate(raw);
     reports++;
@@ -69,16 +75,25 @@ for (const name of names) {
   assert.equal(actual.status, 'ok');
   assert.equal(actual.final, true);
   assert.equal(actual.result.optimality.proven, true);
+  assert.equal(actual.result.aggregation, aggregation);
   assert.equal(actual.result.teams.length, 5, `${name}: complete K=5`);
   assert(actual.result.teams.some(team => team.layout.snaps.some(snap => snap !== null)), `${name}: nonempty Snap`);
-  if (JSON.parse(request).goal.kind === 'freeLive') {
+  if (requestValue.goal.kind === 'freeLive') {
     assert(caseReports > 0, `${name}: progress reports`);
     for (const team of actual.result.teams) {
+      if (aggregation === 'maximum') {
+        assert.equal(team.orders, null);
+        assert.equal(BigInt(team.value.exact.denominator), 1n);
+        assert.equal(BigInt(team.value.exact.numerator), BigInt(team.value.score));
+        assert.deepEqual([...team.bestOrder.order].sort((a, b) => a - b), [...team.layout.members].sort((a, b) => a - b));
+        if (team.value.payoff) assert.equal(BigInt(team.value.payoff.exact.denominator), 1n);
+        continue;
+      }
       assert.equal(team.orders.count, 120);
       assert.equal(team.orders.values.length, 120);
       assert.equal(team.orders.values.reduce((sum, value) => sum + BigInt(value), 0n), BigInt(team.value.exact.numerator));
       assert.equal(BigInt(team.value.exact.denominator), 120n);
-      if (JSON.parse(request).metric?.kind === 'challengePoints') {
+      if (requestValue.metric?.kind === 'challengePoints') {
         assert.equal(team.orders.payoffValues.length, 120);
         assert.equal(team.orders.payoffValues.reduce((sum, value) => sum + BigInt(value), 0n), BigInt(team.value.payoff.exact.numerator));
         assert.equal(BigInt(team.value.payoff.exact.denominator), 120n);
@@ -95,6 +110,7 @@ for (const [name, change, issuePath] of [
   ['life-stream', q => { q.goal.play.stream.judged.pop(); }, 'goal.play.stream'],
   ['challenge-skip-points', q => { q.goal.musicId = 10; }, 'goal.challengeMusicId'],
   ['challenge-skip-items', q => { delete q.eventContext.selectedRewards; }, 'eventContext.selectedRewards'],
+  ['free-maximum', q => { q.aggregation = 'median'; }, 'aggregation'],
 ]) {
   const request = JSON.parse(read(name + '.request.json'));
   change(request);

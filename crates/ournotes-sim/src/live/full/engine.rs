@@ -313,6 +313,33 @@ pub(crate) struct ConditionSkillUpdater {
 }
 
 impl ConditionSkillUpdater {
+    /// Earliest pending finish among allocated instances. Queued instances are
+    /// either unused or ended, so their states cannot file a timed finish.
+    pub(super) fn pending_finish_ms(&self) -> Option<i32> {
+        let finish = |&u: &usize| {
+            let updater = &self.updaters[u];
+            updater.state.pending_finish_ms(self.effects[updater.effect].act)
+        };
+        let mut earliest = self.executing.iter().filter_map(finish).min();
+        for sustained in self.sustained.iter().flatten() {
+            for u in sustained.executing.iter().chain(sustained.current.iter()) {
+                if let Some(time) = finish(u) {
+                    earliest = Some(earliest.map_or(time, |old| old.min(time)));
+                }
+            }
+        }
+        #[cfg(test)]
+        {
+            let scanned = self
+                .updaters
+                .iter()
+                .filter_map(|updater| updater.state.pending_finish_ms(self.effects[updater.effect].act))
+                .min();
+            assert_eq!(earliest, scanned, "allocated instances preserve pending finish horizon");
+        }
+        earliest
+    }
+
     /// `release(e)` builds a fresh release checker for an updater of effect `e`; `gate` is the mission of a Gekisou
     /// (support) skill.
     pub(crate) fn new(
@@ -398,6 +425,11 @@ impl ConditionSkillUpdater {
         self.trigger_checked = false;
         self.idle_frame = false;
         self.gated_frame = false;
+    }
+
+    /// Effects in the same sorted traversal used to dispatch sustained updaters in each phase.
+    pub(super) fn effects_in_update_order(&self) -> impl Iterator<Item = &CondEffect> {
+        self.sorted.iter().map(|&index| &self.effects[index])
     }
 
     /// The effects of the skill (read only).
@@ -527,9 +559,14 @@ impl ConditionSkillUpdater {
         #[cfg(any(test, feature = "search-diagnostics"))]
         super::idle_plan::update(self.idle_frame, first_idle);
         if self.idle_frame || self.gated_frame {
+            #[cfg(test)]
+            let _ = self.pending_finish_ms();
             return Ok(());
         }
-        self.update_active(phase, inp, ctx, updated)
+        self.update_active(phase, inp, ctx, updated)?;
+        #[cfg(test)]
+        let _ = self.pending_finish_ms();
+        Ok(())
     }
 
     /// The non-idle part of [`ConditionSkillUpdater::update_into`]; `updated` arrives empty.
@@ -807,7 +844,43 @@ mod lifecycle_tests {
             current_combo: 0,
         };
         u.begin_frame();
-        u.update(2, FrameInput { time_ms: time, music_length_ms: 10_000, is_live_finished: finished }, &mut ctx)
+        let updated =
+            u.update(2, FrameInput { time_ms: time, music_length_ms: 10_000, is_live_finished: finished }, &mut ctx)?;
+        let _ = u.pending_finish_ms();
+        Ok(updated)
+    }
+
+    #[test]
+    fn pending_finishes_match_pool_across_overlaps_releases_and_reuse() {
+        for trigger_type in [ONE_SHOT, SUSTAINED] {
+            for act in [0.0, 0.125, 0.5, 1.0] {
+                let effect = CondEffect {
+                    effect_id: 1,
+                    trigger_type,
+                    act,
+                    phase: 2,
+                    trigger: Some(Checker::Fixed(true)),
+                    condition: Some(Checker::Fixed(true)),
+                    execute_limit: 0,
+                    reset: None,
+                    row: 0,
+                    cumulative: None,
+                };
+                let mut updater =
+                    ConditionSkillUpdater::new(vec![effect], |_| Ok(Some(Checker::Fixed(true))), None).unwrap();
+                for frame in 0..120 {
+                    updater.effects[0].trigger = Some(Checker::Fixed(frame % 7 < 4));
+                    step(&mut updater, frame * 500, false, &[]).unwrap();
+                    for instance in &mut updater.updaters {
+                        if matches!(instance.state.state, EXECUTE_FRAME | EXECUTING) {
+                            instance.state.extended_ms = if frame % 3 == 0 { -125.0 } else { 250.0 };
+                        }
+                    }
+                    let _ = updater.pending_finish_ms();
+                }
+                step(&mut updater, 60_000, true, &[]).unwrap();
+            }
+        }
     }
 
     #[test]

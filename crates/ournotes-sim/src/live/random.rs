@@ -157,6 +157,8 @@ pub(crate) struct NominalOutcome {
 /// A prefix of nontrivial semantic lottery outcomes, not a script of PRNG seeds or raw integer values.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NominalScript {
+    support_only: bool,
+    greatest_witness: bool,
     prefix: Vec<usize>,
     cursor: usize,
     handled_draws: u64,
@@ -189,8 +191,47 @@ impl LiveRandom {
 
     pub(crate) fn with_nominal_prefix(prefix: Vec<usize>) -> Self {
         let mut random = Self::new(0);
-        random.nominal = Some(NominalScript { prefix, cursor: 0, handled_draws: 0, branch: None });
+        random.nominal = Some(NominalScript {
+            support_only: false,
+            greatest_witness: false,
+            prefix,
+            cursor: 0,
+            handled_draws: 0,
+            branch: None,
+        });
         random
+    }
+
+    pub(crate) fn with_support_prefix(prefix: Vec<usize>) -> Self {
+        let mut random = Self::with_nominal_prefix(prefix);
+        random.nominal.as_mut().expect("nominal script").support_only = true;
+        random
+    }
+
+    /// One reachable path, choosing the greatest positive-mass result at each semantic draw. This
+    /// strategy makes no optimality claim: callers must compare its terminal score with a proved bound.
+    pub(crate) fn with_support_witness() -> Self {
+        let mut random = Self::with_support_prefix(Vec::new());
+        random.nominal.as_mut().expect("nominal script").greatest_witness = true;
+        random
+    }
+
+    pub(crate) fn support_probability(&mut self, rate: f32) -> Result<Option<bool>, Error> {
+        if !self.nominal.as_ref().is_some_and(|s| s.support_only) {
+            return Ok(None);
+        }
+        if !rate.is_finite() {
+            return Err(Error::Unsupported("nominal skill probability requires a finite rate".into()));
+        }
+        // The native binary32 draw can equal 1.0.
+        let weights = if rate <= 0.0 {
+            vec![(1, 1, 0)]
+        } else if rate > 1.0 {
+            vec![(1, 1, 1)]
+        } else {
+            vec![(1, 2, 0), (1, 2, 1)]
+        };
+        self.nominal_lottery(weights).map(|result| Some(result != 0))
     }
 
     pub(crate) fn with_nominal_skill_prefix() -> Self {
@@ -306,6 +347,9 @@ impl LiveRandom {
         if outcomes.len() == 1 {
             return Ok(outcomes[0].value);
         }
+        if script.greatest_witness {
+            return Ok(outcomes.iter().max_by_key(|outcome| outcome.value).expect("positive outcomes").value);
+        }
         let Some(&choice) = script.prefix.get(script.cursor) else {
             script.branch = Some(outcomes);
             return Err(invalid("another outcome branch is required"));
@@ -342,6 +386,56 @@ impl LiveRandom {
 #[cfg(test)]
 mod nominal_tests {
     use super::*;
+
+    #[test]
+    fn support_witness_uses_only_positive_mass_results_without_branch_storage() {
+        let mut witness = LiveRandom::with_support_witness();
+        for _ in 0..8192 {
+            assert_eq!(witness.nominal_lottery(vec![(0, 5, 100), (3, 5, -7), (2, 5, -2)]).unwrap(), -2);
+        }
+        assert_eq!(witness.support_probability(0.0).unwrap(), Some(false));
+        assert_eq!(witness.support_probability(f32::from_bits(1)).unwrap(), Some(true));
+        assert_eq!(witness.draws(), 8194);
+        assert!(witness.nominal_prefix_consumed() && witness.nominal_covers_draws());
+        assert!(witness.nominal_branch().is_none());
+        witness.value(SKILL);
+        assert!(!witness.nominal_covers_draws());
+    }
+
+    #[test]
+    fn support_skill_probabilities_keep_only_positive_probability_outcomes() {
+        for (rate, expected) in [(-1.0, false), (0.0, false), (f32::from_bits(1.0f32.to_bits() + 1), true), (2.0, true)]
+        {
+            let mut random = LiveRandom::with_support_prefix(Vec::new());
+            assert_eq!(random.support_probability(rate).unwrap(), Some(expected));
+            assert!(random.nominal_prefix_consumed() && random.nominal_covers_draws());
+        }
+        for rate in [f32::from_bits(1), 0.01, 0.5, f32::from_bits(1.0f32.to_bits() - 1), 1.0] {
+            for (choice, expected) in [(0, false), (1, true)] {
+                let mut random = LiveRandom::with_support_prefix(vec![choice]);
+                assert_eq!(random.support_probability(rate).unwrap(), Some(expected));
+                assert!(random.nominal_prefix_consumed() && random.nominal_covers_draws());
+            }
+        }
+        for rate in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut random = LiveRandom::with_support_prefix(Vec::new());
+            assert!(matches!(random.support_probability(rate), Err(Error::Unsupported(_))));
+        }
+        let mut seeded = LiveRandom::new(17);
+        let before = seeded.clone();
+        assert_eq!(seeded.support_probability(0.5).unwrap(), None);
+        assert_eq!(seeded, before);
+    }
+
+    #[test]
+    fn seeded_skill_value_can_equal_one_in_binary32() {
+        let mut random = LiveRandom::new(24_917_099);
+        assert_eq!(random.value(SKILL).to_bits(), 1.0f32.to_bits());
+        assert_eq!(random.draws(), 1);
+        let mut support = LiveRandom::with_support_prefix(vec![0]);
+        assert_eq!(support.support_probability(1.0).unwrap(), Some(false));
+        assert!(support.nominal_prefix_consumed() && support.nominal_covers_draws());
+    }
 
     #[test]
     fn skill_events_keep_boundary_draws_and_checkpoint_prefixes() {

@@ -1,8 +1,9 @@
 # Exact deck search
 
 The played Live/PT recommendation facade searches teams (a leader, four other members and the Snap paired with
-each member) under the uniform member-order target: the five members perform in a uniformly random order, and a
-team's value is its mean payoff over the 120 performance orders. Its result order and proof contract are specified
+each member). The default `aggregation:"expected"` target values a team by its mean payoff under uniformly random
+member order and the declared lottery law. The `aggregation:"maximum"` target values its maximum reachable payoff
+under the same play conditions. The expected target's result order and proof contract are specified
 in [uniform member-order search](#uniform-member-order-search); the bounds it uses are described after it, and
 [validation](#validation) lists the reproducible correctness experiments.
 The opening sections describe the canonical member-set solvers and the power/score components that the team
@@ -24,6 +25,7 @@ result, and the complete tie order. The following contracts use different identi
 | Recommendation facade, Power and deterministic Skip metrics | Declared deterministic payoff, then power | Leader and five member/Snap pairs; nonleader pairs in canonical layout | Before every Snap ID |
 | Recommendation facade, deterministic played Live | Mean terminal payoff over all 120 orders, then power | The same canonical team | Before every Snap ID |
 | Recommendation facade, LUCK | Expected terminal payoff under the declared order and lottery law | Canonical team, with certified interval ranking | Before every Snap ID |
+| Recommendation facade, maximum aggregation | Maximum reachable terminal payoff over performance orders and lottery outcomes, then power | Canonical team | Before every Snap ID |
 | Deterministic `SearchSession` v1 | Its supported deterministic payoff, then power | Five physical member slots and their Snap bindings | Before every Snap ID |
 
 `search::search` accepts Power and Skip; best-order Live optimization is exposed through the explicitly named
@@ -33,6 +35,14 @@ diagnostic entry point. The recommendation facade selects its route in
 The session's physical-slot contract is specified in [search sessions](search-session.md).
 A fixed-deck evaluation proves the value of its requested deck under its declared inputs; its domain contains that
 deck alone.
+
+The maximum objective computes `max_order max_outcome payoff(team, order, outcome)` over outcomes with positive
+probability. The declared judgement stream or accuracy, chart, scene, room and event context stay fixed. An
+outcome's terminal payoff is evaluated before taking the maximum, so a threshold metric describes attainability
+and event points follow their score-rank conversion. Its common payoff denominator is 1. Results echo the selected
+`aggregation`, expose its exact `objectiveValue`, and report `maximumScore` separately from the payoff-optimal
+`bestOrder`. Expected-value fields and probability summaries remain absent when they are not computed. The
+canonical Top-K proof still requires `Complete`; a timeout gives an unproven incumbent ranking.
 
 Here, “legal” means admitted by the resolved pool, cultivation, leader/include/exclude constraints and declared
 execution context. The search theorem is relative to the supplied scorer and probability law. Account prerequisite

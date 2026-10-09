@@ -3,15 +3,15 @@
 //! the deck power) and what to maximize; the answer ranks teams (a leader and four other members, each with a Snap)
 //! by their value and reports every input problem with its JSON path. See `docs/recommendation.md`.
 //!
-//! A played live is valued by the mean over its 120 equally likely performance orders. Each goal and metric is
+//! A played live is valued by its expected payoff or its maximum reachable payoff. Each goal and metric is
 //! supported with a proof, supported without a guaranteed proof, or not supported yet ([`capabilities`]).
 
 use crate::clock::Instant;
 use crate::search::Constraints;
 use crate::search::physical::ProgressHook;
 use crate::types::{
-    Execution, Fraction, FractionInterval, Limits, MAX_K, Metric, Optimality, PlayPolicy, RecommendationOutcome,
-    RecommendationRequest, RecommendedDeck, Scene, SimulationInput, Strategy,
+    Aggregation, Execution, ExitReason, Fraction, FractionInterval, Limits, MAX_K, Metric, Optimality, PlayPolicy,
+    RecommendationOutcome, RecommendationRequest, RecommendedDeck, Scene, SimulationInput, Strategy,
 };
 use ournotes_sim::Error;
 use ournotes_sim::account::{AccountInput, Exclusions, Issue};
@@ -63,6 +63,8 @@ impl Support {
 struct RequestWire {
     format: String,
     goal: GoalWire,
+    #[serde(default)]
+    aggregation: Option<String>,
     #[serde(default)]
     metric: Option<MetricWire>,
     #[serde(default)]
@@ -450,12 +452,24 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
     if w.format != REQUEST_FORMAT {
         issues.add("format", "unsupported_format", format!("expected {REQUEST_FORMAT}"));
     }
+    let aggregation = match w.aggregation.as_deref().unwrap_or("expected") {
+        "expected" => Aggregation::Expected,
+        "maximum" => Aggregation::Maximum,
+        other => {
+            issues.add("aggregation", "input", format!("{other} is not expected or maximum"));
+            return None;
+        }
+    };
     let g = &w.goal;
     let Some(kind) = GoalKind::ALL.into_iter().find(|k| k.name() == g.kind) else {
         let names: Vec<&str> = GoalKind::ALL.iter().map(|k| k.name()).collect();
         issues.add("goal.kind", "input", format!("{} is not one of {}", g.kind, names.join(", ")));
         return None;
     };
+    if aggregation == Aggregation::Maximum && kind.gekisou() {
+        issues.add("aggregation", "unsupported", "maximum aggregation is unavailable for Gekisou lives");
+        return None;
+    }
     for (name, present) in [
         ("musicId", g.music_id.is_some()),
         ("arenaMusicId", g.arena_music_id.is_some()),
@@ -880,6 +894,7 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
             event_payoff,
         }),
         metric,
+        aggregation,
         goal: None,
         constraints: Constraints {
             leader: c.leader,
@@ -945,6 +960,11 @@ pub struct AnswerResult {
     pub goal: Value,
     /// The metric as computed (null for the power goal).
     pub metric: Option<Value>,
+    /// How random outcomes are valued, independently of the declared play conditions.
+    pub aggregation: Aggregation,
+    /// The actual stopping reason, present only in the final answer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_reason: Option<ExitReason>,
     /// `search` in progress reports, `done` in the final answer.
     pub phase: &'static str,
     pub elapsed_ms: f64,
@@ -991,6 +1011,9 @@ pub struct Team {
     pub value: Option<TeamValue>,
     /// A played live's order results; null for skip, power and progress reports.
     pub orders: Option<Orders>,
+    /// A reachable order maximizing the selected metric, then score. Available independently of order statistics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_order: Option<BestOrder>,
     /// The canonical layout: the leader in slot 2, the others in slots 0, 1, 3, 4.
     pub layout: Layout,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1000,12 +1023,12 @@ pub struct Team {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TeamValue {
-    /// The expected score, rounded down.
+    /// The expected or maximum reachable score, according to the result's aggregation, rounded down.
     pub score: i64,
     pub exact: Option<Fraction>,
-    /// Bounds of the expected score when it is only known within them.
+    /// Bounds of the score value when it is only known within them.
     pub interval: Option<Interval>,
-    /// The expected metric value when the metric is not the score.
+    /// The selected metric value when the metric is not the score.
     pub payoff: Option<PayoffValue>,
 }
 
@@ -1183,6 +1206,28 @@ fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_orders: bool) ->
         }
         let value = if parsed.kind == GoalKind::Power {
             None
+        } else if parsed.search.aggregation == Aggregation::Maximum {
+            let payoff = if score_metric {
+                None
+            } else {
+                deck.objective_value
+                    .as_ref()
+                    .map(|value| {
+                        let (n, d) = exact(value)?;
+                        Ok::<_, Error>(PayoffValue {
+                            score: n as f64 / d as f64,
+                            exact: Some(value.clone()),
+                            interval: None,
+                        })
+                    })
+                    .transpose()?
+            };
+            deck.maximum_score.map(|score| TeamValue {
+                score: i64::from(score),
+                exact: Some(Fraction { numerator: score.to_string(), denominator: "1".into() }),
+                interval: None,
+                payoff,
+            })
         } else {
             let score = match (&deck.expected_score, &deck.score_interval) {
                 (Some(score), _) => {
@@ -1221,6 +1266,25 @@ fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_orders: bool) ->
         } else {
             None
         };
+        let best_order = if with_orders && parsed.kind.live() && parsed.search.aggregation == Aggregation::Maximum {
+            deck.best_order
+                .as_ref()
+                .map(|best| {
+                    let payoff = if score_metric {
+                        None
+                    } else {
+                        Some(
+                            best.payoff
+                                .parse::<i64>()
+                                .map_err(|_| Error::Domain("result payoff exceeds i64".into()))?,
+                        )
+                    };
+                    Ok::<_, Error>(BestOrder { score: i64::from(best.score), payoff, order: best.members })
+                })
+                .transpose()?
+        } else {
+            None
+        };
         rows.push(Team {
             rank: 0,
             leader,
@@ -1228,6 +1292,7 @@ fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_orders: bool) ->
             power: deck.power,
             value,
             orders,
+            best_order,
             layout,
             rank_certified: deck.rank_certified,
         });
@@ -1271,7 +1336,8 @@ fn result_of(
     let proof = &outcome.telemetry.proof;
     let proven = outcome.optimality == Optimality::Proven;
     let best_deck = outcome.results.first();
-    let best = best_deck.and_then(|d| d.expected_payoff.as_ref()).map(exact).transpose()?;
+    let best =
+        best_deck.and_then(|d| d.objective_value.as_ref().or(d.expected_payoff.as_ref())).map(exact).transpose()?;
     let lower_bound = best.map(|(n, d)| bound(metric, n, d, false)).or_else(|| {
         best_deck
             .and_then(|d| d.payoff_interval.as_ref())
@@ -1288,7 +1354,11 @@ fn result_of(
         // upper_bound covers only unexplored branches. It cannot replace a missing global bound: retained
         // interval candidates can exceed it, and a displayed Top-K does not certify the rest of that frontier.
         let target = outcome.telemetry.environment.target.as_ref().and_then(|t| t.denominator.parse::<u128>().ok());
-        let denominator = target.unwrap_or(if live { ORDERS as u128 } else { 1 });
+        let denominator = target.unwrap_or(if live && parsed.search.aggregation == Aggregation::Expected {
+            ORDERS as u128
+        } else {
+            1
+        });
         proof
             .global_upper_bound
             .as_deref()
@@ -1306,6 +1376,8 @@ fn result_of(
     Ok(AnswerResult {
         goal: parsed.goal.clone(),
         metric: parsed.metric.clone(),
+        aggregation: parsed.search.aggregation,
+        exit_reason: is_final.then_some(outcome.exit_reason),
         phase: if is_final { "done" } else { "search" },
         elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
         optimality: OptimalityReport {
@@ -1440,12 +1512,16 @@ pub fn capabilities() -> Value {
         .filter(|k| k.metrics().iter().any(|m| support(*k, m) != Support::Unsupported))
         .collect();
     let mut metrics = serde_json::Map::new();
+    let mut maximum_metrics = serde_json::Map::new();
     let mut event_ids = serde_json::Map::new();
     for kind in &goals {
         metrics.insert(
             kind.name().into(),
             json!(kind.metrics().iter().filter(|m| support(*kind, m) != Support::Unsupported).collect::<Vec<_>>()),
         );
+        if !kind.gekisou() {
+            maximum_metrics.insert(kind.name().into(), metrics.get(kind.name()).unwrap().clone());
+        }
         event_ids.insert(kind.name().into(), kind.reads_event_ids());
     }
     let support_by_goal: std::collections::BTreeMap<_, _> = GoalKind::ALL
@@ -1462,6 +1538,12 @@ pub fn capabilities() -> Value {
         "accountFormat": ournotes_sim::account::FORMAT,
         "goals": goals.iter().map(|k| k.name()).collect::<Vec<_>>(),
         "metrics": metrics,
+        "defaultAggregation": "expected",
+        "aggregations": {"expected": metrics, "maximum": maximum_metrics},
+        "aggregationLaw": {
+            "expected": "expected payoff over the 120 equally likely performance orders and the declared lottery law",
+            "maximum": "maximum reachable payoff over performance orders and lottery outcomes, with the same declared play conditions",
+        },
         "accuracy": {"great": true, "just": true},
         "play": {"completeStream":true,"field":"goal.play","mutuallyExclusiveWith":"goal.accuracy",
             "judgements":"NoteSimulateJudgement: 1 Miss, 2 Bad, 3 Good, 4 Great, 5 Perfect, 6 Just"},
@@ -1486,6 +1568,10 @@ pub fn capabilities() -> Value {
         "lottery": "certified expectations; only proved rank separation or equality certifies TopK",
         "accuracyLaw": "deterministic evenly spread Greats; Just share of remaining eligible notes",
         "tieBreak": ["expectedPayoff", "power", "canonicalTeamKey"],
+        "aggregationTieBreak": {
+            "expected": ["expectedPayoff", "power", "canonicalTeamKey"],
+            "maximum": ["maximumPayoff", "power", "canonicalTeamKey"],
+        },
         "eventItemsRequireSelectedRewards": true,
         "eventRewardProjection": {
             "field": "eventContext.rewardProjection", "metrics": ["eventPoints", "challengePoints"],
@@ -1494,7 +1580,7 @@ pub fn capabilities() -> Value {
         "eventMusicRanking": {
             "goal": "challengeLive", "metric": "score", "key": "challengeMusicId",
             "record": "maximum solo score across difficulties",
-            "optimization": "expected solo score for the selected challenge song and difficulty",
+            "optimization": "selected aggregation of solo score for the selected challenge song and difficulty",
             "serverRankPrediction": false,
         },
     })
@@ -1646,6 +1732,7 @@ mod tests {
             exit_reason: crate::types::ExitReason::Exhausted,
             result_identity: "team",
             metric: Metric::Score,
+            aggregation: Aggregation::Expected,
             player_goal: None,
             strategy: Strategy::Exhaustive,
             probability_law: Value::Null,
@@ -1659,6 +1746,8 @@ mod tests {
                 power: 100,
                 expected_score: None,
                 expected_payoff: None,
+                objective_value: None,
+                maximum_score: None,
                 score_interval: Some(FractionInterval::from_f64(150.5, 150.75).unwrap()),
                 payoff_interval: Some(FractionInterval::from_f64(150.5, 150.75).unwrap()),
                 rank_certified: Some(true),
@@ -1714,6 +1803,16 @@ mod tests {
     #[test]
     fn capabilities_report_missing_domains_without_calling_them_complete() {
         let value = capabilities();
+        assert_eq!(value["defaultAggregation"], "expected");
+        assert_eq!(value["aggregations"]["expected"], value["metrics"]);
+        for kind in GoalKind::ALL {
+            if kind.gekisou() {
+                assert!(value["aggregations"]["maximum"].get(kind.name()).is_none());
+            } else {
+                assert_eq!(value["aggregations"]["maximum"][kind.name()], value["metrics"][kind.name()]);
+            }
+        }
+        assert_eq!(value["aggregationTieBreak"]["maximum"][0], "maximumPayoff");
         assert_eq!(value["support"]["battleLive"]["score"], "proven");
         assert_eq!(value["support"]["arenaLive"]["eventPoints"], "proven");
         assert_eq!(value["rankConfirmation"], "onCompletion");

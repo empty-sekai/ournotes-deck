@@ -9,7 +9,7 @@
 //! the score at once; when that frame is undone and executed again, it is also counted as rank bonus score.
 
 use super::combo::ComboCounter;
-use super::luck_score_bounds::{BoundsEvent, BoundsTrace, ProbeRow};
+use super::luck_score_bounds::{BoundsEvent, BoundsTrace, ProbeRow, RushPoint, RushStage};
 use super::score_program::{Kernel, Recorder, ScoreProgram, ValueId};
 use crate::error::Error;
 use crate::live::score::{GekisouComboInfo, LiveScoreCalculator, ScoreFactorState, get_frame};
@@ -216,7 +216,7 @@ impl IncrementalCalculator {
     pub(crate) fn add_factor(&mut self, cmd: FactorCommand) {
         let f = self.file(cmd.time_ms);
         if let Some(trace) = &mut self.bounds_trace {
-            trace.events.push(BoundsEvent::Factor { frame: f, command: cmd });
+            trace.events.push(BoundsEvent::Factor { frame: f, command: cmd, rush_origin: None });
         }
         self.factors[f].push(cmd);
     }
@@ -229,16 +229,43 @@ impl IncrementalCalculator {
             probes,
             combo: Default::default(),
             has_luck,
+            rush_before: None,
         });
     }
 
-    pub(super) fn bounds_potential_rush(&mut self, time_ms: i32) {
+    pub(super) fn bounds_begin_rush_frame(&mut self, play_frame: usize, time_ms: i32) {
+        let point = RushPoint { play_frame, stage: RushStage::Before };
+        if let Some(trace) = &mut self.bounds_trace {
+            trace.rush_before = Some(point);
+        }
+        self.bounds_potential_rush(time_ms, point);
+    }
+
+    pub(super) fn bounds_end_rush_before(&mut self) {
+        if let Some(trace) = &mut self.bounds_trace {
+            trace.rush_before = None;
+        }
+    }
+
+    /// The caller has just filed exactly one command through the native Rush handle.
+    pub(super) fn bounds_tag_rush_handle(&mut self, time_ms: i32) {
+        let Some(trace) = &mut self.bounds_trace else { return };
+        let Some(point) = trace.rush_before else { return };
+        if let Some(BoundsEvent::Factor { command, rush_origin, .. }) = trace.events.last_mut() {
+            let expected = FactorCommand { time_ms, owner_id: -1, luck: command.luck, ..Default::default() };
+            if *command == expected {
+                *rush_origin = Some(point);
+            }
+        }
+    }
+
+    pub(super) fn bounds_potential_rush(&mut self, time_ms: i32, point: RushPoint) {
         if self.bounds_trace.as_ref().is_none_or(|trace| !trace.has_luck) {
             return;
         }
         let frame = get_frame(time_ms).min(self.max_frame - 1) as usize;
         if let Some(trace) = &mut self.bounds_trace {
-            trace.events.push(BoundsEvent::Potential { frame });
+            trace.events.push(BoundsEvent::Potential { frame, time_ms, point });
         }
     }
 
@@ -543,5 +570,45 @@ mod score_up_observation_tests {
         observe_score_up(&mut minimum, f32::NAN);
         observe_score_up(&mut minimum, 0.1);
         assert!(minimum.unwrap().is_nan());
+    }
+
+    #[test]
+    fn rush_handle_origin_requires_an_explicit_before_site_and_keeps_zero_commands() {
+        use super::{BoundsEvent, IncrementalCalculator, RushPoint, RushStage};
+        use crate::live::score::{LiveScoreCalculator, LiveScoreSettings};
+        use crate::live::skill::FactorCommand;
+        let settings = LiveScoreSettings {
+            score_adjustment_factor: 3.0,
+            life_onus_factor: 0.5,
+            note_factor_percent: [(1, 100)].into(),
+            judgement_score_factor_percent: [(5, 100)].into(),
+        };
+        let mut score =
+            IncrementalCalculator::new(LiveScoreCalculator::new(1000, 20, 1, &settings, 1.0, 1.0, None), 1000);
+        score.begin_bounds(Vec::new(), true);
+        score.bounds_begin_rush_frame(3, 100);
+        let command = FactorCommand { time_ms: 100, owner_id: -1, ..Default::default() };
+        score.add_factor(command);
+        let trace = score.bounds_trace.as_ref().unwrap();
+        assert!(matches!(trace.events.last(), Some(BoundsEvent::Factor { rush_origin: None, .. })));
+        score.bounds_tag_rush_handle(100);
+        let origin = RushPoint { play_frame: 3, stage: RushStage::Before };
+        assert!(
+            matches!(score.bounds_trace.as_ref().unwrap().events.last(), Some(BoundsEvent::Factor { rush_origin: Some(point), .. }) if *point == origin)
+        );
+        score.bounds_end_rush_before();
+        score.add_factor(command);
+        score.bounds_tag_rush_handle(100);
+        assert!(matches!(
+            score.bounds_trace.as_ref().unwrap().events.last(),
+            Some(BoundsEvent::Factor { rush_origin: None, .. })
+        ));
+        score.bounds_begin_rush_frame(4, 120);
+        score.add_factor(FactorCommand { time_ms: 120, note_mill: 1, ..command });
+        score.bounds_tag_rush_handle(120);
+        assert!(matches!(
+            score.bounds_trace.as_ref().unwrap().events.last(),
+            Some(BoundsEvent::Factor { rush_origin: None, .. })
+        ));
     }
 }

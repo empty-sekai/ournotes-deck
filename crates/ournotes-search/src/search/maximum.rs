@@ -1,0 +1,716 @@
+//! Maximum reachable terminal payoff, with canonical team identity and per-order score bounds.
+use super::*;
+use crate::domain::CandidateDomain;
+use crate::search::certified_search::PayoffMap;
+use crate::search::expectation::ExactExpectation;
+use crate::search::joint::{JointBounds, MaximumIdPrefixes, SLOTS};
+use ournotes_sim::live::full::{
+    LiveModel, LuckExactBudget, LuckExactDecline, LuckExactSession, LuckMaximumSession, LuckMaximumSupport,
+    MaximumOrdersOutcome, Settled,
+};
+use ournotes_sim::live::random::LiveRandom;
+use std::cell::Cell;
+use std::ops::ControlFlow;
+
+const CUTOFF_EVERY: usize = 30;
+
+#[cfg(test)]
+#[path = "maximum/score_pruning_tests.rs"]
+mod score_pruning_tests;
+
+/// Score orders with an upper bound below an attained score cannot change the maximum or its ties.
+fn score_order_dominated(ceiling: Option<i32>, best: Option<i128>) -> bool {
+    ceiling.zip(best).is_some_and(|(ceiling, best)| i128::from(ceiling) < best)
+}
+
+#[cfg(test)]
+#[path = "maximum/payoff_tests.rs"]
+mod payoff_tests;
+
+#[cfg(test)]
+#[path = "maximum/fine_tests.rs"]
+mod fine_tests;
+
+#[cfg(test)]
+#[path = "maximum/bound_reuse_tests.rs"]
+mod bound_reuse_tests;
+
+/// The table, payoff map and order are fixed for one leaf. Only an identical settled prefix reuses a cap.
+fn settled_cap(previous: &mut Option<(Settled, i128)>, settled: Settled, calculate: impl FnOnce() -> i128) -> i128 {
+    if let Some((point, cap)) = *previous
+        && point == settled
+    {
+        return cap;
+    }
+    let cap = calculate();
+    *previous = Some((settled, cap));
+    cap
+}
+
+fn maximum_cap_below(caps: &[i128], threshold: i128) -> bool {
+    caps.iter().copied().max().is_some_and(|upper| upper < threshold)
+}
+
+fn tighten_maximum_caps(
+    caps: &mut [i128],
+    mut tighten: impl FnMut(usize, i128) -> ControlFlow<(), i128>,
+) -> ControlFlow<()> {
+    for (index, cap) in caps.iter_mut().enumerate() {
+        *cap = (*cap).min(tighten(index, *cap)?);
+    }
+    ControlFlow::Continue(())
+}
+
+/// Distinct conditional-effect bases are separated by at least ten. Offsets 0..=4 then remain
+/// distinct under every performer permutation, provided the integer construction does not wrap.
+fn conditional_bases_are_injective(rows: impl IntoIterator<Item = (i64, i64)>) -> bool {
+    let mut seen = HashSet::new();
+    rows.into_iter().all(|(id, source)| {
+        if !matches!(source, 3..=5) {
+            return false;
+        }
+        id.checked_mul(100)
+            .and_then(|base| base.checked_add(source * 10))
+            .is_some_and(|base| base.checked_add(4).is_some() && seen.insert(base))
+    })
+}
+
+/// The prepared no-LUCK model proves identical terminal values for every seed in each order.
+/// Construction retains every selected effect and every condition branch; admission checks their
+/// structure independently of fixed predicate values. A refused preparation keeps the existing path.
+fn admits_fine_maximum(master: &ournotes_sim::master::Master, input: &FiniteSeedContext) -> bool {
+    if input
+        .gekisou
+        .as_ref()
+        .is_none_or(|setup| setup.missions.iter().take(setup.fevers.len()).any(|&mission| mission == 2))
+    {
+        return false;
+    }
+    for performer in &input.performers {
+        let support = performer.support_skills.iter().flat_map(|&(id, level)| {
+            master
+                .support_skill_effects
+                .iter()
+                .filter(move |row| row.support_skill_id == id && row.level == level)
+                .map(|row| (row.id, 3))
+        });
+        let member = performer.gekisou_skill.iter().flat_map(|&(id, level)| {
+            master
+                .gekisou_skill_effects
+                .iter()
+                .filter(move |row| row.skill_id == id && row.level == level)
+                .map(|row| (row.id, 4))
+        });
+        let gekisou_support = performer.gekisou_support_skills.iter().flat_map(|&(id, level)| {
+            master
+                .gekisou_support_skill_effects
+                .iter()
+                .filter(move |row| row.skill_id == id && row.level == level)
+                .map(|row| (row.id, 5))
+        });
+        if !conditional_bases_are_injective(support.chain(member).chain(gekisou_support)) {
+            return false;
+        }
+    }
+    let Ok(mut model) = input.model(master, &input.performers) else { return false };
+    if input.lottery_free.is_some() {
+        return true;
+    }
+    ournotes_sim::live::full::luck_skills(master)
+        .is_ok_and(|skills| ournotes_sim::live::full::prepare_lottery_free(&mut model, &skills).is_ok())
+}
+
+/// A score-maximum witness also settles a monotone score payoff and its highest-score tie. A life
+/// predicate needs either a successful maximum-score witness or a proof that all outcomes fail it.
+fn primitive_witness_suffices(metric: &Metric, maximum: i32, lives: &[i32], exact_life: Option<i32>) -> Option<bool> {
+    match *metric {
+        Metric::Score | Metric::ScoreAtLeast { .. } | Metric::CappedScore { .. } | Metric::Power => Some(true),
+        Metric::ScoreAndLifeAtLeast { threshold, min_final_life } => {
+            Some(maximum < threshold || lives.iter().any(|&life| life >= min_final_life) || exact_life.is_some())
+        }
+        _ => None,
+    }
+}
+
+/// The exact native payoff at the maximum score must dominate every step over the enclosing support.
+/// This admits constant and monotone tables as well as nonmonotone tables whose final step is maximal.
+fn native_witness_suffices(map: &PayoffMap, lower: i32, maximum: i32) -> bool {
+    let PayoffMap::NativeSteps(steps) = map else { return false };
+    if lower > maximum {
+        return false;
+    }
+    let mut next = i64::from(lower);
+    let mut greatest = i128::MIN;
+    for step in steps {
+        if step.upper < lower {
+            continue;
+        }
+        if i64::from(step.lower) > next || i64::from(step.upper) < next {
+            return false;
+        }
+        greatest = greatest.max(step.value);
+        if step.upper >= maximum {
+            return step.value == greatest;
+        }
+        next = i64::from(step.upper) + 1;
+    }
+    false
+}
+
+fn aggregate_maximum(outcomes: Vec<SeedOutcome>) -> Result<FiniteEvaluation, Error> {
+    let best = outcomes.iter().map(|outcome| outcome.terminal_payoff).max();
+    let mut evaluation = expectation::aggregate(outcomes)?;
+    evaluation.expected_payoff = ExactExpectation { numerator: best.expect("nonempty outcomes"), denominator: 1 };
+    Ok(evaluation)
+}
+
+impl Engine<'_, '_> {
+    fn score_witness_settles_payoff(
+        &self,
+        physical: &PhysicalDeck,
+        power: i32,
+        witnesses: &[(i32, i32)],
+        summary: Option<&LuckMaximumSupport>,
+    ) -> bool {
+        if matches!(
+            self.metric,
+            Metric::Score | Metric::ScoreAtLeast { .. } | Metric::CappedScore { .. } | Metric::Power
+        ) {
+            return true;
+        }
+        let Some(maximum) = witnesses.iter().map(|&(score, _)| score).max() else { return false };
+        let lives: Vec<_> = witnesses.iter().filter_map(|&(score, life)| (score == maximum).then_some(life)).collect();
+        if let Some(settled) = primitive_witness_suffices(
+            self.metric,
+            maximum,
+            &lives,
+            summary.and_then(|summary| summary.exact_final_life),
+        ) {
+            return settled;
+        }
+        let Some(summary) = summary else { return false };
+        // The native adapter verifies every rank cell, including cells whose endpoints have equal
+        // rewards. Failure of this optional enclosure proof falls back to reachable outcomes.
+        crate::search::certified_payoff::payoff_map(
+            self.pool,
+            self.request,
+            self.metric,
+            self.event_input,
+            physical,
+            power,
+            (summary.final_support.lower, maximum),
+        )
+        .is_ok_and(|map| native_witness_suffices(&map, summary.final_support.lower, maximum))
+    }
+
+    pub(super) fn evaluate_maximum(
+        &mut self,
+        physical: &PhysicalDeck,
+        power: i32,
+        cut: Option<(&JointBounds, &CandidateDomain)>,
+    ) -> Result<Leaf, Error> {
+        let caps =
+            cut.map(|(bounds, domain)| bounds.order_cheap_caps(domain, physical, i64::from(power), &self.positions));
+        if let Some(caps) = &caps
+            && self.top.len() == self.request.k
+            && let Some(last) = self.top.last()
+        {
+            let upper = caps.iter().copied().max().expect("performance orders");
+            if upper < last.evaluation.expected_payoff.numerator
+                || (upper == last.evaluation.expected_payoff.numerator && power < last.power)
+            {
+                self.tel.leaves.cheap_pruned += 1;
+                return Ok(Leaf::Pruned);
+            }
+        }
+        let mut input = expectation::context(self.pool, physical, &self.request.objective)?;
+        if let Some(value) = self.simulation.music_length_ms {
+            input.params.music_length_ms = value;
+        }
+        if let Some(value) = self.simulation.score_music_length_ms {
+            input.params.score_music_length_ms = Some(value);
+        }
+        input.lottery_free = self.lottery_free.clone();
+        if input
+            .gekisou
+            .as_ref()
+            .is_none_or(|setup| !setup.missions.iter().take(setup.fevers.len()).any(|&mission| mission == 2))
+            && let Some(result) = self.evaluate_maximum_deterministic(physical, power, &input, caps.as_deref(), cut)?
+        {
+            return Ok(result);
+        }
+        let master = self.pool.master;
+        let mut exact = match &input.gekisou {
+            Some(setup) => LuckExactSession::new(
+                master,
+                &input.notes,
+                &input.events,
+                input.params,
+                setup,
+                &input.play,
+                &input.delta_times,
+                input.rank_confirmations.as_deref(),
+                self.limits.cache_entries,
+            )?,
+            None => LuckExactSession::new_live(
+                master,
+                &input.notes,
+                &input.events,
+                input.params,
+                &input.play,
+                &input.delta_times,
+                self.limits.cache_entries,
+            )?,
+        };
+        let skills = input.gekisou.as_ref().and_then(|_| ournotes_sim::live::full::luck_skills(master).ok());
+        let mut score_bounds = input.gekisou.as_ref().zip(skills.as_ref()).map(|(setup, skills)| {
+            LuckMaximumSession::new(
+                master,
+                skills,
+                &input.notes,
+                &input.events,
+                input.params,
+                setup,
+                &input.play,
+                &input.delta_times,
+                input.rank_confirmations.as_deref(),
+            )
+        });
+        let score_metric = matches!(self.metric, Metric::Score);
+        let mut budget = LuckExactBudget::default();
+        let mut outcomes = Vec::with_capacity(ORDERS);
+        let mut support = BTreeMap::new();
+        let mut best = None::<i128>;
+        self.tel.leaves.started += 1;
+        let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+        for (index, order) in uniform::all_orders().into_iter().enumerate() {
+            if self.expired() {
+                self.rec.clock.lap(resume);
+                return Ok(Leaf::Stopped);
+            }
+            if score_metric && best.is_some_and(|best| caps.as_ref().is_some_and(|caps| caps[index] < best)) {
+                continue;
+            }
+            let performers = order.map(|slot| input.performers[slot].clone());
+            let mut ceiling =
+                if score_metric { caps.as_ref().and_then(|caps| i32::try_from(caps[index]).ok()) } else { None };
+            let mut score_summary = None;
+            if let Some(bounds) = &mut score_bounds {
+                // Optional bounds are used only to close the search when a simulated path attains them.
+                if let Ok(Some(summary)) = bounds.support(&performers, || self.expired()) {
+                    ceiling = Some(ceiling.map_or(summary.final_support.upper, |c| c.min(summary.final_support.upper)));
+                    score_summary = Some(summary);
+                }
+                if self.expired() {
+                    self.rec.clock.lap(resume);
+                    return Ok(Leaf::Stopped);
+                }
+                if score_metric && score_order_dominated(ceiling, best) {
+                    continue;
+                }
+            }
+            let mut result = exact.support(&performers, &mut budget, ceiling, || self.expired())?;
+            self.tel.leaves.simulations += result.stats.replay_runs;
+            if result.decline.is_none()
+                && result.attained_ceiling
+                && !self.score_witness_settles_payoff(physical, power, &result.outcomes, score_summary.as_ref())
+            {
+                // A score maximum alone does not settle an arbitrary payoff or its life predicate.
+                // The complete support also preserves a separately reported maximum score.
+                result = exact.support(&performers, &mut budget, None, || self.expired())?;
+                self.tel.leaves.simulations += result.stats.replay_runs;
+            }
+            if let Some(reason) = result.decline {
+                if reason != LuckExactDecline::Cancelled || self.stop.is_none() {
+                    self.stop = Some(ExitReason::RefinementRequired);
+                }
+                self.rec.clock.lap(resume);
+                return Ok(Leaf::Stopped);
+            }
+            let mut chosen = None;
+            for (score, life) in result.outcomes {
+                support.insert(score, 1);
+                let payoff = self.payoff(physical, score, power, Some(life))?;
+                if chosen.is_none_or(|(previous, previous_score)| (payoff, score) > (previous, previous_score)) {
+                    chosen = Some((payoff, score));
+                }
+            }
+            let (payoff, score) = chosen.ok_or_else(|| Error::Domain("reachable outcome set is empty".into()))?;
+            best = Some(best.map_or(payoff, |current| current.max(payoff)));
+            outcomes.push(SeedOutcome {
+                root_seed: 0,
+                weight: 1,
+                performance_order: order,
+                final_score: score,
+                terminal_payoff: payoff,
+            });
+        }
+        self.rec.clock.lap(resume);
+        let mut evaluation = expectation::aggregate(outcomes)?;
+        evaluation.expected_payoff = ExactExpectation { numerator: best.expect("performance orders"), denominator: 1 };
+        evaluation.score_mass = support;
+        Ok(Leaf::Evaluated(evaluation))
+    }
+
+    /// Completed zero-draw orders have a singleton score/life support. Their common prefixes and score
+    /// programs can be shared without changing the maximum over orders. Any observed random draw declines
+    /// this path before an evaluation or cache entry is published.
+    fn evaluate_maximum_deterministic(
+        &mut self,
+        physical: &PhysicalDeck,
+        power: i32,
+        input: &FiniteSeedContext,
+        caps: Option<&[i128]>,
+        cut: Option<(&JointBounds, &CandidateDomain)>,
+    ) -> Result<Option<Leaf>, Error> {
+        if let Some(scores) = self.team_scores.get(physical, power, &mut self.tel.caches.team_scores) {
+            let outcomes = self
+                .orders
+                .iter()
+                .zip(scores)
+                .map(|(&performance_order, (final_score, final_life))| {
+                    Ok(SeedOutcome {
+                        root_seed: 0,
+                        weight: 1,
+                        performance_order,
+                        final_score,
+                        terminal_payoff: self.payoff(physical, final_score, power, Some(final_life))?,
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            return Ok(Some(Leaf::Evaluated(aggregate_maximum(outcomes)?)));
+        }
+        let performers = &input.performers;
+        let cached = self.programs.get_partial(physical.members, performers, power, &mut self.tel.caches.programs);
+        self.tel.caches.program_evaluation_ms = self.programs.evaluation_ms();
+        let mut outcomes: Vec<Option<SeedOutcome>> = vec![None; ORDERS];
+        let mut final_lives = [0; ORDERS];
+        let mut cached_best = i128::MIN;
+        let mut cached_count = 0usize;
+        if let Some(cached) = cached {
+            for (index, score) in cached.into_iter().enumerate() {
+                if let Some((final_score, final_life)) = score {
+                    let payoff = self.payoff(physical, final_score, power, Some(final_life))?;
+                    cached_best = cached_best.max(payoff);
+                    cached_count += 1;
+                    final_lives[index] = final_life;
+                    outcomes[index] = Some(SeedOutcome {
+                        root_seed: 0,
+                        weight: 1,
+                        performance_order: self.orders[index],
+                        final_score,
+                        terminal_payoff: payoff,
+                    });
+                }
+            }
+            self.tel.caches.program_orders_reused += cached_count as u64;
+        }
+        if cached_count == ORDERS {
+            let evaluation = aggregate_maximum(outcomes.into_iter().map(Option::unwrap).collect())?;
+            self.team_scores.insert(physical, power, &evaluation, &final_lives, &mut self.tel.caches.team_scores);
+            return Ok(Some(Leaf::Evaluated(evaluation)));
+        }
+        let threshold = if self.top.len() == self.request.k {
+            self.top.last().map(|last| {
+                let threshold = last.evaluation.expected_payoff.numerator;
+                if power < last.power { threshold.saturating_add(1) } else { threshold }
+            })
+        } else {
+            None
+        };
+        let stop_below = threshold.filter(|&threshold| cached_best < threshold).unwrap_or(i128::MIN);
+        let mut caps =
+            caps.map(<[i128]>::to_vec).unwrap_or_else(|| vec![self.metric.upper().unwrap_or(i128::MAX); ORDERS]);
+        if stop_below != i128::MIN
+            && let Some((bounds, domain)) = cut.filter(|(bounds, _)| bounds.has_fine())
+        {
+            let (_, resume) = self.rec.clock.lap(slot::FINE);
+            let admitted = admits_fine_maximum(self.pool.master, input);
+            let tightened = if admitted {
+                tighten_maximum_caps(&mut caps, |index, mut cap| {
+                    if self.expired() {
+                        return ControlFlow::Break(());
+                    }
+                    // A strict upper bound below the cutoff already excludes this order.
+                    if cap < stop_below {
+                        return ControlFlow::Continue(cap);
+                    }
+                    let positions = &self.positions[index];
+                    if let Some(raw) = bounds.raw_upper(domain, physical, i64::from(power), positions) {
+                        cap = cap.min(raw);
+                    }
+                    if cap < stop_below {
+                        return ControlFlow::Continue(cap);
+                    }
+                    cap = cap.min(
+                        bounds
+                            .fine_upper(domain, physical, i64::from(power), positions, &mut self.bound_scratch)
+                            .expect("compiled fine bound"),
+                    );
+                    self.tel.leaves.fine_orders += 1;
+                    ControlFlow::Continue(cap)
+                })
+            } else {
+                ControlFlow::Continue(())
+            };
+            self.rec.clock.lap(resume);
+            if tightened.is_break() || self.expired() {
+                return Ok(Some(Leaf::Stopped));
+            }
+            if admitted && maximum_cap_below(&caps, stop_below) {
+                self.tel.leaves.fine_pruned += 1;
+                return Ok(Some(Leaf::Pruned));
+            }
+        }
+        let missing: Vec<usize> = (0..ORDERS).filter(|&index| outcomes[index].is_none()).collect();
+        if missing.iter().all(|&index| caps[index] < stop_below) {
+            self.tel.leaves.order_bound_pruned += 1;
+            return Ok(Some(Leaf::Pruned));
+        }
+        let performance_orders = self.orders.clone();
+        let missing_orders: Vec<[usize; 5]> = missing.iter().map(|&index| performance_orders[index]).collect();
+        let orders: Vec<Vec<usize>> = missing_orders.iter().map(|order| order.to_vec()).collect();
+        let capture_budget =
+            self.programs.capture_budget_for(physical.members, performers, &mut self.tel.caches.program_admissions);
+        self.tel.caches.program_bytes = self.programs.allocated_bytes();
+        self.tel.caches.program_recordings += u64::from(capture_budget > 0);
+        let live = input.clone().into_ordered();
+        let random = Cell::new(false);
+        let (pool, request, metric, event_input) = (self.pool, self.request, self.metric, self.event_input);
+        let master = pool.master;
+        let mut visit = |local: usize, model: &LiveModel| -> Result<i128, Error> {
+            if model.draws() != 0 {
+                random.set(true);
+                return Err(Error::Unsupported("terminal order contains random draws".into()));
+            }
+            let index = missing[local];
+            let final_score = model.score();
+            final_lives[index] = model.current_life();
+            let payoff =
+                payoff_of(pool, request, metric, event_input, physical, final_score, power, Some(final_lives[index]))?;
+            outcomes[index] = Some(SeedOutcome {
+                root_seed: 0,
+                weight: 1,
+                performance_order: performance_orders[index],
+                final_score,
+                terminal_payoff: payoff,
+            });
+            Ok(payoff)
+        };
+        let fine = cut.filter(|(bounds, _)| stop_below != i128::MIN && bounds.has_fine());
+        let mut tables: Vec<Option<Option<_>>> = (0..ORDERS).map(|_| None).collect();
+        let mut settled_caps = [None; ORDERS];
+        self.tel.leaves.started += 1;
+        let recording_started = (capture_budget > 0).then(Instant::now);
+        let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+        let upper = |ids: &[usize], model: &LiveModel, settled: Settled| {
+            if model.draws() != 0 {
+                random.set(true);
+                return Ok(ControlFlow::Break(()));
+            }
+            if self.expired() {
+                return Ok(ControlFlow::Break(()));
+            }
+            let Some((bounds, domain)) = fine.filter(|_| model.frames_played() > 0) else {
+                return Ok(ControlFlow::Continue(
+                    ids.iter().map(|&local| caps[missing[local]]).max().expect("node orders"),
+                ));
+            };
+            let (_, resume) = self.rec.clock.lap(slot::CUTOFF_TABLE);
+            let mut maximum = i128::MIN;
+            for &local in ids {
+                let index = missing[local];
+                let cap = settled_cap(&mut settled_caps[index], settled, || {
+                    let table = tables[index].get_or_insert_with(|| {
+                        let table = bounds.cutoff_table(
+                            domain,
+                            physical,
+                            i64::from(power),
+                            &self.positions[index],
+                            &mut self.bound_scratch,
+                        );
+                        self.tel.leaves.cutoff.tables += u64::from(table.is_some());
+                        self.tel.leaves.cutoff.unavailable += u64::from(table.is_none());
+                        table
+                    });
+                    table
+                        .as_ref()
+                        .and_then(|table| table.payoff_cap(bounds, settled))
+                        .map_or(caps[index], |cap| cap.min(caps[index]))
+                });
+                maximum = maximum.max(cap);
+            }
+            self.rec.clock.lap(resume);
+            Ok(ControlFlow::Continue(maximum))
+        };
+        let result = if matches!(metric, Metric::Score) {
+            live.maximize_orders_bounded_recorded_partial(
+                master,
+                &orders,
+                LiveRandom::new(0),
+                capture_budget,
+                stop_below,
+                CUTOFF_EVERY,
+                (cached_count > 0).then_some(cached_best),
+                upper,
+                &mut visit,
+            )
+        } else {
+            live.simulate_orders_maximum_bounded_recorded_partial(
+                master,
+                &orders,
+                LiveRandom::new(0),
+                capture_budget,
+                stop_below,
+                CUTOFF_EVERY,
+                upper,
+                &mut visit,
+            )
+            .map(|(outcome, programs)| (MaximumOrdersOutcome::from(outcome), programs))
+        };
+        self.rec.clock.lap(resume);
+        if let Some(started) = recording_started {
+            self.tel.caches.program_recording_ms += started.elapsed().as_secs_f64() * 1000.0;
+        }
+        if random.get() || (input.lottery_free.is_some() && matches!(&result, Err(Error::Unsupported(_)))) {
+            return Ok(None);
+        }
+        let (outcome, programs) = result?;
+        if let Some(programs) = programs {
+            self.programs.insert_partial(
+                physical.members,
+                performers,
+                &missing_orders,
+                programs,
+                &mut self.tel.caches.programs,
+            );
+            self.tel.caches.program_bytes = self.programs.allocated_bytes();
+            (self.tel.caches.program_recorded_nodes, self.tel.caches.program_recorded_bytes) =
+                self.programs.recorded_work();
+        }
+        let (MaximumOrdersOutcome::AllOrders(shared)
+        | MaximumOrdersOutcome::MaximumProven { sharing: shared, .. }
+        | MaximumOrdersOutcome::BelowThreshold(shared)
+        | MaximumOrdersOutcome::Interrupted(shared)) = outcome;
+        self.tel.leaves.order_tree.add(&shared);
+        self.tel.leaves.simulations += (outcomes.iter().flatten().count() - cached_count) as u64;
+        Ok(Some(match outcome {
+            MaximumOrdersOutcome::AllOrders(_) => {
+                let evaluation =
+                    aggregate_maximum(outcomes.into_iter().map(|outcome| outcome.expect("completed order")).collect())?;
+                self.team_scores.insert(physical, power, &evaluation, &final_lives, &mut self.tel.caches.team_scores);
+                Leaf::Evaluated(evaluation)
+            }
+            MaximumOrdersOutcome::MaximumProven { .. } => {
+                // Strict score bounds omit only orders below an already completed score witness. Their
+                // individual score/life outcomes stay absent from complete-vector caches.
+                Leaf::Evaluated(aggregate_maximum(outcomes.into_iter().flatten().collect())?)
+            }
+            MaximumOrdersOutcome::BelowThreshold(shared) => {
+                telemetry::record_stop(
+                    &mut self.tel.leaves.cutoff,
+                    shared.frames as usize,
+                    shared.separate_frames as usize,
+                );
+                self.tel.leaves.order_bound_pruned += 1;
+                Leaf::Pruned
+            }
+            MaximumOrdersOutcome::Interrupted(_) => Leaf::Stopped,
+        }))
+    }
+}
+
+pub(super) fn search(
+    engine: &mut Engine<'_, '_>,
+    domain: &CandidateDomain,
+    bounds: Option<&JointBounds>,
+) -> Result<(), Error> {
+    if let Some(bounds) = bounds {
+        let mut physical = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
+        let prefixes = bounds.maximum_id_prefixes(engine.pool, domain, || engine.expired());
+        visit(0, None, &mut physical, domain, bounds, prefixes.as_ref(), engine)?;
+    } else {
+        let mut physical = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
+        members_rec(0, 0, &mut physical, domain.members(), domain.required(), domain.leader(), domain.snaps(), engine)?;
+    }
+    Ok(())
+}
+
+fn visit(
+    depth: usize,
+    after: Option<i64>,
+    physical: &mut PhysicalDeck,
+    domain: &CandidateDomain,
+    bounds: &JointBounds,
+    prefixes: Option<&MaximumIdPrefixes>,
+    engine: &mut Engine<'_, '_>,
+) -> Result<bool, Error> {
+    engine.tel.nodes += 1;
+    if engine.expired() {
+        return Ok(false);
+    }
+    let selected = &SLOTS[..depth];
+    if domain
+        .required()
+        .iter()
+        .filter(|&&member| !selected.iter().any(|&slot| physical.members[slot] == member))
+        .count()
+        > 5 - depth
+    {
+        return Ok(true);
+    }
+    if depth > 0 && engine.top.len() == engine.request.k {
+        let (upper, power) = prefixes
+            .and_then(|tables| bounds.maximum_id_upper(tables, engine.pool, domain, physical, depth, after))
+            .unwrap_or_else(|| bounds.maximum_upper(engine.pool, domain, physical, depth));
+        if let Some(last) = engine.top.last()
+            && (upper < last.evaluation.expected_payoff.numerator
+                || (upper == last.evaluation.expected_payoff.numerator && power < i64::from(last.power)))
+        {
+            return Ok(true);
+        }
+        if matches!(engine.metric, Metric::Score)
+            && let Some((carrier_upper, carrier_power)) =
+                bounds.maximum_carrier_upper(engine.pool, domain, physical, depth)
+            && let Some(last) = engine.top.last()
+        {
+            let upper = upper.min(carrier_upper);
+            let power = power.min(carrier_power);
+            if upper < last.evaluation.expected_payoff.numerator
+                || (upper == last.evaluation.expected_payoff.numerator && power < i64::from(last.power))
+            {
+                return Ok(true);
+            }
+        }
+    }
+    if depth == 5 {
+        return engine.consider_with(*physical, Some((bounds, domain)));
+    }
+    let slot = SLOTS[depth];
+    for &(member, choice) in &bounds.choices {
+        let card = &engine.pool.members[member];
+        if (depth == 0 && domain.leader().is_some_and(|leader| leader != member))
+            || (depth > 0 && after.is_some_and(|after| card.id <= after))
+            || selected
+                .iter()
+                .any(|&slot| engine.pool.members[physical.members[slot]].character_id == card.character_id)
+            || domain
+                .required()
+                .iter()
+                .any(|&r| r != member && engine.pool.members[r].character_id == card.character_id)
+        {
+            continue;
+        }
+        let snap = (choice > 0).then(|| domain.snaps()[choice - 1]);
+        if snap.is_some() && selected.iter().any(|&slot| physical.snaps[slot] == snap) {
+            continue;
+        }
+        physical.members[slot] = member;
+        physical.snaps[slot] = snap;
+        if !visit(depth + 1, if depth == 0 { None } else { Some(card.id) }, physical, domain, bounds, prefixes, engine)?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}

@@ -58,22 +58,24 @@ mod luck;
 mod luck_dp;
 mod luck_exact;
 pub use luck_dp::{
-    LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckRangeMoments, LuckRecordProfile,
-    luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified, luck_rush_dp_certified_with_events,
-    luck_rush_dp_certified_with_moments, luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events,
+    LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckDpSupportResult, LuckRangeMoments,
+    LuckRecordProfile, LuckRushFrameSupport, luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified,
+    luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_moments, luck_rush_dp_certified_with_ranking,
+    luck_rush_dp_support_with_ranking, luck_rush_dp_support_with_ranking_cancellable, luck_rush_dp_with_events,
     luck_rush_dp_with_ranking, take_luck_record_profile,
 };
 pub use luck_exact::{
     LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactSession,
-    LuckExactStats, luck_exact_law_with_ranking,
+    LuckExactStats, LuckExactSupport, luck_exact_law_with_ranking,
 };
 mod luck_score_bounds;
 pub(crate) use luck_score_bounds::luck_score_expectation_for_chart;
 mod nominal_expectation;
 pub use luck_score_bounds::{
-    LuckRangeScoreBounds, LuckScoreBounds, LuckScoreExpectation, LuckScoreSession, LuckScoreSummary, RealBounds,
-    luck_score_bounds, luck_score_bounds_with_ranking, luck_score_expectation, luck_score_expectation_with_curves,
-    luck_score_summary_with_curves, luck_score_summary_with_ranking, prepare_lottery_free,
+    LuckMaximumSession, LuckMaximumSupport, LuckRangeScoreBounds, LuckScoreBounds, LuckScoreExpectation,
+    LuckScoreSession, LuckScoreSummary, RealBounds, luck_score_bounds, luck_score_bounds_with_ranking,
+    luck_score_expectation, luck_score_expectation_with_curves, luck_score_summary_with_curves,
+    luck_score_summary_with_ranking, prepare_lottery_free,
 };
 #[cfg(feature = "search-diagnostics")]
 pub use luck_score_bounds::{LuckScoreProfile, take_luck_score_profile};
@@ -92,7 +94,7 @@ pub use luck_shapes::{
     FORMATION, LOTTERY_CONDITIONS, LUCK_REPLAY_CONDITIONS, LuckCondition, LuckScoreShape, LuckShapeProbe, LuckSkillKey,
     LuckSkills, LuckSource, formation_targets, is_luck_chain, luck_holder, luck_skill_key, luck_skills,
 };
-pub use orders::{OrderSharing, OrderedLive, OrdersOutcome, RecordedOrder};
+pub use orders::{MaximumOrdersOutcome, OrderSharing, OrderedLive, OrdersOutcome, RecordedOrder};
 mod raw_runtime;
 mod score_program;
 pub use raw_runtime::{RELAX_TARGET_JUDGEMENTS, RawJudgedNote, RawJudgementRuntime};
@@ -461,7 +463,10 @@ struct Handle<'a> {
 
 impl LuckHandle for Handle<'_> {
     fn add(&mut self, t: i32, percent: i32) -> i32 {
-        self.sc.put(self.score, FactorCommand { time_ms: t, owner_id: -1, luck: percent, ..Default::default() })
+        let id =
+            self.sc.put(self.score, FactorCommand { time_ms: t, owner_id: -1, luck: percent, ..Default::default() });
+        self.score.bounds_tag_rush_handle(t);
+        id
     }
 
     fn disable(&mut self, t: i32, id: i32) -> Result<(), Error> {
@@ -472,6 +477,7 @@ impl LuckHandle for Handle<'_> {
             luck: c.luck.wrapping_neg(),
             ..Default::default()
         });
+        self.score.bounds_tag_rush_handle(t);
         Ok(())
     }
 }
@@ -1313,11 +1319,8 @@ impl LiveModel {
             }
         }
         for skill in &self.cond {
-            for updater in &skill.updater.updaters {
-                let effect = skill.updater.effect(updater.effect);
-                if let Some(finish) = updater.state.pending_finish_ms(effect.act) {
-                    horizon = horizon.min(finish);
-                }
+            if let Some(finish) = skill.updater.pending_finish_ms() {
+                horizon = horizon.min(finish);
             }
         }
         if let Some(gk) = &self.gk {
@@ -1735,7 +1738,8 @@ impl LiveModel {
         }
         self.program_has_started = true;
         self.frame_time = t;
-        self.score.bounds_potential_rush(t);
+        let play_frame = self.frames_played();
+        self.score.bounds_begin_rush_frame(play_frame, t);
         self.frame_rank_confirmation = self.prev_confirmed_rank.take();
         if let Some(gk) = self.gk.as_mut() {
             gk.fever.update(t, &mut gk.fever_updates);
@@ -1963,6 +1967,8 @@ impl LiveModel {
     /// The Gekisou update after the frame: the ranges take the judged notes; the first range that completed this
     /// frame gets its start and end scores and its rank bonus.
     fn gekisou_after(&mut self, t: i32, results: &[(LiveNote, i32)]) -> Result<(), Error> {
+        let play_frame = self.frames_played();
+        self.score.bounds_end_rush_before();
         let Some(gk) = self.gk.as_mut() else { return Ok(()) };
         let mut judged = std::mem::take(&mut self.scratch.gk_judged);
         judged.clear();
@@ -1992,10 +1998,16 @@ impl LiveModel {
         if self.score.bounds_trace.is_some() {
             // A lottery may file Rush commands at any judged chart time, or at this frame's pending draw.
             // These are possible filings, not observations of the recorder's particular lottery trajectory.
-            for &(_, _, time, _) in &judged {
-                self.score.bounds_potential_rush(time);
+            for (index, &(_, _, time, _)) in judged.iter().enumerate() {
+                self.score.bounds_potential_rush(
+                    time,
+                    luck_score_bounds::RushPoint { play_frame, stage: luck_score_bounds::RushStage::Judged(index) },
+                );
             }
-            self.score.bounds_potential_rush(t);
+            self.score.bounds_potential_rush(
+                t,
+                luck_score_bounds::RushPoint { play_frame, stage: luck_score_bounds::RushStage::Pending },
+            );
             self.score.bounds_probability_ready(t);
         }
         self.scratch.gk_judged = judged;

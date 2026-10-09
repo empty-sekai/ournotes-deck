@@ -335,6 +335,7 @@ pub(crate) fn nominal_score_expectation_for_chart(
             true,
             false,
             has_luck,
+            setup.missions.iter().take(setup.fevers.len()).all(|&mission| mission == gekisou::M_LUCK),
             &mut || false,
         )?
         .expect("complete nominal score recording");

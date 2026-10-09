@@ -113,6 +113,12 @@ impl Engine<'_, '_> {
                 self.cache_certified_score(program.clone(), power, &score);
                 score
             };
+            if score.needs_native_payoff_support(self.metric) {
+                if !self.expired() {
+                    self.stop = Some(ExitReason::RefinementRequired);
+                }
+                return Ok(Leaf::Stopped);
+            }
             let support = (
                 score.orders.iter().map(|o| o.support.0).min().expect("120 orders"),
                 score.orders.iter().map(|o| o.support.1).max().expect("120 orders"),

@@ -12,6 +12,9 @@
 //! Members branch in `SLOTS` order; a member prefix bounds its completions by the best remaining bonuses and the
 //! power bound of [`TeamPowerBounds`]. A complete member layout has one Snap-independent power constant, and its Snap
 //! bindings are ranked exactly by [`DeckPayoffBounds::frontier`].
+//!
+//! A common terminal upper bound can also order the domain by power and canonical identity. Its proposals require
+//! terminal evaluation; the upper-only mode does not assign that bound as a deck's actual payoff.
 use super::{
     Objective, Pool, SearchRequest,
     expectation::PhysicalDeck,
@@ -127,6 +130,8 @@ enum Curve {
     Items { counts: Vec<i64>, rate: i64 },
     /// No card changes the payoff.
     Constant(i128),
+    /// Every deck pays at most this value; attainment requires terminal evaluation.
+    UpperOnly(i128),
     /// A bound of each order of a played Live: the step its score cap reaches.
     Steps(ScoreSteps),
 }
@@ -138,7 +143,7 @@ impl Curve {
             Self::Items { counts, rate } => {
                 counts.iter().try_fold(0i128, |sum, &count| Ok(sum + point_product(count, bonus, *rate)?))
             }
-            Self::Constant(value) => Ok(*value),
+            Self::Constant(value) | Self::UpperOnly(value) => Ok(*value),
             Self::Steps(steps) => steps.value(bonus, power),
         }
     }
@@ -303,6 +308,39 @@ pub(crate) struct DeckPayoffBounds {
 }
 
 impl DeckPayoffBounds {
+    /// A common terminal upper bound ranks proposals by exact power and canonical identity.
+    /// This mode certifies no deck's payoff until the caller evaluates it.
+    pub(crate) fn compile_upper_only(
+        pool: &Pool,
+        request: &SearchRequest,
+        domain: &CandidateDomain,
+        metric: &Metric,
+    ) -> Result<Self, Error> {
+        let cap = match *metric {
+            Metric::ScoreAtLeast { .. } | Metric::ScoreAndLifeAtLeast { .. } => 1,
+            Metric::CappedScore { threshold } => i128::from(threshold),
+            _ => return Err(unavailable("requires a capped terminal utility")),
+        };
+        let power = TeamPowerBounds::tables(pool, request, domain)?;
+        let members = power.members.clone();
+        Ok(Self {
+            power,
+            members,
+            member_bonus: vec![0; pool.members.len()],
+            snap_bonus: vec![0; domain.snaps().len()],
+            snap_best: 0,
+            maximum_bonus: 0,
+            curve: Curve::UpperOnly(cap),
+        })
+    }
+
+    pub(crate) fn upper_only(&self) -> Option<i128> {
+        match self.curve {
+            Curve::UpperOnly(cap) => Some(cap),
+            _ => None,
+        }
+    }
+
     /// With score `steps` (a played Live), the payoff is only bounded: an evaluated deck may fall below it.
     pub(crate) fn compile(
         pool: &Pool,
@@ -375,9 +413,9 @@ impl DeckPayoffBounds {
         Ok(Some((self.curve.value(bonus, power)?, power)))
     }
 
-    /// Whether an evaluated deck may pay less than its bound (a played Live bounded by score steps).
+    /// Whether an evaluated deck may pay less than its score-step or common terminal bound.
     pub(crate) fn bounded_only(&self) -> bool {
-        matches!(self.curve, Curve::Steps(_))
+        matches!(self.curve, Curve::Steps(_) | Curve::UpperOnly(_))
     }
 
     /// With score steps, the score cap of every order of a deck with power at most `power`.
@@ -391,8 +429,8 @@ impl DeckPayoffBounds {
         self.power.upper(pool, domain, &PhysicalDeck { members: [0; 5], snaps: [None; 5] }, 0)
     }
 
-    /// The first `k` Snap bindings of a complete member layout, ranked by payoff, then power, then Snap IDs (no Snap
-    /// first), with their exact payoff and power. `base` is the layout's power without Snaps.
+    /// The first `k` Snap bindings of a complete member layout, ranked by curve value, then power, then Snap IDs (no
+    /// Snap first), with their curve value and exact power. `base` is the layout's power without Snaps.
     ///
     /// Snaps are scanned once in public-ID order, so partial bindings of one slot mask extend identically. A binding
     /// is dropped once `k` bindings of its mask with at least its bonus beat its power and Snap IDs: every common

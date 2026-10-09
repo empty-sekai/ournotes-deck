@@ -242,7 +242,10 @@ fn merge_certified_batch(
         *combined = Some(batch);
         return Ok(());
     };
-    if result.steps != batch.steps || result.probe_transitions != batch.probe_transitions {
+    if result.steps != batch.steps
+        || result.probe_transitions != batch.probe_transitions
+        || result.rush_filings != batch.rush_filings
+    {
         return Err(Error::Unsupported("LUCK certified DP: probe batches have different joint curves".into()));
     }
     if result.probes.len() != batch.probes.len() {
@@ -540,6 +543,7 @@ mod certified_tests {
         let mut joint = [ProbabilityMass::ZERO; 4];
         joint[bucket] = ProbabilityMass::ONE;
         full::LuckDpCertifiedResult {
+            rush_filings: Vec::new(),
             probe_transitions: Vec::new(),
             steps: vec![(100, joint)],
             probes,
@@ -577,6 +581,15 @@ mod certified_tests {
         second.probe_transitions = vec![1, 2, 8, 1];
         let error = merge_certified_batch(&mut Some(first), second).unwrap_err();
         assert!(matches!(error, Error::Unsupported(_)));
+    }
+
+    #[test]
+    fn certified_batches_retain_original_rush_filing_support() {
+        let mut first = batch(vec![true, false], 3, 1, 1);
+        first.rush_filings = vec![full::LuckRushFrameSupport::default()];
+        let mut second = batch(vec![false, true], 3, 1, 1);
+        second.rush_filings = vec![full::LuckRushFrameSupport { before: true, ..Default::default() }];
+        assert!(matches!(merge_certified_batch(&mut Some(first), second), Err(Error::Unsupported(_))));
     }
 
     #[test]

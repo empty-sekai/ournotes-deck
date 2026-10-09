@@ -1,5 +1,5 @@
 //! One native benchmark request, with an explicit post-dataset-load timing boundary.
-use ournotes_search::engine::{Progress, recommend_snapshot};
+use ournotes_search::engine::{Answer, AnswerProgress, Progress, recommend_account, recommend_snapshot};
 use ournotes_sim::data::DeckData;
 use std::{
     env, fs,
@@ -33,17 +33,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     emit(serde_json::json!({"type":"ready","setupMs":setup.elapsed().as_secs_f64()*1000.,
         "datasetId":data.sha256,"arch":std::env::consts::ARCH}))?;
     let started = Instant::now();
+    let interval_ms = env::var("OURNOTES_PROGRESS_MS").ok().map(|v| v.parse::<u64>()).transpose()?.unwrap_or(250);
+    let interval = Duration::from_millis(interval_ms);
     let mut report = |r: &ournotes_search::types::RecommendationOutcome| {
         let _ = emit(serde_json::json!({"type":"progress","atMs":started.elapsed().as_secs_f64()*1000.,
             "completion":r.completion,"optimality":r.optimality,"teams":r.results.len(),
             "ranksCertified":r.results.iter().filter(|t| t.rank_certified==Some(true)).count()}));
     };
-    let answer = recommend_snapshot(
-        &data,
-        &snapshot,
-        &request,
-        Some(Progress { interval: Duration::from_millis(250), report: &mut report }),
-    );
+    let account = serde_json::from_str::<serde_json::Value>(&snapshot)?["format"] == "ournotes.account/1";
+    let answer = if account {
+        let mut report = |answer: &Answer| {
+            if let Ok(value) = serde_json::to_value(answer) {
+                let _ = emit(serde_json::json!({"type":"progress","atMs":started.elapsed().as_secs_f64()*1000.,
+                    "optimality":value["result"]["optimality"], "status":value["status"],
+                    "teams":value["result"]["teams"].as_array().map_or(0, Vec::len)}));
+            }
+        };
+        serde_json::to_value(recommend_account(&data, &snapshot, &request, Some(AnswerProgress { interval, report: &mut report })))?
+    } else {
+        serde_json::to_value(recommend_snapshot(&data, &snapshot, &request, Some(Progress { interval, report: &mut report })))?
+    };
     let elapsed_ms = started.elapsed().as_secs_f64() * 1000.;
     fs::write(&args[3], serde_json::to_vec(&answer)?)?;
     emit(serde_json::json!({"type":"done","elapsedMs":elapsed_ms}))?;

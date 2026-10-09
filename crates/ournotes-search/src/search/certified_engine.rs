@@ -486,6 +486,12 @@ impl Engine<'_, '_> {
             self.tel.leaves.simulations += ORDERS as u64;
             score
         };
+        if score.needs_native_payoff_support(self.metric) {
+            if !self.expired() {
+                self.stop = Some(ExitReason::RefinementRequired);
+            }
+            return Ok(false);
+        }
         let support = (
             score.orders.iter().map(|order| order.support.0).min().expect("complete order set"),
             score.orders.iter().map(|order| order.support.1).max().expect("complete order set"),
@@ -536,6 +542,8 @@ impl Engine<'_, '_> {
                     members: entry.members,
                     snaps: entry.snaps,
                     power: entry.power,
+                    objective_value: value.exact_payoff.map(Into::into),
+                    maximum_score: None,
                     expected_score: value.exact_score.map(Into::into),
                     expected_payoff: value.exact_payoff.map(Into::into),
                     score_interval: Some(FractionInterval::from_f64(value.score.lower(), value.score.upper())?),

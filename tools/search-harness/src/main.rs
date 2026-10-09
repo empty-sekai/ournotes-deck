@@ -532,6 +532,8 @@ mod tests {
     use super::*;
     fn row(n: &str, m: i64, s: Option<i64>) -> RecommendedDeck {
         RecommendedDeck {
+            objective_value: Some(types::Fraction { numerator: n.into(), denominator: "9007199254740997".into() }),
+            maximum_score: None,
             members: [m, 2, 3, 4, 5],
             snaps: [s, None, None, None, None],
             power: 100,

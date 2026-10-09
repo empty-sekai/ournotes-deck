@@ -58,6 +58,32 @@ fn probability_range_settles_the_k1_and_k12_certain_event_witnesses() {
 }
 
 #[test]
+fn maximum_support_remains_exact_when_an_unused_skill_has_no_score_ceiling() {
+    use ournotes_search::types::{Aggregation, Metric};
+    let (mut data, roster, _) = inputs(1, 1, 64);
+    let mut request = joint_request("free", false, json!({"kind":"score"}));
+    request.k = 1;
+    request.limits.cache_entries = 64;
+    request.metric = Metric::Score;
+    request.aggregation = Aggregation::Maximum;
+    request.constraints.no_snaps = true;
+    let baseline = engine::recommend(&data, &roster, &request).unwrap();
+    assert_eq!(baseline.completion, Completion::Complete);
+    data.master.support_skill_effects.push(
+        serde_json::from_value(json!({
+            "_id":9901,"_supportSkillID":9901,"_level":1,
+            "_skillTriggerType":1,"_skillEffectType":11000,"_effectValue":1000,
+        }))
+        .unwrap(),
+    );
+    data.master.reindex().unwrap();
+    assert!(ournotes_sim::live::full::luck_skills(&data.master).is_err());
+    let fallback = engine::recommend(&data, &roster, &request).unwrap();
+    assert_eq!(fallback.completion, Completion::Complete);
+    assert_eq!(fallback.results, baseline.results);
+}
+
+#[test]
 fn exact_nominal_refinement_settles_the_remaining_threshold_witness_without_a_cache() {
     let (data, roster, request) = inputs(610_000, 1, 0);
     let result = engine::recommend(&data, &roster, &request).unwrap();

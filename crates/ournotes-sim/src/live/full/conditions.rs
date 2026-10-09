@@ -408,7 +408,13 @@ impl Checker {
             // LUCK coefficient lives draw no lottery, so the luck chain effects a probability gates do nothing
             // (`LiveModel::set_luck_weights` admits no other gated effect).
             Checker::Probability(_) if ctx.gk.is_some_and(|g| g.ctrl.luck_weighted) => Ok((false, 0)),
-            Checker::Probability(rate) => Ok((ctx.random.value(SKILL) < *rate, 0)),
+            Checker::Probability(rate) => {
+                let result = match ctx.random.support_probability(*rate)? {
+                    Some(result) => result,
+                    None => ctx.random.value(SKILL) < *rate,
+                };
+                Ok((result, 0))
+            }
             Checker::ConditionedProbability(rate) => Ok((ctx.random.nominal_skill_probability(*rate)?, 0)),
             Checker::Fixed(ok) => Ok((*ok, *ok as i64)),
             Checker::NoteJudgementMatch { kind, targets, override_ms } => {

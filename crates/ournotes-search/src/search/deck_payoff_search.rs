@@ -35,6 +35,46 @@ impl Ranked {
 /// Evaluated decks that paid less than their bound, by member layout, with their payoff numerators.
 type Below = HashMap<[usize; 5], Vec<(PhysicalDeck, i128)>>;
 
+/// A complete power-ranked prefix settles Maximum only when every member attains the common cap.
+/// If fewer than K legal teams exist, evaluating every returned team exhausts the domain instead.
+pub(super) fn solve_upper_only(
+    domain: &CandidateDomain,
+    bounds: &DeckPayoffBounds,
+    e: &mut Engine<'_, '_>,
+) -> Result<bool, Error> {
+    let cap = bounds.upper_only().ok_or_else(|| Error::Domain("missing common terminal upper bound".into()))?;
+    debug_assert!(e.live && e.aggregation == Aggregation::Maximum && e.certified.is_none());
+    e.tel.joint.modules.entry("maximumPowerCap").or_default().checks += 1;
+    let mut p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
+    e.rec.frontier.clear();
+    (e.rec.tracked, e.rec.bounded) = (true, true);
+    e.note_open(Some(cap));
+    let mut top = Vec::new();
+    visit(0, &mut p, domain, bounds, &Below::new(), 1, &mut top, e)?;
+    if e.stop.is_some() {
+        return stopped(e, Some(cap));
+    }
+    let exhausted = top.len() < e.request.k;
+    for row in top {
+        if !e.consider(row.deck)? {
+            return stopped(e, Some(cap));
+        }
+        let Some(offered) = e.offered.take().or_else(|| e.recorded(&row.deck)) else {
+            return Ok(false);
+        };
+        let Some((payoff, denominator)) = offered.payoff else { return Ok(false) };
+        if denominator != 1 || i64::from(offered.power) != row.power || payoff > cap {
+            return Err(Error::Domain("maximum evaluation disagrees with the power-ranked terminal bound".into()));
+        }
+        e.seeded.insert(row.deck);
+        if !exhausted && payoff < cap {
+            return Ok(false);
+        }
+    }
+    e.tel.joint.modules.entry("maximumPowerCap").or_default().pruned += 1;
+    Ok(true)
+}
+
 /// Ok(false) when the joint traversal is to take over (only with `joint_follows`).
 pub(super) fn solve(
     domain: &CandidateDomain,
@@ -42,7 +82,7 @@ pub(super) fn solve(
     e: &mut Engine<'_, '_>,
     joint_follows: bool,
 ) -> Result<bool, Error> {
-    let scale = if e.live { ORDERS as i128 } else { 1 };
+    let scale = if e.live && e.aggregation == Aggregation::Expected { ORDERS as i128 } else { 1 };
     let mut p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
     let root = bounds.upper(e.pool, domain, &p, 0)?.map(|(payoff, _)| payoff * scale);
     e.rec.frontier.clear();
@@ -94,8 +134,8 @@ pub(super) fn solve(
             {
                 return Err(Error::Domain(format!("score {score} above the score cap {cap} of {:?}", row.key)));
             }
-            // Mean payoff numerator/denominator (in lowest terms) against the bound numerator over `scale`, and the
-            // payoff numerator over `scale` when it is one.
+            // The evaluated payoff fraction against the bound numerator over the aggregation's scale,
+            // and its exact numerator on that same scale when representable.
             let paid = offered.payoff.and_then(|(numerator, denominator)| {
                 let denominator = i128::try_from(denominator).ok()?;
                 let scaled = numerator.checked_mul(scale)?;

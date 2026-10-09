@@ -24,6 +24,8 @@ pub struct RecommendationRequest {
     pub scenario: Option<Scene>,
     pub context: Option<ContextInput>,
     pub metric: Metric,
+    #[serde(default)]
+    pub aggregation: Aggregation,
     /// Optional player intent. It is checked against execution/metric, never cosmetic.
     pub goal: Option<PlayerGoal>,
     #[serde(default, deserialize_with = "strict_constraints")]
@@ -43,6 +45,15 @@ pub struct RecommendationRequest {
     /// They only fill the Top-K earlier; the result and its proof do not depend on them.
     #[serde(default)]
     pub initial_decks: Vec<DeckInput>,
+}
+
+/// How reachable terminal payoffs are combined into the value of a team.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Aggregation {
+    #[default]
+    Expected,
+    Maximum,
 }
 
 /// A deck by public IDs: member cards in physical slots (slot 2 leads) and each slot's Snap.
@@ -554,13 +565,17 @@ pub struct ScoreSummary {
     pub expected_shortfall: Option<Fraction>,
 }
 /// One result. For a played live it is a team in its canonical layout (the leader in slot 2, the other members in
-/// ascending card ID order, each with its Snap), valued by its mean over the 120 performance orders.
+/// ascending card ID order, each with its Snap), valued by the selected aggregation of reachable outcomes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecommendedDeck {
     pub members: [i64; 5],
     pub snaps: [Option<i64>; 5],
     pub power: i32,
+    /// The value used for ranking under the declared aggregation.
+    pub objective_value: Option<Fraction>,
+    /// The greatest reachable final score, when evaluated exactly.
+    pub maximum_score: Option<i32>,
     pub expected_score: Option<Fraction>,
     pub expected_payoff: Option<Fraction>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -587,6 +602,7 @@ pub struct RecommendationOutcome {
     pub exit_reason: ExitReason,
     pub result_identity: &'static str,
     pub metric: Metric,
+    pub aggregation: Aggregation,
     pub player_goal: Option<GoalDescription>,
     pub strategy: Strategy,
     pub probability_law: serde_json::Value,

@@ -220,6 +220,7 @@ fn probe_boundary_guard_requires_every_late_transition_to_stay_off_and_all_nativ
         base_seed: 0,
     };
     let mut curve = LuckDpCertifiedResult {
+        rush_filings: Vec::new(),
         probe_transitions: vec![2, 4, 1, 1],
         range_moments: Vec::new(),
         steps: Vec::new(),
@@ -237,6 +238,7 @@ fn probe_boundary_guard_requires_every_late_transition_to_stay_off_and_all_nativ
         probes: vec![ProbeRow { owner: 1, value: 0.1 }],
         combo: Default::default(),
         has_luck: true,
+        rush_before: None,
     };
     let frame_times: Vec<_> = play.frames.iter().map(|frame| frame.time_ms).collect();
     assert!(check_probe_music_boundary(&frame_times, &curve, 200, true, &trace).is_ok());
