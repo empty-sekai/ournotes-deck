@@ -3,16 +3,13 @@
   "source": {
     "nativeSourceSha256": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
     "publishedNativeSourceCommit": "de589e3a03ab546add92f58740a71102cf2b9fc9",
-    "binarySha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61",
-    "localCommitMeaning": "Equivalent native simulator source to the published full-catalogue run; a subsequent iterator-only diagnostic compilation correction does not alter the native simulator source.",
-    "localCommit": "a80ac2a"
+    "binarySha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61"
   },
   "nativeExpectationProven": false,
   "rankingProven": false,
   "usesMonteCarlo": false,
   "mixedMasterKernels": {
     "binarySha256": "153781a40d1cd5a55c0f8b5b28afaebaf5a317512c264a0fccceda2040282b61",
-    "sourceCommit": "a80ac2a",
     "runs": [
       {
         "scope": "jp-easy",

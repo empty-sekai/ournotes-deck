@@ -1110,7 +1110,7 @@
     "simSourceSha256": "303f64fedfac7cc2c5ab96cbe3143fb1900c7f25a8f5cafdec31b8a601c7f735",
     "tree": "9ee96f3f724270793851dd7bc283a7821bffaef9"
   },
-  "timingMeaning": "Sums of recorded per-chart process elapsed and native phase counters across independent CI workers; neither sum is end-to-end workflow wall time. Charts were not re-run locally.",
+  "timingMeaning": "Sums of recorded per-chart process elapsed and native phase counters across independent CI workers; neither sum is end-to-end workflow wall time.",
   "workflow": {
     "jobs": [
       {

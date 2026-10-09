@@ -198,7 +198,6 @@
     "simSourceSha256": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c",
     "sourceFilesVerified": 327,
     "valid": true,
-    "verificationScriptSha256": "0c77d866336ba2d5dcf0400bc1af67b0e1ccc2d2191bbf8f69043dd93454a440",
     "verifiedAtUtc": "2026-10-09T04:01:53.130919+00:00",
     "verifiedCompressedBundleRoundTrips": 8,
     "verifiedDistinctModeProgramBlobs": 28864,
@@ -266,7 +265,7 @@
         "rawSavingsPercent": 73.52129325525705,
         "report": {
           "bytes": 8411,
-          "path": "/workspace/scratch/6a8794e2da0b/final-ci/family-final-blocks/short-newcomer-score/analysis.json",
+          "role": "block-compression/short-newcomer-score/analysis.json",
           "sha256": "56f40d8334a45eece3df2bd5676a75e82dfa59b0f2fc1baffdd22631ee590274"
         },
         "sourceIndexSha256": "bf5a13c0ea30b86ac6fa4778b111d855012436094cf15e4f60725226a872ad2b",
@@ -332,7 +331,7 @@
         "rawSavingsPercent": 72.53365403266478,
         "report": {
           "bytes": 8406,
-          "path": "/workspace/scratch/6a8794e2da0b/final-ci/family-final-blocks/long-newcomer-score/analysis.json",
+          "role": "block-compression/long-newcomer-score/analysis.json",
           "sha256": "e0225a57133e3a0436f93105c40976cec56a261b892b1a09f7b59f6932e392aa"
         },
         "sourceIndexSha256": "304099ddaf4ff239b1266b95bcd9fde47d95ce2ab18360861162bb28615c1398",
@@ -398,7 +397,7 @@
         "rawSavingsPercent": 68.68019704433496,
         "report": {
           "bytes": 8395,
-          "path": "/workspace/scratch/6a8794e2da0b/final-ci/family-final-blocks/jp-10000300-easy/analysis.json",
+          "role": "block-compression/jp-10000300-easy/analysis.json",
           "sha256": "57bfb53a343789a9a232ad721a67f8d508e98e25fe618a63d98b427a1dafde65"
         },
         "sourceIndexSha256": "b8018689715ad68f9579868c5c47c8de5f0f75cf66c318efda5e9128e93ec06c",
@@ -411,6 +410,7 @@
     "format": "ournotes-deck.final-family-block-summary/1",
     "outerCompressionRoundTrips": 42,
     "propagationCalls": 0,
+    "runner": "tools/luck-tables/analyze_basis_blocks.py",
     "runnerSha256": "40221b44c1a0e41e4f201bfa69f7c0a239d6b5d201661509b24eef3d8cfbda73",
     "samplePrograms": 81,
     "scope": "Three final-source real contexts; no full-catalogue size or runtime RSS inference.",
@@ -440,6 +440,1569 @@
     "simSourceSha256": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c"
   },
   "changesChartsOrMissions": false,
+  "ciVerification": {
+    "interactions": {
+      "algorithmSourceDigest": "748bec38e41505d8944600a4ac99b3e40a11c7a635bb19109d4a41397e525282",
+      "allAuditedFilesUnchanged": true,
+      "artifacts": [
+        {
+          "archive": {
+            "bytes": 6272474,
+            "role": "downloaded-artifact/luck-catalogue-pinned-inputs-and-generator.zip",
+            "sha256": "2c939cd95190c2963d085a8d10e46f0c72618ee2f996cfbfa5ae16f0d3926994"
+          },
+          "artifactId": 11595448386,
+          "downloadReceipt": {
+            "bytes": 67531,
+            "role": "ci-run-37883577487/artifact-receipts/luck-catalogue-pinned-inputs-and-generator.json",
+            "sha256": "8bee75f7cc20a0e965d991aaee4901fc043baf339a7a1fbe067a0f36aae0fa6c"
+          },
+          "extractedBytes": 24121612,
+          "extractedEntries": 717,
+          "headSha": "2f17bac2b12c5459c56b4e87b647c83465821204",
+          "name": "luck-catalogue-pinned-inputs-and-generator",
+          "runId": 37883577487,
+          "zipCrcAndPathsVerified": true
+        },
+        {
+          "archive": {
+            "bytes": 55424786,
+            "role": "downloaded-artifact/luck-real-multiskill-validation.zip",
+            "sha256": "063aebe5048b0a6b22902cd42058096da19624980c5a5c516e0512c894f7a054"
+          },
+          "artifactId": 11595837230,
+          "downloadReceipt": {
+            "bytes": 420999,
+            "role": "ci-run-37883577487/artifact-receipts/luck-real-multiskill-validation.json",
+            "sha256": "eb1f7b5b1573ba06ae76dd938f095a0156d1bd0a64c39113bc82dc869df311f7"
+          },
+          "extractedBytes": 651911511,
+          "extractedEntries": 2735,
+          "headSha": "2f17bac2b12c5459c56b4e87b647c83465821204",
+          "name": "luck-real-multiskill-validation",
+          "runId": 37883577487,
+          "zipCrcAndPathsVerified": true
+        }
+      ],
+      "auditedFiles": 2187,
+      "bundle": {
+        "bytes": 119461,
+        "role": "ci-run-37883577487/inputs/bundle.json",
+        "sha256": "ccd6b0569e5d56fec31273d51ed00d82f0268ade0cee2040e38808ad79888ab6"
+      },
+      "bundleInputFilesVerified": 715,
+      "cases": [
+        {
+          "allActualMasterRecipesMatch": true,
+          "allNativeContextsAndDependenciesMatch": true,
+          "allPreflightProgramBindingsMatch": true,
+          "bothPreflightsZeroDP": true,
+          "caseValidation": {
+            "bytes": 288985,
+            "role": "ci-run-37883577487/interactions/miss-tw/cases/000/validation.json",
+            "sha256": "9a63b914653c8052eb1334536e473d458ce7e87426a5b8e3b0185e0872ef57bb"
+          },
+          "complete": true,
+          "dictionaries": {
+            "canonical": {
+              "codecReviewScope": "Index/report/source and all existing blob checksums verified; gzip/xz decompressed independently and every TAR member byte-matched. No native codec or DP was re-executed.",
+              "compression": {
+                "gzip9": {
+                  "bytes": 154089,
+                  "independentlyRoundTripped": true,
+                  "membersByteMatched": 49,
+                  "path": "dictionary-canonical/dictionary.tar.gz",
+                  "restoredTarBytes": 337920,
+                  "restoredTarSha256": "9c1f4d79cf1f6447a91cb594e044cc616b989d5f3da209d7519e9fc2b315e4d9",
+                  "sha256": "ccba007b4a5adbfa5aeeeff304be16753aef189154b7139c85c62cdaa27d6b03"
+                },
+                "xz6": {
+                  "bytes": 99376,
+                  "independentlyRoundTripped": true,
+                  "membersByteMatched": 49,
+                  "path": "dictionary-canonical/dictionary.tar.xz",
+                  "restoredTarBytes": 337920,
+                  "restoredTarSha256": "9c1f4d79cf1f6447a91cb594e044cc616b989d5f3da209d7519e9fc2b315e4d9",
+                  "sha256": "76108278b8cb02c99929d896ba51c7325a51b7bcad0620bde97f2c2878c9b7f7"
+                }
+              },
+              "index": {
+                "bytes": 39186,
+                "path": "dictionary-canonical/program-index.json",
+                "sha256": "cc8d658627ffa835ab9e05a7825e651c9cfa559415adc54e24a3d33c81bbd4c6"
+              },
+              "indexAndUniqueBlobBytes": 298552,
+              "maximumRecordedU24EndpointWidening": 5.9604457702810976e-08,
+              "nativeCodecEvidenceAllBound": true,
+              "programs": 48,
+              "uniqueBlobs": 48
+            },
+            "original": {
+              "codecReviewScope": "Index/report/source and all existing blob checksums verified; gzip/xz decompressed independently and every TAR member byte-matched. No native codec or DP was re-executed.",
+              "compression": {
+                "gzip9": {
+                  "bytes": 1651908,
+                  "independentlyRoundTripped": true,
+                  "membersByteMatched": 632,
+                  "path": "dictionary-original/dictionary.tar.gz",
+                  "restoredTarBytes": 4392960,
+                  "restoredTarSha256": "a099729871473246f8f4a1a7aabb2351fd02c36792686098bd55b561f141dfd6",
+                  "sha256": "2f22112fef317c79ae7b0d9b3f87910ebe7309c95500aed49f8795170e30ece6"
+                },
+                "xz6": {
+                  "bytes": 160132,
+                  "independentlyRoundTripped": true,
+                  "membersByteMatched": 632,
+                  "path": "dictionary-original/dictionary.tar.xz",
+                  "restoredTarBytes": 4392960,
+                  "restoredTarSha256": "a099729871473246f8f4a1a7aabb2351fd02c36792686098bd55b561f141dfd6",
+                  "sha256": "f047ce8500671c91f8471950eea195a1907ab187a2b0dd0ea9d361b9cf873e2e"
+                }
+              },
+              "index": {
+                "bytes": 508933,
+                "path": "dictionary-original/program-index.json",
+                "sha256": "40f0025e1b5c5406a28bc0ed24a7693194de04b288470d3d56bf6bfe703b93cb"
+              },
+              "indexAndUniqueBlobBytes": 3904246,
+              "maximumRecordedU24EndpointWidening": 5.9604457702810976e-08,
+              "nativeCodecEvidenceAllBound": true,
+              "programs": 631,
+              "uniqueBlobs": 631
+            }
+          },
+          "fullJobs": {
+            "canonicalPrograms": 48,
+            "originalPrograms": 631
+          },
+          "grid": {
+            "canonicalPrograms": 44,
+            "jobs": 625,
+            "originalIndependentPrograms": 625,
+            "parameterAnalysisGaugeMaxima": [
+              50,
+              70,
+              100,
+              140
+            ],
+            "parameterClassesAtDeclaredGaugeMaxima": 44
+          },
+          "inputSha256": {
+            "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+            "request": "fe7b4a375e93b6e9e42e936746f60faa9dcbf95f03346e9accde6d6761b85e7c",
+            "snapshot": "4de297c3f892fa33139cfcbb957d378b787eceb7a8953ef54c41ec1e021af6d8"
+          },
+          "inputs": {
+            "data": {
+              "bytes": 3860477,
+              "role": "ci-run-37883577487/inputs/catalogue/tw/inputs/data.json",
+              "sha256": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf"
+            },
+            "request": {
+              "bytes": 345,
+              "role": "ci-run-37883577487/inputs/catalogue/tw/inputs/requests/tw-10006103-expert.json",
+              "sha256": "fe7b4a375e93b6e9e42e936746f60faa9dcbf95f03346e9accde6d6761b85e7c"
+            },
+            "snapshot": {
+              "bytes": 1650,
+              "role": "ci-run-37883577487/inputs/catalogue/tw/inputs/snapshot.json",
+              "sha256": "4de297c3f892fa33139cfcbb957d378b787eceb7a8953ef54c41ec1e021af6d8"
+            }
+          },
+          "manifest": {
+            "bytes": 88314,
+            "role": "ci-run-37883577487/inputs/catalogue/tw/inputs/benchmark.json",
+            "sha256": "e4862357396f5ebce9210743ec4dbbdf4b997b2370146759e6f092c5563f9c97"
+          },
+          "name": "tw-10006103-expert",
+          "phases": {
+            "canonical": {
+              "identityBudgetBytes": 268435456,
+              "jobs": 631,
+              "programs": 48,
+              "propagationCalls": 48,
+              "report": {
+                "bytes": 11888555,
+                "path": "canonical.json",
+                "sha256": "9d3669e6f2faf2a306dd2c5d6e742019e11012be7333dfe92f9ac2fb9b2c3dff"
+              },
+              "retainedIdentityBytes": 8012592,
+              "spec": {
+                "bytes": 619048,
+                "path": "specs/canonical.json",
+                "sha256": "f241ac08ac4b37646601c7680fdbed0d95f62ab6b7c2bf7963d5f2cc6a4143a9"
+              }
+            },
+            "canonical-preflight": {
+              "identityBudgetBytes": 268435456,
+              "jobs": 631,
+              "programs": 48,
+              "propagationCalls": 0,
+              "report": {
+                "bytes": 2703966,
+                "path": "canonical-preflight.json",
+                "sha256": "474ba1d1809fa258a7e1ae517ea0af3f9726da4bf60618f29cb69c7b373f85ef"
+              },
+              "retainedIdentityBytes": 8012592,
+              "spec": {
+                "bytes": 619048,
+                "path": "specs/canonical-preflight.json",
+                "sha256": "e0d50e52f276f761ae07b7539a9ac87b3dc03e390b721667d4eb09916cf28649"
+              }
+            },
+            "original": {
+              "identityBudgetBytes": 268435456,
+              "jobs": 631,
+              "programs": 631,
+              "propagationCalls": 631,
+              "report": {
+                "bytes": 123897958,
+                "path": "original.json",
+                "sha256": "003eac2278a599312982f118f428b9134cd6c8a5675a194b6d95ae58d61a045d"
+              },
+              "retainedIdentityBytes": 168301964,
+              "spec": {
+                "bytes": 619049,
+                "path": "specs/original.json",
+                "sha256": "fb074b964ddaf3ccc1bfd479084918363ce82cf169c6f69816792700cd0078c8"
+              }
+            },
+            "original-preflight": {
+              "identityBudgetBytes": 268435456,
+              "jobs": 631,
+              "programs": 631,
+              "propagationCalls": 0,
+              "report": {
+                "bytes": 3138134,
+                "path": "original-preflight.json",
+                "sha256": "1b79419af30e491e5bea9f7669fc65c4a319e280046e8707807d5e3e31dd3a6c"
+              },
+              "retainedIdentityBytes": 168301964,
+              "spec": {
+                "bytes": 619049,
+                "path": "specs/original-preflight.json",
+                "sha256": "61c6361b665fa98cfa638ebfa917cf052d3ef98cb46f55abfa759f5a6a51b4d3"
+              }
+            }
+          },
+          "profile": "CI catalogue anchor; not original PR40 newcomer inventory",
+          "recipeReceipt": {
+            "bytes": 2738,
+            "role": "ci-run-37883577487/interactions/miss-tw/cases/000/specs/receipt.json",
+            "sha256": "32fa2964291c994adf980eef6dec23703b6ecdfd5fbf554887deee21294a7b1f"
+          },
+          "recomputedResponseComparison": {
+            "allJointEndpointsEqual": false,
+            "allJointIntervalsOverlap": true,
+            "allLookupEnclosesReferenceEndpoints": false,
+            "allProbeFlagsAndTransitionMasksEqual": true,
+            "allRangeMomentsEqual": true,
+            "allWeightedIntervalsOverlap": true,
+            "comparedJobs": 631,
+            "disjointJointIntervals": 0,
+            "jointIntervals": 507324,
+            "maximumEndpointDifference": 9.992007221626409e-16,
+            "recomputedPerJobComparisonSha256": "2fe03796087bf16280a5dc2bad91298eb62a6828682e7eea613a8f032663d0e5"
+          },
+          "scoreId": 10006103,
+          "topValidation": {
+            "bytes": 46434,
+            "role": "ci-run-37883577487/interactions/miss-tw/validation.json",
+            "sha256": "85e767e9d40bd315175fd41461940da6a39d551aa083f856716b405744bc4287"
+          },
+          "witnesses": {
+            "counterexampleScope": "Native identity distinguishes the admitted gauge domains; an observable difference on each chart is measured, not assumed.",
+            "fingerprints": {
+              "base": "8c055a1bf27885140cc8381cfcdbd912743242df0ac2951c78a4584b13742fa5",
+              "level1-plus-level2": "e27b9bba78fd5e72cd1ca385a7c66d120b20456e4df40a6e43c676f8c1dee1c0",
+              "level2-plus-level1": "e27b9bba78fd5e72cd1ca385a7c66d120b20456e4df40a6e43c676f8c1dee1c0",
+              "one-level2": "488077389094026aa247d1dcf27276b217419cd3bf3a277b6b784f6e8d55e08f",
+              "one-level3": "e27b9bba78fd5e72cd1ca385a7c66d120b20456e4df40a6e43c676f8c1dee1c0",
+              "two-level1": "9257d65bd6b4a091d931390120899e7b3414f41331b552bfe901c3e9a5bf6d97"
+            },
+            "nativeDeltaEquivalenceShared": true,
+            "rawSumCounterexampleCurveDifference": {
+              "disjointJointIntervals": 700,
+              "jointIntervals": 804,
+              "jointIntervalsOverlap": false,
+              "lookupCoversRequiredProbes": true,
+              "lookupEnclosesReferenceEndpoints": false,
+              "maximumEndpointDifference": 0.00020500037984760855,
+              "maximumJointSeparatedGap": 0.00020500037959930717,
+              "maximumWeightedSeparatedGap": 0.00021061841214858879,
+              "sameJointEndpoints": false,
+              "sameProbeFlags": true,
+              "sameRangeMoments": true,
+              "sameTransitionMasks": true,
+              "timePoints": 201,
+              "weightedIntervals": 603,
+              "weightedIntervalsOverlap": false
+            },
+            "rawSumCounterexampleSeparated": true
+          }
+        },
+        {
+          "allActualMasterRecipesMatch": true,
+          "allNativeContextsAndDependenciesMatch": true,
+          "allPreflightProgramBindingsMatch": true,
+          "bothPreflightsZeroDP": true,
+          "caseValidation": {
+            "bytes": 288989,
+            "role": "ci-run-37883577487/interactions/miss-tw/cases/001/validation.json",
+            "sha256": "ef940ebde7fa3e4feea3143a3ca2e8c75ee9ddc268025b8569f30d1cd64f23f1"
+          },
+          "complete": true,
+          "dictionaries": {
+            "canonical": {
+              "codecReviewScope": "Index/report/source and all existing blob checksums verified; gzip/xz decompressed independently and every TAR member byte-matched. No native codec or DP was re-executed.",
+              "compression": {
+                "gzip9": {
+                  "bytes": 143800,
+                  "independentlyRoundTripped": true,
+                  "membersByteMatched": 49,
+                  "path": "dictionary-canonical/dictionary.tar.gz",
+                  "restoredTarBytes": 327680,
+                  "restoredTarSha256": "f1b67cadadf71e1e2fc4b663447bacf9caabd3c14ceaebeeb415c8c8644da950",
+                  "sha256": "434e0ea09d00ca6bbed72786cb1ffb1f1898abb5c04ba4a13e910be6827eb994"
+                },
+                "xz6": {
+                  "bytes": 92260,
+                  "independentlyRoundTripped": true,
+                  "membersByteMatched": 49,
+                  "path": "dictionary-canonical/dictionary.tar.xz",
+                  "restoredTarBytes": 327680,
+                  "restoredTarSha256": "f1b67cadadf71e1e2fc4b663447bacf9caabd3c14ceaebeeb415c8c8644da950",
+                  "sha256": "3cf5f34e1f006e73f8fb05ae1d00eb4404833fdddf72c948ea64bcdaef6979cc"
+                }
+              },
+              "index": {
+                "bytes": 39360,
+                "path": "dictionary-canonical/program-index.json",
+                "sha256": "18b376a4d7696ecb7b3293a00f640341d4687c5f8e7f31773f2b2a03cef5ef42"
+              },
+              "indexAndUniqueBlobBytes": 282320,
+              "maximumRecordedU24EndpointWidening": 5.9604641999833063e-08,
+              "nativeCodecEvidenceAllBound": true,
+              "programs": 48,
+              "uniqueBlobs": 48
+            },
+            "original": {
+              "codecReviewScope": "Index/report/source and all existing blob checksums verified; gzip/xz decompressed independently and every TAR member byte-matched. No native codec or DP was re-executed.",
+              "compression": {
+                "gzip9": {
+                  "bytes": 1568261,
+                  "independentlyRoundTripped": true,
+                  "membersByteMatched": 632,
+                  "path": "dictionary-original/dictionary.tar.gz",
+                  "restoredTarBytes": 4167680,
+                  "restoredTarSha256": "fe87781f2ca4c1b1f684a35e177afcdeb242696572b728299778a92d82340c9e",
+                  "sha256": "be5c261a8814d6bdae671b8ba2122759b9e3aa338f2bb935b11bfc21095ac5da"
+                },
+                "xz6": {
+                  "bytes": 156380,
+                  "independentlyRoundTripped": true,
+                  "membersByteMatched": 632,
+                  "path": "dictionary-original/dictionary.tar.xz",
+                  "restoredTarBytes": 4167680,
+                  "restoredTarSha256": "fe87781f2ca4c1b1f684a35e177afcdeb242696572b728299778a92d82340c9e",
+                  "sha256": "bc3c803e8112682cc0cf1f2ebfc47085d116af2bb4dee5b2436ceeb67aabb785"
+                }
+              },
+              "index": {
+                "bytes": 509280,
+                "path": "dictionary-original/program-index.json",
+                "sha256": "33f50b1bcf9378c2c1736b26d847b2d7bd407a4c876b7fb5c32c1ee20240ed1e"
+              },
+              "indexAndUniqueBlobBytes": 3691235,
+              "maximumRecordedU24EndpointWidening": 5.9604641999833063e-08,
+              "nativeCodecEvidenceAllBound": true,
+              "programs": 631,
+              "uniqueBlobs": 631
+            }
+          },
+          "fullJobs": {
+            "canonicalPrograms": 48,
+            "originalPrograms": 631
+          },
+          "grid": {
+            "canonicalPrograms": 44,
+            "jobs": 625,
+            "originalIndependentPrograms": 625,
+            "parameterAnalysisGaugeMaxima": [
+              50,
+              70,
+              100,
+              140
+            ],
+            "parameterClassesAtDeclaredGaugeMaxima": 44
+          },
+          "inputSha256": {
+            "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+            "request": "785b1e9bfa56e34abb83095e13dbf10ac9ef3788dff5489374b128b2bb12ef52",
+            "snapshot": "4de297c3f892fa33139cfcbb957d378b787eceb7a8953ef54c41ec1e021af6d8"
+          },
+          "inputs": {
+            "data": {
+              "bytes": 3860477,
+              "role": "ci-run-37883577487/inputs/catalogue/tw/inputs/data.json",
+              "sha256": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf"
+            },
+            "request": {
+              "bytes": 345,
+              "role": "ci-run-37883577487/inputs/catalogue/tw/inputs/requests/tw-10010703-expert.json",
+              "sha256": "785b1e9bfa56e34abb83095e13dbf10ac9ef3788dff5489374b128b2bb12ef52"
+            },
+            "snapshot": {
+              "bytes": 1650,
+              "role": "ci-run-37883577487/inputs/catalogue/tw/inputs/snapshot.json",
+              "sha256": "4de297c3f892fa33139cfcbb957d378b787eceb7a8953ef54c41ec1e021af6d8"
+            }
+          },
+          "manifest": {
+            "bytes": 88314,
+            "role": "ci-run-37883577487/inputs/catalogue/tw/inputs/benchmark.json",
+            "sha256": "e4862357396f5ebce9210743ec4dbbdf4b997b2370146759e6f092c5563f9c97"
+          },
+          "name": "tw-10010703-expert",
+          "phases": {
+            "canonical": {
+              "identityBudgetBytes": 268435456,
+              "jobs": 631,
+              "programs": 48,
+              "propagationCalls": 48,
+              "report": {
+                "bytes": 14330762,
+                "path": "canonical.json",
+                "sha256": "ab8ad67ca1c39b35d2ffae4b2ba9a5c0b0f32cd081d720d638954bec2868655d"
+              },
+              "retainedIdentityBytes": 9439536,
+              "spec": {
+                "bytes": 619048,
+                "path": "specs/canonical.json",
+                "sha256": "f241ac08ac4b37646601c7680fdbed0d95f62ab6b7c2bf7963d5f2cc6a4143a9"
+              }
+            },
+            "canonical-preflight": {
+              "identityBudgetBytes": 268435456,
+              "jobs": 631,
+              "programs": 48,
+              "propagationCalls": 0,
+              "report": {
+                "bytes": 2986206,
+                "path": "canonical-preflight.json",
+                "sha256": "67ff0ec656c4b67b045489e7a23a0ffa46465aaf6a3c0c314a5cb7c75e20c045"
+              },
+              "retainedIdentityBytes": 9439536,
+              "spec": {
+                "bytes": 619048,
+                "path": "specs/canonical-preflight.json",
+                "sha256": "e0d50e52f276f761ae07b7539a9ac87b3dc03e390b721667d4eb09916cf28649"
+              }
+            },
+            "original": {
+              "identityBudgetBytes": 268435456,
+              "jobs": 631,
+              "programs": 631,
+              "propagationCalls": 631,
+              "report": {
+                "bytes": 152576678,
+                "path": "original.json",
+                "sha256": "01aee5d38fe6e0c50e50fe1dcff992591aa4c1db438d56af03c74d2d132ecdd4"
+              },
+              "retainedIdentityBytes": 183197068,
+              "spec": {
+                "bytes": 619049,
+                "path": "specs/original.json",
+                "sha256": "fb074b964ddaf3ccc1bfd479084918363ce82cf169c6f69816792700cd0078c8"
+              }
+            },
+            "original-preflight": {
+              "identityBudgetBytes": 268435456,
+              "jobs": 631,
+              "programs": 631,
+              "propagationCalls": 0,
+              "report": {
+                "bytes": 3420833,
+                "path": "original-preflight.json",
+                "sha256": "15633f14bba2927eba60ea424db382f0e8ffcf13d10e5ce32956da59d629ac72"
+              },
+              "retainedIdentityBytes": 183197068,
+              "spec": {
+                "bytes": 619049,
+                "path": "specs/original-preflight.json",
+                "sha256": "61c6361b665fa98cfa638ebfa917cf052d3ef98cb46f55abfa759f5a6a51b4d3"
+              }
+            }
+          },
+          "profile": "CI catalogue anchor; not original PR40 newcomer inventory",
+          "recipeReceipt": {
+            "bytes": 2738,
+            "role": "ci-run-37883577487/interactions/miss-tw/cases/001/specs/receipt.json",
+            "sha256": "32fa2964291c994adf980eef6dec23703b6ecdfd5fbf554887deee21294a7b1f"
+          },
+          "recomputedResponseComparison": {
+            "allJointEndpointsEqual": false,
+            "allJointIntervalsOverlap": true,
+            "allLookupEnclosesReferenceEndpoints": false,
+            "allProbeFlagsAndTransitionMasksEqual": true,
+            "allRangeMomentsEqual": true,
+            "allWeightedIntervalsOverlap": true,
+            "comparedJobs": 631,
+            "disjointJointIntervals": 0,
+            "jointIntervals": 474512,
+            "maximumEndpointDifference": 3.4416913763379853e-15,
+            "recomputedPerJobComparisonSha256": "26a45bd242b6b031d04b1e8a848aeced27c68c76cd50b8435ce36e159c7e541a"
+          },
+          "scoreId": 10010703,
+          "topValidation": {
+            "bytes": 46434,
+            "role": "ci-run-37883577487/interactions/miss-tw/validation.json",
+            "sha256": "85e767e9d40bd315175fd41461940da6a39d551aa083f856716b405744bc4287"
+          },
+          "witnesses": {
+            "counterexampleScope": "Native identity distinguishes the admitted gauge domains; an observable difference on each chart is measured, not assumed.",
+            "fingerprints": {
+              "base": "5577137b5b925f3daa5309196005b29f51fb5a13f6b73e007c397ae8150b90c0",
+              "level1-plus-level2": "3d337bba3d6bf2a46a41091fc1d8d0c3c40b1c33f226146ec81ffac328b56b8f",
+              "level2-plus-level1": "3d337bba3d6bf2a46a41091fc1d8d0c3c40b1c33f226146ec81ffac328b56b8f",
+              "one-level2": "c29991431093a08ac48f93d99e8eb9a8c50f1eaafa17becbab6332efaa05325b",
+              "one-level3": "3d337bba3d6bf2a46a41091fc1d8d0c3c40b1c33f226146ec81ffac328b56b8f",
+              "two-level1": "8871cf6f34296c3a77b8085242d1d99abfdacf6fe03315b440e965bebedf75eb"
+            },
+            "nativeDeltaEquivalenceShared": true,
+            "rawSumCounterexampleCurveDifference": {
+              "disjointJointIntervals": 672,
+              "jointIntervals": 752,
+              "jointIntervalsOverlap": false,
+              "lookupCoversRequiredProbes": true,
+              "lookupEnclosesReferenceEndpoints": false,
+              "maximumEndpointDifference": 0.0006229638201275811,
+              "maximumJointSeparatedGap": 0.0006229638200490051,
+              "maximumWeightedSeparatedGap": 0.0003724043142356859,
+              "sameJointEndpoints": false,
+              "sameProbeFlags": true,
+              "sameRangeMoments": true,
+              "sameTransitionMasks": true,
+              "timePoints": 188,
+              "weightedIntervals": 564,
+              "weightedIntervalsOverlap": false
+            },
+            "rawSumCounterexampleSeparated": true
+          }
+        },
+        {
+          "allActualMasterRecipesMatch": true,
+          "allNativeContextsAndDependenciesMatch": true,
+          "allPreflightProgramBindingsMatch": true,
+          "bothPreflightsZeroDP": true,
+          "caseValidation": {
+            "bytes": 292682,
+            "role": "ci-run-37883577487/interactions/miss-jp/cases/000/validation.json",
+            "sha256": "13e2e52be97f9c2539fc06bd2e9695a56838e66c5dc7970456b3be23537ff50b"
+          },
+          "complete": true,
+          "dictionaries": {
+            "canonical": {
+              "codecReviewScope": "Index/report/source and all existing blob checksums verified; gzip/xz decompressed independently and every TAR member byte-matched. No native codec or DP was re-executed.",
+              "compression": {
+                "gzip9": {
+                  "bytes": 104257,
+                  "independentlyRoundTripped": true,
+                  "membersByteMatched": 49,
+                  "path": "dictionary-canonical/dictionary.tar.gz",
+                  "restoredTarBytes": 276480,
+                  "restoredTarSha256": "dbc890263e6eed342c9d0b98e43666437a9df83f33f892c8aeea07de70cbfed0",
+                  "sha256": "8a822224d87847f1f72353f49769223edddd1d5d38689bad4e98000ca16f3d4b"
+                },
+                "xz6": {
+                  "bytes": 66316,
+                  "independentlyRoundTripped": true,
+                  "membersByteMatched": 49,
+                  "path": "dictionary-canonical/dictionary.tar.xz",
+                  "restoredTarBytes": 276480,
+                  "restoredTarSha256": "dbc890263e6eed342c9d0b98e43666437a9df83f33f892c8aeea07de70cbfed0",
+                  "sha256": "26aec870882cd87d5c3c48eee3cd077d866adfeaaf9eb3277e9728f7f50fa137"
+                }
+              },
+              "index": {
+                "bytes": 39353,
+                "path": "dictionary-canonical/program-index.json",
+                "sha256": "35bd7ed3e9a7a0cc4d680bd054075700491c8e1949799b996cc3faf989b5badd"
+              },
+              "indexAndUniqueBlobBytes": 232287,
+              "maximumRecordedU24EndpointWidening": 5.9604641999833063e-08,
+              "nativeCodecEvidenceAllBound": true,
+              "programs": 48,
+              "uniqueBlobs": 48
+            },
+            "original": {
+              "codecReviewScope": "Index/report/source and all existing blob checksums verified; gzip/xz decompressed independently and every TAR member byte-matched. No native codec or DP was re-executed.",
+              "compression": {
+                "gzip9": {
+                  "bytes": 1119150,
+                  "independentlyRoundTripped": true,
+                  "membersByteMatched": 632,
+                  "path": "dictionary-original/dictionary.tar.gz",
+                  "restoredTarBytes": 3502080,
+                  "restoredTarSha256": "99e44c69f245570aaa722ceef719171cc9be75f3fd6dde36b3e45e489f969dd1",
+                  "sha256": "d7ed83d28deae01c29440da42e2e63af9fc229a44ce1bf392ab59a9fd1a49582"
+                },
+                "xz6": {
+                  "bytes": 125812,
+                  "independentlyRoundTripped": true,
+                  "membersByteMatched": 632,
+                  "path": "dictionary-original/dictionary.tar.xz",
+                  "restoredTarBytes": 3502080,
+                  "restoredTarSha256": "99e44c69f245570aaa722ceef719171cc9be75f3fd6dde36b3e45e489f969dd1",
+                  "sha256": "8514ea8a212b7460bba8f2d46fa9a6180f413047b347698a7540b856aff49981"
+                }
+              },
+              "index": {
+                "bytes": 509938,
+                "path": "dictionary-original/program-index.json",
+                "sha256": "4343ea5701c18479c107456b97ea5d8a99e33fca9d3d38e6689ce8cb175adc4d"
+              },
+              "indexAndUniqueBlobBytes": 3036609,
+              "maximumRecordedU24EndpointWidening": 5.9604641999833063e-08,
+              "nativeCodecEvidenceAllBound": true,
+              "programs": 631,
+              "uniqueBlobs": 631
+            }
+          },
+          "fullJobs": {
+            "canonicalPrograms": 48,
+            "originalPrograms": 631
+          },
+          "grid": {
+            "canonicalPrograms": 44,
+            "jobs": 625,
+            "originalIndependentPrograms": 625,
+            "parameterAnalysisGaugeMaxima": [
+              50,
+              70,
+              100,
+              140
+            ],
+            "parameterClassesAtDeclaredGaugeMaxima": 44
+          },
+          "inputSha256": {
+            "data": "76446232396ba61cbc499f9e31313a39ab635534426354197b29d81fd0a87d47",
+            "request": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f",
+            "snapshot": "e00221d87e0feea288887e76a5e96b8a5a8e9834953dc485edb85357f72310c6"
+          },
+          "inputs": {
+            "data": {
+              "bytes": 3816206,
+              "role": "ci-run-37883577487/inputs/catalogue/jp/inputs/data.json",
+              "sha256": "76446232396ba61cbc499f9e31313a39ab635534426354197b29d81fd0a87d47"
+            },
+            "request": {
+              "bytes": 345,
+              "role": "ci-run-37883577487/inputs/catalogue/jp/inputs/requests/jp-10000300-easy.json",
+              "sha256": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f"
+            },
+            "snapshot": {
+              "bytes": 1650,
+              "role": "ci-run-37883577487/inputs/catalogue/jp/inputs/snapshot.json",
+              "sha256": "e00221d87e0feea288887e76a5e96b8a5a8e9834953dc485edb85357f72310c6"
+            }
+          },
+          "manifest": {
+            "bytes": 87478,
+            "role": "ci-run-37883577487/inputs/catalogue/jp/inputs/benchmark.json",
+            "sha256": "52ed2f12e7609317ee4505e70ff612dcc0db0aed3f1694769d02b15654b35f98"
+          },
+          "name": "jp-10000300-easy",
+          "phases": {
+            "canonical": {
+              "identityBudgetBytes": 268435456,
+              "jobs": 631,
+              "programs": 48,
+              "propagationCalls": 48,
+              "report": {
+                "bytes": 11991541,
+                "path": "canonical.json",
+                "sha256": "09ed6f73132d7b138158cfe194aed7d09935a5bd70e1e76add8f59aca4d995e0"
+              },
+              "retainedIdentityBytes": 4599344,
+              "spec": {
+                "bytes": 619048,
+                "path": "specs/canonical.json",
+                "sha256": "f241ac08ac4b37646601c7680fdbed0d95f62ab6b7c2bf7963d5f2cc6a4143a9"
+              }
+            },
+            "canonical-preflight": {
+              "identityBudgetBytes": 268435456,
+              "jobs": 631,
+              "programs": 48,
+              "propagationCalls": 0,
+              "report": {
+                "bytes": 2749718,
+                "path": "canonical-preflight.json",
+                "sha256": "d1528870f2a0dce6524dcdb8d864d0ae688fb17225b2263b6f2eb9a0b7005524"
+              },
+              "retainedIdentityBytes": 4599344,
+              "spec": {
+                "bytes": 619048,
+                "path": "specs/canonical-preflight.json",
+                "sha256": "e0d50e52f276f761ae07b7539a9ac87b3dc03e390b721667d4eb09916cf28649"
+              }
+            },
+            "original": {
+              "identityBudgetBytes": 268435456,
+              "jobs": 631,
+              "programs": 631,
+              "propagationCalls": 631,
+              "report": {
+                "bytes": 124689865,
+                "path": "original.json",
+                "sha256": "9dbddc48068beaa3d9975f96cf1cdbff35b715ff0d4b56e7264ae8b8306464e0"
+              },
+              "retainedIdentityBytes": 108622796,
+              "spec": {
+                "bytes": 619049,
+                "path": "specs/original.json",
+                "sha256": "fb074b964ddaf3ccc1bfd479084918363ce82cf169c6f69816792700cd0078c8"
+              }
+            },
+            "original-preflight": {
+              "identityBudgetBytes": 268435456,
+              "jobs": 631,
+              "programs": 631,
+              "propagationCalls": 0,
+              "report": {
+                "bytes": 3184290,
+                "path": "original-preflight.json",
+                "sha256": "4401528a5698eceedc024ff9b6a3639752682cb26b9b42b325594c686003799f"
+              },
+              "retainedIdentityBytes": 108622796,
+              "spec": {
+                "bytes": 619049,
+                "path": "specs/original-preflight.json",
+                "sha256": "61c6361b665fa98cfa638ebfa917cf052d3ef98cb46f55abfa759f5a6a51b4d3"
+              }
+            }
+          },
+          "profile": "CI catalogue anchor; not original PR40 newcomer inventory",
+          "recipeReceipt": {
+            "bytes": 2738,
+            "role": "ci-run-37883577487/interactions/miss-jp/cases/000/specs/receipt.json",
+            "sha256": "32fa2964291c994adf980eef6dec23703b6ecdfd5fbf554887deee21294a7b1f"
+          },
+          "recomputedResponseComparison": {
+            "allJointEndpointsEqual": false,
+            "allJointIntervalsOverlap": true,
+            "allLookupEnclosesReferenceEndpoints": false,
+            "allProbeFlagsAndTransitionMasksEqual": true,
+            "allRangeMomentsEqual": true,
+            "allWeightedIntervalsOverlap": true,
+            "comparedJobs": 631,
+            "disjointJointIntervals": 0,
+            "jointIntervals": 391220,
+            "maximumEndpointDifference": 3.3306690738754696e-16,
+            "recomputedPerJobComparisonSha256": "0d5669aaa9d920d5145d4469764eae70a46026323586069db61712b045a5eb62"
+          },
+          "scoreId": 10000300,
+          "topValidation": {
+            "bytes": 44133,
+            "role": "ci-run-37883577487/interactions/miss-jp/validation.json",
+            "sha256": "144cf64b3b3e870f2bbcd90eb2e6d0c8f0e95e763e5f33418a45d58df806dd32"
+          },
+          "witnesses": {
+            "counterexampleScope": "Native identity distinguishes the admitted gauge domains; an observable difference on each chart is measured, not assumed.",
+            "fingerprints": {
+              "base": "d599bbe070755b48bb7300fc38709979ddd04f250684c217aee1f156e730267b",
+              "level1-plus-level2": "b52f0cce355b610b0a303e685f4772ee3057c80d7963968c5edd6a87e88265f5",
+              "level2-plus-level1": "b52f0cce355b610b0a303e685f4772ee3057c80d7963968c5edd6a87e88265f5",
+              "one-level2": "1964ae28f97abeef438c36a7edef980ac000c11f59c5b643264f92f4579f32a5",
+              "one-level3": "b52f0cce355b610b0a303e685f4772ee3057c80d7963968c5edd6a87e88265f5",
+              "two-level1": "3faead6d38526d1f91771bc8fb00cbf5e1e711b0e2248ea562575ad89cfeee94"
+            },
+            "nativeDeltaEquivalenceShared": true,
+            "rawSumCounterexampleCurveDifference": {
+              "disjointJointIntervals": 297,
+              "jointIntervals": 620,
+              "jointIntervalsOverlap": false,
+              "lookupCoversRequiredProbes": true,
+              "lookupEnclosesReferenceEndpoints": false,
+              "maximumEndpointDifference": 7.681243286722372e-05,
+              "maximumJointSeparatedGap": 7.681243267632087e-05,
+              "maximumWeightedSeparatedGap": 7.681243267632087e-05,
+              "sameJointEndpoints": false,
+              "sameProbeFlags": true,
+              "sameRangeMoments": true,
+              "sameTransitionMasks": true,
+              "timePoints": 155,
+              "weightedIntervals": 465,
+              "weightedIntervalsOverlap": false
+            },
+            "rawSumCounterexampleSeparated": true
+          }
+        }
+      ],
+      "casesReviewed": 3,
+      "combined": {
+        "allStoredCodecEvidenceBound": true,
+        "coldWarmBytesIdentical": true,
+        "complete": true,
+        "independentOriginalDPJobs": 6,
+        "inputSha256": {
+          "data": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf",
+          "request": "fe7b4a375e93b6e9e42e936746f60faa9dcbf95f03346e9accde6d6761b85e7c",
+          "snapshot": "4de297c3f892fa33139cfcbb957d378b787eceb7a8953ef54c41ec1e021af6d8"
+        },
+        "operatorContract": "conditional-start-minimum+canonical-miss-gauge-deltas/1",
+        "persistentBlobBytes": 168124,
+        "persistentPrograms": 32,
+        "persistentUniqueBlobs": 32,
+        "profile": "CI TW catalogue anchor on tw-10006103-expert; not PR40 newcomer",
+        "queries": {
+          "cold": {
+            "archive": {
+              "bytes": 20966,
+              "path": "responses.onlrsp",
+              "sha256": "91f731cb243bd209178899fe8c0238224952f639d179e26759352ffe841b32a9"
+            },
+            "identificationStats": {
+              "basisTermReferences": 48,
+              "compileMs": 16.770346000000004,
+              "compiledJobs": 6,
+              "compiledProgramPeakBytes": 189308,
+              "elapsedMs": 23.539391,
+              "exactTermAliases": 16,
+              "familyAdmissionCalls": 0,
+              "familyBudgetBytes": 33554432,
+              "familyCacheBytes": 0,
+              "familyFallbacks": 0,
+              "familyHits": 0,
+              "familyIdentityComputations": 48,
+              "familyIdentityHits": 0,
+              "familyIdentityIndexBytes": 0,
+              "familyKeyPeakBytes": 0,
+              "familyMisses": 0,
+              "familyOriginalProgramPeakBytes": 0,
+              "familyReuseDecline": "canonicalMissGauge",
+              "familyReuseEnabled": false,
+              "fingerprintWorkspacePeakBytes": 142370,
+              "identityBudgetBytes": 268435456,
+              "mixtureMs": 0.0,
+              "nativeRecordings": 6,
+              "programBudgetBytes": 33554432,
+              "propagationCalls": 0,
+              "propagationMs": 0.0,
+              "reconstructedJobs": 0,
+              "requestedJobs": 6,
+              "responseArcCounterBytes": 0,
+              "responseBudgetBytes": 33554432,
+              "responseIndexBytes": 256,
+              "retainedFamilies": 0,
+              "retainedIdentityBytes": 5098752,
+              "retainedResponseBytes": 0,
+              "temporaryIdentityPeakBytes": 164680,
+              "uniquePrograms": 32,
+              "verificationCalls": 0,
+              "verificationCompileMs": 0.0,
+              "verificationMs": 0.0,
+              "verificationRecordingCalls": 0,
+              "verifiedJobs": 0
+            },
+            "query": {
+              "bytes": 3404,
+              "role": "ci-run-37883577487/interactions/miss-basis-tw/cold/query.json",
+              "sha256": "ccafec49f9b54e48965e422c9f3151a1feb3bf0dcbd4fba4c4084bd4f6623b90"
+            },
+            "stats": {
+              "conditionalTermReferences": 48,
+              "generatedPrograms": 32,
+              "propagationCalls": 32,
+              "requestedJobs": 6,
+              "reusedPrograms": 0,
+              "storedPrograms": 32,
+              "uniqueBasisPrograms": 32
+            }
+          },
+          "warm": {
+            "archive": {
+              "bytes": 20966,
+              "path": "responses.onlrsp",
+              "sha256": "91f731cb243bd209178899fe8c0238224952f639d179e26759352ffe841b32a9"
+            },
+            "identificationStats": {
+              "basisTermReferences": 48,
+              "compileMs": 16.797956,
+              "compiledJobs": 6,
+              "compiledProgramPeakBytes": 189308,
+              "elapsedMs": 23.763563,
+              "exactTermAliases": 16,
+              "familyAdmissionCalls": 0,
+              "familyBudgetBytes": 33554432,
+              "familyCacheBytes": 0,
+              "familyFallbacks": 0,
+              "familyHits": 0,
+              "familyIdentityComputations": 48,
+              "familyIdentityHits": 0,
+              "familyIdentityIndexBytes": 0,
+              "familyKeyPeakBytes": 0,
+              "familyMisses": 0,
+              "familyOriginalProgramPeakBytes": 0,
+              "familyReuseDecline": "canonicalMissGauge",
+              "familyReuseEnabled": false,
+              "fingerprintWorkspacePeakBytes": 142370,
+              "identityBudgetBytes": 268435456,
+              "mixtureMs": 0.0,
+              "nativeRecordings": 6,
+              "programBudgetBytes": 33554432,
+              "propagationCalls": 0,
+              "propagationMs": 0.0,
+              "reconstructedJobs": 0,
+              "requestedJobs": 6,
+              "responseArcCounterBytes": 0,
+              "responseBudgetBytes": 33554432,
+              "responseIndexBytes": 256,
+              "retainedFamilies": 0,
+              "retainedIdentityBytes": 5098752,
+              "retainedResponseBytes": 0,
+              "temporaryIdentityPeakBytes": 164680,
+              "uniquePrograms": 32,
+              "verificationCalls": 0,
+              "verificationCompileMs": 0.0,
+              "verificationMs": 0.0,
+              "verificationRecordingCalls": 0,
+              "verifiedJobs": 0
+            },
+            "query": {
+              "bytes": 2310,
+              "role": "ci-run-37883577487/interactions/miss-basis-tw/warm/query.json",
+              "sha256": "6864eef0a99cba5a02c9c2c7a30d3f592e7e515f96032814e4b3b186135ba84b"
+            },
+            "stats": {
+              "conditionalTermReferences": 48,
+              "generatedPrograms": 0,
+              "propagationCalls": 0,
+              "requestedJobs": 6,
+              "reusedPrograms": 32,
+              "storedPrograms": 32,
+              "uniqueBasisPrograms": 32
+            }
+          }
+        },
+        "recomputedComparisons": {
+          "coldFinalU24VsMaterialized": {
+            "allJointEndpointsEqual": false,
+            "allLookupEncloseReferenceEndpoints": true,
+            "allProbeFlagsAndTransitionMasksEqual": true,
+            "allRangeMomentsEqual": true,
+            "comparedJobs": 6,
+            "disjointJointIntervals": 0,
+            "jointIntervals": 4824,
+            "maximumEndpointDifference": 5.960464477487563e-08,
+            "maximumJointSeparatedGap": 0.0,
+            "maximumWeightedSeparatedGap": 0.0
+          },
+          "coldFinalU24VsOriginalDP": {
+            "allJointEndpointsEqual": false,
+            "allLookupEncloseReferenceEndpoints": true,
+            "allProbeFlagsAndTransitionMasksEqual": true,
+            "allRangeMomentsEqual": true,
+            "comparedJobs": 6,
+            "disjointJointIntervals": 0,
+            "jointIntervals": 4824,
+            "maximumEndpointDifference": 1.1920910114593397e-07,
+            "maximumJointSeparatedGap": 0.0,
+            "maximumWeightedSeparatedGap": 0.0
+          },
+          "coldMaterializedVsOriginalDP": {
+            "allJointEndpointsEqual": false,
+            "allLookupEncloseReferenceEndpoints": true,
+            "allProbeFlagsAndTransitionMasksEqual": true,
+            "allRangeMomentsEqual": true,
+            "comparedJobs": 6,
+            "disjointJointIntervals": 0,
+            "jointIntervals": 4824,
+            "maximumEndpointDifference": 5.960446014530163e-08,
+            "maximumJointSeparatedGap": 0.0,
+            "maximumWeightedSeparatedGap": 0.0
+          },
+          "warmFinalU24VsMaterialized": {
+            "allJointEndpointsEqual": false,
+            "allLookupEncloseReferenceEndpoints": true,
+            "allProbeFlagsAndTransitionMasksEqual": true,
+            "allRangeMomentsEqual": true,
+            "comparedJobs": 6,
+            "disjointJointIntervals": 0,
+            "jointIntervals": 4824,
+            "maximumEndpointDifference": 5.960464477487563e-08,
+            "maximumJointSeparatedGap": 0.0,
+            "maximumWeightedSeparatedGap": 0.0
+          },
+          "warmFinalU24VsOriginalDP": {
+            "allJointEndpointsEqual": false,
+            "allLookupEncloseReferenceEndpoints": true,
+            "allProbeFlagsAndTransitionMasksEqual": true,
+            "allRangeMomentsEqual": true,
+            "comparedJobs": 6,
+            "disjointJointIntervals": 0,
+            "jointIntervals": 4824,
+            "maximumEndpointDifference": 1.1920910114593397e-07,
+            "maximumJointSeparatedGap": 0.0,
+            "maximumWeightedSeparatedGap": 0.0
+          },
+          "warmMaterializedVsOriginalDP": {
+            "allJointEndpointsEqual": false,
+            "allLookupEncloseReferenceEndpoints": true,
+            "allProbeFlagsAndTransitionMasksEqual": true,
+            "allRangeMomentsEqual": true,
+            "comparedJobs": 6,
+            "disjointJointIntervals": 0,
+            "jointIntervals": 4824,
+            "maximumEndpointDifference": 5.960446014530163e-08,
+            "maximumJointSeparatedGap": 0.0,
+            "maximumWeightedSeparatedGap": 0.0
+          }
+        },
+        "scope": "Nominal joint response intervals and requested probes/masks; no full-score expectation or ranking proof.",
+        "sourceVersion": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c",
+        "validation": {
+          "bytes": 94650,
+          "role": "ci-run-37883577487/interactions/miss-basis-tw/validation.json",
+          "sha256": "0febcb0a93bd5cb34afeacc56009cc46549ec8f678c850e56d351a7623c67a86"
+        }
+      },
+      "complete": true,
+      "dpPropagationsPerformed": 0,
+      "elapsedMs": 13779.641815001014,
+      "format": "ournotes-deck.final-head-ci-interactions-readonly-audit/1",
+      "generator": {
+        "bytes": 7510328,
+        "role": "ci-run-37883577487/inputs/bin/luck_response",
+        "sha256": "9c4560819c8259bc564e91c0d0c682ad3dc00f1869e53812c9d13b62b223e6ed"
+      },
+      "headSha": "2f17bac2b12c5459c56b4e87b647c83465821204",
+      "independentCompressionRoundTrips": 12,
+      "jobsRecompared": 1893,
+      "jointIntervalsRecompared": 1373056,
+      "nativeExecutionsPerformed": 0,
+      "nativeSourceFileCount": 327,
+      "scope": "Final GitHub CI catalogue-anchor evidence on three real charts and the six-witness combined gate. CI inventories are distinct from original PR40 newcomer inputs; no original-PR40 byte-equivalence claim, full-score expectation, all-legal-deck coverage or new benchmark.",
+      "sourceVersion": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c",
+      "status": "success",
+      "workflowRunId": 37883577487
+    },
+    "interactionsReceipt": {
+      "bytes": 32739,
+      "sha256": "e2905726abd98c500f7b2d8e4a98c7286a6d6c00452bfdfbe6268621e8228a8d"
+    },
+    "publication": {
+      "algorithmDigest": "748bec38e41505d8944600a4ac99b3e40a11c7a635bb19109d4a41397e525282",
+      "allPublishedIndexesAndCompressedFilesByteIdentical": true,
+      "artifactDownloads": [
+        {
+          "apiBytes": 6272474,
+          "apiDigest": "sha256:2c939cd95190c2963d085a8d10e46f0c72618ee2f996cfbfa5ae16f0d3926994",
+          "artifactId": 11595448386,
+          "extractedEntries": 717,
+          "name": "luck-catalogue-pinned-inputs-and-generator",
+          "receipt": {
+            "bytes": 67531,
+            "role": "ci-run-37883577487/artifact-receipts/luck-catalogue-pinned-inputs-and-generator.json",
+            "sha256": "8bee75f7cc20a0e965d991aaee4901fc043baf339a7a1fbe067a0f36aae0fa6c"
+          }
+        },
+        {
+          "apiBytes": 580156,
+          "apiDigest": "sha256:356f438abcaabc7bbe7fe4ffb85fa9ac54f0102b4574098b11438affd23b2f85",
+          "artifactId": 11595424585,
+          "extractedEntries": 2,
+          "name": "luck-family-full-catalogue-audit",
+          "receipt": {
+            "bytes": 778,
+            "role": "ci-run-37883577487/artifact-receipts/luck-family-full-catalogue-audit.json",
+            "sha256": "39df53af78c746e5b3fe67227a2e858c44d15b858548cf0de08e2425a7a4a67f"
+          }
+        },
+        {
+          "apiBytes": 6173197,
+          "apiDigest": "sha256:6a0ec20698e42391fb029e3b32476c7be7febc8ff30000e64e5983b53f903a3f",
+          "artifactId": 11595736376,
+          "extractedEntries": 3,
+          "name": "luck-family-program-dictionaries",
+          "receipt": {
+            "bytes": 1056,
+            "role": "ci-run-37883577487/artifact-receipts/luck-family-program-dictionaries.json",
+            "sha256": "d539ef44cce47ce31939d2d4316ecf3055a1aa4fcb0b7b01c2f48c840ed375ed"
+          }
+        },
+        {
+          "apiBytes": 3300605,
+          "apiDigest": "sha256:2e96ebcedfa8979f8bccf4b5842c01a063faa3072506585e0b1501a55623eab0",
+          "artifactId": 11596115250,
+          "extractedEntries": 3,
+          "name": "luck-catalogue-full-audit",
+          "receipt": {
+            "bytes": 817,
+            "role": "ci-run-37883577487/artifact-receipts/luck-catalogue-full-audit.json",
+            "sha256": "e8f334e7c890b1614691ef70c6ba7d36261bd97879984db748e13b624aa8750f"
+          }
+        },
+        {
+          "apiBytes": 77812776,
+          "apiDigest": "sha256:98619e4df4e7f8db0361c2f5089a7626e0d40aa81188bf60966e5aa7bb6fd6dc",
+          "artifactId": 11595561556,
+          "extractedEntries": 12,
+          "name": "luck-catalogue-program-dictionaries",
+          "receipt": {
+            "bytes": 2284,
+            "role": "ci-run-37883577487/artifact-receipts/luck-catalogue-program-dictionaries.json",
+            "sha256": "1db2ab294ee15ffd7c78d0b4aa28f743c543d8c7ab4e142527f6da43431023f0"
+          }
+        }
+      ],
+      "baseCoverage": {
+        "declaredCharts": 692,
+        "errors": 0,
+        "naturalLuckCharts": 292,
+        "notApplicable": 400,
+        "receivedCharts": 692,
+        "success": 292
+      },
+      "baseCurrentRunWork": {
+        "exactInputReusedCharts": 292,
+        "generatedProgramsByRegion": {
+          "jp": 0,
+          "tw": 0
+        },
+        "historicalSemanticProofFlagCharts": 0,
+        "nativeTotalCallsFieldAvailableOnLuckRows": false,
+        "newSemanticPlanReusedCharts": 0,
+        "notApplicableCharts": 400,
+        "regeneratedCharts": 0,
+        "reportedNativePlanCalls": 0,
+        "reportedNewPrograms": 0,
+        "retainedRegionalProgramRecords": 14236,
+        "retainedReportDpCountersAreNotCurrentRunWork": true,
+        "retainedRequestedBaseSingleJobs": 350692,
+        "reusedChartsByRegion": {
+          "jp": 144,
+          "tw": 148
+        },
+        "scope": "Current base/single catalogue stage chart receipts; excludes build/input preparation, family generation, interactions and codec audits."
+      },
+      "baseDictionaries": [
+        {
+          "compressedRoundTrips": 2,
+          "gzip9Bytes": 20884254,
+          "gzip9Sha256": "42abf03ad5b3afcc322aec1335f40d21295693a86a474ab6556287024a047065",
+          "indexAndBlobBytes": 29570573,
+          "indexAndBothCompressedArtifactsByteIdentical": true,
+          "indexSha256": "5aafe2206251ce01b8dc42b0c3f0797fee187a53f403f3bacf9f9a33bf400f1a",
+          "mode": "lossless",
+          "uniquePrograms": 7216,
+          "xz6Bytes": 16199824,
+          "xz6Sha256": "92121774e2ef694630ef07a696813bd107c2696e5ef15ed7beaa4c3bdb619ad7"
+        },
+        {
+          "compressedRoundTrips": 2,
+          "gzip9Bytes": 6392531,
+          "gzip9Sha256": "1b8b703fd18d338be986e776739a5cbf371e0121df7e084bcc9e5e4355f7dbc6",
+          "indexAndBlobBytes": 14517010,
+          "indexAndBothCompressedArtifactsByteIdentical": true,
+          "indexSha256": "35a1de13db856d34c150a34cb33cab48ab337dd3ba76d69be4bb400811d1cc3b",
+          "mode": "u16",
+          "uniquePrograms": 7216,
+          "xz6Bytes": 3224856,
+          "xz6Sha256": "f2147b92b31eaa8b96b5dc262bbaaa86db5f75273ad587678411e0ae3d798440"
+        },
+        {
+          "compressedRoundTrips": 2,
+          "gzip9Bytes": 8250408,
+          "gzip9Sha256": "ab283d2d692736fa351f074fe013ce0ff4f5abaae291c0ff5adcd3d6066f57ab",
+          "indexAndBlobBytes": 16429514,
+          "indexAndBothCompressedArtifactsByteIdentical": true,
+          "indexSha256": "051c95abac08cf2aefe6a42f3d44a3165231e46f0931c941a8811167653f261b",
+          "mode": "u24",
+          "uniquePrograms": 7216,
+          "xz6Bytes": 4599344,
+          "xz6Sha256": "193302cf32117c088743da7f62637027e13eb12af06f8108e44720149bbb065c"
+        },
+        {
+          "compressedRoundTrips": 2,
+          "gzip9Bytes": 10023200,
+          "gzip9Sha256": "270d5f9d1893c48b3f2d3ede142b8600d4d9ff7a7f85adef7b167634de7e76a7",
+          "indexAndBlobBytes": 18322347,
+          "indexAndBothCompressedArtifactsByteIdentical": true,
+          "indexSha256": "c779676dd83d049cd7a06e9bf9af9934f24b6e386ff4835fa741d911699c36a2",
+          "mode": "u32",
+          "uniquePrograms": 7216,
+          "xz6Bytes": 5840068,
+          "xz6Sha256": "d29f0722f9b889a2013e1c5949df9e5ebe7fd042038b5cd9346978184a1346b3"
+        }
+      ],
+      "baseRetainedProbabilityMetadata": {
+        "allObservedIndexesComplete": true,
+        "allObservedProbabilityRunsComplete": true,
+        "canonicalJobMetadataBytes": 197440502,
+        "indexFileBytes": 46369669,
+        "physicalBlobFileBytes": 131904429,
+        "physicalBlobFiles": 56944,
+        "reportFileBytes": 2690919046,
+        "reportFiles": 292,
+        "requestedJobsAcrossUniqueReports": 350692,
+        "uniqueReportContents": 292
+      },
+      "familyCoverage": {
+        "allPlayProfilesCovered": false,
+        "allTeamCombinationsCovered": false,
+        "declaredRegionalCharts": 692,
+        "receivedRegionalCharts": 692,
+        "statuses": {
+          "notApplicable": 400,
+          "success": 292
+        }
+      },
+      "familyDictionaries": [
+        {
+          "compressedRoundTrips": 2,
+          "gzip9Bytes": 5231483,
+          "gzip9Sha256": "18a6863d3244237f71113973a9d7f8878854ccb86d56ceb32a9215e842ce9b1f",
+          "indexAndBlobBytes": 9464195,
+          "indexAndBothCompressedArtifactsByteIdentical": true,
+          "indexSha256": "9a08c8c51e8d7f0d0fce05491b4c4164a7ef5492a7d1501c741d1274bb2cbc27",
+          "mode": "u24",
+          "uniquePrograms": 2364,
+          "xz6Bytes": 744752,
+          "xz6Sha256": "8e374352a575fdd700e7b0a98f9396e998593ffa4db2fb0198658998c0572113"
+        }
+      ],
+      "familyWork": {
+        "codecPropagationCalls": 0,
+        "codecRepackedPrograms": 4620,
+        "comparedBuckets": 686712,
+        "fastGridJobs": 365000,
+        "gridFamilyHits": 364708,
+        "gridNativeRecordings": 292,
+        "maximumEndpointDifference": 1.3877787807814457e-14,
+        "originalDpVerificationCalls": 1752,
+        "regionalConditionalPrograms": 4620
+      },
+      "format": "ournotes-deck.final-head-publication-verification/1",
+      "generatorSha256": "9c4560819c8259bc564e91c0d0c682ad3dc00f1869e53812c9d13b62b223e6ed",
+      "headSha": "2f17bac2b12c5459c56b4e87b647c83465821204",
+      "inputVerification": {
+        "bytes": 1940,
+        "role": "ci-run-37883577487/input-verification.json",
+        "sha256": "f4eaf4fbfde5190892ccfbad446eb67e8a58df0c3f3133565b79fdce9dbe8306"
+      },
+      "nativeExecutionCallsThisVerification": 0,
+      "nativePropagationsThisVerification": 0,
+      "previousHeadSha": "6fb669cd177fa8b0857bee500e86f7f46bdfb1f8",
+      "previousRunId": 37880796087,
+      "publishedFileComparisons": [
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 5231483,
+            "role": "ci-run-37883577487/family/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.gz",
+            "sha256": "18a6863d3244237f71113973a9d7f8878854ccb86d56ceb32a9215e842ce9b1f"
+          },
+          "kind": "family",
+          "mode": "u24",
+          "name": "dictionary.tar.gz",
+          "previous": {
+            "bytes": 5231483,
+            "role": "independent-family-publication-audit/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.gz",
+            "sha256": "18a6863d3244237f71113973a9d7f8878854ccb86d56ceb32a9215e842ce9b1f"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 744752,
+            "role": "ci-run-37883577487/family/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.xz",
+            "sha256": "8e374352a575fdd700e7b0a98f9396e998593ffa4db2fb0198658998c0572113"
+          },
+          "kind": "family",
+          "mode": "u24",
+          "name": "dictionary.tar.xz",
+          "previous": {
+            "bytes": 744752,
+            "role": "independent-family-publication-audit/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.xz",
+            "sha256": "8e374352a575fdd700e7b0a98f9396e998593ffa4db2fb0198658998c0572113"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 960039,
+            "role": "ci-run-37883577487/family/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/program-index.json",
+            "sha256": "9a08c8c51e8d7f0d0fce05491b4c4164a7ef5492a7d1501c741d1274bb2cbc27"
+          },
+          "kind": "family",
+          "mode": "u24",
+          "name": "program-index.json",
+          "previous": {
+            "bytes": 960039,
+            "role": "independent-family-publication-audit/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/program-index.json",
+            "sha256": "9a08c8c51e8d7f0d0fce05491b4c4164a7ef5492a7d1501c741d1274bb2cbc27"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 20884254,
+            "role": "ci-run-37883577487/base/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/lossless/dictionary.tar.gz",
+            "sha256": "42abf03ad5b3afcc322aec1335f40d21295693a86a474ab6556287024a047065"
+          },
+          "kind": "base",
+          "mode": "lossless",
+          "name": "dictionary.tar.gz",
+          "previous": {
+            "bytes": 20884254,
+            "role": "ci-run-37880796087/base-catalogue-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/lossless/dictionary.tar.gz",
+            "sha256": "42abf03ad5b3afcc322aec1335f40d21295693a86a474ab6556287024a047065"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 16199824,
+            "role": "ci-run-37883577487/base/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/lossless/dictionary.tar.xz",
+            "sha256": "92121774e2ef694630ef07a696813bd107c2696e5ef15ed7beaa4c3bdb619ad7"
+          },
+          "kind": "base",
+          "mode": "lossless",
+          "name": "dictionary.tar.xz",
+          "previous": {
+            "bytes": 16199824,
+            "role": "ci-run-37880796087/base-catalogue-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/lossless/dictionary.tar.xz",
+            "sha256": "92121774e2ef694630ef07a696813bd107c2696e5ef15ed7beaa4c3bdb619ad7"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 2965321,
+            "role": "ci-run-37883577487/base/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/lossless/program-index.json",
+            "sha256": "5aafe2206251ce01b8dc42b0c3f0797fee187a53f403f3bacf9f9a33bf400f1a"
+          },
+          "kind": "base",
+          "mode": "lossless",
+          "name": "program-index.json",
+          "previous": {
+            "bytes": 2965321,
+            "role": "ci-run-37880796087/base-catalogue-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/lossless/program-index.json",
+            "sha256": "5aafe2206251ce01b8dc42b0c3f0797fee187a53f403f3bacf9f9a33bf400f1a"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 6392531,
+            "role": "ci-run-37883577487/base/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u16/dictionary.tar.gz",
+            "sha256": "1b8b703fd18d338be986e776739a5cbf371e0121df7e084bcc9e5e4355f7dbc6"
+          },
+          "kind": "base",
+          "mode": "u16",
+          "name": "dictionary.tar.gz",
+          "previous": {
+            "bytes": 6392531,
+            "role": "ci-run-37880796087/base-catalogue-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u16/dictionary.tar.gz",
+            "sha256": "1b8b703fd18d338be986e776739a5cbf371e0121df7e084bcc9e5e4355f7dbc6"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 3224856,
+            "role": "ci-run-37883577487/base/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u16/dictionary.tar.xz",
+            "sha256": "f2147b92b31eaa8b96b5dc262bbaaa86db5f75273ad587678411e0ae3d798440"
+          },
+          "kind": "base",
+          "mode": "u16",
+          "name": "dictionary.tar.xz",
+          "previous": {
+            "bytes": 3224856,
+            "role": "ci-run-37880796087/base-catalogue-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u16/dictionary.tar.xz",
+            "sha256": "f2147b92b31eaa8b96b5dc262bbaaa86db5f75273ad587678411e0ae3d798440"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 2927153,
+            "role": "ci-run-37883577487/base/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u16/program-index.json",
+            "sha256": "35a1de13db856d34c150a34cb33cab48ab337dd3ba76d69be4bb400811d1cc3b"
+          },
+          "kind": "base",
+          "mode": "u16",
+          "name": "program-index.json",
+          "previous": {
+            "bytes": 2927153,
+            "role": "ci-run-37880796087/base-catalogue-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u16/program-index.json",
+            "sha256": "35a1de13db856d34c150a34cb33cab48ab337dd3ba76d69be4bb400811d1cc3b"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 8250408,
+            "role": "ci-run-37883577487/base/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.gz",
+            "sha256": "ab283d2d692736fa351f074fe013ce0ff4f5abaae291c0ff5adcd3d6066f57ab"
+          },
+          "kind": "base",
+          "mode": "u24",
+          "name": "dictionary.tar.gz",
+          "previous": {
+            "bytes": 8250408,
+            "role": "ci-run-37880796087/base-catalogue-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.gz",
+            "sha256": "ab283d2d692736fa351f074fe013ce0ff4f5abaae291c0ff5adcd3d6066f57ab"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 4599344,
+            "role": "ci-run-37883577487/base/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.xz",
+            "sha256": "193302cf32117c088743da7f62637027e13eb12af06f8108e44720149bbb065c"
+          },
+          "kind": "base",
+          "mode": "u24",
+          "name": "dictionary.tar.xz",
+          "previous": {
+            "bytes": 4599344,
+            "role": "ci-run-37880796087/base-catalogue-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.xz",
+            "sha256": "193302cf32117c088743da7f62637027e13eb12af06f8108e44720149bbb065c"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 2927561,
+            "role": "ci-run-37883577487/base/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/program-index.json",
+            "sha256": "051c95abac08cf2aefe6a42f3d44a3165231e46f0931c941a8811167653f261b"
+          },
+          "kind": "base",
+          "mode": "u24",
+          "name": "program-index.json",
+          "previous": {
+            "bytes": 2927561,
+            "role": "ci-run-37880796087/base-catalogue-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/program-index.json",
+            "sha256": "051c95abac08cf2aefe6a42f3d44a3165231e46f0931c941a8811167653f261b"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 10023200,
+            "role": "ci-run-37883577487/base/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u32/dictionary.tar.gz",
+            "sha256": "270d5f9d1893c48b3f2d3ede142b8600d4d9ff7a7f85adef7b167634de7e76a7"
+          },
+          "kind": "base",
+          "mode": "u32",
+          "name": "dictionary.tar.gz",
+          "previous": {
+            "bytes": 10023200,
+            "role": "ci-run-37880796087/base-catalogue-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u32/dictionary.tar.gz",
+            "sha256": "270d5f9d1893c48b3f2d3ede142b8600d4d9ff7a7f85adef7b167634de7e76a7"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 5840068,
+            "role": "ci-run-37883577487/base/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u32/dictionary.tar.xz",
+            "sha256": "d29f0722f9b889a2013e1c5949df9e5ebe7fd042038b5cd9346978184a1346b3"
+          },
+          "kind": "base",
+          "mode": "u32",
+          "name": "dictionary.tar.xz",
+          "previous": {
+            "bytes": 5840068,
+            "role": "ci-run-37880796087/base-catalogue-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u32/dictionary.tar.xz",
+            "sha256": "d29f0722f9b889a2013e1c5949df9e5ebe7fd042038b5cd9346978184a1346b3"
+          }
+        },
+        {
+          "bytesEqual": true,
+          "current": {
+            "bytes": 2927816,
+            "role": "ci-run-37883577487/base/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u32/program-index.json",
+            "sha256": "c779676dd83d049cd7a06e9bf9af9934f24b6e386ff4835fa741d911699c36a2"
+          },
+          "kind": "base",
+          "mode": "u32",
+          "name": "program-index.json",
+          "previous": {
+            "bytes": 2927816,
+            "role": "ci-run-37880796087/base-catalogue-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u32/program-index.json",
+            "sha256": "c779676dd83d049cd7a06e9bf9af9934f24b6e386ff4835fa741d911699c36a2"
+          }
+        }
+      ],
+      "rawShardsDownloadedThisVerification": 0,
+      "reports": [
+        {
+          "bytes": 1011991,
+          "role": "ci-run-37883577487/family/audit/aggregate.json",
+          "sha256": "aa2e91bbd82791a30a8a75f08eee764b173ccdf219b5cddb0cce7e56c1f32c9c"
+        },
+        {
+          "bytes": 1462073,
+          "role": "ci-run-37883577487/family/audit/program-analysis.json",
+          "sha256": "6fb31496db584eab32d5ba10a4f76f2dc5bebee6b9029f6a3c266be1b3fb1d12"
+        },
+        {
+          "bytes": 1753073,
+          "role": "ci-run-37883577487/base/audit/aggregate.json",
+          "sha256": "1a81e6064e814b72b60807c33b8a968b2a422ffd53557796ac3b7d41e87ea63d"
+        },
+        {
+          "bytes": 7925948,
+          "role": "ci-run-37883577487/base/audit/program-analysis.json",
+          "sha256": "deb938c24e8f9b544dcdaf5b3898c941c3ff357aef3162b22b4ed64fc2103e71"
+        }
+      ],
+      "runId": 37883577487,
+      "sameCompleteNativeInputs": true,
+      "scope": "Final-head publication confirms the exact prior independently audited native and dataset inputs, complete regional coverage and actual dictionary bytes. No new all-team or all-play-profile claim.",
+      "simSourceSha256": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c",
+      "valid": true,
+      "verifiedCompressedRoundTrips": 10,
+      "verifiedMergedIndexes": 5
+    },
+    "publicationReceipt": {
+      "bytes": 20592,
+      "sha256": "72abad17fbfcd398a4c6661cb722ba526a2d4d0db62c8b9a8657905440c41e2c"
+    },
+    "workflows": {
+      "allPassed": true,
+      "head": "2f17bac2b12c5459c56b4e87b647c83465821204",
+      "repository": "empty-sekai/ournotes-deck",
+      "verifiedAtUtc": "2026-10-09 04:42:24 UTC",
+      "workflows": [
+        {
+          "conclusion": "success",
+          "id": 37883577449,
+          "name": "Chromium Worker search",
+          "status": "completed",
+          "url": "https://github.com/empty-sekai/ournotes-deck/actions/runs/37883577449"
+        },
+        {
+          "conclusion": "success",
+          "id": 37883577481,
+          "name": "CI",
+          "status": "completed",
+          "url": "https://github.com/empty-sekai/ournotes-deck/actions/runs/37883577481"
+        },
+        {
+          "conclusion": "success",
+          "id": 37883577487,
+          "name": "Incremental real-chart LUCK response tables",
+          "status": "completed",
+          "url": "https://github.com/empty-sekai/ournotes-deck/actions/runs/37883577487"
+        }
+      ]
+    }
+  },
   "combinedMissBasis": {
     "algorithmDigest": "748bec38e41505d8944600a4ac99b3e40a11c7a635bb19109d4a41397e525282",
     "allTeamCombinationsCovered": false,
@@ -547,22 +2110,22 @@
     "inputs": {
       "data": {
         "bytes": 3860477,
-        "path": "/workspace/scratch/6a8794e2da0b/recovered-ci/inputs/catalogue/tw/deck-data.json",
+        "role": "pinned-input-bundle/catalogue/tw/deck-data.json",
         "sha256": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf"
       },
       "generator": {
         "bytes": 7510328,
-        "path": "/workspace/scratch/6a8794e2da0b/final-bench/bin/luck_response",
+        "role": "native-generator/luck_response",
         "sha256": "9c4560819c8259bc564e91c0d0c682ad3dc00f1869e53812c9d13b62b223e6ed"
       },
       "request": {
         "bytes": 472,
-        "path": "/workspace/scratch/6a8794e2da0b/recovered-pr40/full48/requests/short-newcomer-score.json",
+        "role": "pr40-generated-inputs/requests/short-newcomer-score.json",
         "sha256": "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa"
       },
       "snapshot": {
         "bytes": 7793,
-        "path": "/workspace/scratch/6a8794e2da0b/recovered-pr40/full48/snapshots/newcomer.json",
+        "role": "pr40-generated-inputs/snapshots/newcomer.json",
         "sha256": "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242"
       }
     },
@@ -1281,7 +2844,7 @@
       },
       "complete": true,
       "currentValidation": {
-        "path": "/workspace/scratch/6a8794e2da0b/bench/c18-final-miss-basis/validation.json",
+        "role": "miss-minimum-256m/validation.json",
         "sha256": "73088647e835536058451d5f0710ede25f4b8b616219743fa2129b75103a92bf"
       },
       "format": "ournotes-deck.luck-miss-basis-compatibility/1",
@@ -1294,7 +2857,7 @@
       "missValidatorSha256": "affc738a6b7b64dbba6def8e5b1114a87e491ebcdee9159755a63cc82d50a911",
       "nativeSourceUnchanged": true,
       "previousValidation": {
-        "path": "/workspace/scratch/6a8794e2da0b/bench/c18-portable-miss-basis/validation.json",
+        "role": "miss-minimum-128m/validation.json",
         "sha256": "98a62c301da2c2afdd09dd2c85b31362b034ab8371d28ad5b988f11c58b85140"
       },
       "queries": {
@@ -1323,6 +2886,7 @@
           }
         }
       },
+      "runner": "tools/luck-tables/validate_miss_basis.py",
       "runnerSha256": "6af82bc856b20cce5bf8ba0cf3bb6656bba1274e292d161586eee9d093f4dd9f",
       "sourceVersion": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c",
       "specs": {
@@ -1551,7 +3115,7 @@
     },
     "receipt": {
       "bytes": 93806,
-      "path": "bench/c18-final-miss-basis/validation.json",
+      "role": "miss-minimum-256m/validation.json",
       "sha256": "73088647e835536058451d5f0710ede25f4b8b616219743fa2129b75103a92bf"
     },
     "reference": {
@@ -1710,7 +3274,7 @@
         "bothPreflightsZeroDP": true,
         "caseValidation": {
           "bytes": 288987,
-          "path": "/workspace/scratch/6a8794e2da0b/final-bench/miss-final/short-newcomer-score/cases/000/validation.json",
+          "role": "miss-gauge/short-newcomer-score/cases/000/validation.json",
           "sha256": "a9d6fb3f27a79911d988d1891371cbdc6ece6b13b96aeeb9bb767d7b65ad1f8e"
         },
         "complete": true,
@@ -1806,23 +3370,23 @@
         "inputs": {
           "data": {
             "bytes": 3860477,
-            "path": "/workspace/scratch/6a8794e2da0b/recovered-ci/inputs/catalogue/tw/deck-data.json",
+            "role": "pinned-input-bundle/catalogue/tw/deck-data.json",
             "sha256": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf"
           },
           "request": {
             "bytes": 472,
-            "path": "/workspace/scratch/6a8794e2da0b/recovered-pr40/full48/requests/short-newcomer-score.json",
+            "role": "pr40-generated-inputs/requests/short-newcomer-score.json",
             "sha256": "5267039589fdc694468b1e90b3c8b56cfbde19d36b4d37970643247aabcb27fa"
           },
           "snapshot": {
             "bytes": 7793,
-            "path": "/workspace/scratch/6a8794e2da0b/recovered-pr40/full48/snapshots/newcomer.json",
+            "role": "pr40-generated-inputs/snapshots/newcomer.json",
             "sha256": "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242"
           }
         },
         "manifest": {
           "bytes": 21748,
-          "path": "/workspace/scratch/6a8794e2da0b/recovered-pr40/full48/benchmark.json",
+          "role": "pr40-generated-inputs/benchmark.json",
           "sha256": "098f33a1035d4e3b1650c74682397cae360829f0ad0d5fa2aa63c2733ad1520d"
         },
         "name": "short-newcomer-score",
@@ -1898,7 +3462,7 @@
         },
         "recipeReceipt": {
           "bytes": 2738,
-          "path": "/workspace/scratch/6a8794e2da0b/final-bench/miss-final/short-newcomer-score/cases/000/specs/receipt.json",
+          "role": "miss-gauge/short-newcomer-score/cases/000/specs/receipt.json",
           "sha256": "32fa2964291c994adf980eef6dec23703b6ecdfd5fbf554887deee21294a7b1f"
         },
         "recomputedResponseComparison": {
@@ -1917,7 +3481,7 @@
         "scoreId": 10006103,
         "topValidation": {
           "bytes": 44139,
-          "path": "/workspace/scratch/6a8794e2da0b/final-bench/miss-final/short-newcomer-score/validation.json",
+          "role": "miss-gauge/short-newcomer-score/validation.json",
           "sha256": "c5f12b8132b5ffad1dadb8580a9c598f69d7f5ff95186fe97bed768051ee0f55"
         },
         "witnesses": {
@@ -1958,7 +3522,7 @@
         "bothPreflightsZeroDP": true,
         "caseValidation": {
           "bytes": 288985,
-          "path": "/workspace/scratch/6a8794e2da0b/final-bench/miss-final/long-newcomer-score/cases/000/validation.json",
+          "role": "miss-gauge/long-newcomer-score/cases/000/validation.json",
           "sha256": "2546d08cee3c4c394c20cd687ed4bec283568117f7452c47a7f2477243f67780"
         },
         "complete": true,
@@ -2054,23 +3618,23 @@
         "inputs": {
           "data": {
             "bytes": 3860477,
-            "path": "/workspace/scratch/6a8794e2da0b/recovered-ci/inputs/catalogue/tw/deck-data.json",
+            "role": "pinned-input-bundle/catalogue/tw/deck-data.json",
             "sha256": "de867d2df3020e9430c164cdc889cd114113e50b2ab12003b6978665905493bf"
           },
           "request": {
             "bytes": 242231,
-            "path": "/workspace/scratch/6a8794e2da0b/recovered-pr40/full48/requests/long-newcomer-score.json",
+            "role": "pr40-generated-inputs/requests/long-newcomer-score.json",
             "sha256": "f98368aeac2d6a370638e320a6d25b789c6f3c5015d545621d7cbbfa3cc8567e"
           },
           "snapshot": {
             "bytes": 7793,
-            "path": "/workspace/scratch/6a8794e2da0b/recovered-pr40/full48/snapshots/newcomer.json",
+            "role": "pr40-generated-inputs/snapshots/newcomer.json",
             "sha256": "1dadbfc3986a23254ca492c583d26e441d7cca3741dafb8c20031bf2d65b6242"
           }
         },
         "manifest": {
           "bytes": 21748,
-          "path": "/workspace/scratch/6a8794e2da0b/recovered-pr40/full48/benchmark.json",
+          "role": "pr40-generated-inputs/benchmark.json",
           "sha256": "098f33a1035d4e3b1650c74682397cae360829f0ad0d5fa2aa63c2733ad1520d"
         },
         "name": "long-newcomer-score",
@@ -2146,7 +3710,7 @@
         },
         "recipeReceipt": {
           "bytes": 2738,
-          "path": "/workspace/scratch/6a8794e2da0b/final-bench/miss-final/long-newcomer-score/cases/000/specs/receipt.json",
+          "role": "miss-gauge/long-newcomer-score/cases/000/specs/receipt.json",
           "sha256": "32fa2964291c994adf980eef6dec23703b6ecdfd5fbf554887deee21294a7b1f"
         },
         "recomputedResponseComparison": {
@@ -2165,7 +3729,7 @@
         "scoreId": 10010703,
         "topValidation": {
           "bytes": 44138,
-          "path": "/workspace/scratch/6a8794e2da0b/final-bench/miss-final/long-newcomer-score/validation.json",
+          "role": "miss-gauge/long-newcomer-score/validation.json",
           "sha256": "bceaa2a7357337078e271b64bc446b7ab6eb17fa6ce346c3842de2b5b3f71859"
         },
         "witnesses": {
@@ -2206,7 +3770,7 @@
         "bothPreflightsZeroDP": true,
         "caseValidation": {
           "bytes": 292671,
-          "path": "/workspace/scratch/6a8794e2da0b/final-bench/miss-final/jp-10000300-easy/cases/000/validation.json",
+          "role": "miss-gauge/jp-10000300-easy/cases/000/validation.json",
           "sha256": "48186cbb71f90982e6f68c7167eab9b2f7d096415ce9305494e767f338a66290"
         },
         "complete": true,
@@ -2302,23 +3866,23 @@
         "inputs": {
           "data": {
             "bytes": 3816206,
-            "path": "/workspace/scratch/6a8794e2da0b/recovered-ci/inputs/catalogue/jp/inputs/data.json",
+            "role": "pinned-input-bundle/catalogue/jp/inputs/data.json",
             "sha256": "76446232396ba61cbc499f9e31313a39ab635534426354197b29d81fd0a87d47"
           },
           "request": {
             "bytes": 345,
-            "path": "/workspace/scratch/6a8794e2da0b/recovered-ci/inputs/catalogue/jp/inputs/requests/jp-10000300-easy.json",
+            "role": "pinned-input-bundle/catalogue/jp/inputs/requests/jp-10000300-easy.json",
             "sha256": "314755225ea64e67de92fe1e2b34005dc8b96fc2ba29416217f8e12f994aa44f"
           },
           "snapshot": {
             "bytes": 1650,
-            "path": "/workspace/scratch/6a8794e2da0b/recovered-ci/inputs/catalogue/jp/inputs/snapshot.json",
+            "role": "pinned-input-bundle/catalogue/jp/inputs/snapshot.json",
             "sha256": "e00221d87e0feea288887e76a5e96b8a5a8e9834953dc485edb85357f72310c6"
           }
         },
         "manifest": {
           "bytes": 87478,
-          "path": "/workspace/scratch/6a8794e2da0b/recovered-ci/inputs/catalogue/jp/inputs/benchmark.json",
+          "role": "pinned-input-bundle/catalogue/jp/inputs/benchmark.json",
           "sha256": "52ed2f12e7609317ee4505e70ff612dcc0db0aed3f1694769d02b15654b35f98"
         },
         "name": "jp-10000300-easy",
@@ -2394,7 +3958,7 @@
         },
         "recipeReceipt": {
           "bytes": 2738,
-          "path": "/workspace/scratch/6a8794e2da0b/final-bench/miss-final/jp-10000300-easy/cases/000/specs/receipt.json",
+          "role": "miss-gauge/jp-10000300-easy/cases/000/specs/receipt.json",
           "sha256": "32fa2964291c994adf980eef6dec23703b6ecdfd5fbf554887deee21294a7b1f"
         },
         "recomputedResponseComparison": {
@@ -2413,7 +3977,7 @@
         "scoreId": 10000300,
         "topValidation": {
           "bytes": 44125,
-          "path": "/workspace/scratch/6a8794e2da0b/final-bench/miss-final/jp-10000300-easy/validation.json",
+          "role": "miss-gauge/jp-10000300-easy/validation.json",
           "sha256": "6cf1b8f20e6e6a3139f34f22ad45224941b4256318c6fbe973c1fbfb46e74c64"
         },
         "witnesses": {
@@ -2455,7 +4019,7 @@
     "format": "ournotes-deck.luck-miss-final-readonly-audit/1",
     "generator": {
       "bytes": 7510328,
-      "path": "/workspace/scratch/6a8794e2da0b/final-bench/bin/luck_response",
+      "role": "native-generator/luck_response",
       "sha256": "9c4560819c8259bc564e91c0d0c682ad3dc00f1869e53812c9d13b62b223e6ed"
     },
     "jobsRecompared": 1893,
@@ -2464,13 +4028,8 @@
     "nativeSourceFileCount": 327,
     "receipt": {
       "bytes": 24517,
-      "path": "review/miss-final-readonly/readonly-review.json",
+      "role": "independent-miss-gauge-audit/readonly-review.json",
       "sha256": "b4295f6b3b762240471b89f2dd206574079cb2681a7c89f9b4e107e490640ad2"
-    },
-    "reviewScript": {
-      "bytes": 17824,
-      "path": "/workspace/scratch/6a8794e2da0b/review/miss-final-readonly/review_final_miss.py",
-      "sha256": "503bb5128710e389eed78c57bef2ba9d480fc79c5feeff463544346176524152"
     },
     "scope": "Read-only verification of three existing real-chart master-parameter experiments, every job and original artifact. Not owned decks, all skill combinations, full-score expectations or a new performance benchmark.",
     "sourceVersion": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c",
@@ -2739,13 +4298,13 @@
       "rankingProven": false,
       "receipt": {
         "bytes": 288987,
-        "path": "final-bench/miss-final/short-newcomer-score/cases/000/validation.json",
+        "role": "miss-gauge/short-newcomer-score/cases/000/validation.json",
         "sha256": "a9d6fb3f27a79911d988d1891371cbdc6ece6b13b96aeeb9bb767d7b65ad1f8e"
       },
       "region": "tw",
       "runReceipt": {
         "bytes": 44139,
-        "path": "final-bench/miss-final/short-newcomer-score/validation.json",
+        "role": "miss-gauge/short-newcomer-score/validation.json",
         "sha256": "c5f12b8132b5ffad1dadb8580a9c598f69d7f5ff95186fe97bed768051ee0f55"
       },
       "runnerSourceSha256": {
@@ -3053,13 +4612,13 @@
       "rankingProven": false,
       "receipt": {
         "bytes": 288985,
-        "path": "final-bench/miss-final/long-newcomer-score/cases/000/validation.json",
+        "role": "miss-gauge/long-newcomer-score/cases/000/validation.json",
         "sha256": "2546d08cee3c4c394c20cd687ed4bec283568117f7452c47a7f2477243f67780"
       },
       "region": "tw",
       "runReceipt": {
         "bytes": 44138,
-        "path": "final-bench/miss-final/long-newcomer-score/validation.json",
+        "role": "miss-gauge/long-newcomer-score/validation.json",
         "sha256": "bceaa2a7357337078e271b64bc446b7ab6eb17fa6ce346c3842de2b5b3f71859"
       },
       "runnerSourceSha256": {
@@ -3367,13 +4926,13 @@
       "rankingProven": false,
       "receipt": {
         "bytes": 292671,
-        "path": "final-bench/miss-final/jp-10000300-easy/cases/000/validation.json",
+        "role": "miss-gauge/jp-10000300-easy/cases/000/validation.json",
         "sha256": "48186cbb71f90982e6f68c7167eab9b2f7d096415ce9305494e767f338a66290"
       },
       "region": "jp",
       "runReceipt": {
         "bytes": 44125,
-        "path": "final-bench/miss-final/jp-10000300-easy/validation.json",
+        "role": "miss-gauge/jp-10000300-easy/validation.json",
         "sha256": "6cf1b8f20e6e6a3139f34f22ad45224941b4256318c6fbe973c1fbfb46e74c64"
       },
       "runnerSourceSha256": {
@@ -3918,7 +5477,7 @@
       "rankingProven": false,
       "receipt": {
         "bytes": 75564,
-        "path": "final-bench/owned-deck/short-veteran-score/validation.json",
+        "role": "held-deck-comparison/short-veteran-score/validation.json",
         "sha256": "b131b2fd80ad1a2faf3fdbb4c8cca8620cbf216b17ac0ceec0550a8ed4860b19"
       },
       "reference": {
@@ -3964,7 +5523,7 @@
         },
         "weightedIntervalsOverlapOrders": 120
       },
-      "timingScope": "Sequential actual-deck run after the three parameter-grid comparisons; independent original DP for all 120 orders.",
+      "timingScope": "Sequential actual-deck evaluation with independent original DP for all 120 orders.",
       "usesMonteCarlo": false
     },
     {
@@ -4230,7 +5789,7 @@
       "rankingProven": false,
       "receipt": {
         "bytes": 75556,
-        "path": "final-bench/owned-deck/long-veteran-score/validation.json",
+        "role": "held-deck-comparison/long-veteran-score/validation.json",
         "sha256": "b2b6f0187f268d882027c1cabc20cf2accb4e0928716032627413180cdb277eb"
       },
       "reference": {
@@ -4276,40 +5835,41 @@
         },
         "weightedIntervalsOverlapOrders": 120
       },
-      "timingScope": "Sequential actual-deck run after the three parameter-grid comparisons; independent original DP for all 120 orders.",
+      "timingScope": "Sequential actual-deck evaluation with independent original DP for all 120 orders.",
       "usesMonteCarlo": false
     }
   ],
   "rankingProven": false,
+  "receiptConvention": "Receipt roles identify benchmark inputs, outputs and independent verification records; they are not repository paths. Byte lengths and SHA256 values bind the original file contents. Public artifact names and member paths identify downloadable CI files.",
   "receipts": [
     {
       "bytes": 287,
-      "path": "final-ci/input-artifact-receipt.json",
+      "role": "ci-run-37880796087/input-artifact-receipt.json",
       "sha256": "a272eadfdecb85d778e18b84ba3ca62624c0396ec43038abb3db89f84fe2460e"
     },
     {
       "bytes": 8105,
-      "path": "final-ci/family-local-audit/publication-comparison.json",
+      "role": "independent-family-publication-audit/publication-comparison.json",
       "sha256": "054caee98392d643b112575415e03c95241ee00f294e5401ee5838aa758470eb"
     },
     {
       "bytes": 1011979,
-      "path": "final-ci/family-local-audit/aggregate.json",
+      "role": "independent-family-publication-audit/aggregate.json",
       "sha256": "a5e991dfe0dffad8eda31ae6c8a4c3fa9fdecd07fe62fe3eee4af0e0db38d56b"
     },
     {
       "bytes": 8104,
-      "path": "final-ci/base-published-verification.json",
+      "role": "ci-run-37880796087/base-published-verification.json",
       "sha256": "7dc28b8b15caae857907d1953d889d5575aaa12c308aa403f1560485b64c87eb"
     },
     {
       "bytes": 7926,
-      "path": "final-ci/family-final-blocks/summary.json",
+      "role": "block-compression/summary.json",
       "sha256": "a1356d4fde26dd53f90ca6facdfcf6b2908858ea3548067ae22aa28f7bf1778c"
     },
     {
       "bytes": 4838,
-      "path": "review/luck-miss-math-receipt.json",
+      "role": "independent-verification/luck-miss-math-receipt.json",
       "sha256": "f98677fce67a0dea231d5a2e4084ae546887495c5eb441ae698a21702537ada1"
     }
   ],
@@ -4724,13 +6284,13 @@
       "rankingProven": false,
       "receipt": {
         "bytes": 16189,
-        "path": "final-bench/family-comparison/short-newcomer-score/validation.json",
+        "role": "minimum-family-comparison/short-newcomer-score/validation.json",
         "sha256": "4a1cebe60fa5ff0b6114dd67af5217243c3b9328ea44fb2d1706e2d43ae3028c"
       },
       "scoreId": 10006103,
       "sourceVersion": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c",
       "status": "success",
-      "timingScope": "Sequential same-CI-binary runs; no concurrent local build, DP benchmark, codec audit or compression task.",
+      "timingScope": "Sequential same-CI-binary runs without competing compute workloads; process and report I/O included.",
       "usesMonteCarlo": false,
       "verification": {
         "comparedBuckets": 4824,
@@ -5205,13 +6765,13 @@
       "rankingProven": false,
       "receipt": {
         "bytes": 16224,
-        "path": "final-bench/family-comparison/long-newcomer-score/validation.json",
+        "role": "minimum-family-comparison/long-newcomer-score/validation.json",
         "sha256": "dfc5a651bcf62e584cfc655706c2ca6800b64378d15625c9ec4080825049faa5"
       },
       "scoreId": 10010703,
       "sourceVersion": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c",
       "status": "success",
-      "timingScope": "Sequential same-CI-binary runs; no concurrent local build, DP benchmark, codec audit or compression task.",
+      "timingScope": "Sequential same-CI-binary runs without competing compute workloads; process and report I/O included.",
       "usesMonteCarlo": false,
       "verification": {
         "comparedBuckets": 4512,
@@ -5686,13 +7246,13 @@
       "rankingProven": false,
       "receipt": {
         "bytes": 16222,
-        "path": "final-bench/family-comparison/jp-10000300-easy/validation.json",
+        "role": "minimum-family-comparison/jp-10000300-easy/validation.json",
         "sha256": "3fc7492f8896c6f20d29bd272829cd6d6ffab63db71d2f9469b2b528a574f4f9"
       },
       "scoreId": 10000300,
       "sourceVersion": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c",
       "status": "success",
-      "timingScope": "Sequential same-CI-binary runs; no concurrent local build, DP benchmark, codec audit or compression task.",
+      "timingScope": "Sequential same-CI-binary runs without competing compute workloads; process and report I/O included.",
       "usesMonteCarlo": false,
       "verification": {
         "comparedBuckets": 3720,
@@ -5792,52 +7352,52 @@
       "receipts": [
         {
           "bytes": 818,
-          "path": "family-artifact-receipts/luck-family-full-catalogue-audit.json",
+          "role": "artifact-download-verification/luck-family-full-catalogue-audit.json",
           "sha256": "4aec4d1058ecd10a8ea2da0dc57fa064dac34d89fbca3af50f0b5f961b5c2735"
         },
         {
           "bytes": 1089,
-          "path": "family-artifact-receipts/luck-family-program-dictionaries.json",
+          "role": "artifact-download-verification/luck-family-program-dictionaries.json",
           "sha256": "72adeabdac1f43077ac5916ba965a462fbcaa5ed66d8fad071a0ba90fe83aa83"
         },
         {
           "bytes": 139665,
-          "path": "family-artifact-receipts/luck-family-shard-jp-0.json",
+          "role": "artifact-download-verification/luck-family-shard-jp-0.json",
           "sha256": "cab36c728dff4cbc13c43336a0d0e8fe8a81a3117af2f8a2f063049124e74f9d"
         },
         {
           "bytes": 139707,
-          "path": "family-artifact-receipts/luck-family-shard-jp-1.json",
+          "role": "artifact-download-verification/luck-family-shard-jp-1.json",
           "sha256": "46eeddf3313b5ab87e2631e1edff3c0232ac9aa8d92815f47fecbc1d56e7e1dd"
         },
         {
           "bytes": 139725,
-          "path": "family-artifact-receipts/luck-family-shard-jp-2.json",
+          "role": "artifact-download-verification/luck-family-shard-jp-2.json",
           "sha256": "847d0a351aac6896132ea733b1acd2c984dfd34e690fda0a7a0b50d786da0837"
         },
         {
           "bytes": 139740,
-          "path": "family-artifact-receipts/luck-family-shard-jp-3.json",
+          "role": "artifact-download-verification/luck-family-shard-jp-3.json",
           "sha256": "3a9fc7d44a704e83205b70a810dfe9f114f648ccf95061f097110d6491c85763"
         },
         {
           "bytes": 145251,
-          "path": "family-artifact-receipts/luck-family-shard-tw-0.json",
+          "role": "artifact-download-verification/luck-family-shard-tw-0.json",
           "sha256": "7893041386914b4de20b8ea013d01f306f38604d0a10f4ac0dd92119344f3e3f"
         },
         {
           "bytes": 145295,
-          "path": "family-artifact-receipts/luck-family-shard-tw-1.json",
+          "role": "artifact-download-verification/luck-family-shard-tw-1.json",
           "sha256": "6ce44d14bcd4b67c8540ce2ed0c84214ece51ffc963ecf1af66b931df4b8044a"
         },
         {
           "bytes": 145313,
-          "path": "family-artifact-receipts/luck-family-shard-tw-2.json",
+          "role": "artifact-download-verification/luck-family-shard-tw-2.json",
           "sha256": "8999c92ee5afe5f0f1f62cac753751cdf5c1dd6d73659c00f53d865a98ce64be"
         },
         {
           "bytes": 145329,
-          "path": "family-artifact-receipts/luck-family-shard-tw-3.json",
+          "role": "artifact-download-verification/luck-family-shard-tw-3.json",
           "sha256": "515031622ad16b82760dfc13a3b44a550117953377fe7c84e822068a47bda9ba"
         }
       ],
@@ -5845,13 +7405,15 @@
       "zipBytes": 264105252
     },
     "ciAggregate": {
+      "artifactName": "luck-family-full-catalogue-audit",
       "bytes": 1011978,
-      "path": "family-published/luck-family-full-catalogue-audit/aggregate.json",
+      "path": "aggregate.json",
       "sha256": "ac48c1749dc60a4d46d57c1cef967fe488d375a206514194a3d95157a859fb92"
     },
     "ciAnalysis": {
+      "artifactName": "luck-family-full-catalogue-audit",
       "bytes": 1462072,
-      "path": "family-published/luck-family-full-catalogue-audit/program-analysis.json",
+      "path": "program-analysis.json",
       "sha256": "c318eebe2490207aa3a2504840fc63630c73d88ce6b8f8a663507debe7c98ab8"
     },
     "complete": true,
@@ -5900,12 +7462,12 @@
     "headSha": "6fb669cd177fa8b0857bee500e86f7f46bdfb1f8",
     "localAggregate": {
       "bytes": 1011979,
-      "path": "family-local-audit/aggregate.json",
+      "role": "independent-family-publication-audit/aggregate.json",
       "sha256": "a5e991dfe0dffad8eda31ae6c8a4c3fa9fdecd07fe62fe3eee4af0e0db38d56b"
     },
     "localAnalysis": {
       "bytes": 1462073,
-      "path": "family-local-audit/program-analysis.json",
+      "role": "independent-family-publication-audit/program-analysis.json",
       "sha256": "1bc12b78bdfe5e5734219036c321ee3aa2c8bac394433356927ff950452bfd41"
     },
     "nativeCodecRepackedPrograms": 4620,
@@ -5919,49 +7481,52 @@
       {
         "bytesEqual": true,
         "ci": {
+          "artifactName": "luck-family-program-dictionaries",
           "bytes": 5231483,
-          "path": "family-published/luck-family-program-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.gz",
+          "path": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.gz",
           "sha256": "18a6863d3244237f71113973a9d7f8878854ccb86d56ceb32a9215e842ce9b1f"
         },
         "file": "dictionary.tar.gz",
         "local": {
           "bytes": 5231483,
-          "path": "family-local-audit/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.gz",
+          "role": "independent-family-publication-audit/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.gz",
           "sha256": "18a6863d3244237f71113973a9d7f8878854ccb86d56ceb32a9215e842ce9b1f"
         }
       },
       {
         "bytesEqual": true,
         "ci": {
+          "artifactName": "luck-family-program-dictionaries",
           "bytes": 744752,
-          "path": "family-published/luck-family-program-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.xz",
+          "path": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.xz",
           "sha256": "8e374352a575fdd700e7b0a98f9396e998593ffa4db2fb0198658998c0572113"
         },
         "file": "dictionary.tar.xz",
         "local": {
           "bytes": 744752,
-          "path": "family-local-audit/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.xz",
+          "role": "independent-family-publication-audit/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/dictionary.tar.xz",
           "sha256": "8e374352a575fdd700e7b0a98f9396e998593ffa4db2fb0198658998c0572113"
         }
       },
       {
         "bytesEqual": true,
         "ci": {
+          "artifactName": "luck-family-program-dictionaries",
           "bytes": 960039,
-          "path": "family-published/luck-family-program-dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/program-index.json",
+          "path": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/program-index.json",
           "sha256": "9a08c8c51e8d7f0d0fce05491b4c4164a7ef5492a7d1501c741d1274bb2cbc27"
         },
         "file": "program-index.json",
         "local": {
           "bytes": 960039,
-          "path": "family-local-audit/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/program-index.json",
+          "role": "independent-family-publication-audit/dictionaries/c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c/u24/program-index.json",
           "sha256": "9a08c8c51e8d7f0d0fce05491b4c4164a7ef5492a7d1501c741d1274bb2cbc27"
         }
       }
     ],
     "publishedSourceMetadata": {
       "bytes": 978,
-      "path": "family-published-api-artifacts.json",
+      "role": "ci-artifact-metadata",
       "sha256": "236ee0d86343a007523d5657ea69ac26d4125a7af3601eb99410eee65aaa7712"
     },
     "regionalCoverage": {
@@ -5999,7 +7564,7 @@
     },
     "sourceMetadata": {
       "bytes": 3577,
-      "path": "family-api-artifacts.json",
+      "role": "ci-artifact-metadata",
       "sha256": "e1eeabab0ce014938740288f047ae1b2eb2005e828fd3ba87e15a6b778c39205"
     },
     "sourceVersion": "c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c",

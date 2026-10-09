@@ -169,8 +169,8 @@ The following measurements use the successful CI generator built with Rust 1.99.
 `9c4560819c8259bc564e91c0d0c682ad3dc00f1869e53812c9d13b62b223e6ed`, simulation source
 `c18b5846c45ccf29109220d3a6a0afa08d9d1dd167c2771d4c49211c2cdec44c` and semantic algorithm digest
 `748bec38e41505d8944600a4ac99b3e40a11c7a635bb19109d4a41397e525282`. They were run sequentially on
-the local eight-CPU-quota, 8 GiB environment with no concurrent local build, DP experiment or codec
-audit. Times include the native process and report I/O. They are observed single-run wall times,
+an eight-CPU-quota, 8 GiB environment without competing compute workloads.
+Times include the native process and report I/O. They are observed single-run wall times,
 not distributions from repeated timing trials.
 
 | Unchanged real request context | Record every job independently | Family reuse | Measured ratio |
@@ -273,7 +273,7 @@ All 365,000 grid jobs passed. The fast path recorded 292 native families and ser
 
 The complete evidence was downloaded independently: eight shard archives plus the CI audit and published dictionary. All ten downloads matched GitHub API byte lengths and SHA256 digests; every ZIP passed CRC checks and path validation before extraction. Local `aggregate_basis_families.py` then repeated all receipt, actual-master scope, mapping, curve and dictionary checks. It repacked all 4,620 regional conditional programs with the identical native binary, using zero DP calls. Each generated archive exactly matched the retained archive.
 
-The local and CI aggregate/analysis JSON agree after excluding only newly measured compression durations and the enclosing analysis-file digest/length, which are separately checked against each full file. The complete index, gzip archive and XZ archive are **byte-for-byte identical** between the independent local rebuild and the CI publication.
+The independently reproduced and CI aggregate/analysis JSON agree after excluding only newly measured compression durations and the enclosing analysis-file digest/length, which are separately checked against each full file. The complete index, gzip archive and XZ archive are **byte-for-byte identical** between the independent reproduction and the CI publication.
 
 | Complete merged dictionary | Actual bytes |
 |---|---:|
@@ -296,9 +296,35 @@ table; the two identity counts cannot be added without computing their union.
 
 Independent publication receipt: `publication-comparison.json`, SHA256 `054caee98392d643b112575415e03c95241ee00f294e5401ee5838aa758470eb`. Published XZ SHA256: `8e374352a575fdd700e7b0a98f9396e998593ffa4db2fb0198658998c0572113`.
 
+## Source-pinned CI verification
+
+Commit [`2f17bac`](https://github.com/empty-sekai/ournotes-deck/commit/2f17bac2b12c5459c56b4e87b647c83465821204)
+passes [general CI](https://github.com/empty-sekai/ournotes-deck/actions/runs/37883577481),
+[Chromium Worker checks](https://github.com/empty-sekai/ournotes-deck/actions/runs/37883577449), and the
+[complete LUCK workflow](https://github.com/empty-sekai/ournotes-deck/actions/runs/37883577487).
+The full TW and JP Miss comparisons and the combined Miss/minimum cold/warm gate all pass.
+These CI interactions use the declared catalogue-anchor snapshots; the original PR40 measurements
+above retain their own request and roster identities.
+
+The published input bundle matches the measured bundle exactly, including all 715 catalogue/input
+files, 327 native source files and the generator. Independent verification checks all five merged
+indexes and all ten gzip/XZ archives from the base/single and minimum-family publications. Every
+published index and compressed file is byte-identical to the audited counterpart, and every
+compression round trip recovers its complete TAR.
+
+The base/single stage reuses **all 292 LUCK charts through exact-input cache hits**, with **zero
+new native dependency plans and zero generated programs**. These are current-run counters for
+that stage. Its 14,236 retained regional program records describe the existing table. The
+minimum-family validation remains a separate cold grid and independently covers all 692 regional
+records, including the 400 explicit non-LUCK records.
+
+The [measurement audit](luck-response-family-audit.json) includes the workflow and publication
+verification receipts. Receipt roles identify inputs, outputs and verification records by content
+hash; downloadable CI records additionally retain their public artifact identities.
+
 ## Reversible block sharing on the measured native source
 
-The block-sharing experiment was repeated on three final-source dictionaries: the recovered PR40 `short-newcomer-score` and `long-newcomer-score` request/roster contexts, and `jp-10000300-easy`. The substituted skill experiment remains the same declared real-master parameter kernel. Each dictionary contains 27 conditional programs; these measurements are three real samples, not a full-catalogue estimate for the prototype codec.
+The block-sharing experiment uses three source-pinned dictionaries: the original PR40 `short-newcomer-score` and `long-newcomer-score` request/roster contexts, and `jp-10000300-easy`. The substituted skill experiment remains the same declared real-master parameter kernel. Each dictionary contains 27 conditional programs; these measurements are three real samples, not a full-catalogue estimate for the prototype codec.
 
 | Context | Native / prefix index + payload | Native / prefix gzip9 | Native / prefix XZ6 |
 |---|---:|---:|---:|
