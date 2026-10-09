@@ -272,13 +272,24 @@ jobs:
         run: |
           python3 tools/luck-tables/validate_minimum_basis.py work/shared/catalogue/jp/inputs/benchmark.json \
             --case jp-10000300-easy --generator work/shared/bin/luck_response --output work/interactions/jp
-      - name: Compare all real Miss-gauge interaction configurations with independent original programs
+      - name: Compare all TW Miss-gauge configurations with independent original programs
         if: always() && steps.verify-inputs.outcome == 'success'
         run: |
           python3 tools/luck-tables/validate_miss_gauge.py work/shared/catalogue/tw/inputs/benchmark.json \
             --generator work/shared/bin/luck_response --source . --output work/interactions/miss-tw
+      - name: Compare all JP Miss-gauge configurations with independent original programs
+        if: always() && steps.verify-inputs.outcome == 'success'
+        run: |
           python3 tools/luck-tables/validate_miss_gauge.py work/shared/catalogue/jp/inputs/benchmark.json \
             --generator work/shared/bin/luck_response --source . --output work/interactions/miss-jp
+      - name: Verify combined Miss and minimum-basis cold and warm materialization
+        if: always() && steps.verify-inputs.outcome == 'success'
+        run: |
+          python3 tools/luck-tables/validate_miss_basis.py work/shared/catalogue/tw/inputs/data.json \
+            work/shared/catalogue/tw/inputs/snapshot.json \
+            work/shared/catalogue/tw/inputs/requests/tw-10006103-expert.json \
+            --generator work/shared/bin/luck_response --source . \
+            --output work/interactions/miss-basis-tw --timeout-seconds 600
       - name: Preserve native grid, original-DP comparisons, cold/warm queries and control evidence
         if: always()
         uses: actions/upload-artifact@v4

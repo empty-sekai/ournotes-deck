@@ -48,7 +48,9 @@ pipeline = storage.pipeline
 FORMAT = 'ournotes-deck.luck-miss-gauge-validation/1'
 CASE_FORMAT = 'ournotes-deck.luck-miss-gauge-chart/1'
 CONTRACT = 'canonical-miss-gauge-deltas/1'
-IDENTITY_BYTES = 128 << 20
+# All 631 original identities must fit before any probability propagation.
+# The longest pinned TW chart retains about 184 MB for this complete grid.
+IDENTITY_BYTES = 256 << 20
 PROGRAM_BYTES = 32 << 20
 WITNESSES = (('base', ()), ('two-level1', (1, 1)), ('one-level2', (2,)),
              ('level1-plus-level2', (1, 2)), ('one-level3', (3,)), ('level2-plus-level1', (2, 1)))
@@ -209,52 +211,103 @@ def make_specs(data):
     return specs, receipt_value
 
 
-def program_report(report, spec, hashes, spec_sha, source):
+def program_report(report, spec, hashes, spec_sha, source, *, propagates=True):
+    """Validate the same complete native protocol for admission and propagation."""
     compare.validate_provenance(report, hashes, spec_sha)
     jobs, canonical = spec['jobs'], spec['canonicalMissGauge']
+    mode, status = ('programs', 'success') if propagates else ('identify', 'identified')
     contract = CONTRACT if canonical else 'native-ordered-actions/1'
-    if (report.get('format') != storage.REPORT or report.get('mode') != 'programs'
+    if (type(propagates) is not bool or type(canonical) is not bool or not jobs
+            or spec.get('mode') != mode or spec.get('identityBytes') != IDENTITY_BYTES
+            or spec.get('programBytes') != PROGRAM_BYTES or spec.get('canonicalStartMinimum') is not False
+            or report.get('format') != storage.REPORT or report.get('mode') != mode
             or report.get('sourceVersion') != source or report.get('canonicalMissGauge') is not canonical
             or report.get('canonicalStartMinimum') is not False
-            or any(report.get(field) is not True for field in ('complete', 'probabilityComplete', 'identificationComplete'))
             or compare.source_version(report) != source):
-        raise ValueError('complete original/canonical programs do not match the requested native mode and source')
+        raise ValueError('original/canonical programs do not match the requested native mode, source and allowances')
     storage.digest(report['context']['fingerprint'])
+    stats = report.get('stats', {})
+    if not propagates:
+        if (type(stats.get('propagationCalls')) is not int or stats['propagationCalls'] != 0
+                or stats.get('propagationMs') != 0):
+            raise ValueError('Miss identity preflight must perform zero DP propagations')
+        refused = [row for row in report.get('jobs', []) if row.get('status') != 'identified']
+        capacity = [row for row in refused if row.get('status') == 'capacity']
+        if capacity:
+            first = capacity[0]
+            raise ValueError(f'Miss identity preflight capacity refusal before any DP: '
+                             f'{len(capacity)}/{len(jobs)} jobs; identityBytes={IDENTITY_BYTES}, '
+                             f'programBytes={PROGRAM_BYTES}; first {first.get("name")}: {first.get("error")}')
+    if (any(report.get(field) is not True for field in ('complete', 'identificationComplete'))
+            or report.get('probabilityComplete') is not propagates):
+        raise ValueError('complete original/canonical programs do not match the requested native completion phase')
     programs = report.get('programs', [])
-    if not 1 <= len(programs) <= len(jobs):
+    if not isinstance(programs, list) or not 1 <= len(programs) <= len(jobs):
         raise ValueError('native Miss experiment has no bounded program set')
     fingerprints = []
     rows = pipeline.job_results(report, jobs)
     for ordinal, program in enumerate(programs):
         fingerprints.append(storage.digest(program.get('fingerprint')))
         representative = program.get('representativeJobIndex')
-        if (program.get('programIndex') != ordinal or program.get('sourceVersion') != source
-                or program.get('status') != 'success' or program.get('response', {}).get('status') != 'success'
+        if (type(program.get('programIndex')) is not int or program['programIndex'] != ordinal
+                or program.get('sourceVersion') != source or program.get('status') != status
                 or program.get('operatorContract') != contract
                 or type(representative) is not int or not 0 <= representative < len(jobs)
                 or rows[jobs[representative]['name']].get('programIndex') != ordinal):
-            raise ValueError('a native Miss representative is missing its original response, source or contract')
-        compare.validate_curve(program['response']['curve'])
+            raise ValueError('a native Miss representative is missing its requested status, source or contract')
+        if propagates:
+            if not isinstance(program.get('response'), dict) or program['response'].get('status') != 'success':
+                raise ValueError('a native Miss representative lacks its original probability response')
+            compare.validate_curve(program['response']['curve'])
+        elif ('response' not in program or program['response'] is not None
+              or program.get('propagationMs', 0) != 0):
+            raise ValueError('Miss identity preflight must retain identified programs with null responses and zero DP')
     if len(set(fingerprints)) != len(fingerprints):
         raise ValueError('native Miss report repeats a complete program identity')
     used, mapping = set(), {}
     for ordinal, job in enumerate(jobs):
         row = rows[job['name']]; index = row.get('programIndex')
-        if (type(index) is not int or not 0 <= index < len(programs) or row.get('jobIndex') != ordinal
-                or row.get('programFingerprint') != fingerprints[index] or row.get('status') != 'success'
+        if (type(index) is not int or not 0 <= index < len(programs)
+                or type(row.get('jobIndex')) is not int or row['jobIndex'] != ordinal
+                or row.get('programFingerprint') != fingerprints[index] or row.get('status') != status
                 or row.get('operatorContract') != contract):
             raise ValueError('a requested actual skill configuration lacks its original/canonical native program')
         used.add(index)
-        mapping[job['name']] = {'fingerprint': fingerprints[index], 'curve': programs[index]['response']['curve']}
-    stats = report.get('stats', {})
-    if (used != set(range(len(programs))) or stats.get('sourceJobs') != len(jobs)
+        mapping[job['name']] = {'fingerprint': fingerprints[index],
+                              'curve': programs[index]['response']['curve'] if propagates else None}
+    counters = ('sourceJobs', 'compiledJobs', 'uniqueRetainedPrograms', 'propagationCalls', 'exactProgramAliases',
+                'identityBudgetBytes', 'programBudgetBytes', 'retainedIdentityBytes',
+                'compiledProgramPeakBytes', 'temporaryIdentityPeakBytes')
+    if (any(type(stats.get(field)) is not int or stats[field] < 0 for field in counters)
+            or used != set(range(len(programs))) or stats.get('sourceJobs') != len(jobs)
             or stats.get('compiledJobs') != len(jobs) or stats.get('uniqueRetainedPrograms') != len(programs)
-            or stats.get('propagationCalls') != len(programs)
+            or stats.get('propagationCalls') != (len(programs) if propagates else 0)
             or stats.get('exactProgramAliases') != len(jobs) - len(programs)
             or stats.get('identityBudgetBytes') != IDENTITY_BYTES
-            or stats.get('programBudgetBytes') != PROGRAM_BYTES):
+            or stats.get('programBudgetBytes') != PROGRAM_BYTES
+            or not 0 < stats['retainedIdentityBytes'] <= IDENTITY_BYTES
+            or not 0 < stats['compiledProgramPeakBytes'] <= PROGRAM_BYTES
+            or not 0 < stats['temporaryIdentityPeakBytes'] <= IDENTITY_BYTES):
         raise ValueError('native Miss work counters omit jobs, propagations or the explicit identity allowance')
+    for row in [*programs, *rows.values()]:
+        if (type(row.get('compiledBytes')) is not int or not 0 < row['compiledBytes'] <= stats['compiledProgramPeakBytes']
+                or type(row.get('identityBytes')) is not int
+                or not 0 < row['identityBytes'] <= stats['temporaryIdentityPeakBytes']):
+            raise ValueError('native Miss program identity/compiled bytes exceed the reported budget peaks')
     return mapping
+
+
+def bind_preflight(identified_report, identified, propagated_report, propagated):
+    """Bind every expensive response to its already admitted complete identity."""
+    for field in ('context', 'sharedFingerprint', 'dependencyDescriptor', 'capabilities'):
+        if identified_report.get(field) != propagated_report.get(field):
+            raise ValueError('Miss propagation changed its preflight native input or selected-source dependency')
+    if not identified or set(identified) != set(propagated):
+        raise ValueError('Miss propagation changed its complete preflight job set')
+    for name, value in identified.items():
+        if value['fingerprint'] != propagated[name]['fingerprint']:
+            raise ValueError('Miss propagation changed its preflight program fingerprint: ' + name)
+    return {'complete': True, 'jobs': len(identified), 'allProgramFingerprintsMatch': True}
 
 
 def compare_probability_curves(original, canonical):
@@ -332,6 +385,63 @@ def pack(report_path, report, generator, output, source, mode, timeout):
             'compression': compressed, 'globalSkillCombinationAliasesStored': False}
 
 
+def run_program_phases(specs, paths, generator, source, hashes, output, result, timeout=None):
+    """Complete both zero-DP admissions before starting either expensive run."""
+    phases = ('original', 'canonical')
+    if (set(specs) != {phase + '.json' for phase in phases}
+            or specs['original.json']['jobs'] != specs['canonical.json']['jobs']):
+        raise ValueError('original/canonical Miss phases must request the same complete job set')
+    preflight_specs = {}
+    for phase in phases:
+        spec = specs[phase + '.json']
+        pipeline.write(output / 'specs' / (phase + '.json'), spec)
+        name = phase + '-preflight'
+        preflight_specs[phase] = {**copy.deepcopy(spec), 'mode': 'identify'}
+        spec_path = output / 'specs' / (name + '.json')
+        pipeline.write(spec_path, preflight_specs[phase])
+        result['phases'][name] = {'spec': receipt(spec_path, output), 'status': 'pending',
+                                 'mode': 'identify', 'propagates': False}
+    result['preflight'] = {'complete': False, 'requiredPhases': [phase + '-preflight' for phase in phases]}
+    pipeline.write(output / 'validation.json', result)
+
+    def run_phase(name, spec, propagates, previous=None):
+        spec_path, report_path = output / 'specs' / (name + '.json'), output / (name + '.json')
+        phase = {'spec': receipt(spec_path, output), 'status': 'running',
+                 'mode': spec['mode'], 'propagates': propagates}
+        result['phases'][name] = phase
+        pipeline.write(output / 'validation.json', result)
+        began = time.monotonic()
+        try:
+            storage.call([generator, paths['data'], paths['snapshot'], paths['request'], spec_path, report_path],
+                         report_path.with_suffix('.log'), timeout)
+            report = pipeline.read(report_path)
+            phase.update(report=receipt(report_path, output), nativeStats=report.get('stats'))
+            mapping = program_report(report, spec, hashes, file_hash(spec_path), source, propagates=propagates)
+            if previous is not None:
+                phase['preflightBinding'] = bind_preflight(*previous, report, mapping)
+            phase['status'] = 'success'
+            return report, mapping
+        except (OSError, ValueError, KeyError, TypeError, IndexError, subprocess.SubprocessError) as error:
+            phase.update(status='error', error=pipeline.error_text(error))
+            raise
+        finally:
+            phase['wallMs'] = (time.monotonic() - began) * 1000
+            pipeline.write(output / 'validation.json', result)
+
+    preflights = {phase: run_phase(phase + '-preflight', preflight_specs[phase], False) for phase in phases}
+    for field in ('context', 'sharedFingerprint', 'dependencyDescriptor', 'capabilities'):
+        if preflights['original'][0].get(field) != preflights['canonical'][0].get(field):
+            raise ValueError('original/canonical preflights changed a resolved native input or selected-source dependency')
+    result['preflight'].update(complete=True, propagationCalls=0,
+                              identifiedJobs=sum(len(value[1]) for value in preflights.values()),
+                              bothPassedBeforeAnyPropagation=True)
+    pipeline.write(output / 'validation.json', result)
+    reports, mappings = {}, {}
+    for phase in phases:
+        reports[phase], mappings[phase] = run_phase(phase, specs[phase + '.json'], True, preflights[phase])
+    return reports, mappings
+
+
 def run_case(case, paths, generator, source, data, output, mode, timeout=None):
     hashes = pipeline.provenance(paths)
     output.mkdir(parents=True, exist_ok=True)
@@ -343,19 +453,7 @@ def run_case(case, paths, generator, source, data, output, mode, timeout=None):
     try:
         specs, recipe = make_specs(data)
         pipeline.write(output / 'specs/receipt.json', recipe)
-        results, mappings = {}, {}
-        for name, spec in specs.items():
-            spec_path, report_path = output / 'specs' / name, output / name
-            pipeline.write(spec_path, spec)
-            began = time.monotonic()
-            storage.call([generator, paths['data'], paths['snapshot'], paths['request'], spec_path, report_path],
-                         report_path.with_suffix('.log'), timeout)
-            report = pipeline.read(report_path)
-            phase = name.removesuffix('.json')
-            result['phases'][phase] = {'spec': receipt(spec_path, output), 'report': receipt(report_path, output),
-                                       'wallMs': (time.monotonic() - began) * 1000, 'nativeStats': report.get('stats')}
-            mappings[phase] = program_report(report, spec, hashes, file_hash(spec_path), source)
-            results[phase] = report
+        results, mappings = run_program_phases(specs, paths, generator, source, hashes, output, result, timeout)
         for field in ('context', 'sharedFingerprint', 'dependencyDescriptor', 'capabilities'):
             if results['original'].get(field) != results['canonical'].get(field):
                 raise ValueError('original/canonical runs changed a resolved native input or selected-source dependency')

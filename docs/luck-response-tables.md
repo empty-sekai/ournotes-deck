@@ -1,8 +1,12 @@
 # Offline LUCK response tables and skill interactions
 
 The [recording-family and Miss-gauge extension](luck-response-family-reuse.md) documents the new
-bounded recording reuse, native rounding quotient and complete-chart family audit. Measurements
-below retain their original dated source and scope.
+bounded recording reuse, native rounding quotient and complete-chart family audit. Its
+[2026-10-09 audit](luck-response-family-audit.json) covers all 692 regional records, with 365,000
+minimum-family parameter jobs on all 292 natural LUCK charts requiring 292 grid recordings.
+The merged 2,364-program family dictionary is 744,752 B in U24/XZ; the separate complete base/single
+dictionary is 4,599,344 B in U24/XZ on that native source. These are different table scopes.
+Measurements below retain their original dated source and scope.
 
 The complete published TW and JP catalogues have been generated and audited: **692 regional
 chart/difficulty records are accounted for, including all 292 charts with actual LUCK missions**.

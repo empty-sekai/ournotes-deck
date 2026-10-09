@@ -2,7 +2,12 @@
 
 The [recording-family extension](../../docs/luck-response-family-reuse.md) adds bounded minimum-family
 recording reuse, opt-in Miss-gauge canonical identities, complete-chart family validation and
-independent same-binary dictionary auditing. It includes runnable commands and current evidence scope.
+independent same-binary dictionary auditing. The [2026-10-09 audit](../../docs/luck-response-family-audit.json)
+records all 365,000 minimum-family parameter jobs over 292 natural LUCK charts: 292 grid recordings,
+2,364 merged conditional programs and a 744,752 B U24/XZ dictionary. The separate complete base/single
+dictionary is 4,599,344 B in U24/XZ on that source. The extension includes runnable commands,
+original PR40 input comparisons and the scope of each table. Historical measurements below retain
+their explicitly linked earlier source.
 
 This tool generates reusable joint LUCK probability responses from actual published charts and master skills. The primary workflow covers the **complete TW and JP chart catalogues**, including every difficulty, and identifies interacting skill combinations through their complete native controller programs. It does not estimate every entry by repeatedly simulating random seeds.
 
