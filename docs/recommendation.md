@@ -28,9 +28,33 @@ event windows and local-event context, or `eventContext.rewardProjection:true` f
 Explicit local records and reward projection are mutually exclusive. Projection runs private synthetic counters:
 the native per-result EP amount and CP increment do not depend on previous balances, even when Int32 counters wrap.
 It does not validate resource affordability, predict terminal balances, or include cumulative achievement/loop
-rewards. The answer echoes `metric.rewardProjection:true`. Conditional items still need explicit server-selected
-rewards and local context. A played result with explicit context requires the event's local record. Existing balances are
-excluded from the payoff. A challenge Live spends these points and cannot select the earnings metric.
+rewards. The answer echoes `metric.rewardProjection:true`. A played point result with explicit context requires
+the event's local record. Existing balances are excluded from the payoff. A challenge Live spends these points and cannot select the earnings metric.
+
+## Event-item rewards
+
+`metric:{"kind":"eventItems","eventId":7,"resourceType":4,"resourceId":88,"consumption":1}` maximizes
+items of the requested resource. The lower-level metric is `rankedEventItems` (`Metric::RankedEventItems`).
+Use `eventContext.rewardProjection:true` with the declared result clock and event windows; this projection
+requires neither account balances nor selected reward IDs. An event outside its held result-time window has
+zero payoff.
+
+Each terminal score resolves its result grade under the selected solo, room or Skip model. Skip uses the configured
+fixed result grade. The event's `liveEventRewardGroup` or `challengeLiveEventRewardGroup` selects rows by
+`eventGroup` in the corresponding reward table. The supported deterministic domain requires exactly one row for
+the exact grade, with `probability` marker 10000. This check applies to the entire grade before filtering by the
+requested resource. Missing grades, multiple rows and other probability markers are explicit unsupported inputs.
+
+Only that grade's reward is counted. A different resource gives zero for the requested metric; rewards from lower
+grades are not accumulated. The quantity uses member and Snap `EVENT_ITEM` effects and the route's item multiplier
+(the first boost-rate component): `resourceCount * (10000 + bonus) * itemRate / 10000`, with native Int32 operations
+and truncation. Each terminal outcome is settled before averaging; the mean score is not used to select a grade.
+
+`capabilities().eventItemRewards` declares `selection:exactResultGrade`, `eventGroupField:eventGroup`,
+`rowsPerGrade:1`, and `probabilityMarker:10000`. Clients can require this contract before submitting an item
+projection. Counter increments, affordability and cumulative achievement rewards remain separate quantities.
+
+## Context and output
 
 The event song-ranking choice uses `goal:{"kind":"challengeLive","challengeMusicId":...,"difficulty":"expert"}`
 with `metric:{"kind":"score"}` and the applicable held `eventIds`. `capabilities().eventMusicRanking` describes this
@@ -44,8 +68,8 @@ Accuracy is a deterministic declared play: Greats are spread evenly over judged 
 applied to remaining Just-eligible notes. It is not a distribution of human errors. Gekisou-off goals require Just 0.
 
 Event requests accept `eventContext.resultClock` with `kind: played|skip`, `serverNowJstTicks`, and nullable
-`liveStartJstTicks` for a played live. Ticks remain 64-bit integers in the raw JSON text. Conditional event-item
-metrics still require explicit selected server rewards. `room` supplies the Battle/Arena score aggregation policy.
+`liveStartJstTicks` for a played live. Ticks remain 64-bit integers in the raw JSON text.
+`room` supplies the Battle/Arena score aggregation policy.
 Only Challenge and power with `eventParameter:true` read event IDs for power bonuses.
 
 Answers use status `ok`, `incomplete`, `invalid`, or `failed`; input issues never masquerade as an empty successful

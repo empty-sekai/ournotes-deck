@@ -48,11 +48,6 @@ pub(crate) fn validate_payoff(
                 "challenge-point earnings require an ordinary played/skip result; challenge Live spends points".into(),
             ));
         }
-        if matches!(metric, Metric::ConditionalClientEventItems { .. }) && input.selected_rewards.is_none() {
-            return Err(Error::Unsupported(
-                "UnknownServerAuthority: selectedRewards are required for conditional items".into(),
-            ));
-        }
     }
     match (request.objective.inner(), metric) {
         (Objective::Power { .. }, Metric::Power)
@@ -64,7 +59,7 @@ pub(crate) fn validate_payoff(
             | Metric::ScoreAndLifeAtLeast { .. }
             | Metric::ClientEventPoints { .. }
             | Metric::ClientChallengePoints { .. }
-            | Metric::ConditionalClientEventItems { .. },
+            | Metric::RankedEventItems { .. },
         ) => Ok(()),
         _ => Err(Error::Input("metric does not match execution".into())),
     }
@@ -75,9 +70,7 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
         (Execution::Power { .. }, _) => PlayerGoal::Power,
         (
             _,
-            Metric::ClientEventPoints { .. }
-            | Metric::ClientChallengePoints { .. }
-            | Metric::ConditionalClientEventItems { .. },
+            Metric::ClientEventPoints { .. } | Metric::ClientChallengePoints { .. } | Metric::RankedEventItems { .. },
         ) => PlayerGoal::EventFarming,
         (_, Metric::ScoreAtLeast { .. } | Metric::CappedScore { .. } | Metric::ScoreAndLifeAtLeast { .. }) => {
             PlayerGoal::StableTarget
@@ -130,9 +123,7 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
         Metric::ClientChallengePoints { .. } => {
             "maximize expected newly earned client challenge points per declared Live Boost consumption; no deck event-point bonus"
         }
-        Metric::ConditionalClientEventItems { .. } => {
-            "maximize expected selected resource quantity conditional on explicitly supplied server rewards"
-        }
+        Metric::RankedEventItems { .. } => "maximize expected resource quantity selected by each terminal result grade",
     };
     let mut assumptions = vec!["supplied roster progression and player bonuses; no upgrades or costs inferred"];
     if let Execution::Live { play, .. } = &r.execution {
@@ -148,7 +139,9 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
             "native lottery probability law; certified intervals remain explicit until sufficient to prove ranking",
         );
     }
-    if r.metric.event().is_some() {
+    if matches!(r.metric, Metric::RankedEventItems { .. }) {
+        assumptions.push("one reward row per exact grade with probability marker 10000; quantities include EventItem effects and the declared item multiplier");
+    } else if r.metric.event().is_some() {
         assumptions
             .push("client counters under explicit clocks, consumption and peer inputs; no server award authority");
     }

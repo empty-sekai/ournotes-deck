@@ -32,8 +32,8 @@ Use ournotes-deck recommend --help for its input and progress options.
 with snap skills over the native member-order roots of the finite law in --seed-law (JSON
 [[rootSeed,positiveWeight],...]); --play is a judgement stream and defaults to the theoretical best play; --gekisou
 plays the live with Gekisou on.
-objectives: --objective power|score|client-event-points|conditional-client-event-items [--event-id ID]
-conditional items also require --resource-type ID --resource-id ID and context.eventPayoff.selectedRewards
+objectives: --objective power|score|client-event-points|ranked-event-items [--event-id ID]
+ranked items also require --resource-type ID --resource-id ID; the exact result grade selects its reward
 scenario options: --scenario free|mission|battle|arena|challenge --scenario-music ID --context FILE
 --scenario-music is the special row ID for arena/challenge; --score always denotes the base chart.
 --context uses explicit powerSnapshot.eventIds and separate resultClock normalized DateTime ticks.
@@ -233,12 +233,12 @@ fn run(args: &[String]) -> Result<serde_json::Value, String> {
         return Err("--scenario-music requires --scenario".into());
     }
     let objective_name = objective_name.as_deref().unwrap_or(if cmd == "power" { "power" } else { "score" });
-    if !matches!(objective_name, "power" | "score" | "client-event-points" | "conditional-client-event-items") {
+    if !matches!(objective_name, "power" | "score" | "client-event-points" | "ranked-event-items") {
         return Err(format!(
-            "unknown objective {objective_name:?}; server-selected item rewards require an explicit reward adapter, never guessed drops"
+            "unknown objective {objective_name:?}; expected power, score, client-event-points or ranked-event-items"
         ));
     }
-    let item_objective = objective_name == "conditional-client-event-items";
+    let item_objective = objective_name == "ranked-event-items";
     let event_objective = objective_name == "client-event-points" || item_objective;
     let item_target = if item_objective {
         Some((
@@ -247,7 +247,7 @@ fn run(args: &[String]) -> Result<serde_json::Value, String> {
         ))
     } else {
         if resource_type.is_some() || resource_id.is_some() {
-            return Err("resource target options require conditional-client-event-items".into());
+            return Err("resource target options require ranked-event-items".into());
         }
         None
     };
@@ -376,20 +376,31 @@ fn run(args: &[String]) -> Result<serde_json::Value, String> {
             let event_input =
                 context_input.event_payoff.as_ref().ok_or("client-event-points requires context.eventPayoff")?;
             ctx.event_request(&data.master, event_input, event_id).map_err(|e| e.to_string())?;
-            if item_objective && event_input.selected_rewards.is_none() {
-                return Err("UnknownServerAuthority: context.eventPayoff.selectedRewards is required; [] means explicitly no selected rewards".into());
-            }
             ournotes_search::search::expectation::oracle_with_payoff_factory(
                 &pool,
                 &request,
                 &law,
                 || Ok(()),
                 |physical, terminal, _| {
-                    if let Some((ty,id))=item_target {
-                        let items=ctx.preview_event_items(&pool,&physical.as_deck(),event_input,event_id,terminal.final_score)?;
-                        ournotes_sim::scenario::item_payoff(&items,event_id,ty,id)
+                    if let Some((ty, id)) = item_target {
+                        let items = ctx.preview_event_items(
+                            &pool,
+                            &physical.as_deck(),
+                            event_input,
+                            event_id,
+                            terminal.final_score,
+                        )?;
+                        ournotes_sim::scenario::item_payoff(&items, event_id, ty, id)
                     } else {
-                        Ok(ctx.preview_event_points(&pool, &physical.as_deck(), event_input, event_id, terminal.final_score)?.points_for(event_id) as i128)
+                        Ok(ctx
+                            .preview_event_points(
+                                &pool,
+                                &physical.as_deck(),
+                                event_input,
+                                event_id,
+                                terminal.final_score,
+                            )?
+                            .points_for(event_id) as i128)
                     }
                 },
             )
@@ -403,21 +414,25 @@ fn run(args: &[String]) -> Result<serde_json::Value, String> {
             let ctx = context.as_ref().expect("validated context");
             let input = context_input.event_payoff.as_ref().expect("validated event input");
             for result in &out.results {
-                let terminal_previews = result
-                    .evaluation
-                    .outcomes
-                    .iter()
-                    .map(|o| {
-                        ctx.preview_event_points(
-                            &pool,
-                            &result.physical.as_deck(),
-                            input,
-                            target_event_id.expect("validated event id"),
-                            o.final_score,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| e.to_string())?;
+                let terminal_previews = if item_objective {
+                    Vec::new()
+                } else {
+                    result
+                        .evaluation
+                        .outcomes
+                        .iter()
+                        .map(|o| {
+                            ctx.preview_event_points(
+                                &pool,
+                                &result.physical.as_deck(),
+                                input,
+                                target_event_id.expect("validated event id"),
+                                o.final_score,
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| e.to_string())?
+                };
                 if item_objective {
                     item_previews.push(
                         result
@@ -444,7 +459,7 @@ fn run(args: &[String]) -> Result<serde_json::Value, String> {
             json!({"resolvedContext":resolved_output,"objective":objective_name,"targetEventId":target_event_id,
             "jsonNumberPolicy":"exact JSON integers; parse with arbitrary-precision integers (not JavaScript Number)","probabilityLaw":"explicit-finite-native-root-law","legacyStreamBaseSeed":"ignored; finite law is authoritative","arithmetic":"client-f32-i32; checked-i128-u128-expectation",
             "proofScope":"conditional on supplied finite root law and simulator supported domain; not inferred TickCount distribution",
-            "clientCounterPreviews":previews,"conditionalItemPreviews":item_previews,"itemTarget":item_target,"search":out}),
+            "clientCounterPreviews":previews,"rankedItemPreviews":item_previews,"itemTarget":item_target,"search":out}),
         );
     }
     if event_objective {

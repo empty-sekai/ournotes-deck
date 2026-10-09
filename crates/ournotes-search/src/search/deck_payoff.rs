@@ -1,9 +1,8 @@
-//! Payoffs the deck alone determines: Skip event points and challenge points at the configured result rank, and the
-//! selected item rewards of any route. Each is a nondecreasing function of one additive deck sum, the event bonus of
-//! its members and Snaps, so the canonical team Top-K needs no Live play: the payoff, then power, then the canonical
-//! member and Snap IDs rank every team exactly.
+//! Payoffs the deck alone determines: Skip event points, challenge points and ranked items at the configured result
+//! rank. Each is a nondecreasing function of one additive deck sum, the event bonus of its members and Snaps, so the
+//! canonical team Top-K needs no Live play: payoff, power, then canonical member and Snap IDs rank every team exactly.
 //!
-//! A played Live's event points, challenge points and score targets step with the local score of each order instead
+//! A played Live's event points, challenge points, ranked items and score targets step with the local score instead
 //! (a declared multiplayer room ranks its total, which is nondecreasing in the local score). Every order of a deck
 //! scores at most its power times the joint envelope's global coefficient, so the step of that cap bounds the payoff
 //! by the deck's bonus and power alone ([`ScoreSteps`]); the search then ranks by this bound and evaluates the decks
@@ -24,7 +23,7 @@ use ournotes_sim::{
     master::EventEffectRow,
     scenario::EventPayoffInput,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 fn unavailable(message: &str) -> Error {
     Error::Unsupported(format!("deck payoff bound unavailable: {message}"))
@@ -40,7 +39,7 @@ fn nonnegative_i32(value: i64) -> Result<i64, Error> {
 
 /// Audit the native order `value * (bonus + 10000) * rate / 10000`.
 /// The first product must fit even when the final rate is zero.
-fn point_product(value: i64, bonus: i64, rate: i64) -> Result<i128, Error> {
+pub(super) fn point_product(value: i64, bonus: i64, rate: i64) -> Result<i128, Error> {
     nonnegative_i32(value)?;
     nonnegative_i32(bonus)?;
     nonnegative_i32(rate)?;
@@ -59,7 +58,7 @@ fn challenge_product(value: i64, rate: i64) -> Result<i128, Error> {
 }
 
 /// Reproduce the native card's sum of `bonus_type` effects only after proving every cast/addition safe.
-fn card_bonus(effects: &[&EventEffectRow], card: EventCard<'_>, bonus_type: i64) -> Result<i64, Error> {
+pub(super) fn card_bonus(effects: &[&EventEffectRow], card: EventCard<'_>, bonus_type: i64) -> Result<i64, Error> {
     let mut sum = 0i64;
     for effect in effects.iter().filter(|e| e.event_bonus_type == bonus_type) {
         let (hit, rank) = match card {
@@ -123,8 +122,8 @@ impl ScoreSteps {
 enum Curve {
     /// Event points at a fixed result rank, `reward * (bonus + 10000) * rate / 10000`.
     Points { reward: i64, rate: i64 },
-    /// The selected rewards of the metric's resource, each `count * (bonus + 10000) * rate / 10000`.
-    Items { counts: Vec<i64>, rate: i64 },
+    /// One exact-grade reward. Its native products are checked even for a different target resource.
+    Items { count: i64, rate: i64, counted: bool },
     /// No card changes the payoff.
     Constant(i128),
     /// A bound of each order of a played Live: the step its score cap reaches.
@@ -135,23 +134,14 @@ impl Curve {
     fn value(&self, bonus: i64, power: i64) -> Result<i128, Error> {
         match self {
             Self::Points { reward, rate } => point_product(*reward, bonus, *rate),
-            Self::Items { counts, rate } => {
-                counts.iter().try_fold(0i128, |sum, &count| Ok(sum + point_product(count, bonus, *rate)?))
+            Self::Items { count, rate, counted } => {
+                let amount = point_product(*count, bonus, *rate)?;
+                Ok(if *counted { amount } else { 0 })
             }
             Self::Constant(value) => Ok(*value),
             Self::Steps(steps) => steps.value(bonus, power),
         }
     }
-}
-
-/// Event IDs of the local counters after a result's event stage: a normal Skip adds the held events it counts; every
-/// other route only updates existing counters (or fails for every deck alike).
-fn result_local_events(route: EventResultRoute, local: &[event::LocalEvent], holding: &[i64]) -> HashSet<i64> {
-    let mut ids: HashSet<_> = local.iter().map(|l| l.event_id).collect();
-    if route == EventResultRoute::NormalSkip {
-        ids.extend(holding);
-    }
-    ids
 }
 
 /// The bonus type, effect event and payoff curve of a request's deck-determined payoff, or of the per-order payoff
@@ -166,6 +156,13 @@ fn curve(
     if let Some(steps) = steps {
         return match *metric {
             Metric::ClientEventPoints { event_id } => Ok((event::EVENT_POINT, Some(event_id), Curve::Steps(steps))),
+            Metric::RankedEventItems { event_id, .. } => {
+                let context = request.objective.context().ok_or_else(|| unavailable("missing resolved context"))?;
+                let input = input.ok_or_else(|| unavailable("missing event payoff input"))?;
+                let q = context.event_request(pool.master, input, event_id)?;
+                let effect = q.holding_event_ids.contains(&event_id).then_some(event_id);
+                Ok((event::EVENT_ITEM, effect, Curve::Steps(steps)))
+            }
             Metric::ClientChallengePoints { .. } | Metric::ScoreAtLeast { .. } | Metric::ScoreAndLifeAtLeast { .. } => {
                 Ok((event::EVENT_POINT, None, Curve::Steps(steps)))
             }
@@ -219,72 +216,27 @@ fn curve(
                 (event::EVENT_POINT, Some(event_id), Curve::Points { reward, rate })
             })
         }
-        Metric::ConditionalClientEventItems { event_id, resource_type, resource_id }
-            if skip || matches!(request.objective.inner(), Objective::LiveScore { .. }) =>
-        {
+        Metric::RankedEventItems { event_id, resource_type, resource_id } if skip => {
             let q = context.event_request(master, input, event_id)?;
-            let choices = input.selected_rewards.as_ref().ok_or_else(|| unavailable("unknown selected rewards"))?;
-            let challenge =
-                matches!(q.route, EventResultRoute::ChallengePlayed { .. } | EventResultRoute::ChallengeSkip { .. });
+            let challenge = match q.route {
+                EventResultRoute::NormalSkip => false,
+                EventResultRoute::ChallengeSkip { event_id: selected } if selected == event_id => true,
+                _ => return Err(unavailable("ranked Skip items require a matching Skip route")),
+            };
+            let rank = event::skip_result_rank(master)?.rank;
+            if !q.holding_event_ids.contains(&event_id) {
+                return Ok((event::EVENT_ITEM, None, Curve::Constant(0)));
+            }
             let rate = if challenge {
                 event::challenge_point_bonus(master, i64::from(q.consumed_count))?[0]
             } else {
                 event::boost_bonus(master, i64::from(q.consumed_count))?[0]
             };
-            nonnegative_i32(rate)?;
-            let rows = if challenge { &master.challenge_live_event_rewards } else { &master.live_event_rewards };
-            let local = result_local_events(q.route, &q.local_events, &q.holding_event_ids);
-            // Each settled reward: its effect event (None: no local counter, no bonus) and, when it counts toward
-            // the metric, its resource count.
-            let mut settled: Vec<(Option<i64>, Option<i64>)> = Vec::new();
-            for choice in choices {
-                let row = rows.iter().find(|r| r.id == choice.reward_id);
-                if row.is_none() && q.route != EventResultRoute::NormalPlayed {
-                    continue;
-                }
-                let effect = if local.contains(&choice.event_id) {
-                    // Played Challenge uses the selected challenge event even when the reward names another event.
-                    let id = match q.route {
-                        EventResultRoute::ChallengePlayed { event_id } => event_id,
-                        _ => choice.event_id,
-                    };
-                    master.event(id).ok_or_else(|| unavailable("unknown reward effect event"))?;
-                    Some(id)
-                } else if matches!(q.route, EventResultRoute::NormalSkip | EventResultRoute::ChallengeSkip { .. }) {
-                    return Err(unavailable("a selected Skip reward has no local event"));
-                } else {
-                    None
-                };
-                let row = row.ok_or_else(|| unavailable("unknown normal event reward"))?;
-                let counted =
-                    choice.event_id == event_id && row.resource_type == resource_type && row.resource_id == resource_id;
-                settled.push((effect, counted.then_some(row.resource_count)));
-            }
-            // Every settled reward reads its effect event's bonus of each card; prove all of them native-safe.
-            let read: HashSet<i64> = settled.iter().filter_map(|&(effect, _)| effect).collect();
-            for id in read {
-                let effects = event::event_effects(master, id);
-                for m in &pool.members {
-                    let card = ournotes_sim::bonus::event_member(master, m);
-                    card_bonus(&effects, EventCard::Member(&card), event::EVENT_ITEM)?;
-                }
-                for s in &pool.snaps {
-                    card_bonus(&effects, EventCard::Snap(&ournotes_sim::bonus::event_snap(s)), event::EVENT_ITEM)?;
-                }
-            }
-            let counted: Vec<_> = settled.iter().filter_map(|&(effect, count)| count.map(|c| (effect, c))).collect();
-            let target = counted.first().and_then(|&(effect, _)| effect);
-            if counted.iter().any(|&(effect, _)| effect != target) {
-                return Err(unavailable("counted rewards read different effect events"));
-            }
-            let counts = counted.into_iter().map(|(_, c)| nonnegative_i32(c)).collect::<Result<Vec<_>, _>>()?;
-            let items = Curve::Items { counts, rate };
-            Ok(match target {
-                Some(_) => (event::EVENT_ITEM, target, items),
-                None => (event::EVENT_ITEM, None, Curve::Constant(items.value(0, 0)?)),
-            })
+            let row = event::ranked_event_reward(master, event_id, &q.route, rank)?;
+            let counted = row.resource_type == resource_type && row.resource_id == resource_id;
+            Ok((event::EVENT_ITEM, Some(event_id), Curve::Items { count: row.resource_count, rate, counted }))
         }
-        _ => Err(unavailable("requires a Skip point counter or a selected item reward")),
+        _ => Err(unavailable("requires a fixed-rank Skip payoff or played score steps")),
     }
 }
 
@@ -467,6 +419,7 @@ mod tests {
     use common::{Rng, Synth, replace_table, roster, set_column, short_chart, synth};
     use ournotes_sim::scenario::{ContextInput, Scenario};
     use serde_json::json;
+    use std::collections::HashSet;
 
     #[test]
     fn native_intermediate_wrapping_is_refused_even_at_zero_rate() {
@@ -522,7 +475,8 @@ mod tests {
         replace_table(
             &mut data,
             "MasterEvent",
-            json!([{"_id":7,"_liveEventPointGroup":1,"_challengeLiveEventPointGroup":2}]),
+            json!([{"_id":7,"_liveEventPointGroup":1,"_challengeLiveEventPointGroup":2,
+                "_liveEventRewardGroup":37,"_challengeLiveEventRewardGroup":38}]),
         );
         replace_table(
             &mut data,
@@ -552,15 +506,17 @@ mod tests {
             &mut data,
             "MasterLiveEventReward",
             json!([
-                {"_id":11,"_resourceType":4,"_resourceId":88,"_resourceCount":3},
-                {"_id":12,"_resourceType":4,"_resourceId":88,"_resourceCount":7},
-                {"_id":13,"_resourceType":1,"_resourceId":5,"_resourceCount":100}
+                {"_id":11,"_eventGroup":37,"_group":5,"_scoreRank":2,"_probability":10000,
+                    "_resourceType":4,"_resourceId":88,"_resourceCount":10},
+                {"_id":13,"_eventGroup":39,"_group":37,"_scoreRank":2,"_probability":10000,
+                    "_resourceType":1,"_resourceId":5,"_resourceCount":100}
             ]),
         );
         replace_table(
             &mut data,
             "MasterChallengeLiveEventReward",
-            json!([{"_id":11,"_resourceType":4,"_resourceId":88,"_resourceCount":2}]),
+            json!([{"_id":11,"_eventGroup":38,"_group":5,"_scoreRank":2,"_probability":10000,
+                "_resourceType":4,"_resourceId":88,"_resourceCount":2}]),
         );
         data
     }
@@ -575,8 +531,7 @@ mod tests {
             "powerSnapshot":{"eventIds":[7],"capturedJstTicks":50},
             "resultClock":{"execution":"skip","serverNowJstTicks":99},
             "eventPayoff":{"consumedCount":0,"localEvents":[{"eventId":7,"points":0,"challengePoints":30,"added":[]}],
-                "eventWindows":[{"eventId":7,"startJstTicks":90,"endJstTicks":100}],
-                "selectedRewards":[{"eventId":7,"rewardId":11},{"eventId":7,"rewardId":12},{"eventId":7,"rewardId":13}]}
+                "eventWindows":[{"eventId":7,"startJstTicks":90,"endJstTicks":100}]}
         }))
         .unwrap();
         let context = input.resolve(&master, scenario, Some(1004), &[]).unwrap();
@@ -610,7 +565,7 @@ mod tests {
                         .preview_event_points(&pool, &deck.as_deck(), payoff, event_id, score)?
                         .challenge_points_for(event_id),
                 ),
-                Metric::ConditionalClientEventItems { event_id, resource_type, resource_id } => {
+                Metric::RankedEventItems { event_id, resource_type, resource_id } => {
                     let items = context.preview_event_items(&pool, &deck.as_deck(), payoff, event_id, score)?;
                     ournotes_sim::scenario::item_payoff(&items, event_id, resource_type, resource_id)?
                 }
@@ -651,7 +606,7 @@ mod tests {
 
     #[test]
     fn every_canonical_skip_team_is_bounded_and_ranked_exactly() {
-        let items = Metric::ConditionalClientEventItems { event_id: 7, resource_type: 4, resource_id: 88 };
+        let items = Metric::RankedEventItems { event_id: 7, resource_type: 4, resource_id: 88 };
         for scenario in [Scenario::Free(10), Scenario::Challenge(70)] {
             check_exact(scenario, Metric::ClientEventPoints { event_id: 7 });
             check_exact(scenario, items.clone());

@@ -1,8 +1,7 @@
-//! Event bonuses, score ranks and event points, as the game client computes them.
+//! Event bonuses, result grades and per-result reward calculations.
 //!
-//! The awarded event points are decided by the game server; the functions here reproduce the client's own
-//! computation (the value it shows until it syncs with the server). No event has run on the current master data, so
-//! these functions are exercised with synthetic tables.
+//! Counter previews and exact-grade item projections use explicit result inputs. They compute quantities without
+//! changing account balances or inventory.
 
 use serde::{Deserialize, Serialize};
 
@@ -766,6 +765,81 @@ pub fn preview_client_event_items(
         });
     }
     Ok(out)
+}
+
+/// A deterministic projection for one event's exact result grade.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RankedEventItemRequest {
+    pub route: EventResultRoute,
+    pub consumed_count: i32,
+    pub event_id: i64,
+    pub score_rank: i64,
+}
+
+/// Select the exact grade from the route's event group. The supported deterministic
+/// domain has one row for that grade with probability marker 10000.
+pub fn ranked_event_reward<'m>(
+    master: &'m Master,
+    event_id: i64,
+    route: &EventResultRoute,
+    score_rank: i64,
+) -> Result<&'m crate::master::EventItemRewardRow, Error> {
+    let event = master.event(event_id).ok_or_else(|| Error::Master(format!("unknown event {event_id}")))?;
+    let challenge = match route {
+        EventResultRoute::ChallengePlayed { event_id: selected }
+        | EventResultRoute::ChallengeSkip { event_id: selected } => {
+            if *selected != event_id {
+                return Err(Error::Input("challenge reward event differs from the selected event".into()));
+            }
+            true
+        }
+        EventResultRoute::NormalPlayed | EventResultRoute::NormalSkip => false,
+    };
+    let group = if challenge { event.challenge_live_event_reward_group } else { event.live_event_reward_group };
+    if group <= 0 {
+        return Err(Error::Unsupported(format!("event {event_id} has no reward group for this route")));
+    }
+    let rank = score_rank;
+    let rows = if challenge { &master.challenge_live_event_rewards } else { &master.live_event_rewards };
+    let mut matching = rows.iter().filter(|row| row.event_group == group && row.score_rank == rank);
+    let row = matching
+        .next()
+        .ok_or_else(|| Error::Unsupported(format!("event {event_id} has no reward row for grade {rank}")))?;
+    if matching.next().is_some() || row.probability != 10000 {
+        return Err(Error::Unsupported(format!(
+            "event {event_id} grade {rank} requires one reward row with probability marker 10000"
+        )));
+    }
+    Ok(row)
+}
+
+/// Project the unique grade reward with EventItem effects and the route's item multiplier.
+/// The request declares a result grade and consumption; no inventory or event counter is mutated.
+pub fn preview_ranked_event_items(
+    master: &Master,
+    request: &RankedEventItemRequest,
+    members: &[Option<&EventMember>],
+    snaps: Option<&[Option<&EventSnap>]>,
+) -> Result<EventItemPreview, Error> {
+    let row = ranked_event_reward(master, request.event_id, &request.route, request.score_rank)?;
+    let rate =
+        if matches!(request.route, EventResultRoute::ChallengePlayed { .. } | EventResultRoute::ChallengeSkip { .. }) {
+            challenge_point_bonus(master, i64::from(request.consumed_count))?[0]
+        } else {
+            boost_bonus(master, i64::from(request.consumed_count))?[0]
+        };
+    let bonus = total_effect_10000_deck(&[event_effects(master, request.event_id)], members, snaps, EVENT_ITEM)?;
+    Ok(EventItemPreview {
+        rewards: vec![ClientEventItem {
+            event_id: request.event_id,
+            reward_id: row.id,
+            resource_type: row.resource_type,
+            resource_id: row.resource_id,
+            amount: event_item_amount(row.resource_count, bonus, rate),
+        }],
+        missing_reward_ids: Vec::new(),
+    })
 }
 
 const TICKS_PER_SECOND: i64 = 10_000_000;

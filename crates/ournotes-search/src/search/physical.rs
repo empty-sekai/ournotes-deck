@@ -190,7 +190,7 @@ impl Engine<'_, '_> {
                     self.metric,
                     Metric::ClientEventPoints { .. }
                         | Metric::ClientChallengePoints { .. }
-                        | Metric::ConditionalClientEventItems { .. }
+                        | Metric::RankedEventItems { .. }
                 ))
             || (!matches!(traversal, Traversal::Session | Traversal::Fixed)
                 && super::team_power::applies(&self.request.objective, self.metric))
@@ -683,7 +683,7 @@ pub(crate) fn payoff_of(
             .expect("validated context")
             .preview_event_points(pool, &p.as_deck(), event_input.expect("validated event input"), event_id, score)?
             .challenge_points_for(event_id) as i128),
-        Metric::ConditionalClientEventItems { event_id, resource_type, resource_id } => {
+        Metric::RankedEventItems { event_id, resource_type, resource_id } => {
             let items = request.objective.context().expect("validated context").preview_event_items(
                 pool,
                 &p.as_deck(),

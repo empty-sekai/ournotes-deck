@@ -124,9 +124,11 @@ pub(crate) fn compile_execution(
             Err(reason) => (None, Some(reason.to_string())),
         }
     } else if matches!(strategy, Strategy::BranchAndBound)
-        && (matches!(metric, Metric::ConditionalClientEventItems { .. })
-            || (matches!(request.objective.inner(), Objective::SkipScore { .. })
-                && matches!(metric, Metric::ClientEventPoints { .. } | Metric::ClientChallengePoints { .. })))
+        && matches!(request.objective.inner(), Objective::SkipScore { .. })
+        && matches!(
+            metric,
+            Metric::ClientEventPoints { .. } | Metric::ClientChallengePoints { .. } | Metric::RankedEventItems { .. }
+        )
     {
         match crate::search::deck_payoff::DeckPayoffBounds::compile(pool, request, &domain, metric, event_input, None) {
             Ok(bound) => {

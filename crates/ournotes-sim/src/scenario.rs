@@ -230,15 +230,15 @@ impl ContextInput {
     }
 }
 
-/// Explicit client-counter inputs, not server eligibility or inventory authority.
+/// Per-result event inputs for counter increments and exact-grade reward projections.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EventPayoffInput {
     pub consumed_count: i32,
+    #[serde(default)]
     pub local_events: Vec<crate::event::LocalEvent>,
     pub event_windows: Option<Vec<crate::event::EventWindow>>,
     pub event_window_adapter: Option<String>,
-    pub selected_rewards: Option<Vec<crate::event::ServerEventReward>>,
     /// External total-score ranks keyed by terminal local score, not guessed solo ranks.
     pub multiplayer_ranks: Option<Vec<MultiplayerRankInput>>,
     /// Explicit result-panel adapter. It models the result panel, not network save semantics.
@@ -428,35 +428,31 @@ impl ResolvedContext {
         })
     }
 
-    /// Call inside each random-law atom, not on E(score).
-    pub fn preview_event_points(
+    /// Resolve the exact terminal grade using the declared solo, room or skip result model.
+    pub fn event_score_rank(
         &self,
-        pool: &crate::pool::Pool,
-        deck: &crate::pool::Deck,
+        master: &Master,
         input: &EventPayoffInput,
-        target_event_id: i64,
+        route: &crate::event::EventResultRoute,
         final_score: i32,
-    ) -> Result<crate::event::EventPointPreview, Error> {
-        self.validate_pool(pool)?;
-        pool.check_deck(deck)?;
-        let request = self.event_request(pool.master, input, target_event_id)?;
-        let group = music(pool.master, self.resolved.live_music_id)?.live_score_rank_group;
+    ) -> Result<i64, Error> {
+        let group = music(master, self.resolved.live_music_id)?.live_score_rank_group;
         let rank = if matches!(
-            request.route,
+            *route,
             crate::event::EventResultRoute::NormalSkip | crate::event::EventResultRoute::ChallengeSkip { .. }
         ) {
             // Skip first resolves its EXP row from the computed score. That lookup can fail before the fixed
             // result rank is parsed. Counter rewards then always read the configured out-rank, even on parse
-            // failure (None). EXP's success-dependent override and server-selected items are separate paths.
-            crate::event::score_rank(pool.master, group, i64::from(final_score))?;
-            crate::event::skip_result_rank(pool.master)?.rank
+            // failure (None). EXP's success-dependent override is a separate path.
+            crate::event::score_rank(master, group, i64::from(final_score))?;
+            crate::event::skip_result_rank(master)?.rank
         } else if matches!(self.scenario, Scenario::Battle(_) | Scenario::Arena(_)) {
             if let Some(policy) = &input.multiplayer_score_policy {
                 let (total, count) = policy.total_and_count(final_score)?;
-                crate::event::battle_score_rank(pool.master, group, i64::from(total), count)
+                crate::event::battle_score_rank(master, group, i64::from(total), count)
             } else if let Some(panel) = &input.multiplayer_result_panel {
                 let (total, count) = panel.total_and_count(final_score)?;
-                crate::event::battle_score_rank(pool.master, group, i64::from(total), count)
+                crate::event::battle_score_rank(master, group, i64::from(total), count)
             } else {
                 input
                     .multiplayer_ranks
@@ -470,8 +466,24 @@ impl ResolvedContext {
                     .resolved_total_score_rank
             }
         } else {
-            crate::event::score_rank(pool.master, group, i64::from(final_score))?
+            crate::event::score_rank(master, group, i64::from(final_score))?
         };
+        Ok(rank)
+    }
+
+    /// Call inside each random-law atom, not on E(score).
+    pub fn preview_event_points(
+        &self,
+        pool: &crate::pool::Pool,
+        deck: &crate::pool::Deck,
+        input: &EventPayoffInput,
+        target_event_id: i64,
+        final_score: i32,
+    ) -> Result<crate::event::EventPointPreview, Error> {
+        self.validate_pool(pool)?;
+        pool.check_deck(deck)?;
+        let request = self.event_request(pool.master, input, target_event_id)?;
+        let rank = self.event_score_rank(pool.master, input, &request.route, final_score)?;
         let members = deck.members.map(|i| crate::bonus::event_member(pool.master, &pool.members[i]));
         let snaps = deck.snaps.map(|i| i.map(|i| crate::bonus::event_snap(&pool.snaps[i])));
         crate::event::preview_client_event_points(
@@ -495,7 +507,7 @@ impl EventPayoffInput {
 }
 
 impl ResolvedContext {
-    /// Conditional on explicitly server-selected reward IDs; None is unknown, not an empty drop.
+    /// Project the exact terminal grade of a held event before taking any expectation.
     pub fn preview_event_items(
         &self,
         pool: &crate::pool::Pool,
@@ -504,20 +516,22 @@ impl ResolvedContext {
         target_event_id: i64,
         final_score: i32,
     ) -> Result<crate::event::EventItemPreview, Error> {
-        if input.selected_rewards.is_none() {
-            return Err(Error::Unsupported("UnknownServerAuthority: eventPayoff.selectedRewards is required; [] explicitly means no selected rewards".into()));
-        }
-        let points = self.preview_event_points(pool, deck, input, target_event_id, final_score)?;
+        self.validate_pool(pool)?;
+        pool.check_deck(deck)?;
         let request = self.event_request(pool.master, input, target_event_id)?;
+        let rank = self.event_score_rank(pool.master, input, &request.route, final_score)?;
+        if !request.holding_event_ids.contains(&target_event_id) {
+            return Ok(crate::event::EventItemPreview { rewards: Vec::new(), missing_reward_ids: Vec::new() });
+        }
         let members = deck.members.map(|i| crate::bonus::event_member(pool.master, &pool.members[i]));
         let snaps = deck.snaps.map(|i| i.map(|i| crate::bonus::event_snap(&pool.snaps[i])));
-        crate::event::preview_client_event_items(
+        crate::event::preview_ranked_event_items(
             pool.master,
-            &crate::event::EventItemRequest {
+            &crate::event::RankedEventItemRequest {
                 route: request.route,
                 consumed_count: input.consumed_count,
-                local_event_ids: points.local_events.iter().map(|l| l.event_id).collect(),
-                selected_rewards: input.selected_rewards.clone(),
+                event_id: target_event_id,
+                score_rank: rank,
             },
             &members.each_ref().map(Some),
             Some(&snaps.each_ref().map(|s| s.as_ref())),
@@ -536,7 +550,6 @@ pub fn item_payoff(
         .iter()
         .filter(|r| r.event_id == event_id && r.resource_type == resource_type && r.resource_id == resource_id)
         .try_fold(0i128, |sum, r| {
-            sum.checked_add(i128::from(r.amount))
-                .ok_or_else(|| Error::Domain("conditional item payoff overflow".into()))
+            sum.checked_add(i128::from(r.amount)).ok_or_else(|| Error::Domain("ranked item payoff overflow".into()))
         })
 }
