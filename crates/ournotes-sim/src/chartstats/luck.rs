@@ -486,6 +486,7 @@ pub fn diagnostic_luck_table(
         gekisou: Some(super::Gekisou { setup, dt: stream.delta_times()?, perfect: play.clone() }),
         play,
         positions: 5,
+        cache: None,
     };
     live.luck_table(options)
 }

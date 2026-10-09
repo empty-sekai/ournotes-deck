@@ -38,6 +38,8 @@
 //! types are [`Error::Unsupported`] (4004 of Gekisou and Gekisou support skills keeps its no-op on a judged stream).
 
 mod applier_plan;
+mod chart_cache_identity;
+pub(crate) use chart_cache_identity::{chart_program_identity, initialized_chart_program_identity};
 mod combo;
 #[cfg(feature = "search-diagnostics")]
 pub use applier_plan::with_applier_plan_disabled;
@@ -56,6 +58,7 @@ pub use gekisou::{
 mod life;
 mod luck;
 mod luck_dp;
+pub(crate) use luck_dp::luck_rush_dp_certified_with_moments_cached;
 mod luck_exact;
 pub use luck_dp::{
     LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckRangeMoments, LuckRecordProfile,
@@ -68,6 +71,7 @@ pub use luck_exact::{
     LuckExactStats, luck_exact_law_with_ranking,
 };
 mod luck_score_bounds;
+pub(crate) use luck_score_bounds::IntegerBounds;
 pub(crate) use luck_score_bounds::luck_score_expectation_for_chart;
 mod nominal_expectation;
 pub use luck_score_bounds::{

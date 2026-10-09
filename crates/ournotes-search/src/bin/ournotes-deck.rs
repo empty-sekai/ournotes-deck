@@ -25,7 +25,7 @@ const USAGE: &str = "usage:
   ournotes-deck live  --data FILE --roster FILE --score ID --expectation finite --seed-law FILE [--play FILE]
                       [--gekisou] [common options]
   ournotes-deck chart-stats --data FILE [--seeds N] [--no-gekisou-aptitude]
-                      [--charts ID[,ID...]] [--jobs N] [-o FILE]
+                      [--charts ID[,ID...]] [--jobs N] [--stats-cache DIR] [-o FILE]
 recommend consumes the JSON recommendation request and writes the unified recommendation result.
 Use ournotes-deck recommend --help for its input and progress options.
 --data is a deck data file (nnnotes.deck-data/1). live ranks by the expected score of the whole-live simulation
@@ -44,6 +44,7 @@ Estimates are [center, outward interval half-width] under independent nominal lo
 --seeds N controls replay seeds for charts with a luck range (default 8); statistics use nominal expectations.
 --no-gekisou-aptitude leaves both aptitude fields null and includes the baseline measurements.
 --charts keeps the listed score ids in file order; --jobs N measures N charts at once (default 1).
+--stats-cache DIR reuses completed measurement programs and lottery propagations; counters go to stderr.
 -o FILE writes JSON to a file; without it JSON goes to stdout.
 common options: -k N (default 10), --leader ID, --include ID[,ID...], --exclude ID[,ID...],
                 --exclude-snaps ID[,ID...], --no-snaps, --time-limit-ms N";
@@ -57,7 +58,7 @@ fn read(path: &str) -> Result<String, String> {
 }
 
 fn chart_stats(args: &[String]) -> Result<Option<serde_json::Value>, String> {
-    let (mut data, mut seeds, mut out) = (None, None, None);
+    let (mut data, mut seeds, mut out, mut cache) = (None, None, None, None);
     let mut options = ournotes_sim::chartstats::Options::default();
     let (mut only, mut jobs): (Option<Vec<i64>>, usize) = (None, 1);
     let mut i = 0;
@@ -73,6 +74,7 @@ fn chart_stats(args: &[String]) -> Result<Option<serde_json::Value>, String> {
             "--no-gekisou-aptitude" => options.aptitude = false,
             "--charts" => only = Some(ids(&val()?)?),
             "--jobs" => jobs = val()?.trim().parse::<usize>().map_err(|_| "bad --jobs".to_string())?.max(1),
+            "--stats-cache" => cache = Some(val()?),
             "-o" | "--out" => out = Some(val()?),
             "-h" | "--help" => return Err(USAGE.into()),
             other => return Err(format!("unknown option {other}\n{USAGE}")),
@@ -86,11 +88,20 @@ fn chart_stats(args: &[String]) -> Result<Option<serde_json::Value>, String> {
     if let Some(n) = seeds {
         options.replay_seeds = n;
     }
+    let cache = cache.map(ournotes_sim::chartstats::ChartStatsCache::new).transpose().map_err(|e| e.to_string())?;
     let doc = if jobs <= 1 {
-        ournotes_sim::chartstats::document_with(&data, &options).map_err(|e| e.to_string())?
+        match cache.as_ref() {
+            Some(cache) => ournotes_sim::chartstats::document_with_cache(&data, &options, cache),
+            None => ournotes_sim::chartstats::document_with(&data, &options),
+        }
+        .map_err(|e| e.to_string())
     } else {
-        chart_stats_parallel(data, &options, jobs)?
+        chart_stats_parallel(data, &options, jobs, cache.as_ref())
     };
+    if let Some(cache) = cache {
+        eprintln!("chart cache {}", serde_json::to_string(&cache.snapshot()).expect("cache counters"));
+    }
+    let doc = doc?;
     match out {
         Some(path) => {
             let mut text = serde_json::to_string(&doc).expect("json");
@@ -107,6 +118,7 @@ fn chart_stats_parallel(
     mut data: DeckData,
     options: &ournotes_sim::chartstats::Options,
     jobs: usize,
+    cache: Option<&ournotes_sim::chartstats::ChartStatsCache>,
 ) -> Result<serde_json::Value, String> {
     use ournotes_sim::chartstats;
     let charts = std::mem::take(&mut data.charts);
@@ -122,8 +134,11 @@ fn chart_stats_parallel(
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(c) = charts.get(i) else { break };
                     let t = std::time::Instant::now();
-                    let r = chartstats::chart_stats_with(&data.master, c, &kinds, options)
-                        .map_err(|e| format!("chart {}: {e}", c.score_id));
+                    let r = match cache {
+                        Some(cache) => chartstats::chart_stats_with_cache(&data.master, c, &kinds, options, cache),
+                        None => chartstats::chart_stats_with(&data.master, c, &kinds, options),
+                    }
+                    .map_err(|e| format!("chart {}: {e}", c.score_id));
                     eprintln!(
                         "chart {} {:.1} s{}",
                         c.score_id,

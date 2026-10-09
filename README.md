@@ -177,7 +177,8 @@ ournotes-deck live  --data deck-data.json --roster box.json --score SCORE_ID --e
 谱面统计：
 
 ```sh
-ournotes-deck chart-stats --data deck-data.json [--seeds 8] [--charts ID,...] [--jobs N] -o chart-stats.json
+ournotes-deck chart-stats --data deck-data.json [--seeds 8] [--charts ID,...] [--jobs N] \
+  [--stats-cache DIR] -o chart-stats.json
 ```
 
 谱面统计格式为 `ournotes-deck.chart-stats/3`。激走开启时给出各次抽签、技能判定按名义概率独立的期望，
@@ -192,6 +193,11 @@ ournotes-deck chart-stats --data deck-data.json [--seeds 8] [--charts ID,...] [-
 `--charts` 选择 score id，按输入数据中的谱面顺序输出；`--jobs N` 同时测 N 张谱面，结果与逐张测量相同。
 `--seeds N` 指定幸运谱面的回放种子数量，默认 8，与期望统计无关；没有幸运区间时回放种子为 `[0]`。
 `--no-gekisou-aptitude` 关闭单技能适性，保留基线统计。
+
+`--stats-cache DIR` 持久保存各个已编译测量程序及抽签曲线的原始结果，分别复用基线、普通技能位置、
+激走变体与交叉项。每项完成后原子保存，可在中断后继续；输入的元数据、kind / shape 目录和校验卡组每次重新生成。
+缓存按模型源码和格式隔离，输出与无缓存测量一致；命中与计算计数写到 stderr。
+存储格式、依赖边界与 Rust API 见 [谱面统计缓存](docs/chart-stats-cache.md)。
 
 每张谱面的 `expectation` 包含无技能 `score`、`scorePerfect`、区间结果、普通加分技能的 `weights[kind][position]`、
 `rangeWeights[kind][position][range]`，以及随机卡组的 `check` / 固定名次的 `rankCheck`。
