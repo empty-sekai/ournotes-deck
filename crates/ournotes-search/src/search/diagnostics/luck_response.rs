@@ -54,6 +54,10 @@ fn default_cache_entries() -> usize {
     4096
 }
 
+fn default_basis_family_reuse() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LuckResponseSpec {
@@ -81,6 +85,9 @@ pub struct LuckResponseSpec {
     /// Experimental exact-CDF quotient for contiguous nominal start-minimum operators.
     #[serde(default)]
     pub canonical_start_minimum: bool,
+    /// Optional native integer-delta identity for contiguous once-per-range Miss writers.
+    #[serde(default)]
+    pub canonical_miss_gauge: bool,
     /// Optional conditional-minimum experiment; the native implementation always caps this at 64.
     #[serde(default)]
     pub basis_max_terms: Option<usize>,
@@ -95,6 +102,12 @@ pub struct LuckResponseSpec {
     /// Optional inspection output; persistent queries need only the reusable conditional curves.
     #[serde(default)]
     pub basis_reconstruct: bool,
+    /// Reuse an admitted non-minimum initialized controller inside this immutable request.
+    #[serde(default = "default_basis_family_reuse")]
+    pub basis_family_reuse: bool,
+    /// Separately bounded retained family recordings and source index.
+    #[serde(default)]
+    pub basis_family_bytes: Option<usize>,
 }
 
 fn fingerprint(value: &Value) -> String {
@@ -457,6 +470,9 @@ pub fn generate_luck_response(built: &BuiltProblem<'_>, spec: &LuckResponseSpec)
         .collect();
     let mut context = response_context(&shared_fingerprint, archive_dependencies.clone());
     if compiled_mode {
+        if spec.canonical_start_minimum && spec.canonical_miss_gauge {
+            return Err(Error::Unsupported("LUCK response cannot combine minimum CDF and Miss gauge quotients".into()));
+        }
         let capacity = spec.cache_bytes.unwrap_or_else(|| spec.cache_entries.saturating_mul(8192));
         let basis_mode = matches!(spec.mode, ResponseMode::BasisIdentify | ResponseMode::BasisPrograms);
         let mut report = if basis_mode {
@@ -475,6 +491,9 @@ pub fn generate_luck_response(built: &BuiltProblem<'_>, spec: &LuckResponseSpec)
                     selected: spec.basis_programs.as_deref(),
                     verify: spec.verify_basis,
                     reconstruct: spec.basis_reconstruct,
+                    family_reuse: spec.basis_family_reuse,
+                    family_bytes: spec.basis_family_bytes.unwrap_or(capacity),
+                    canonical_miss_gauge: spec.canonical_miss_gauge,
                 },
             )
         } else {
@@ -488,6 +507,7 @@ pub fn generate_luck_response(built: &BuiltProblem<'_>, spec: &LuckResponseSpec)
                 spec.program_bytes.unwrap_or(capacity),
                 matches!(spec.mode, ResponseMode::Programs),
                 spec.canonical_start_minimum,
+                spec.canonical_miss_gauge,
             )
         };
         report["format"] = json!(if basis_mode {

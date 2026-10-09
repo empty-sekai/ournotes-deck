@@ -19,6 +19,7 @@ use crate::num::{FxHashMap, floor_to_i32};
 mod compiled;
 pub(crate) use compiled::compile_luck_program_virtual;
 pub use compiled::{CompiledLuckMinimumBasis, CompiledLuckProgram, LuckMinimumTermResponse, compile_luck_program};
+pub(crate) use compiled::{MinimumFamilyAdmission, MinimumFamilyRecorder};
 mod family;
 pub(super) mod fused;
 pub use family::{
@@ -1545,6 +1546,12 @@ impl<M: Mass> Transcript<M> {
     /// Every field as words (binary32 and binary64 values by bit pattern, every list after its length), or None
     /// for a failed recording. Equal words mean equal transcripts.
     fn key(&self) -> Option<Vec<u64>> {
+        self.key_with_frames_actions(&self.frames, &self.actions)
+    }
+
+    /// The complete identity with an explicitly admitted operator's frame/action view. The ordinary
+    /// key delegates its original slices unchanged; this helper supplies no public proof constructor.
+    fn key_with_frames_actions(&self, frames: &[Frame], actions: &[Action<M>]) -> Option<Vec<u64>> {
         let Self {
             collect_moments,
             templates,
@@ -1552,10 +1559,10 @@ impl<M: Mass> Transcript<M> {
             luck,
             probes,
             miss_rows,
-            frames,
+            frames: _,
             notes,
             hits,
-            actions,
+            actions: _,
             pending,
             failure,
         } = self;
@@ -3032,7 +3039,10 @@ mod tests {
         ));
     }
 
-    fn fixture(result: i64, base: i64) -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
+    pub(super) fn fixture(
+        result: i64,
+        base: i64,
+    ) -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
         let mut speed = row(1, "_gekisouSkillID", 1, 11001, 20000, 7010, 0, 0);
         speed["_activationTimeSecond"] = json!(0.2);
         let mut sustained = row(3, "_gekisouSkillID", 3, 11001, 20000, 7020, 0, 7013);

@@ -22,6 +22,9 @@ use crate::live::full::{
 use crate::live::seeds::seed_candidate;
 use crate::master::Master;
 
+mod minimum_family;
+pub use minimum_family::{LuckTableMinimumFamilySession, LuckTableMinimumFamilyStats};
+
 /// The model line of the document.
 #[cfg(feature = "search-diagnostics")]
 pub const MODEL: &str = "experimental single-skill samples, not a composable team expectation: per chart with a luck range, the probabilities [r, s_0, rs_0, s_1, rs_1, ...] at every \
@@ -182,6 +185,17 @@ impl CompiledLuckTableProgram {
     pub fn canonicalize_start_minimum(mut self) -> Self {
         self.batches = self.batches.into_iter().map(full::CompiledLuckProgram::canonicalize_start_minimum).collect();
         self
+    }
+
+    /// Quotient each admitted batch's Miss gauge identity after native per-row rounding. Original
+    /// tapes still propagate; unknown or wrapping domains refuse this optional identity transform.
+    pub fn canonicalize_miss_gauge(mut self) -> Result<Self, Error> {
+        self.batches = self
+            .batches
+            .into_iter()
+            .map(full::CompiledLuckProgram::canonicalize_miss_gauge)
+            .collect::<Result<_, _>>()?;
+        Ok(self)
     }
 
     /// Decompose each original native probe batch into the same positive whole-live conditional

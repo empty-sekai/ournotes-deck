@@ -1,5 +1,9 @@
 # Offline LUCK response tables and skill interactions
 
+The [recording-family and Miss-gauge extension](luck-response-family-reuse.md) documents the new
+bounded recording reuse, native rounding quotient and complete-chart family audit. Measurements
+below retain their original dated source and scope.
+
 The complete published TW and JP catalogues have been generated and audited: **692 regional
 chart/difficulty records are accounted for, including all 292 charts with actual LUCK missions**.
 The 350,692 base/single-skill labels required 14,236 native DP propagations across chart jobs. Merging

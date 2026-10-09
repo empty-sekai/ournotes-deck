@@ -124,6 +124,7 @@ pub(super) fn identify_interactions(
     program_budget_bytes: usize,
     propagate_representatives: bool,
     canonical_start_minimum: bool,
+    canonical_miss_gauge: bool,
 ) -> Value {
     let started = Instant::now();
     let identity_limit = identity_budget_bytes.min(MAX_BYTES);
@@ -161,8 +162,20 @@ pub(super) fn identify_interactions(
                 &input.0.delta_times,
                 &job.entries,
             );
-            let program = program
-                .map(|program| if canonical_start_minimum { program.canonicalize_start_minimum() } else { program });
+            let program = program.and_then(|program| {
+                if canonical_start_minimum && canonical_miss_gauge {
+                    return Err(Error::Unsupported(
+                        "the minimum-CDF and Miss-gauge identity quotients cannot yet be combined".into(),
+                    ));
+                }
+                if canonical_miss_gauge {
+                    program.canonicalize_miss_gauge()
+                } else if canonical_start_minimum {
+                    Ok(program.canonicalize_start_minimum())
+                } else {
+                    Ok(program)
+                }
+            });
             let elapsed = before.elapsed().as_secs_f64() * 1000.0;
             compile_ms += elapsed;
             row["compileMs"] = json!(elapsed);
@@ -262,6 +275,7 @@ pub(super) fn identify_interactions(
         "memoryScope":"Separate retained-identity and compiled-program allowances; temporary identity and fingerprint buffers, returned JSON, inputs and native DP workspace are reported separately or governed by their original limits, not a total RSS bound.",
         "usesSingleSkillResponseComposition":false,"usesMonteCarlo":false,
         "canonicalStartMinimum":canonical_start_minimum,
+        "canonicalMissGauge":canonical_miss_gauge,
         "jobs":reports,"programs":programs,
         "stats":{"sourceJobs":jobs.len(),"distinctSourceKeys":source_keys.len(),
             "compiledJobs":compiled,"uniqueRetainedPrograms":registry.entries.len(),"exactProgramAliases":aliases,

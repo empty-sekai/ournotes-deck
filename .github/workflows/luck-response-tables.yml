@@ -152,6 +152,94 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  families:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        region: [tw, jp]
+        shard: [0, 1, 2, 3]
+    env:
+      REGION: ${{ matrix.region }}
+      SHARD: ${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: luck-catalogue-pinned-inputs-and-generator
+          path: work/shared
+      - name: Verify the shared complete inputs and identical native generator
+        run: |
+          chmod +x work/shared/bin/luck_response
+          python3 tools/luck-tables/aggregate_catalogue.py verify-bundle --inputs work/shared/catalogue \
+            --generator work/shared/bin/luck_response --source . --bundle work/shared/bundle.json
+      - name: Validate every assigned natural LUCK chart's complete parameter grid and original DP
+        run: |
+          python3 tools/luck-tables/validate_basis_families.py "work/shared/catalogue/$REGION/inputs/benchmark.json" \
+            --generator work/shared/bin/luck_response --source . --output work/families \
+            --shard-index "$SHARD" --shard-count 4
+      - name: Retain complete and failed per-chart family evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luck-family-shard-${{ matrix.region }}-${{ matrix.shard }}
+          path: work/families/
+          if-no-files-found: warn
+          retention-days: 7
+
+  family-audit:
+    needs: [prepare, families]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: luck-catalogue-pinned-inputs-and-generator
+          path: work/shared
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: luck-family-shard-*
+          path: work/family-shards
+      - name: Independently verify every chart, original-DP comparison and dictionary blob
+        run: |
+          chmod +x work/shared/bin/luck_response
+          python3 tools/luck-tables/aggregate_basis_families.py \
+            --manifest work/shared/catalogue/tw/inputs/benchmark.json \
+            --manifest work/shared/catalogue/jp/inputs/benchmark.json \
+            --root work/family-shards --generator work/shared/bin/luck_response --source . \
+            --output work/family-audit/aggregate.json --bundle-dir work/family-dictionaries
+      - name: Preserve full-catalogue family audit and source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luck-family-full-catalogue-audit
+          path: work/family-audit/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Publish compressed conditional programs without a combination-alias catalogue
+        uses: actions/upload-artifact@v4
+        with:
+          name: luck-family-program-dictionaries
+          path: work/family-dictionaries/
+          if-no-files-found: error
+          retention-days: 30
+
   interactions:
     needs: prepare
     runs-on: ubuntu-24.04
@@ -184,6 +272,13 @@ jobs:
         run: |
           python3 tools/luck-tables/validate_minimum_basis.py work/shared/catalogue/jp/inputs/benchmark.json \
             --case jp-10000300-easy --generator work/shared/bin/luck_response --output work/interactions/jp
+      - name: Compare all real Miss-gauge interaction configurations with independent original programs
+        if: always() && steps.verify-inputs.outcome == 'success'
+        run: |
+          python3 tools/luck-tables/validate_miss_gauge.py work/shared/catalogue/tw/inputs/benchmark.json \
+            --generator work/shared/bin/luck_response --source . --output work/interactions/miss-tw
+          python3 tools/luck-tables/validate_miss_gauge.py work/shared/catalogue/jp/inputs/benchmark.json \
+            --generator work/shared/bin/luck_response --source . --output work/interactions/miss-jp
       - name: Preserve native grid, original-DP comparisons, cold/warm queries and control evidence
         if: always()
         uses: actions/upload-artifact@v4

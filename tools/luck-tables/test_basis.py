@@ -36,6 +36,7 @@ class BasisTests(unittest.TestCase):
 
     def report(self, spec, spec_path):
         identify = spec['mode'] == 'basisIdentify'
+        contract = basis.MISS_CONTRACT if spec.get('canonicalMissGauge', False) else basis.CONTRACT
         jobs = spec['jobs']; selected = set(spec.get('basisPrograms', []))
         unique, programs, rows = {}, [], []
         for ordinal, value in enumerate(jobs):
@@ -53,7 +54,7 @@ class BasisTests(unittest.TestCase):
                     index = len(programs); unique[fingerprint] = index
                     propagated = not identify and fingerprint in selected
                     programs.append({'programIndex': index, 'fingerprint': fingerprint, 'sourceVersion': SOURCE,
-                        'identityVersion': 'test-conditional-domain/' + SOURCE, 'operatorContract': basis.CONTRACT,
+                        'identityVersion': 'test-conditional-domain/' + SOURCE, 'operatorContract': contract,
                         'representativeJobIndex': ordinal, 'representativeTermIndex': term,
                         'status': 'success' if propagated else 'identified',
                         'response': {'status': 'success', 'curve': {'steps': []}} if propagated else None})
@@ -68,7 +69,7 @@ class BasisTests(unittest.TestCase):
                    'fingerprint': pipeline.sha(pipeline.canonical([job['entries'] for job in jobs]))}
         return {'format': basis.REPORT, 'mode': spec['mode'], 'sourceVersion': SOURCE,
                 'identificationComplete': True, 'complete': True, 'probabilityComplete': not identify,
-                'operatorContract': basis.CONTRACT, 'context': context, 'sharedFingerprint': 'a' * 64,
+                'operatorContract': contract, 'context': context, 'sharedFingerprint': 'a' * 64,
                 'dependencyDescriptor': {'algorithm': {'simSourceSha256': SOURCE}}, 'capabilities': {'chain': []},
                 'provenance': {'contextDeck': spec.get('contextDeck'), 'datasetSha256': hashes['data'], 'inputs': {
                     'rosterSha256': hashes['snapshot'], 'requestSha256': hashes['request'],
@@ -166,6 +167,32 @@ class BasisTests(unittest.TestCase):
         self.assertEqual(result['stats']['uniqueBasisPrograms'], 4)
         selected = next(call for call in self.calls if call[0] == 'basisPrograms')
         self.assertEqual(selected[1], [job['name'] for job in expanded]); self.assertEqual(len(selected[2]), 2)
+
+    def test_miss_quotient_contract_is_bound_to_the_requested_specification(self):
+        pipeline.write(self.spec, {**self.original, 'canonicalMissGauge': True})
+        result = self.query()
+        self.assertTrue(result['complete'], result)
+        self.assertEqual(result['operatorContract'], basis.MISS_CONTRACT)
+        self.mutate_identify = lambda report: report.update(operatorContract=basis.CONTRACT)
+        self.calls.clear()
+        rejected = self.query()
+        self.assertEqual(rejected['status'], 'error')
+        self.assertFalse(any(call[0] != 'basisIdentify' for call in self.calls))
+
+    def test_native_programs_cannot_mix_conditional_operator_contracts(self):
+        self.mutate_identify = lambda report: report['programs'][0].update(operatorContract=basis.MISS_CONTRACT)
+        rejected = self.query()
+        self.assertEqual(rejected['status'], 'error')
+        self.assertEqual([call[0] for call in self.calls], ['basisIdentify'])
+
+    def test_experimental_switches_reject_nonboolean_values_before_native_work(self):
+        for name in ('canonicalMissGauge', 'basisFamilyReuse'):
+            for value in (0, 1, 'true', None):
+                with self.subTest(name=name, value=value):
+                    pipeline.write(self.spec, {**self.original, name: value})
+                    with self.assertRaisesRegex(ValueError, 'must be booleans'):
+                        self.query()
+        self.assertEqual(self.calls, [])
 
     def test_corrupt_term_repairs_one_program_and_preserves_other_blob(self):
         self.assertTrue(self.query()['complete'])

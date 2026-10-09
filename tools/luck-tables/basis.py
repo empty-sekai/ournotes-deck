@@ -25,6 +25,8 @@ pipeline = storage.pipeline
 REPORT = 'ournotes-deck.luck-response-basis/1'
 QUERY = 'ournotes-deck.luck-basis-query/1'
 CONTRACT = 'conditional-start-minimum/1'
+MISS_CONTRACT = 'conditional-start-minimum+canonical-miss-gauge-deltas/1'
+CONTRACTS = (CONTRACT, MISS_CONTRACT)
 MAX_TERMS = 64
 
 
@@ -44,13 +46,15 @@ def provenance(report, hashes, spec_sha):
         raise ValueError('native basis provenance differs from current input/spec bytes')
 
 
-def structure(report, jobs, mode, max_terms):
+def structure(report, jobs, mode, max_terms, expected_contract=None):
     """Validate complete term mappings without interpreting a hash as a proof."""
     object_value(report, 'native basis report')
     if (report.get('format') != REPORT or report.get('mode') != mode
             or report.get('identificationComplete') is not True or report.get('complete') is not True
-            or report.get('operatorContract') != CONTRACT):
+            or report.get('operatorContract') not in CONTRACTS
+            or expected_contract is not None and report.get('operatorContract') != expected_contract):
         raise ValueError('native conditional basis is incomplete or uses a different operator contract')
+    contract = report['operatorContract']
     source = storage.digest(report.get('sourceVersion'))
     context = object_value(report.get('context'), 'native response context')
     storage.digest(context.get('fingerprint'))
@@ -63,7 +67,7 @@ def structure(report, jobs, mode, max_terms):
     for ordinal, value in enumerate(programs):
         program = object_value(value, 'conditional program')
         fingerprint = storage.digest(program.get('fingerprint'))
-        if (program.get('sourceVersion') != source or program.get('operatorContract') != CONTRACT
+        if (program.get('sourceVersion') != source or program.get('operatorContract') != contract
                 or not isinstance(program.get('identityVersion'), str) or not program['identityVersion']
                 or type(program.get('programIndex')) is not int or program['programIndex'] != ordinal):
             raise ValueError('conditional program source, contract or ordinal differs')
@@ -121,8 +125,8 @@ def structure(report, jobs, mode, max_terms):
     return source, programs, mappings, term_references
 
 
-def identification(report, jobs, max_terms=MAX_TERMS):
-    result = structure(report, jobs, 'basisIdentify', max_terms)
+def identification(report, jobs, max_terms=MAX_TERMS, expected_contract=None):
+    result = structure(report, jobs, 'basisIdentify', max_terms, expected_contract)
     if (report.get('probabilityComplete') is not False or report['stats']['propagationCalls'] != 0
             or any(row['status'] != 'identified' for row in report['jobs'])
             or any(program.get('status') != 'identified' or program.get('response') is not None
@@ -132,7 +136,8 @@ def identification(report, jobs, max_terms=MAX_TERMS):
 
 
 def generation(report, identified, jobs, missing, max_terms=MAX_TERMS):
-    source, programs, mappings, _count = structure(report, jobs, 'basisPrograms', max_terms)
+    source, programs, mappings, _count = structure(
+        report, jobs, 'basisPrograms', max_terms, identified.get('operatorContract'))
     old_source, original, old_mappings, _count = identification(identified, jobs, max_terms)
     expected = set(missing)
     if (source != old_source or report.get('probabilityComplete') is not True
@@ -175,7 +180,7 @@ def storage_projection(report, selected, report_sha):
                      'programIndex': index, 'programFingerprint': fingerprint, 'status': 'success'})
     result = {'format': storage.REPORT, 'mode': 'programs', 'sourceVersion': report['sourceVersion'],
               'identificationComplete': True, 'probabilityComplete': True, 'complete': True,
-              'kind': 'conditionalProgramStorageProjection', 'operatorContract': CONTRACT,
+              'kind': 'conditionalProgramStorageProjection', 'operatorContract': report['operatorContract'],
               'scope': 'CONTROL rows are conditional native programs for storage, not simulated teams or independent skill curves.',
               'basisReportSha256': report_sha, 'jobs': jobs, 'programs': bodies,
               'context': report['context'], 'sharedFingerprint': report['sharedFingerprint'],
@@ -209,6 +214,11 @@ def query(data, snapshot, request, spec, generator, store, output, mode='u24', g
         max_terms = MAX_TERMS
     if type(max_terms) is not int or not 1 <= max_terms <= MAX_TERMS:
         raise ValueError('basisMaxTerms must be an integer from 1 to 64')
+    canonical_miss = original.get('canonicalMissGauge', False)
+    family_reuse = original.get('basisFamilyReuse', True)
+    if type(canonical_miss) is not bool or type(family_reuse) is not bool:
+        raise ValueError('canonicalMissGauge and basisFamilyReuse must be booleans')
+    contract = MISS_CONTRACT if canonical_miss else CONTRACT
     identified_spec = {**original, 'mode': 'basisIdentify', 'mcRuns': 0, 'scoreSamples': 0,
                        'validationDecks': [], 'verifyBasis': False, 'basisReconstruct': False,
                        'basisMaxTerms': max_terms}
@@ -218,7 +228,7 @@ def query(data, snapshot, request, spec, generator, store, output, mode='u24', g
     result = {'format': QUERY, 'complete': False, 'inputSha256': before,
               'generatorSha256': pipeline.sha(generator.read_bytes()), 'mode': mode,
               'nativeExpectationProven': False, 'rankingProven': False, 'usesMonteCarlo': False,
-              'allTeamCombinationsCovered': False, 'operatorContract': CONTRACT,
+              'allTeamCombinationsCovered': False, 'operatorContract': contract,
               'scope': 'Requested whole-live conditional minimum basis; only missing native term responses are propagated.',
               'stats': {'requestedJobs': len(jobs), 'conditionalTermReferences': 0, 'uniqueBasisPrograms': 0,
                         'reusedPrograms': 0, 'generatedPrograms': 0, 'propagationCalls': 0}}
@@ -227,7 +237,7 @@ def query(data, snapshot, request, spec, generator, store, output, mode='u24', g
     try:
         run_command(base + [output / 'identify-spec.json', output / 'identify.json'], output / 'identify.log', timeout)
         identified = pipeline.read(output / 'identify.json')
-        source, programs, _mappings, references = identification(identified, jobs, max_terms)
+        source, programs, _mappings, references = identification(identified, jobs, max_terms, contract)
         provenance(identified, before, pipeline.sha((output / 'identify-spec.json').read_bytes()))
         result.update(sourceVersion=source, identificationStats=identified['stats'])
         result['stats'].update(conditionalTermReferences=references, uniqueBasisPrograms=len(programs))

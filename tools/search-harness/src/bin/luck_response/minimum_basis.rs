@@ -83,6 +83,10 @@ pub(super) fn materialize(args: &[String]) -> Result<()> {
         return Err("expected complete native basis identification and program index".into());
     }
     let source = programs::digest(&identification, "sourceVersion")?;
+    let contract = identification["operatorContract"].as_str().ok_or("missing conditional operator contract")?;
+    if !matches!(contract, "conditional-start-minimum/1" | "conditional-start-minimum+canonical-miss-gauge-deltas/1") {
+        return Err("unknown conditional operator contract".into());
+    }
     if programs::digest(&index, "sourceVersion")? != source {
         return Err("conditional program source differs".into());
     }
@@ -128,6 +132,7 @@ pub(super) fn materialize(args: &[String]) -> Result<()> {
             let program = identified.get(ordinal).ok_or("invalid conditional index")?;
             let fingerprint = programs::digest(program, "fingerprint")?;
             if programs::digest(program, "sourceVersion")? != source
+                || program["operatorContract"] != contract
                 || component["programFingerprint"] != fingerprint
                 || !seen.insert(fingerprint.clone())
             {
@@ -162,7 +167,7 @@ pub(super) fn materialize(args: &[String]) -> Result<()> {
     write_json(
         &args[2],
         &json!({"format":"ournotes-deck.luck-response-materialized/1","table":table,
-        "sourceVersion":source,"operatorContract":"conditional-start-minimum/1",
+        "sourceVersion":source,"operatorContract":contract,
         "nativeExpectationProven":false,"rankingProven":false,
         "retainedResponseBytes":retained_bytes,"usesMonteCarlo":false,"propagationCalls":0}),
     )

@@ -558,6 +558,12 @@ impl Default for LuckScore {
 }
 
 impl LuckScore {
+    /// The original initial/default/Rush maxima cover every value installed by this range's native
+    /// gauge state machine. Optional controller quotients derive their domain from these fields.
+    pub(super) fn gauge_domain(&self) -> [i64; 3] {
+        [self.gauge_max, self.gauge_max_default, self.gauge_max_rush]
+    }
+
     /// Every field as words: equal words mean equal states.
     pub(super) fn push_words(&self, out: &mut Vec<u64>) {
         let Self {

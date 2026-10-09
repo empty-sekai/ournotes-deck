@@ -4,7 +4,10 @@ use std::mem::size_of;
 
 mod minimum;
 mod minimum_basis;
+mod minimum_family;
+mod miss;
 pub use minimum_basis::{CompiledLuckMinimumBasis, LuckMinimumTermResponse};
+pub(crate) use minimum_family::{MinimumFamilyAdmission, MinimumFamilyRecorder};
 
 /// An immutable, completely recorded native lottery program. Construction runs the original recorder
 /// and every admission check, but performs no distribution propagation. Compilation can succeed even
@@ -16,6 +19,7 @@ pub struct CompiledLuckProgram {
     transcript: Transcript<ProbabilityMass>,
     virtual_observer: bool,
     canonical_minimum: Option<Vec<minimum::MinimumBlock>>,
+    canonical_miss: Option<miss::MissGaugeDomain>,
 }
 
 impl std::fmt::Debug for CompiledLuckProgram {
@@ -34,7 +38,10 @@ impl CompiledLuckProgram {
     /// retains exact CDF words: coincident rounded probability bounds alone never authorize equivalence.
     /// Hashes may index these words, but only complete equality establishes a matching program.
     pub fn identity_words(&self) -> Option<Vec<u64>> {
-        let mut words = self.transcript.key()?;
+        let mut words = match &self.canonical_miss {
+            Some(domain) => domain.identity_words(&self.transcript)?,
+            None => self.transcript.key()?,
+        };
         // The observer contract is part of the identity even when the controller transcript and
         // shape coverage happen to be identical. External words still cannot construct a program.
         if let Some(blocks) = &self.canonical_minimum {
@@ -65,16 +72,46 @@ impl CompiledLuckProgram {
     /// identities authorize sharing this operator's probability law, not the finite-seed stream or
     /// whole-score paths. Original recording/admission is complete before this transformation.
     /// Unsupported chance arithmetic keeps its original action run; additive-moment programs remain
-    /// entirely unchanged. The old interval endpoints need not equal the new outward enclosure.
+    /// entirely unchanged. An already selected Miss identity quotient also remains unchanged; mixed
+    /// quotient requests are refused by the table diagnostics. The old interval endpoints need not
+    /// equal the new outward enclosure.
     pub fn canonicalize_start_minimum(mut self) -> Self {
-        if self.canonical_minimum.is_none() && !self.transcript.collect_moments {
+        if self.canonical_minimum.is_none() && self.canonical_miss.is_none() && !self.transcript.collect_moments {
             self.canonical_minimum = Some(minimum::rewrite(&mut self.transcript));
         }
         self
     }
 
     pub fn operator_contract(&self) -> &'static str {
-        if self.canonical_minimum.is_some() { "canonical-start-minimum-cdf/1" } else { "native-ordered-actions/1" }
+        if self.canonical_miss.is_some() {
+            "canonical-miss-gauge-deltas/1"
+        } else if self.canonical_minimum.is_some() {
+            "canonical-start-minimum-cdf/1"
+        } else {
+            "native-ordered-actions/1"
+        }
+    }
+
+    /// Opt in to an exact identity quotient of separately native-rounded once-per-range Miss gauge
+    /// additions. The original native tape still propagates, and the returned curves remain nominal
+    /// controller probabilities. Unknown, negative or wrapping gauge domains fail explicitly. The
+    /// start-minimum CDF quotient is a separate choice; conditional minimum bases remain compatible.
+    pub fn canonicalize_miss_gauge(mut self) -> Result<Self, Error> {
+        if self.canonical_minimum.is_some() {
+            return Err(Error::Unsupported(
+                "LUCK Miss gauge quotient cannot combine with the minimum CDF quotient".into(),
+            ));
+        }
+        if self.canonical_miss.is_none() {
+            self.canonical_miss = Some(miss::MissGaugeDomain::admit(&self.transcript)?);
+        }
+        Ok(self)
+    }
+
+    /// Transport a private conditioned-operator marker into the complete identity's action view.
+    pub(super) fn identity_action_slot(&self, slot: usize) -> Option<usize> {
+        self.transcript.actions.get(slot)?;
+        if self.canonical_miss.is_some() { miss::action_slot(&self.transcript, slot) } else { Some(slot) }
     }
 
     /// Describes how the direct 7021 observer's shape coverage was established.
@@ -106,6 +143,9 @@ impl CompiledLuckProgram {
         }
         if let Some(blocks) = &self.canonical_minimum {
             bytes = bytes.checked_add(blocks.capacity().checked_mul(size_of::<minimum::MinimumBlock>())?)?;
+        }
+        if let Some(domain) = &self.canonical_miss {
+            bytes = bytes.checked_add(domain.allocated_bytes()?.checked_sub(size_of::<miss::MissGaugeDomain>())?)?;
         }
         bytes.checked_add(t.machine.owned_allocation_bytes()?)
     }
@@ -146,7 +186,7 @@ pub fn compile_luck_program(
     if let Some(error) = transcript.failure.take() {
         return Err(error);
     }
-    Ok(CompiledLuckProgram { transcript, virtual_observer: false, canonical_minimum: None })
+    Ok(CompiledLuckProgram { transcript, virtual_observer: false, canonical_minimum: None, canonical_miss: None })
 }
 
 /// Constructible only after every shape has passed the original native probe compiler. This
@@ -159,7 +199,7 @@ struct ValidatedVirtualProbes(Vec<bool>);
 /// existing score/score_before bits already implement that reader at the native skill boundary;
 /// neither actions nor note lotteries later in that frame alter its observed class.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn compile_luck_program_virtual<'a>(
+fn validate_virtual_probes<'a>(
     master: &Master,
     skills: &LuckSkills,
     notes: &[LiveNote],
@@ -167,9 +207,8 @@ pub(crate) fn compile_luck_program_virtual<'a>(
     setup: &GekisouSetup,
     play: &LivePlay,
     delta_times: &[f32],
-    deck: &[Performer],
     validation: impl IntoIterator<Item = (&'a [Performer], &'a [Option<usize>])>,
-) -> Result<CompiledLuckProgram, Error> {
+) -> Result<ValidatedVirtualProbes, Error> {
     let mut covered = vec![false; skills.shapes.len()];
     for (probe_deck, designated) in validation {
         let prepared = prepare_recording::<ProbabilityMass>(
@@ -219,7 +258,22 @@ pub(crate) fn compile_luck_program_virtual<'a>(
     if covered.iter().any(|held| !held) {
         return Err(Error::Input("LUCK virtual observer is missing a score shape".into()));
     }
-    let validated = ValidatedVirtualProbes(covered);
+    Ok(ValidatedVirtualProbes(covered))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compile_luck_program_virtual<'a>(
+    master: &Master,
+    skills: &LuckSkills,
+    notes: &[LiveNote],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    deck: &[Performer],
+    validation: impl IntoIterator<Item = (&'a [Performer], &'a [Option<usize>])>,
+) -> Result<CompiledLuckProgram, Error> {
+    let validated = validate_virtual_probes(master, skills, notes, params, setup, play, delta_times, validation)?;
     // Record all original writers with the original admission and error path. No actual performer is
     // displaced, no score row is inserted into this recording, and no controller action is bypassed.
     let mut program =

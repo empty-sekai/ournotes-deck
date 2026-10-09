@@ -1,5 +1,9 @@
 # Incremental real-chart LUCK response tables
 
+The [recording-family extension](../../docs/luck-response-family-reuse.md) adds bounded minimum-family
+recording reuse, opt-in Miss-gauge canonical identities, complete-chart family validation and
+independent same-binary dictionary auditing. It includes runnable commands and current evidence scope.
+
 This tool generates reusable joint LUCK probability responses from actual published charts and master skills. The primary workflow covers the **complete TW and JP chart catalogues**, including every difficulty, and identifies interacting skill combinations through their complete native controller programs. It does not estimate every entry by repeatedly simulating random seeds.
 
 The nominal DP probability intervals and archive score replay remain diagnostic prediction data. They do not authorize pruning or certify a complete full-team Top-K ranking. Each supplied request retains its original chart, difficulty, play stream, inventory and all 120 performance-order semantics. A whole-catalogue anchor is explicitly an independent kernel construction from real master cards, not an invented owned inventory.

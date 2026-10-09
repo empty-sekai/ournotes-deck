@@ -58,7 +58,6 @@ mod life;
 mod luck;
 mod luck_dp;
 mod luck_exact;
-pub(crate) use luck_dp::compile_luck_program_virtual;
 pub use luck_dp::{
     CompiledLuckMinimumBasis, CompiledLuckProgram, LuckControllerFamily, LuckDpCache, LuckDpCacheStats,
     LuckDpCertifiedResult, LuckDpResult, LuckFamilyBindings, LuckFamilyChoice, LuckFamilyContext, LuckFamilyDecline,
@@ -70,6 +69,7 @@ pub use luck_dp::{
     luck_rush_dp, luck_rush_dp_certified, luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_moments,
     luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
 };
+pub(crate) use luck_dp::{MinimumFamilyAdmission, MinimumFamilyRecorder, compile_luck_program_virtual};
 pub use luck_exact::{
     LuckCylinderAttempt, LuckCylinderChoice, LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline,
     LuckExactLaw, LuckExactMass, LuckExactSession, LuckExactStats, LuckTerminalCylinder, luck_exact_law_with_ranking,

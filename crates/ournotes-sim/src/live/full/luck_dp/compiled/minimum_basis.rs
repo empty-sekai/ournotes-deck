@@ -98,6 +98,45 @@ fn max_law(actions: &[Action<ProbabilityMass>]) -> Result<[ProbabilityMass; 4], 
     Ok(law)
 }
 
+fn fixed_minimum_terms(
+    starts: usize,
+    actions: &[Action<ProbabilityMass>],
+    max_terms: usize,
+) -> Result<Vec<MinimumTerm>, Error> {
+    let allowance = max_terms.min(MAX_TERMS);
+    if allowance == 0 || starts > MAX_STARTS {
+        return Err(Error::Capacity("LUCK minimum family has no valid term allowance".into()));
+    }
+    let law = max_law(actions)?;
+    let support = law.iter().filter(|weight| weight.interval().upper() > 0.0).count();
+    let mut terms = vec![MinimumTerm { choices: [0; MAX_STARTS], weight: ProbabilityMass::ONE }];
+    for start in 0..starts {
+        let count = terms
+            .len()
+            .checked_mul(support)
+            .filter(|&count| count <= allowance)
+            .ok_or_else(|| Error::Capacity("LUCK minimum family exceeds its term allowance".into()))?;
+        let mut next = Vec::new();
+        // Charge one fixed maximum-sized support allocation to every retained family. Subsequent
+        // reweighting cannot grow its retained payload beyond the initial cache admission.
+        next.try_reserve_exact(allowance).map_err(|_| Error::Capacity("LUCK minimum family term allocation".into()))?;
+        for term in &terms {
+            for (minimum, weight) in law.into_iter().enumerate() {
+                if weight.interval().upper() == 0.0 {
+                    continue;
+                }
+                let mut selected = *term;
+                selected.choices[start] = minimum as u8;
+                selected.weight = selected.weight.multiply(weight);
+                next.push(selected);
+            }
+        }
+        debug_assert_eq!(next.len(), count);
+        terms = next;
+    }
+    Ok(terms)
+}
+
 impl CompiledLuckProgram {
     /// Separate a complete, originally ordered native recording into whole-live conditional programs.
     /// The allowance is capped at 64 terms, and the native game's three starts remain an explicit
@@ -209,6 +248,43 @@ impl CompiledLuckMinimumBasis {
         self.minimum_actions
     }
 
+    pub(super) fn matches_fixed_minimum_actions(
+        &self,
+        actions: &[Action<ProbabilityMass>],
+        max_terms: usize,
+    ) -> Result<bool, Error> {
+        if actions.len().checked_mul(self.starts) != Some(self.minimum_actions) {
+            return Ok(false);
+        }
+        let terms = fixed_minimum_terms(self.starts, actions, max_terms)?;
+        Ok(terms.len() == self.terms.len()
+            && terms.iter().zip(&self.terms).all(|(a, b)| a.choices == b.choices && a.weight == b.weight))
+    }
+
+    pub(super) fn reweight_fixed_minimum_actions(
+        &mut self,
+        actions: &[Action<ProbabilityMass>],
+        max_terms: usize,
+    ) -> Result<(), Error> {
+        let terms = fixed_minimum_terms(self.starts, actions, max_terms)?;
+        let count = actions
+            .len()
+            .checked_mul(self.starts)
+            .ok_or_else(|| Error::Capacity("LUCK minimum family action count overflow".into()))?;
+        let allowance = max_terms.min(MAX_TERMS);
+        if self.terms.capacity() < allowance {
+            self.terms
+                .try_reserve_exact(allowance.saturating_sub(self.terms.len()))
+                .map_err(|_| Error::Capacity("LUCK minimum family retained term allocation".into()))?;
+        }
+        // Reuse the initially charged buffer. An allocator's excess capacity on a temporary PMF
+        // allocation cannot grow the retained family on a later cache hit.
+        self.terms.clear();
+        self.terms.extend(terms);
+        self.minimum_actions = count;
+        Ok(())
+    }
+
     pub fn term_count(&self) -> usize {
         self.terms.len()
     }
@@ -243,7 +319,13 @@ impl CompiledLuckMinimumBasis {
             .identity_words()
             .ok_or_else(|| Error::Input("LUCK minimum basis has no complete native identity".into()))?;
         identity.extend([BASIS_DOMAIN, self.starts as u64]);
-        identity.extend(self.slots[..self.starts].iter().map(|&slot| slot as u64));
+        for &slot in &self.slots[..self.starts] {
+            let normalized = self
+                .program
+                .identity_action_slot(slot)
+                .ok_or_else(|| Error::Input("LUCK minimum basis has no canonical action slot".into()))?;
+            identity.push(normalized as u64);
+        }
         Ok(identity)
     }
 
@@ -259,7 +341,11 @@ impl CompiledLuckMinimumBasis {
     }
 
     pub fn operator_contract(&self) -> &'static str {
-        "whole-live-start-minimum-basis/1"
+        if self.program.operator_contract() == "canonical-miss-gauge-deltas/1" {
+            "whole-live-start-minimum-basis+canonical-miss-gauge-deltas/1"
+        } else {
+            "whole-live-start-minimum-basis/1"
+        }
     }
 
     /// Reconstruct the independent nominal law from complete native responses, including responses
