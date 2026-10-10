@@ -4,6 +4,9 @@ use ournotes_sim::event::*;
 use ournotes_sim::master::Master;
 use serde_json::json;
 
+#[path = "event/rank_rewards.rs"]
+mod rank_rewards;
+
 fn master(tables: serde_json::Value) -> Master {
     let texts: Vec<(String, String)> =
         tables.as_object().unwrap().iter().map(|(k, v)| (k.clone(), json!({ "_allData": v }).to_string())).collect();

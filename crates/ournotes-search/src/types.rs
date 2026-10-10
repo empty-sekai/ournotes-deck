@@ -315,7 +315,8 @@ pub enum Metric {
         #[serde(rename = "eventId")]
         event_id: i64,
     },
-    ConditionalClientEventItems {
+    /// Resource quantity from the unique reward row of each terminal result grade.
+    RankedEventItems {
         #[serde(rename = "eventId")]
         event_id: i64,
         #[serde(rename = "resourceType")]
@@ -329,13 +330,16 @@ impl Metric {
         match *self {
             Self::ClientEventPoints { event_id }
             | Self::ClientChallengePoints { event_id }
-            | Self::ConditionalClientEventItems { event_id, .. } => Some(event_id),
+            | Self::RankedEventItems { event_id, .. } => Some(event_id),
             _ => None,
         }
     }
     pub(crate) fn upper(&self) -> Option<i128> {
         match self {
-            Self::Score | Self::ClientEventPoints { .. } | Self::ClientChallengePoints { .. } => Some(i32::MAX as i128),
+            Self::Score
+            | Self::ClientEventPoints { .. }
+            | Self::ClientChallengePoints { .. }
+            | Self::RankedEventItems { .. } => Some(i32::MAX as i128),
             Self::ScoreAtLeast { .. } | Self::ScoreAndLifeAtLeast { .. } => Some(1),
             Self::CappedScore { threshold } => Some(*threshold as i128),
             _ => None,

@@ -796,7 +796,7 @@ upper bound. Those two cases have different completion rules.
 | --- | --- |
 | `floor(reward * (B + 10000) * rate / 10000)` | Exact Skip event points at the configured result rank. |
 | `reward * rate` | Exact Skip challenge-point earnings; no card bonus is applied. |
-| `sum_j floor(count_j * (B + 10000) * rate / 10000)` | Exact conditional items for the declared selected rewards of the requested resource. Each reward is rounded separately. |
+| `floor(count * (B + 10000) * rate / 10000)` | Exact Skip items at the configured result grade, or zero when that grade rewards a different resource. `B` contains EventItem effects. |
 | Score-step function at a score cap | Upper bound for each played order's score-dependent payoff. |
 
 The compiler resolves the requested result route, active events, reward rows and effect event before selecting a
@@ -813,7 +813,10 @@ occur in one team. This is a relaxation; no assumption of positive correlation b
 
 For played score-step payoffs, [the joint compiler](../crates/ournotes-search/src/search/joint.rs) supplies a
 per-outcome score cap `C(P) = ceil(P * global * (1 + eps))`. A reward table may decrease at a higher score: the bound
-uses the prefix maximum of the reachable tiers, rather than assuming the actual rewards are monotone. A target
+uses the prefix maximum of the reachable tiers, rather than assuming the actual rewards are monotone.
+For ranked items, each reachable grade selects the unique row of the route's event group with probability marker
+10000. Native-product checks cover that row before resource filtering. Prefix maxima are only upper bounds: actual
+settlement selects exactly one grade, without accumulating lower grades or substituting their larger rewards. A target
 uses the indicator that `C(P)` reaches its threshold; a score-and-life target may relax the life requirement.
 Thus each order's payoff, and its lottery expectation when applicable, is at most `F(B,P)`. Multiplying by 120
 bounds the uniform-order payoff numerator. This conversion requires an orderwise score cap; a bound on mean score

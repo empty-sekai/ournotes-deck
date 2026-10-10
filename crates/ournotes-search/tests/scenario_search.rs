@@ -28,7 +28,7 @@ fn fixture() -> Synth {
     s.tables.extend([
         ("MasterChallengeMusic".into(),json!([{"_id":70,"_eventId":7,"_liveMusicId":10,"_musicType":4},{"_id":71,"_eventId":7,"_liveMusicId":10,"_musicType":0}])),
         ("MasterArenaMusic".into(),json!([{"_id":80,"_liveMusicId":10,"_liveMusicType":5,"_gekisouMission1":3,"_gekisouMission2":2,"_gekisouMission3":1}])),
-        ("MasterEvent".into(),json!([{"_id":7,"_liveEventPointGroup":1,"_challengeLiveEventPointGroup":2}])),
+        ("MasterEvent".into(),json!([{"_id":7,"_liveEventPointGroup":1,"_challengeLiveEventPointGroup":2,"_liveEventRewardGroup":37,"_challengeLiveEventRewardGroup":41}])),
         ("MasterEventEffect".into(),json!([{"_id":1,"_eventId":7,"_eventBonusType":2,"_resourceTypeConstraint":2,"_rank1EffectValue":1000,"_rank2EffectValue":1000,"_rank3EffectValue":1000,"_rank4EffectValue":1000,"_rank5EffectValue":1000}])),
         ("MasterLiveScoreRank".into(),json!([{"_id":1,"_group":1,"_liveScoreRank":2,"_requiredScore":0}])),
         ("MasterLiveEventPoint".into(),json!([{"_id":1,"_group":1,"_scoreRank":2,"_value":100}])),
@@ -37,11 +37,11 @@ fn fixture() -> Synth {
     ]);
     s.tables.push((
         "MasterLiveEventReward".into(),
-        json!([{"_id":5,"_resourceCount":3,"_resourceType":11,"_resourceId":9}]),
+        json!([{"_id":5,"_eventGroup":37,"_scoreRank":2,"_resourceCount":3,"_resourceType":11,"_resourceId":9,"_probability":10000}]),
     ));
     s.tables.push((
         "MasterChallengeLiveEventReward".into(),
-        json!([{"_id":5,"_resourceCount":4,"_resourceType":11,"_resourceId":9}]),
+        json!([{"_id":5,"_eventGroup":41,"_scoreRank":2,"_resourceCount":4,"_resourceType":11,"_resourceId":9,"_probability":10000}]),
     ));
     s
 }
@@ -179,7 +179,7 @@ fn event_payoff_uses_result_clock_and_preserves_initial_counters() {
     let req = request(Objective::SkipScore { score_id: 1004, chart }.in_scenario(skip_ctx));
     let out = search_skip_event_points(&pool, &req, i.event_payoff.as_ref().unwrap(), 7).unwrap();
     assert_eq!(out.evaluated, 120);
-    assert_eq!(out.results[0].event_points, 0);
+    assert_eq!(out.results[0].event_points, Some(0));
     let arena = i.resolve(&m, Scenario::Arena(80), Some(1004), &[]).unwrap();
     assert!(arena.event_request(&m, i.event_payoff.as_ref().unwrap(), 7).is_err());
 }
@@ -289,10 +289,8 @@ fn cli_selects_special_song_and_native_expectation_end_to_end() {
     let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(out["search"]["results"][0]["evaluation"]["expected_payoff"]["numerator"], 200);
     assert_eq!(out["clientCounterPreviews"][0][0]["points"], json!([[7, 100]]));
-    let mut conditional = input(false);
-    conditional.event_payoff.as_mut().unwrap().selected_rewards =
-        Some(vec![ournotes_sim::event::ServerEventReward { event_id: 7, reward_id: 5 }]);
-    std::fs::write(&contextfile, serde_json::to_string(&conditional).unwrap()).unwrap();
+    let ranked = input(false);
+    std::fs::write(&contextfile, serde_json::to_string(&ranked).unwrap()).unwrap();
     let o = run(&[
         "live",
         "--scenario",
@@ -306,7 +304,7 @@ fn cli_selects_special_song_and_native_expectation_end_to_end() {
         "--seed-law",
         lawfile.to_str().unwrap(),
         "--objective",
-        "conditional-client-event-items",
+        "ranked-event-items",
         "--event-id",
         "7",
         "--resource-type",
@@ -321,7 +319,7 @@ fn cli_selects_special_song_and_native_expectation_end_to_end() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(out["search"]["results"][0]["evaluation"]["expected_payoff"]["numerator"], 6);
-    assert_eq!(out["conditionalItemPreviews"][0][0]["rewards"][0]["amount"], 3);
+    assert_eq!(out["rankedItemPreviews"][0][0]["rewards"][0]["amount"], 3);
     std::fs::write(&lawfile, "[[42,18446744073709551615],[-42,18446744073709551615]]").unwrap();
     let o = run(&[
         "live",
@@ -340,16 +338,14 @@ fn cli_selects_special_song_and_native_expectation_end_to_end() {
         out["search"]["results"][0]["evaluation"]["expected_score"]["denominator"].to_string(),
         "36893488147419103230"
     );
-    let mut skip_items = input(true);
-    skip_items.event_payoff.as_mut().unwrap().selected_rewards =
-        Some(vec![ournotes_sim::event::ServerEventReward { event_id: 7, reward_id: 5 }]);
+    let skip_items = input(true);
     std::fs::write(&contextfile, serde_json::to_string(&skip_items).unwrap()).unwrap();
     let o = run(&[
         "skip",
         "--score",
         "1004",
         "--objective",
-        "conditional-client-event-items",
+        "ranked-event-items",
         "--event-id",
         "7",
         "--resource-type",
@@ -363,8 +359,8 @@ fn cli_selects_special_song_and_native_expectation_end_to_end() {
     ]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
-    assert_eq!(out["search"]["results"][0]["terminalPayoff"], 3);
-    assert_eq!(out["search"]["results"][0]["eventPoints"], 0);
+    assert_eq!(out["search"]["results"][0]["terminalPayoff"], 0);
+    assert!(out["search"]["results"][0]["eventPoints"].is_null());
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -454,7 +450,7 @@ fn multiplayer_result_panel_checks_sum_and_counts_disconnections_separately() {
 }
 
 #[test]
-fn conditional_items_need_server_choices_and_master_dates_need_named_adapter() {
+fn ranked_items_project_without_balances_and_master_dates_need_named_adapter() {
     let s = fixture();
     let mut m = s.master();
     let r = roster(&mut Rng::new(2), &m);
@@ -463,15 +459,7 @@ fn conditional_items_need_server_choices_and_master_dates_need_named_adapter() {
     let pool = ctx.pool(&m, &r).unwrap();
     let deck = Deck { members: [0, 1, 2, 3, 4], snaps: [None; 5], performance_order: [0, 1, 2, 3, 4] };
     let input = i.event_payoff.as_mut().unwrap();
-    assert!(
-        ctx.preview_event_items(&pool, &deck, input, 7, 100)
-            .unwrap_err()
-            .to_string()
-            .contains("UnknownServerAuthority")
-    );
-    input.selected_rewards = Some(vec![]);
-    assert!(ctx.preview_event_items(&pool, &deck, input, 7, 100).unwrap().rewards.is_empty());
-    input.selected_rewards = Some(vec![ournotes_sim::event::ServerEventReward { event_id: 7, reward_id: 5 }]);
+    input.local_events.clear();
     let items = ctx.preview_event_items(&pool, &deck, input, 7, 100).unwrap();
     assert_eq!(item_payoff(&items, 7, 11, 9).unwrap(), 3);
     input.event_windows = None;
@@ -573,6 +561,81 @@ fn event_oracle_can_choose_lower_power_deck_with_higher_event_bonus() {
         search::search(&pool, &request(Objective::Power { music_id: None, event: false }.in_scenario(ctx))).unwrap();
     assert!(points.results[0].members.contains(&6));
     assert!(!points.results[0].members.contains(&1));
-    assert_eq!(points.results[0].event_points, 150);
+    assert_eq!(points.results[0].event_points, Some(150));
     assert!(points.results[0].power < power.results[0].power);
+}
+
+#[test]
+fn ranked_items_use_each_terminal_grade_before_expectation_without_point_rows() {
+    let mut master = fixture().master();
+    let mut rank = master.live_score_ranks[0].clone();
+    rank.id = 2;
+    rank.live_score_rank = 3;
+    rank.required_score = 1000;
+    rank.battle_live_required_score = 1000;
+    master.live_score_ranks.push(rank);
+    for (rows, count) in [(&mut master.live_event_rewards, 11), (&mut master.challenge_live_event_rewards, 17)] {
+        let mut higher = rows[0].clone();
+        higher.id = 6;
+        higher.score_rank = 3;
+        higher.resource_count = count;
+        rows.push(higher);
+    }
+    master.live_event_points.clear();
+    master.challenge_live_event_points.clear();
+    master.live_challenge_points.clear();
+    let roster = roster(&mut Rng::new(2), &master);
+    let deck = Deck { members: [0, 1, 2, 3, 4], snaps: [None; 5], performance_order: [0, 1, 2, 3, 4] };
+    for (scene, low, high) in [(Scenario::Free(10), 3, 11), (Scenario::Challenge(70), 4, 17)] {
+        let mut request = input(false);
+        request.event_payoff.as_mut().unwrap().local_events.clear();
+        let context = request.resolve(&master, scene, Some(1004), &[]).unwrap();
+        let pool = context.pool(&master, &roster).unwrap();
+        let payoff = |score| {
+            let preview =
+                context.preview_event_items(&pool, &deck, request.event_payoff.as_ref().unwrap(), 7, score).unwrap();
+            assert_eq!(preview.rewards.len(), 1);
+            item_payoff(&preview, 7, 11, 9).unwrap()
+        };
+        assert_eq!(payoff(999), low);
+        assert_eq!(payoff(1000), high);
+        assert_eq!(payoff(1001), high);
+        assert_ne!(payoff(999) + payoff(1001), 2 * payoff(1000));
+    }
+    for scene in [Scenario::Battle(10), Scenario::Arena(80)] {
+        let mut request = input(false);
+        let input = request.event_payoff.as_mut().unwrap();
+        input.local_events.clear();
+        input.multiplayer_score_policy = Some(MultiplayerScorePolicy::SameScore { players: 3 });
+        let context = request.resolve(&master, scene, Some(1004), &[]).unwrap();
+        let pool = context.pool(&master, &roster).unwrap();
+        for (score, expected) in [(1290, 3), (1291, 11)] {
+            let preview =
+                context.preview_event_items(&pool, &deck, request.event_payoff.as_ref().unwrap(), 7, score).unwrap();
+            assert_eq!(item_payoff(&preview, 7, 11, 9).unwrap(), expected);
+        }
+    }
+}
+
+#[test]
+fn ranked_skip_items_use_fixed_grade_and_result_time() {
+    let mut master = fixture().master();
+    master.parameters.iter_mut().find(|row| row.id == "live_skip_result_score_rank").unwrap().value = "D".into();
+    let roster = roster(&mut Rng::new(2), &master);
+    let deck = Deck { members: [0, 1, 2, 3, 4], snaps: [None; 5], performance_order: [0, 1, 2, 3, 4] };
+    for (scene, count) in [(Scenario::Free(10), 3), (Scenario::Challenge(70), 4)] {
+        for (now, expected) in [(99, count), (100, 0)] {
+            let mut request = input(true);
+            request.result_clock = Some(ResultClockInput::Skip { server_now_jst_ticks: now });
+            request.event_payoff.as_mut().unwrap().local_events.clear();
+            let context = request.resolve(&master, scene, Some(1004), &[]).unwrap();
+            let pool = context.pool(&master, &roster).unwrap();
+            for score in [0, 999_999] {
+                let preview = context
+                    .preview_event_items(&pool, &deck, request.event_payoff.as_ref().unwrap(), 7, score)
+                    .unwrap();
+                assert_eq!(item_payoff(&preview, 7, 11, 9).unwrap(), expected);
+            }
+        }
+    }
 }

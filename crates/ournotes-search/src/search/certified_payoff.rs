@@ -61,7 +61,7 @@ pub(crate) fn payoff_map(
         Metric::ClientChallengePoints { event_id } => Ok(i128::from(
             context.preview_event_points(pool, &deck, input, event_id, score)?.challenge_points_for(event_id),
         )),
-        Metric::ConditionalClientEventItems { event_id, resource_type, resource_id } => {
+        Metric::RankedEventItems { event_id, resource_type, resource_id } => {
             let preview = context.preview_event_items(pool, &deck, input, event_id, score)?;
             item_payoff(&preview, event_id, resource_type, resource_id)
         }
@@ -109,7 +109,7 @@ impl Room {
     }
 }
 
-fn rank_cuts(
+pub(super) fn rank_cuts(
     pool: &Pool,
     context: &ResolvedContext,
     input: &EventPayoffInput,
@@ -237,7 +237,8 @@ mod tests {
             &mut data,
             "MasterEvent",
             json!([
-                {"_id":7,"_liveEventPointGroup":1,"_challengeLiveEventPointGroup":2}
+                {"_id":7,"_liveEventPointGroup":1,"_challengeLiveEventPointGroup":2,
+                    "_liveEventRewardGroup":37,"_challengeLiveEventRewardGroup":37}
             ]),
         );
         replace_table(
@@ -269,7 +270,21 @@ mod tests {
             );
         }
         for table in ["MasterLiveEventReward", "MasterChallengeLiveEventReward"] {
-            replace_table(&mut data, table, json!([{"_id":1,"_resourceType":4,"_resourceId":88,"_resourceCount":7}]));
+            replace_table(
+                &mut data,
+                table,
+                Value::Array(
+                    [0, 2, 3, 4]
+                        .into_iter()
+                        .map(|rank| {
+                            json!({
+                                "_id":rank+1,"_eventGroup":37,"_group":5,"_scoreRank":rank,"_probability":10000,
+                                "_resourceType":4,"_resourceId":88,"_resourceCount":7
+                            })
+                        })
+                        .collect(),
+                ),
+            );
         }
         if let Some((_, rows)) = data.tables.iter_mut().find(|(name, _)| name == "MasterParameter") {
             let rows = rows.as_array_mut().unwrap();
@@ -345,7 +360,7 @@ mod tests {
                             .preview_event_points(&pool, &deck, event_input, event_id, score)?
                             .challenge_points_for(event_id),
                     ),
-                    Metric::ConditionalClientEventItems { event_id, resource_type, resource_id } => item_payoff(
+                    Metric::RankedEventItems { event_id, resource_type, resource_id } => item_payoff(
                         &context.preview_event_items(&pool, &deck, event_input, event_id, score)?,
                         event_id,
                         resource_type,
@@ -552,22 +567,54 @@ mod tests {
     }
 
     #[test]
-    fn items_merge_constant_steps_but_still_execute_point_validation_in_every_rank_cell() {
+    fn items_merge_equal_grade_rewards_without_reading_point_rows() {
         let mut data = fixture();
-        let input = input(json!({"selectedRewards":[{"eventId":7,"rewardId":1}]}));
-        let metric = Metric::ConditionalClientEventItems { event_id: 7, resource_type: 4, resource_id: 88 };
-        assert_eq!(
-            invoke(&data, Scenario::Free(10), &input, &metric, (-10, 30), true).unwrap(),
-            PayoffMap::NativeSteps(vec![PayoffStep { lower: -10, upper: 30, value: 7 }])
-        );
-        replace_table(
-            &mut data,
-            "MasterLiveEventPoint",
-            json!([
-                {"_id":1,"_group":1,"_scoreRank":2,"_value":5},{"_id":2,"_group":1,"_scoreRank":4,"_value":5}
-            ]),
-        );
-        assert!(invoke(&data, Scenario::Free(10), &input, &metric, (0, 30), false).is_err());
+        let input = input(json!({}));
+        let metric = Metric::RankedEventItems { event_id: 7, resource_type: 4, resource_id: 88 };
+        let expected = PayoffMap::NativeSteps(vec![PayoffStep { lower: -10, upper: 30, value: 7 }]);
+        assert_eq!(invoke(&data, Scenario::Free(10), &input, &metric, (-10, 30), true).unwrap(), expected);
+        for table in ["MasterLiveEventPoint", "MasterChallengeLiveEventPoint", "MasterLiveChallengePoint"] {
+            replace_table(&mut data, table, json!([]));
+        }
+        assert_eq!(invoke(&data, Scenario::Free(10), &input, &metric, (-10, 30), true).unwrap(), expected);
+    }
+
+    #[test]
+    fn item_rank_cells_preserve_interior_peaks_resource_changes_and_exact_boundaries() {
+        let mut data = fixture();
+        let metric = Metric::RankedEventItems { event_id: 7, resource_type: 4, resource_id: 88 };
+        for table in ["MasterLiveEventReward", "MasterChallengeLiveEventReward"] {
+            set_column(&mut data, table, &mut |row| {
+                row["_resourceCount"] = if row["_scoreRank"] == 3 { json!(29) } else { json!(7) };
+                if row["_scoreRank"] == 4 {
+                    row["_resourceId"] = json!(89);
+                }
+            });
+        }
+        for scenario in [Scenario::Free(10), Scenario::Challenge(70)] {
+            let map = invoke(&data, scenario, &input(json!({})), &metric, (0, 30), true).unwrap();
+            for (score, value) in [(0, 7), (9, 7), (10, 29), (19, 29), (20, 0), (30, 0)] {
+                assert_eq!(lookup(&map, score), value);
+            }
+        }
+        for scenario in [Scenario::Battle(10), Scenario::Arena(80)] {
+            for adapter in [
+                json!({"multiplayerScorePolicy":{"kind":"sameScore","players":2}}),
+                json!({"multiplayerScorePolicy":{"kind":"fixedOthersAverage","players":3,"score":7}}),
+                json!({"multiplayerResultPanel":{"localPlayerIndex":1,"localDisconnected":false,
+                    "otherPlayers":[{"finalScore":7,"disconnected":false}]}}),
+            ] {
+                invoke(&data, scenario, &input(adapter), &metric, (-10, 80), true).unwrap();
+            }
+        }
+        // Equal end rewards do not justify suppressing an unsupported middle grade.
+        set_column(&mut data, "MasterLiveEventReward", &mut |row| {
+            if row["_scoreRank"] == 3 {
+                row["_probability"] = json!(9999);
+            }
+        });
+        assert!(invoke(&data, Scenario::Free(10), &input(json!({})), &metric, (0, 30), false).is_err());
+        invoke(&data, Scenario::Free(10), &input(json!({})), &metric, (0, 9), true).unwrap();
     }
 
     #[test]
@@ -607,7 +654,8 @@ mod tests {
     #[test]
     fn undefined_items_and_native_reward_wrapping_are_not_replaced_with_guessed_values() {
         let mut data = fixture();
-        let item = Metric::ConditionalClientEventItems { event_id: 7, resource_type: 4, resource_id: 88 };
+        let item = Metric::RankedEventItems { event_id: 7, resource_type: 4, resource_id: 88 };
+        set_column(&mut data, "MasterLiveEventReward", &mut |row| row["_probability"] = json!(9999));
         assert!(invoke(&data, Scenario::Free(10), &input(json!({})), &item, (0, 30), false).is_err());
         set_column(&mut data, "MasterLiveEventPoint", &mut |row| {
             row["_value"] = json!(i64::from(i32::MAX));

@@ -45,7 +45,7 @@ fn metrics(kind: &str) -> Vec<Value> {
         json!({"kind":"cappedScore","threshold":400_000}),
         json!({"kind":"scoreAndLifeAtLeast","threshold":1,"minFinalLife":500}),
         json!({"kind":"clientEventPoints","eventId":EVENT_ID}),
-        json!({"kind":"conditionalClientEventItems","eventId":EVENT_ID,"resourceType":11,"resourceId":9}),
+        json!({"kind":"rankedEventItems","eventId":EVENT_ID,"resourceType":11,"resourceId":9}),
     ];
     if kind != "challenge" {
         metrics.push(json!({"kind":"clientChallengePoints","eventId":EVENT_ID}));

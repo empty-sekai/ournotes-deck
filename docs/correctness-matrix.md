@@ -6,7 +6,7 @@ The played-live matrix exercises the public scene and payoff contracts using syn
 | --- | --- |
 | Scene | Free, Mission, Challenge, Battle, Arena |
 | Play | Theoretical-best play (explicit Perfect stream for terminal-life targets); a fixed stream containing Perfect, Great and Miss judgements |
-| Payoff | Score, score threshold, capped score, score with terminal-life threshold, client event points, selected client event items |
+| Payoff | Score, score threshold, capped score, score with terminal-life threshold, client event points, exact-grade event items |
 | Additional ordinary-scene payoff | Client challenge points for Free, Mission, Battle and Arena |
 | Ranking size | K = 1 and K = 5 |
 | Ownership | Six member cards across five characters, one optional unique Snap |
@@ -19,7 +19,7 @@ The scene/payoff test contains 68 combinations. Each combination has twelve lega
 
 The constraint test contains ten combinations with six legal teams each. It compares the complete ranking with exhaustive enumeration and checks the result status and returned values after a candidate-budget stop. A reported complete-domain upper bound must cover the exhaustive optimum.
 
-The payoff is computed for each performance order before averaging. In particular, point rewards, threshold indicators and capped scores retain their own payoff maps. Terminal-life thresholds refer to final life under the declared input stream.
+The payoff is computed for each performance order before averaging. In particular, point rewards, exact-grade item rewards, threshold indicators and capped scores retain their own payoff maps. Terminal-life thresholds refer to final life under the declared input stream.
 
 ## Reproduction
 

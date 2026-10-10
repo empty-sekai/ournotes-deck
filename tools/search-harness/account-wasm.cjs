@@ -78,7 +78,7 @@ for (const name of names) {
       assert.equal(team.orders.values.length, 120);
       assert.equal(team.orders.values.reduce((sum, value) => sum + BigInt(value), 0n), BigInt(team.value.exact.numerator));
       assert.equal(BigInt(team.value.exact.denominator), 120n);
-      if (JSON.parse(request).metric?.kind === 'challengePoints') {
+      if (['challengePoints', 'eventItems'].includes(JSON.parse(request).metric?.kind)) {
         assert.equal(team.orders.payoffValues.length, 120);
         assert.equal(team.orders.payoffValues.reduce((sum, value) => sum + BigInt(value), 0n), BigInt(team.value.payoff.exact.numerator));
         assert.equal(BigInt(team.value.payoff.exact.denominator), 120n);
@@ -94,7 +94,7 @@ for (const [name, change, issuePath] of [
   ['life-stream', q => { q.goal.accuracy = { greatFraction: 0.1 }; }, 'goal.accuracy'],
   ['life-stream', q => { q.goal.play.stream.judged.pop(); }, 'goal.play.stream'],
   ['challenge-skip-points', q => { q.goal.musicId = 10; }, 'goal.challengeMusicId'],
-  ['challenge-skip-items', q => { delete q.eventContext.selectedRewards; }, 'eventContext.selectedRewards'],
+  ['challenge-skip-items', q => { delete q.metric.resourceId; }, 'metric.resourceId'],
 ]) {
   const request = JSON.parse(read(name + '.request.json'));
   change(request);

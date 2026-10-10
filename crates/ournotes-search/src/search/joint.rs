@@ -351,12 +351,13 @@ impl JointBounds {
                 Metric::Score
                     | Metric::ClientEventPoints { .. }
                     | Metric::ClientChallengePoints { .. }
+                    | Metric::RankedEventItems { .. }
                     | Metric::ScoreAtLeast { .. }
                     | Metric::CappedScore { .. }
                     | Metric::ScoreAndLifeAtLeast { .. }
             )
         {
-            return Err(unavailable("joint bounds require a Live score, score target, or point objective"));
+            return Err(unavailable("joint bounds require a Live score, score target, or event objective"));
         }
         if simulation.music_length_ms.is_some()
             || simulation.score_music_length_ms.is_some()
@@ -422,6 +423,21 @@ impl JointBounds {
                     *event_id,
                     matches!(metric, Metric::ClientChallengePoints { .. }),
                     eps < 1.0,
+                )?)
+            }
+            Metric::RankedEventItems { event_id, resource_type, resource_id } => {
+                let cap = ((maximum_slot * 5) as f64 * global * (1.0 + eps)).ceil();
+                if !cap.is_finite() {
+                    return Err(unavailable("ranked-item score support is not finite"));
+                }
+                let support = (if eps < 1.0 { 0 } else { i32::MIN }, cap.clamp(0.0, i32::MAX as f64) as i32);
+                Some(PointBound::compile_items(
+                    pool,
+                    request,
+                    domain,
+                    input.ok_or_else(|| unavailable("missing event input"))?,
+                    (*event_id, *resource_type, *resource_id),
+                    support,
                 )?)
             }
             _ => None,
@@ -2197,6 +2213,95 @@ impl PointBound {
         })
     }
 
+    /// Rank-dependent item rewards share the score envelope, but use EventItem effects and the item rate.
+    /// Every rank cell is audited before resource filtering, including cells below a later, smaller reward.
+    fn compile_items(
+        pool: &Pool,
+        request: &SearchRequest,
+        domain: &CandidateDomain,
+        input: &EventPayoffInput,
+        target: (i64, i64, i64),
+        support: (i32, i32),
+    ) -> Result<Self, Error> {
+        use super::deck_payoff::{card_bonus, point_product};
+        use ournotes_sim::event::{self, EventCard, EventResultRoute};
+
+        let (event_id, resource_type, resource_id) = target;
+        let context = request.objective.context().ok_or_else(|| unavailable("items need resolved context"))?;
+        let q = context.event_request(pool.master, input, event_id)?;
+        if !matches!(q.route, EventResultRoute::NormalPlayed | EventResultRoute::ChallengePlayed { .. }) {
+            return Err(unavailable("played item bounds require a played result route"));
+        }
+        let cuts = super::certified_payoff::rank_cuts(pool, context, input, support)?;
+        let mut ranks = Vec::with_capacity(cuts.len().saturating_sub(1));
+        for cell in cuts.windows(2) {
+            let lower = i32::try_from(cell[0]).map_err(|_| unavailable("item rank boundary outside Int32"))?;
+            let upper = i32::try_from(cell[1] - 1).map_err(|_| unavailable("item rank boundary outside Int32"))?;
+            let rank = context.event_score_rank(pool.master, input, &q.route, lower)?;
+            if context.event_score_rank(pool.master, input, &q.route, upper)? != rank {
+                return Err(unavailable("item rank changes inside a rank-constant partition"));
+            }
+            ranks.push((i64::from(lower), rank));
+        }
+        if !q.holding_event_ids.contains(&event_id) {
+            return Ok(Self {
+                member: vec![0; pool.members.len()],
+                snap: vec![0; domain.snaps().len()],
+                multiplier: 0,
+                score_tiers: Some(vec![(0, 0)]),
+                hulls: None,
+                target: None,
+            });
+        }
+        let effects = event::event_effects(pool.master, event_id);
+        let mut member = vec![0; pool.members.len()];
+        for &m in domain.members() {
+            let card = ournotes_sim::bonus::event_member(pool.master, &pool.members[m]);
+            member[m] = card_bonus(&effects, EventCard::Member(&card), event::EVENT_ITEM)?;
+        }
+        let snap = domain
+            .snaps()
+            .iter()
+            .map(|&s| {
+                card_bonus(
+                    &effects,
+                    EventCard::Snap(&ournotes_sim::bonus::event_snap(&pool.snaps[s])),
+                    event::EVENT_ITEM,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let maximum_bonus = super::team_power::largest_team_bonus(
+            domain.members().iter().map(|&m| (pool.members[m].character_id, member[m])),
+            &snap,
+        );
+        let rate = if matches!(q.route, EventResultRoute::ChallengePlayed { .. }) {
+            event::challenge_point_bonus(pool.master, i64::from(q.consumed_count))?[0]
+        } else {
+            event::boost_bonus(pool.master, i64::from(q.consumed_count))?[0]
+        };
+        // This checks the cast, bonus addition and both native products, even when the item rate is zero.
+        point_product(0, maximum_bonus, rate)?;
+        let mut tiers = Vec::with_capacity(ranks.len());
+        let mut multiplier = 0;
+        for (lower, rank) in ranks {
+            let row = event::ranked_event_reward(pool.master, event_id, &q.route, rank)?;
+            point_product(row.resource_count, maximum_bonus, rate)?;
+            let value = if row.resource_type == resource_type && row.resource_id == resource_id {
+                row.resource_count * rate
+            } else {
+                0
+            };
+            multiplier = multiplier.max(value);
+            tiers.push((lower, value));
+        }
+        // Concave score majorants require nonnegative scores. Signed domains retain the largest audited reward.
+        let score_tiers = (support.0 >= 0).then_some(tiers);
+        let hulls = score_tiers
+            .as_deref()
+            .map(|tiers| (1..=tiers.len()).map(|k| super::uniform::concave_majorant(&tiers[..k])).collect());
+        Ok(Self { member, snap, multiplier, score_tiers, hulls, target: None })
+    }
+
     fn compile(
         pool: &Pool,
         request: &SearchRequest,
@@ -2348,6 +2453,179 @@ fn signed_network_reward_values(
     // A missing native reward row has no terminal payoff to bound: exact settlement still reports its Game error.
     // Defined NONE rows must be included even though the first ordinary threshold is at score zero.
     ranks.into_iter().filter_map(|rank| route.value_at_rank(master, rank).ok()).collect()
+}
+
+#[cfg(test)]
+mod ranked_item_tests {
+    use super::super::gate_tests::common::{Rng, Synth, replace_table, roster, set_column, short_chart, synth};
+    use super::*;
+    use ournotes_sim::scenario::{ContextInput, Scenario};
+    use serde_json::{Value, json};
+
+    fn fixture() -> Synth {
+        let mut data = synth(&mut Rng::new(8171), 5, 0);
+        set_column(&mut data, "MasterMemberCard", &mut |row| row["_characterID"] = row["_id"].clone());
+        set_column(&mut data, "MasterLiveMusic", &mut |row| row["_liveScoreRankGroup"] = json!(1));
+        replace_table(&mut data, "MasterEvent", json!([{"_id":7,"_liveEventRewardGroup":37}]));
+        replace_table(
+            &mut data,
+            "MasterLiveScoreRank",
+            Value::Array(
+                [0, 10, 20]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, score)| json!({"_id":i+1,"_group":1,"_liveScoreRank":i+2,"_requiredScore":score}))
+                    .collect(),
+            ),
+        );
+        replace_table(
+            &mut data,
+            "MasterLiveEventReward",
+            Value::Array(
+                [7, 29, 3]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, count)| {
+                        json!({"_id":i+1,"_eventGroup":37,"_group":5,"_scoreRank":i+2,"_probability":10000,
+                "_resourceType":4,"_resourceId":if i == 2 {89} else {88},"_resourceCount":count})
+                    })
+                    .collect(),
+            ),
+        );
+        replace_table(
+            &mut data,
+            "MasterLiveMusicBoostBonus",
+            json!([
+                {"_id":1,"_consumedLiveBoostCount":1,"_liveMusicRewardRate":3,"_eventPointRate":17}
+            ]),
+        );
+        replace_table(
+            &mut data,
+            "MasterEventEffect",
+            json!([
+                {"_id":1,"_eventId":7,"_eventBonusType":1,"_resourceTypeConstraint":2,"_memberCardId":1,
+                 "_rank1EffectValue":2500,"_rank2EffectValue":2500,"_rank3EffectValue":2500,
+                 "_rank4EffectValue":2500,"_rank5EffectValue":2500}
+            ]),
+        );
+        data
+    }
+
+    fn compile(data: &Synth, support: (i32, i32), active: bool) -> Result<PointBound, Error> {
+        let master = data.master();
+        let owned = roster(&mut Rng::new(8172), &master);
+        let input: ContextInput = serde_json::from_value(json!({
+            "powerSnapshot":{"eventIds":[7]},
+            "resultClock":{"execution":"played","savedStartJstTicks":99,"serverNowJstTicks":100},
+            "eventPayoff":{"consumedCount":1,"eventWindows":if active {
+                json!([{"eventId":7,"startJstTicks":90,"endJstTicks":110}])
+            } else {json!([])}}
+        }))
+        .unwrap();
+        let context = input.resolve(&master, Scenario::Free(10), Some(1004), &[])?;
+        let pool = context.pool(&master, &owned)?;
+        let (chart, judgement_types) = short_chart(&mut Rng::new(8173), 2, false);
+        let request = SearchRequest {
+            objective: Objective::LiveScore {
+                score_id: 1004,
+                play: super::super::PlayInput::Stream {
+                    stream: ournotes_sim::live::model::JudgementStream::theoretical_best(&chart),
+                    judgement_types,
+                },
+                chart,
+                event: false,
+                exclude_snap_skills: false,
+                gekisou: None,
+            }
+            .in_scenario(context),
+            k: 1,
+            constraints: super::super::Constraints::default(),
+            time_limit: None,
+        };
+        let domain = CandidateDomain::build(&pool, &request.constraints)?;
+        PointBound::compile_items(&pool, &request, &domain, input.event_payoff.as_ref().unwrap(), (7, 4, 88), support)
+    }
+
+    #[test]
+    fn item_prefix_maxima_and_mean_hulls_cover_each_outcome_before_averaging() {
+        let bound = compile(&fixture(), (0, 30), true).unwrap();
+        assert_eq!(bound.multiplier_at(9), 21);
+        assert_eq!(bound.multiplier_at(10), 87);
+        assert_eq!(bound.multiplier_at(30), 87);
+        assert_eq!(bound.order_payoff(2500, 9), 26);
+        let exact = |score| match score {
+            0..=9 => 26,
+            10..=19 => 108,
+            _ => 0,
+        };
+        for a in 0..=30 {
+            assert!(bound.order_payoff(2500, a) >= exact(a));
+            for b in 0..=30 {
+                let mean_ceiling = (a + b + 1) / 2;
+                assert!(2 * bound.mean_payoff(2500, mean_ceiling, a.max(b)) >= exact(a) + exact(b));
+            }
+        }
+    }
+
+    #[test]
+    fn every_rank_checks_native_products_before_resource_filtering_or_zero_rate() {
+        for count in [-1, i64::from(i32::MAX), 1i64 << 32] {
+            for rate in [0, 3] {
+                let mut data = fixture();
+                set_column(&mut data, "MasterLiveEventReward", &mut |row| {
+                    if row["_scoreRank"] == 3 {
+                        row["_resourceCount"] = json!(count);
+                        row["_resourceId"] = json!(89);
+                    }
+                });
+                set_column(&mut data, "MasterLiveMusicBoostBonus", &mut |row| {
+                    row["_liveMusicRewardRate"] = json!(rate)
+                });
+                assert!(compile(&data, (0, 30), true).is_err(), "count={count}, rate={rate}");
+                compile(&data, (0, 9), true).unwrap();
+            }
+        }
+        for rate in [-1, i64::from(i32::MAX), 1i64 << 32] {
+            let mut data = fixture();
+            set_column(&mut data, "MasterLiveMusicBoostBonus", &mut |row| row["_liveMusicRewardRate"] = json!(rate));
+            assert!(compile(&data, (0, 30), true).is_err());
+        }
+        let mut data = fixture();
+        set_column(&mut data, "MasterEventEffect", &mut |row| {
+            for rank in 1..=5 {
+                row[format!("_rank{rank}EffectValue")] = json!(1i64 << 32);
+            }
+        });
+        assert!(compile(&data, (0, 30), true).is_err());
+    }
+
+    #[test]
+    fn unsupported_interior_item_grades_are_not_hidden_by_equal_end_rewards() {
+        for mutation in ["missing", "probability", "duplicate"] {
+            let mut data = fixture();
+            let (_, rows) = data.tables.iter_mut().find(|(name, _)| name == "MasterLiveEventReward").unwrap();
+            let rows = rows.as_array_mut().unwrap();
+            match mutation {
+                "missing" => {
+                    rows.remove(1);
+                }
+                "probability" => rows[1]["_probability"] = json!(9999),
+                _ => {
+                    let mut row = rows[1].clone();
+                    row["_id"] = json!(99);
+                    row["_group"] = json!(6);
+                    row["_resourceId"] = json!(89);
+                    rows.push(row);
+                }
+            }
+            assert!(compile(&data, (0, 30), true).is_err(), "{mutation}");
+            compile(&data, (0, 9), true).unwrap();
+        }
+        let mut data = fixture();
+        replace_table(&mut data, "MasterLiveEventReward", json!([]));
+        assert_eq!(compile(&data, (0, 30), false).unwrap().order_payoff(0, 30), 0);
+        assert!(compile(&data, (-1, 30), false).is_err(), "inactive events still resolve the result rank");
+    }
 }
 
 #[cfg(test)]

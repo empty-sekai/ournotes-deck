@@ -1164,7 +1164,8 @@ fn synthetic_master(members: i64, snaps: i64, characters: i64) -> Synth {
         &mut s,
         "MasterEvent",
         json!([{
-            "_id":EVENT_ID,"_liveEventPointGroup":1,"_challengeLiveEventPointGroup":2
+            "_id":EVENT_ID,"_liveEventPointGroup":1,"_challengeLiveEventPointGroup":2,
+            "_liveEventRewardGroup":37,"_challengeLiveEventRewardGroup":41
         }]),
     );
     replace_table(
@@ -1214,14 +1215,20 @@ fn synthetic_master(members: i64, snaps: i64, characters: i64) -> Synth {
             "_memberCardExpRate":2,"_friendshipExpRate":2,"_eventPointRate":2
         }]),
     );
-    for (table, count) in [("MasterLiveEventReward", 3), ("MasterChallengeLiveEventReward", 4)] {
+    for (table, count, group) in [("MasterLiveEventReward", 3, 37), ("MasterChallengeLiveEventReward", 4, 41)] {
         replace_table(
             &mut s,
             table,
-            json!([{
-                "_id":5,"_group":1,"_eventGroup":1,"_scoreRank":2,"_resourceType":11,
-                "_resourceId":9,"_resourceCount":count,"_probability":999
-            }]),
+            Value::Array(
+                (0..=7)
+                    .map(|rank| {
+                        json!({
+                            "_id":rank+3,"_group":1,"_eventGroup":group,"_scoreRank":rank,"_resourceType":11,
+                            "_resourceId":9,"_resourceCount":count,"_probability":10000
+                        })
+                    })
+                    .collect(),
+            ),
         );
     }
     replace_table(
@@ -1295,7 +1302,7 @@ fn context_document(skip: bool, multiplayer: bool, expired: bool) -> Value {
             else {json!({"execution":"played","savedStartJstTicks":150,"serverNowJstTicks":201})},
         "eventPayoff":{"consumedCount":0,"localEvents":[{"eventId":EVENT_ID,"points":0,
             "challengePoints":500,"added":[]}],"eventWindows":[{"eventId":EVENT_ID,
-            "startJstTicks":100,"endJstTicks":200}],"selectedRewards":[{"eventId":EVENT_ID,"rewardId":5}]}
+            "startJstTicks":100,"endJstTicks":200}]}
     });
     if multiplayer {
         value["eventPayoff"]["multiplayerResultPanel"] = json!({"localPlayerIndex":1,
@@ -2045,7 +2052,7 @@ fn typed_skip_items_rank_five_canonical_leaders_before_account_projection() {
             "format":"ournotes-deck.search-request/1",
             "execution":{"kind":"skip","scoreId":SCORE_ID},
             "scenario":scenario,"context":context,
-            "metric":{"kind":"conditionalClientEventItems","eventId":EVENT_ID,"resourceType":11,"resourceId":9},
+            "metric":{"kind":"rankedEventItems","eventId":EVENT_ID,"resourceType":11,"resourceId":9},
             "k":5,"constraints":{"noSnaps":true},"strategy":{"kind":"branchAndBound"},
             "limits":{"timeLimitMs":null,"maxCandidates":null,"cacheEntries":0}
         }))
@@ -2096,8 +2103,7 @@ fn account_challenge_skip_names_its_scene_and_supports_explicit_rewards() {
     request["eventContext"] = json!({
         "resultClock":{"kind":"skip","serverNowJstTicks":150},
         "eventWindows":[{"eventId":EVENT_ID,"startJstTicks":100,"endJstTicks":200}],
-        "localEvents":[{"eventId":EVENT_ID,"points":0,"challengePoints":500,"added":[]}],
-        "selectedRewards":[{"eventId":EVENT_ID,"rewardId":5}]
+        "rewardProjection":true
     });
     for kind in ["eventPoints", "eventItems"] {
         request["metric"] = json!({"kind":kind,"eventId":EVENT_ID,"consumption":201});
@@ -2416,12 +2422,8 @@ fn export_account_transport_corpus() {
                 if metric == "eventItems" {
                     request["metric"]["resourceType"] = json!(11);
                     request["metric"]["resourceId"] = json!(9);
-                    request["eventContext"]["localEvents"] =
-                        json!([{"eventId":EVENT_ID,"points":0,"challengePoints":500,"added":[]}]);
-                    request["eventContext"]["selectedRewards"] = json!([{"eventId":EVENT_ID,"rewardId":5}]);
-                } else {
-                    request["eventContext"]["rewardProjection"] = json!(true);
                 }
+                request["eventContext"]["rewardProjection"] = json!(true);
                 if matches!(scene, "battle" | "arena") {
                     request["room"] = json!({"players":5,"othersAverageScore":null});
                 }

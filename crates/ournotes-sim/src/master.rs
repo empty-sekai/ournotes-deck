@@ -614,7 +614,7 @@ row!(
 );
 
 row!(
-    /// `MasterEvent` (the columns the event points read).
+    /// `MasterEvent` reward and point groups.
     EventRow {
         id: i64 = "_id",
         event_type: i64 = "_eventType",
@@ -622,6 +622,8 @@ row!(
         end_at: Option<String> = "_endAt",
         live_event_point_group: i64 = "_liveEventPointGroup",
         challenge_live_event_point_group: i64 = "_challengeLiveEventPointGroup",
+        live_event_reward_group: i64 = "_liveEventRewardGroup",
+        challenge_live_event_reward_group: i64 = "_challengeLiveEventRewardGroup",
     }
 );
 

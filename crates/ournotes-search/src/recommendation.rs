@@ -16,7 +16,7 @@ use crate::types::{
 use ournotes_sim::Error;
 use ournotes_sim::account::{AccountInput, Exclusions, Issue};
 use ournotes_sim::data::DeckData;
-use ournotes_sim::event::{EventWindow, LocalEvent, ServerEventReward};
+use ournotes_sim::event::{EventWindow, LocalEvent};
 use ournotes_sim::live::model::{Accuracy, JudgementStream, JustRule};
 use ournotes_sim::scenario::{
     ContextInput, EventPayoffInput, MultiplayerRankInput, MultiplayerResultPanelInput, MultiplayerScorePolicy,
@@ -132,7 +132,7 @@ struct MetricWire {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EventContextWire {
-    /// Project one result's EP/CP increment. Synthetic counters are never account balances or inventory.
+    /// Project one result's event rewards. Synthetic counters are never account balances or inventory.
     #[serde(default)]
     reward_projection: bool,
     #[serde(default)]
@@ -141,8 +141,6 @@ struct EventContextWire {
     local_events: Vec<LocalEvent>,
     #[serde(default)]
     event_windows: Option<Vec<EventWindow>>,
-    #[serde(default)]
-    selected_rewards: Option<Vec<ServerEventReward>>,
     #[serde(default)]
     multiplayer_ranks: Option<Vec<MultiplayerRankInput>>,
     #[serde(default)]
@@ -614,7 +612,7 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
                         },
                         "eventPoints" => Metric::ClientEventPoints { event_id: e },
                         "challengePoints" => Metric::ClientChallengePoints { event_id: e },
-                        _ => Metric::ConditionalClientEventItems {
+                        _ => Metric::RankedEventItems {
                             event_id: e,
                             resource_type: m.resource_type.unwrap_or_default(),
                             resource_id: m.resource_id.unwrap_or_default(),
@@ -663,24 +661,12 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
         (Some(_), false) => issues.add("eventContext", "input", "eventContext applies only to event metrics"),
         (None, false) => {}
         (Some(c), true) => {
-            if matches!(metric.as_ref(), Some(Metric::ConditionalClientEventItems { .. }))
-                && c.selected_rewards.is_none()
-            {
-                issues.add(
-                    "eventContext.selectedRewards",
-                    "input",
-                    "eventItems requires an explicit server-selected reward list; omission does not mean zero rewards",
-                );
-            }
             if c.reward_projection && !c.local_events.is_empty() {
                 issues.add(
                     "eventContext.localEvents",
                     "input",
                     "rewardProjection and explicit localEvents are mutually exclusive",
                 );
-            }
-            if c.reward_projection && matches!(metric.as_ref(), Some(Metric::ConditionalClientEventItems { .. })) {
-                issues.add("eventContext.rewardProjection", "input", "rewardProjection applies to eventPoints and challengePoints; conditional items require their explicit server reward context");
             }
             if let Some(clock) = &c.result_clock {
                 result_clock = match (clock.execution.as_str(), clock.saved_start_jst_ticks) {
@@ -715,7 +701,6 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
                 },
                 event_window_adapter: c.event_windows.is_none().then(|| "canonical-master-no-offset".to_string()),
                 event_windows: c.event_windows.clone(),
-                selected_rewards: c.selected_rewards.clone(),
                 multiplayer_ranks: c.multiplayer_ranks.clone(),
                 multiplayer_result_panel: c.multiplayer_result_panel.clone(),
                 multiplayer_score_policy: w.room.as_ref().map(|room| match room.others_average_score {
@@ -1486,9 +1471,12 @@ pub fn capabilities() -> Value {
         "lottery": "certified expectations; only proved rank separation or equality certifies TopK",
         "accuracyLaw": "deterministic evenly spread Greats; Just share of remaining eligible notes",
         "tieBreak": ["expectedPayoff", "power", "canonicalTeamKey"],
-        "eventItemsRequireSelectedRewards": true,
+        "eventItemRewards": {
+            "selection": "exactResultGrade", "eventGroupField": "eventGroup",
+            "rowsPerGrade": 1, "probabilityMarker": 10000,
+        },
         "eventRewardProjection": {
-            "field": "eventContext.rewardProjection", "metrics": ["eventPoints", "challengePoints"],
+            "field": "eventContext.rewardProjection", "metrics": ["eventPoints", "challengePoints", "eventItems"],
             "balanceValidation": false, "cumulativeRewards": false,
         },
         "eventMusicRanking": {
