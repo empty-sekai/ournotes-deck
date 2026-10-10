@@ -288,6 +288,14 @@ impl Scene {
     }
 }
 
+/// Secondary expectations compared after maximizing earned Challenge points.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EventRewardPriority {
+    EventPointsFirst,
+    EventItemsFirst,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Metric {
@@ -315,6 +323,16 @@ pub enum Metric {
         #[serde(rename = "eventId")]
         event_id: i64,
     },
+    /// Lexicographic expectations within the maximum Challenge-point layer.
+    ClientChallengePointsWithBonuses {
+        #[serde(rename = "eventId")]
+        event_id: i64,
+        priority: EventRewardPriority,
+        #[serde(rename = "resourceType")]
+        resource_type: i64,
+        #[serde(rename = "resourceId")]
+        resource_id: i64,
+    },
     /// Resource quantity from the unique reward row of each terminal result grade.
     RankedEventItems {
         #[serde(rename = "eventId")]
@@ -326,10 +344,24 @@ pub enum Metric {
     },
 }
 impl Metric {
+    /// Scalar objective whose upper bounds cover the primary reward dimension.
+    pub(crate) fn primary_bound_metric(&self) -> Self {
+        match *self {
+            Self::ClientChallengePointsWithBonuses { event_id, .. } => Self::ClientChallengePoints { event_id },
+            _ => self.clone(),
+        }
+    }
+    pub(crate) fn secondary_priority(&self) -> Option<EventRewardPriority> {
+        match *self {
+            Self::ClientChallengePointsWithBonuses { priority, .. } => Some(priority),
+            _ => None,
+        }
+    }
     pub(crate) fn event(&self) -> Option<i64> {
         match *self {
             Self::ClientEventPoints { event_id }
             | Self::ClientChallengePoints { event_id }
+            | Self::ClientChallengePointsWithBonuses { event_id, .. }
             | Self::RankedEventItems { event_id, .. } => Some(event_id),
             _ => None,
         }
@@ -339,6 +371,7 @@ impl Metric {
             Self::Score
             | Self::ClientEventPoints { .. }
             | Self::ClientChallengePoints { .. }
+            | Self::ClientChallengePointsWithBonuses { .. }
             | Self::RankedEventItems { .. } => Some(i32::MAX as i128),
             Self::ScoreAtLeast { .. } | Self::ScoreAndLifeAtLeast { .. } => Some(1),
             Self::CappedScore { threshold } => Some(*threshold as i128),
@@ -557,6 +590,15 @@ pub struct ScoreSummary {
     pub probability_at_least: Option<Fraction>,
     pub expected_shortfall: Option<Fraction>,
 }
+/// Exact expected rewards under one shared terminal-result distribution.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventRewardExpectation {
+    pub challenge_points: Fraction,
+    pub event_points: Fraction,
+    pub event_items: Fraction,
+}
+
 /// One result. For a played live it is a team in its canonical layout (the leader in slot 2, the other members in
 /// ascending card ID order, each with its Snap), valued by its mean over the 120 performance orders.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -567,6 +609,8 @@ pub struct RecommendedDeck {
     pub power: i32,
     pub expected_score: Option<Fraction>,
     pub expected_payoff: Option<Fraction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_rewards: Option<EventRewardExpectation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score_interval: Option<FractionInterval>,
     #[serde(skip_serializing_if = "Option::is_none")]

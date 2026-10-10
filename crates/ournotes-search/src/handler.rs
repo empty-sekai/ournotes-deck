@@ -109,6 +109,7 @@ pub(crate) fn compile_execution(
         return Err(Error::Input("simulation/network inputs apply only to played live".into()));
     }
     let domain = CandidateDomain::build(pool, &request.constraints)?;
+    let primary_metric = metric.primary_bound_metric();
     let started = crate::clock::Instant::now();
     let mut deck_payoff = None;
     let mut deck_payoff_refusal = None;
@@ -123,6 +124,9 @@ pub(crate) fn compile_execution(
             }
             Err(reason) => (None, Some(reason.to_string())),
         }
+    } else if metric.secondary_priority().is_some() && matches!(request.objective.inner(), Objective::SkipScore { .. })
+    {
+        (None, None)
     } else if matches!(strategy, Strategy::BranchAndBound)
         && matches!(request.objective.inner(), Objective::SkipScore { .. })
         && matches!(
@@ -138,10 +142,19 @@ pub(crate) fn compile_execution(
             Err(reason) => (None, Some(reason.to_string())),
         }
     } else if matches!(strategy, Strategy::BranchAndBound) {
-        match crate::search::joint::JointBounds::compile(pool, request, &domain, metric, event_input, simulation) {
+        match crate::search::joint::JointBounds::compile(
+            pool,
+            request,
+            &domain,
+            &primary_metric,
+            event_input,
+            simulation,
+        ) {
             Ok(bound) => {
                 // A played Live whose payoff steps with the local score is first ranked by deck under its score cap.
-                if let Some(steps) = bound.score_steps() {
+                if metric.secondary_priority().is_none()
+                    && let Some(steps) = bound.score_steps()
+                {
                     match crate::search::deck_payoff::DeckPayoffBounds::compile(
                         pool,
                         request,

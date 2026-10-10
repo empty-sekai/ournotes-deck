@@ -902,7 +902,7 @@ ranked by certified intervals over the native lottery probabilities ([LUCK](#luc
 `resultIdentity` is `team` (`fixedTeam` for a fixed-deck evaluation). A team is reported in its canonical layout: the
 leader in slot 2 and the other (member, Snap) pairs in slots 0, 1, 3 and 4 in ascending member card ID order. Every
 layout of the same pairs is the same team, and a fixed deck given in any layout evaluates and reports as that team.
-Results are ordered by
+Scalar-objective results are ordered by
 
 1. expected payoff, descending; on the deterministic played branch this compares `expectedPayoff.numerator`
    because each denominator is 120;
@@ -921,7 +921,8 @@ In a Gekisou live without a LUCK range, a deck whose skills read a probability r
 without a LUCK range the controller consumes no lottery, the probability gates only lottery chains and
 lottery-dependent score-ups, and each order still has one exact score.
 
-`Complete` certifies the first `min(K, number of legal teams)` teams under this order. `TimedOut` preserves
+`Complete` certifies the first `min(K, number of legal teams)` teams under this scalar order.
+[Challenge-point priorities](#lexicographic-challenge-point-priorities) select their Top-K within the maximum-CP layer. `TimedOut` preserves
 complete deterministic evaluations, or certified enclosures on the LUCK route; the reason can be a time limit,
 candidate limit or another incomplete-search exit and is recorded separately. `telemetry.proof` reports the
 available bounds on unexplored work; an absent cap means that the unexplored value is unknown.
@@ -1077,7 +1078,7 @@ and checks every prefix against its exact value and power, then compares the ent
 
 ### Deterministic completion theorem
 
-Fix a validated request and its finite legal team domain `D`. Let `N(t)` be a team's exact payoff numerator on
+Fix a validated scalar-objective request and its finite legal team domain `D`. Let `N(t)` be a team's exact payoff numerator on
 the common mass, `P(t)` its power, and `I(t)` its canonical member/Snap key. Order teams by
 `N descending, P descending, I ascending`. The direct member-set route uses its own representative key instead.
 The following obligations establish the complete result:
@@ -1292,6 +1293,30 @@ reused only within one compiled bound/domain; used Snaps need not enter the key 
 explicit. Limits on states, convolution work and retained cells disable this optional bound rather than dropping
 DP states. All numeric equality cases retain the original canonical ranking rules. This layer supplements the
 unique-resource and suffix bounds; it does not replace the exact leaf evaluator.
+
+## Lexicographic Challenge-point priorities
+
+`ClientChallengePointsWithBonuses` ranks exact expected CP first, followed by the selected order of
+expected PT and exact-grade items, then power and the canonical member/Snap key. Its result set is the
+Top-K within the maximum-CP layer. The search maintains a single best primary numerator, clears the
+incumbents when this value increases, and admits only equal-primary candidates to the secondary ranking.
+Every evaluated terminal score is settled independently for PT and items with its full probability mass.
+All candidates share the declared expectation denominator.
+
+The scalar CP bound is admissible for the primary coordinate. A node with `upper < bestCP` is inferior.
+Equality retains all possible secondary values and canonical ties. The cutoff uses the no-power-tie
+marker, and the composition path uses complete Snap binding traversal for this objective. Played search
+uses the primary CP joint envelope; deterministic Skip uses complete legal team enumeration. A completed
+traversal therefore proves both the best CP layer and its lexicographic Top-K. Time-limited traversals
+retain observed incumbents and primary-coordinate bounds; secondary optimality remains unproven.
+
+Reproduce the synthetic complete-domain oracle, cache equivalence, deterministic-domain checks and
+fractional priority tests with:
+
+```sh
+cargo test --release --locked -p ournotes-search --lib reward_priority_tests
+cargo test --release --locked -p ournotes-search --test adapter_fixture_export cp_priorities
+```
 
 ## Member compositions, Snap pairings and power frontiers
 

@@ -10,8 +10,8 @@ use crate::clock::Instant;
 use crate::search::Constraints;
 use crate::search::physical::ProgressHook;
 use crate::types::{
-    Execution, Fraction, FractionInterval, Limits, MAX_K, Metric, Optimality, PlayPolicy, RecommendationOutcome,
-    RecommendationRequest, RecommendedDeck, Scene, SimulationInput, Strategy,
+    EventRewardPriority, Execution, Fraction, FractionInterval, Limits, MAX_K, Metric, Optimality, PlayPolicy,
+    RecommendationOutcome, RecommendationRequest, RecommendedDeck, Scene, SimulationInput, Strategy,
 };
 use ournotes_sim::Error;
 use ournotes_sim::account::{AccountInput, Exclusions, Issue};
@@ -115,6 +115,8 @@ struct AccuracyWire {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MetricWire {
     kind: String,
+    #[serde(default)]
+    secondary_priority: Option<String>,
     #[serde(default)]
     threshold: Option<i32>,
     #[serde(default)]
@@ -578,7 +580,23 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
             }
             Some(fields) => {
                 let mut complete = true;
+                let secondary_priority = match m.secondary_priority.as_deref() {
+                    None => None,
+                    Some("eventPointsFirst") => Some(EventRewardPriority::EventPointsFirst),
+                    Some("eventItemsFirst") => Some(EventRewardPriority::EventItemsFirst),
+                    Some(_) => {
+                        complete = false;
+                        issues.add("metric.secondaryPriority", "input", "choose eventPointsFirst or eventItemsFirst");
+                        None
+                    }
+                };
+                let fields = if m.kind == "challengePoints" && m.secondary_priority.is_some() {
+                    &["eventId", "consumption", "secondaryPriority", "resourceType", "resourceId"][..]
+                } else {
+                    fields
+                };
                 for (name, present) in [
+                    ("secondaryPriority", m.secondary_priority.is_some()),
                     ("threshold", m.threshold.is_some()),
                     ("minFinalLife", m.min_final_life.is_some()),
                     ("eventId", m.event_id.is_some()),
@@ -611,7 +629,15 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
                             min_final_life: m.min_final_life.unwrap_or_default(),
                         },
                         "eventPoints" => Metric::ClientEventPoints { event_id: e },
-                        "challengePoints" => Metric::ClientChallengePoints { event_id: e },
+                        "challengePoints" => match secondary_priority {
+                            Some(priority) => Metric::ClientChallengePointsWithBonuses {
+                                event_id: e,
+                                priority,
+                                resource_type: m.resource_type.expect("complete resource type"),
+                                resource_id: m.resource_id.expect("complete resource ID"),
+                            },
+                            None => Metric::ClientChallengePoints { event_id: e },
+                        },
                         _ => Metric::RankedEventItems {
                             event_id: e,
                             resource_type: m.resource_type.unwrap_or_default(),
@@ -820,6 +846,9 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
                 }
             }
         }
+        if let Some(priority) = metric_wire.and_then(|m| m.secondary_priority.as_ref()) {
+            echo["secondaryPriority"] = json!(priority);
+        }
         if w.event_context.as_ref().is_some_and(|c| c.reward_projection) {
             echo["rewardProjection"] = json!(true);
         }
@@ -980,6 +1009,17 @@ pub struct Team {
     pub layout: Layout,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rank_certified: Option<bool>,
+    /// Exact expectations for a Challenge-point priority objective.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_rewards: Option<TeamEventRewards>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamEventRewards {
+    pub challenge_points: PayoffValue,
+    pub event_points: PayoffValue,
+    pub event_items: PayoffValue,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1206,6 +1246,21 @@ fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_orders: bool) ->
         } else {
             None
         };
+        let event_rewards = deck
+            .event_rewards
+            .as_ref()
+            .map(|rewards| {
+                let value = |fraction: &Fraction| -> Result<PayoffValue, Error> {
+                    let (n, d) = exact(fraction)?;
+                    Ok(PayoffValue { score: n as f64 / d as f64, exact: Some(fraction.clone()), interval: None })
+                };
+                Ok::<_, Error>(TeamEventRewards {
+                    challenge_points: value(&rewards.challenge_points)?,
+                    event_points: value(&rewards.event_points)?,
+                    event_items: value(&rewards.event_items)?,
+                })
+            })
+            .transpose()?;
         rows.push(Team {
             rank: 0,
             leader,
@@ -1215,6 +1270,7 @@ fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_orders: bool) ->
             orders,
             layout,
             rank_certified: deck.rank_certified,
+            event_rewards,
         });
     }
     // Preserve the search ordering and its proof. Changing the tie objective here would not recover
@@ -1471,6 +1527,11 @@ pub fn capabilities() -> Value {
         "lottery": "certified expectations; only proved rank separation or equality certifies TopK",
         "accuracyLaw": "deterministic evenly spread Greats; Just share of remaining eligible notes",
         "tieBreak": ["expectedPayoff", "power", "canonicalTeamKey"],
+        "challengePointPriorities": {
+            "priorities": ["eventPointsFirst", "eventItemsFirst"],
+            "objective": "lexicographicExpected", "primary": "challengePoints",
+            "bestPrimaryOnly": true, "lotteryFree": true,
+        },
         "eventItemRewards": {
             "selection": "exactResultGrade", "eventGroupField": "eventGroup",
             "rowsPerGrade": 1, "probabilityMarker": 10000,
@@ -1647,6 +1708,7 @@ mod tests {
                 power: 100,
                 expected_score: None,
                 expected_payoff: None,
+                event_rewards: None,
                 score_interval: Some(FractionInterval::from_f64(150.5, 150.75).unwrap()),
                 payoff_interval: Some(FractionInterval::from_f64(150.5, 150.75).unwrap()),
                 rank_certified: Some(true),

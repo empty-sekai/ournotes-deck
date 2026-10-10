@@ -17,8 +17,8 @@ bounds or a verified equal-program certificate. An overlapping frontier remains 
 
 Live values average all 120 member performance orders. Snaps stay paired with their members. Nonleader layout is
 canonical, with the leader in slot 2. Five fixed member/Snap pairs therefore give at most five teams, one per leader;
-the 120 performance orders never become additional recommended teams. The result preserves the search's order: expected payoff, power, then its
-canonical key. It does not reorder a truncated Top-K under a different secondary objective.
+the 120 performance orders never become additional recommended teams. Scalar results preserve the search's order:
+expected payoff, power, then its canonical key. Challenge-point reward priorities use the lexicographic order below. It does not reorder a truncated Top-K under a different secondary objective.
 
 `metric:{"kind":"challengePoints","eventId":7,"consumption":1}` maximizes newly earned Challenge points from
 an ordinary played or skipped Live. The lower-level search metric is `clientChallengePoints`. It uses the
@@ -30,6 +30,39 @@ the native per-result EP amount and CP increment do not depend on previous balan
 It does not validate resource affordability, predict terminal balances, or include cumulative achievement/loop
 rewards. The answer echoes `metric.rewardProjection:true`. A played point result with explicit context requires
 the event's local record. Existing balances are excluded from the payoff. A challenge Live spends these points and cannot select the earnings metric.
+
+## Challenge-point reward priorities
+
+An optional `secondaryPriority` on `challengePoints` selects a lexicographic objective:
+
+- `eventPointsFirst`: expected CP, expected event points, expected event items, power, canonical IDs.
+- `eventItemsFirst`: expected CP, expected event items, expected event points, power, canonical IDs.
+
+```json
+{"kind":"challengePoints","eventId":7,"consumption":1,"secondaryPriority":"eventPointsFirst","resourceType":4,"resourceId":88}
+```
+
+Supply the event-item resource and event context as for an item projection. The lower-level metric is
+`clientChallengePointsWithBonuses`, with `priority`, `eventId`, `resourceType` and `resourceId`.
+Each terminal outcome settles all three rewards under the same scenario. Played expectations weight all
+120 member orders equally; deterministic Skip has denominator 1. Member and Snap event bonuses contribute
+to their respective PT and item quantities. CP retains its ordinary earnings formula.
+
+The search returns at most K teams from the highest expected-CP layer it has found. A result can therefore
+contain fewer than K teams. Any positive CP advantage takes precedence over both secondary quantities;
+among exact CP ties, the requested secondary order precedes power and canonical identity. The search
+covers the complete legal team domain using bounds for the primary dimension and exact secondary values.
+
+The supported domain is lottery-free played outcomes and deterministic Skip. Active LUCK ranges and
+ordinary probability predicates with an unproved outcome distribution return `Unsupported`.
+`capabilities().challengePointPriorities` declares both priorities, `objective:lexicographicExpected`,
+`primary:challengePoints`, `bestPrimaryOnly:true` and `lotteryFree:true`.
+
+The result echoes the priority and resource identity. Each team's `eventRewards` contains
+`challengePoints`, `eventPoints` and `eventItems`, each with `score`, an exact numerator/denominator and
+`interval:null`. `value.payoff` remains CP. Complete/proven covers the full lexicographic result;
+time-limited answers contain the best observed CP layer and are unproven. Scalar upper bounds describe
+CP only. Partial-search best/K-th gaps are omitted because secondary optimality requires its own proof.
 
 ## Event-item rewards
 

@@ -173,6 +173,7 @@ fn oracle(
             power,
             expected_score: Some(Fraction { numerator: score.to_string(), denominator: "1".into() }),
             expected_payoff: Some(Fraction { numerator: pt.to_string(), denominator: "1".into() }),
+            event_rewards: None,
             score_interval: None,
             payoff_interval: None,
             rank_certified: None,
