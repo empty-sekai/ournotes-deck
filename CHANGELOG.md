@@ -2,6 +2,52 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.4](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.3...v0.0.4) - 2026-10-10
+
+### Features
+
+- **chartstats:** [**breaking**] Compute nominal chart expectations ([#33](https://github.com/empty-sekai/ournotes-deck/issues/33)) ([cbdd680](https://github.com/empty-sekai/ournotes-deck/commit/cbdd680199f8cc80a85708953514dedaa12fddc8))
+- **replay:** Add exact skill-order rank analysis ([e6c6aff](https://github.com/empty-sekai/ournotes-deck/commit/e6c6aff050eb787326ddab6ad89f9a7c4e60859f))
+- **event:** Derive item rewards from each result grade ([c2ecab8](https://github.com/empty-sekai/ournotes-deck/commit/c2ecab8d88b7d0b1237bc163675b50ad0fc60a7d))
+- **search:** Rank challenge-point ties by event rewards ([9ff6ac1](https://github.com/empty-sekai/ournotes-deck/commit/9ff6ac149f80ee5a5e8ca30f497997ceeea7b4f6))
+
+### Bug fixes
+
+- **search:** Certify canonical ranking and pruning bounds ([c02509d](https://github.com/empty-sekai/ournotes-deck/commit/c02509d47fe9f8a535d1da6f006778a6f46ea9b1))
+- **search:** Certify numeric domains and replay boundaries ([ebb2e9f](https://github.com/empty-sekai/ournotes-deck/commit/ebb2e9f3ba58658399a591631de4770d57644f6b))
+- **search:** Certify timers beyond the play horizon ([8932b19](https://github.com/empty-sekai/ournotes-deck/commit/8932b191709a470207a677a1fee899c159613647))
+- **search:** Retain bounds for damage reduction skills ([6759c26](https://github.com/empty-sekai/ournotes-deck/commit/6759c2624d4e56c063390f935f2d4a9393a0514f))
+- **validation:** Preserve matrix outcomes for invalid contracts ([1d47039](https://github.com/empty-sekai/ournotes-deck/commit/1d470395950838eda6200b60c1ece4579670bb49))
+- **search:** Certify window-weighted factor roundoff ([fdf55de](https://github.com/empty-sekai/ournotes-deck/commit/fdf55decc70859802c76001eb8e2969f17dd68b2))
+- **search:** Certify replayed factors and bounded warm starts ([7be5f0f](https://github.com/empty-sekai/ournotes-deck/commit/7be5f0f2b8e32be8ed4019fd683cf8b2a33e8a48))
+
+### Performance
+
+- **sim:** Resume exact lottery branches from frame checkpoints ([e9dab37](https://github.com/empty-sekai/ournotes-deck/commit/e9dab37db32d55667e4da9b282817ef33f01147b))
+- **search:** Materialize LUCK refinement state at the ranking boundary ([392044f](https://github.com/empty-sekai/ournotes-deck/commit/392044f80b001718c385a58aaf52ffa561bfb7dc))
+- **luck:** Reuse complete laws and prioritize uncertain orders ([463eaed](https://github.com/empty-sekai/ournotes-deck/commit/463eaedbf236fd91b9d69d1dcd11f5950b9586aa))
+- **search:** Bound certified warm-start proposals ([f31cc6f](https://github.com/empty-sekai/ournotes-deck/commit/f31cc6fba438a85c064fe3b60e9f607518d8c460))
+- **luck:** Reuse certified recorder states within score sessions ([96ce5df](https://github.com/empty-sekai/ournotes-deck/commit/96ce5dfbc9776af8e15632619a7d2e807d7bc59f))
+- **search:** Prepare conversion envelopes on demand ([0f230fd](https://github.com/empty-sekai/ournotes-deck/commit/0f230fd5a1b5ab05f7ce2668c9c885425178163e))
+- **search:** Group conversion traversals by envelope ([f781689](https://github.com/empty-sekai/ournotes-deck/commit/f7816890130d36f85f1d046468426f08586dea1a))
+- **search:** Compile conversion bounds from reachable effects ([4686361](https://github.com/empty-sekai/ournotes-deck/commit/4686361bb60c5703a3220111e5fbddd08ef60640))
+
+### Documentation
+
+- **search:** State complete proof obligations and audit boundaries ([f79fd04](https://github.com/empty-sekai/ournotes-deck/commit/f79fd0401b90c0a5128c12607f84ca6811296846))
+- **search:** Specify bound preparation and LUCK refinement methods ([cf1049a](https://github.com/empty-sekai/ournotes-deck/commit/cf1049a6945f808400b77f09fc8c9f2549690545))
+- Expose roadmap and add optional parallel search ([bca2fdd](https://github.com/empty-sekai/ournotes-deck/commit/bca2fdde8cf45f440243d1c408889135bc538c23))
+
+### Tests
+
+- **search:** Validate canonical results across live objectives ([6f34680](https://github.com/empty-sekai/ournotes-deck/commit/6f34680116c7c4c28e1d37730cc6f3378246224a))
+- **search:** Extend canonical coverage to scene payoff contracts ([acf41e1](https://github.com/empty-sekai/ournotes-deck/commit/acf41e15b0df334f50e21cecb2699d31aac60722))
+- Bind frame matrices to calculation source and coverage ([910eb8f](https://github.com/empty-sekai/ournotes-deck/commit/910eb8f6cfd419ea94909880f200b2083fe5717c))
+
+### CI
+
+- Verify packaged wasm on pull requests ([#39](https://github.com/empty-sekai/ournotes-deck/issues/39)) ([e900dbc](https://github.com/empty-sekai/ournotes-deck/commit/e900dbce962da714aea7c8b303b8f2a47d5cad37))
+
 ## [0.0.3](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.2...v0.0.3) - 2026-10-06
 
 ### Features
