@@ -5,11 +5,19 @@ use ournotes_sim::master::Master;
 use ournotes_sim::replay::{RankConfirmation, ReplayMode, ReplayRawResult, ReplayRawRuntime, ReplaySession};
 use serde_json::{Value, json};
 
+#[path = "replay/rank_analysis.rs"]
+mod rank_analysis;
+
 fn data() -> DeckData {
+    data_with_tables(|_| {})
+}
+
+fn data_with_tables(patch: impl FnOnce(&mut Value)) -> DeckData {
     let mut rows: Value = serde_json::from_str(include_str!("fixtures/raw_bridge_master.json")).unwrap();
     rows["MasterLiveMusic"] =
         json!([{"_id":1,"_easyID":101,"_musicType":1,"_gekisouMission1":1,"_gekisouMission2":2,"_gekisouMission3":3}]);
     rows["MasterLiveMusicScore"] = json!([{"_id":101,"_musicScoreLevel":25,"_fullComboCount":3}]);
+    patch(&mut rows);
     let tables: Vec<_> =
         rows.as_object().unwrap().iter().map(|(k, v)| (k.clone(), json!({"_allData":v}).to_string())).collect();
     let master = Master::from_json_tables(|n| tables.iter().find(|(k, _)| k == n).map(|(_, v)| v.as_str())).unwrap();
