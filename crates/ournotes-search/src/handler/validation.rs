@@ -25,6 +25,30 @@ pub(crate) fn validate_payoff(
     metric: &Metric,
     input: Option<&EventPayoffInput>,
 ) -> Result<(), Error> {
+    if let Metric::Combined { levels } = metric {
+        let [level] = levels.as_slice() else {
+            return Err(Error::Input("a combined metric has exactly one level of terms".into()));
+        };
+        if !(1..=MAX_METRIC_TERMS).contains(&level.terms.len()) {
+            return Err(Error::Input(format!("a combined metric level has 1..={MAX_METRIC_TERMS} terms")));
+        }
+        for term in &level.terms {
+            if !(1..=MAX_TERM_WEIGHT).contains(&term.weight) {
+                return Err(Error::Input(format!("a combined metric weight must be in 1..={MAX_TERM_WEIGHT}")));
+            }
+            if matches!(
+                term.metric,
+                Metric::Combined { .. } | Metric::Power | Metric::ClientChallengePointsWithBonuses { .. }
+            ) {
+                return Err(Error::Input(
+                    "a combined metric term is a score, score target, event-point, challenge-point or event-item                      metric"
+                        .into(),
+                ));
+            }
+            validate_payoff(pool, request, &term.metric, input)?;
+        }
+        return Ok(());
+    }
     if metric.target().is_some_and(|threshold| threshold <= 0) {
         return Err(Error::Input("score target must be positive".into()));
     }
@@ -71,16 +95,8 @@ pub(crate) fn validate_payoff(
 pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescription, Error> {
     let inferred = match (&r.execution, &r.metric) {
         (Execution::Power { .. }, _) => PlayerGoal::Power,
-        (
-            _,
-            Metric::ClientEventPoints { .. }
-            | Metric::ClientChallengePoints { .. }
-            | Metric::ClientChallengePointsWithBonuses { .. }
-            | Metric::RankedEventItems { .. },
-        ) => PlayerGoal::EventFarming,
-        (_, Metric::ScoreAtLeast { .. } | Metric::CappedScore { .. } | Metric::ScoreAndLifeAtLeast { .. }) => {
-            PlayerGoal::StableTarget
-        }
+        (_, metric) if metric.any(|m| m.event().is_some()) => PlayerGoal::EventFarming,
+        (_, metric) if metric.any(|m| m.target().is_some()) => PlayerGoal::StableTarget,
         (Execution::Skip { .. }, _) => PlayerGoal::SkipFarming,
         (Execution::Live { gekisou: true, .. }, _) => PlayerGoal::GekisouScore,
         _ => PlayerGoal::DailyHighScore,
@@ -88,19 +104,22 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
     let goal = r.goal.unwrap_or(inferred);
     let valid = match goal {
         PlayerGoal::Power => matches!((&r.execution, &r.metric), (Execution::Power { .. }, Metric::Power)),
-        PlayerGoal::DailyHighScore => matches!((&r.execution, &r.metric), (Execution::Live { .. }, Metric::Score)),
-        PlayerGoal::StableTarget => r.metric.target().is_some(),
-        PlayerGoal::EventFarming => r.metric.event().is_some(),
+        PlayerGoal::DailyHighScore => {
+            matches!(r.execution, Execution::Live { .. }) && r.metric.all(|m| matches!(m, Metric::Score))
+        }
+        PlayerGoal::StableTarget => r.metric.any(|m| m.target().is_some()),
+        PlayerGoal::EventFarming => r.metric.any(|m| m.event().is_some()),
         PlayerGoal::SkipFarming => matches!(r.execution, Execution::Skip { .. }),
         PlayerGoal::GekisouScore => {
             matches!(r.execution, Execution::Live { gekisou: true, .. })
-                && matches!(r.metric, Metric::Score | Metric::CappedScore { .. } | Metric::ScoreAtLeast { .. })
+                && r.metric
+                    .all(|m| matches!(m, Metric::Score | Metric::CappedScore { .. } | Metric::ScoreAtLeast { .. }))
         }
     };
     if !valid {
         return Err(Error::Input("player goal does not match the executable action and payoff metric".into()));
     }
-    if matches!(r.metric, Metric::ScoreAndLifeAtLeast { .. })
+    if r.metric.any(|m| matches!(m, Metric::ScoreAndLifeAtLeast { .. }))
         && !matches!(&r.execution, Execution::Live { play: PlayPolicy::Stream { .. }, .. })
     {
         return Err(Error::Input(
@@ -136,6 +155,9 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
             "maximize expected Challenge points, then expected exact-grade event items, then expected event points"
         }
         Metric::RankedEventItems { .. } => "maximize expected resource quantity selected by each terminal result grade",
+        Metric::Combined { .. } => {
+            "maximize the expected weighted sum of the listed metrics' payoffs, each settled on the same terminal result"
+        }
     };
     let mut assumptions = vec!["supplied roster progression and player bonuses; no upgrades or costs inferred"];
     if let Execution::Live { play, .. } = &r.execution {
@@ -156,16 +178,18 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
             );
         }
     }
-    if matches!(r.metric, Metric::RankedEventItems { .. } | Metric::ClientChallengePointsWithBonuses { .. }) {
+    if r.metric.any(|m| matches!(m, Metric::RankedEventItems { .. } | Metric::ClientChallengePointsWithBonuses { .. }))
+    {
         assumptions.push("one reward row per exact grade with probability marker 10000; quantities include EventItem effects and the declared item multiplier");
-    } else if r.metric.event().is_some() {
+    }
+    if r.metric.any(|m| matches!(m, Metric::ClientEventPoints { .. } | Metric::ClientChallengePoints { .. })) {
         assumptions
             .push("client counters under explicit clocks, consumption and peer inputs; no server award authority");
     }
     if r.network_confirmations.is_some() {
         assumptions.push("conditional immutable peer rank arrival timeline with native network score snapshots; frame-zero arrivals apply on range completion, not opponent placement prediction");
     }
-    if matches!(r.metric, Metric::ScoreAndLifeAtLeast { .. }) {
+    if r.metric.any(|m| matches!(m, Metric::ScoreAndLifeAtLeast { .. })) {
         assumptions
             .push("terminal life does not prove survival throughout the live or the failure/continue/quit route");
     }

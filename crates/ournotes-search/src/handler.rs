@@ -124,7 +124,8 @@ pub(crate) fn compile_execution(
             }
             Err(reason) => (None, Some(reason.to_string())),
         }
-    } else if metric.secondary_priority().is_some() && matches!(request.objective.inner(), Objective::SkipScore { .. })
+    } else if (metric.secondary_priority().is_some() || matches!(metric, Metric::Combined { .. }))
+        && matches!(request.objective.inner(), Objective::SkipScore { .. })
     {
         (None, None)
     } else if matches!(strategy, Strategy::BranchAndBound)

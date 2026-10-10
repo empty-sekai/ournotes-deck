@@ -215,7 +215,7 @@ impl CutoffTable {
 impl JointBounds {
     fn payoff_of(&self, points_bonus: Option<i64>, score_cap: i128) -> i128 {
         match (&self.points, points_bonus) {
-            (Some(pt), Some(bonus)) => ((bonus + 10000) * pt.multiplier_at(score_cap) / 10000) as i128,
+            (Some(pt), Some(bonus)) => pt.cutoff_payoff(bonus, score_cap),
             _ => score_cap,
         }
     }

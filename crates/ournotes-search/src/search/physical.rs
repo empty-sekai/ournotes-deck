@@ -57,6 +57,8 @@ struct Entry {
     power: i32,
     evaluation: FiniteEvaluation,
     secondary: Option<SecondaryRewards>,
+    /// A combined metric: the expectation numerator of each term's payoff over the evaluation's denominator.
+    terms: Option<Vec<Option<i128>>>,
 }
 #[derive(Clone)]
 struct SecondaryRewards {
@@ -97,6 +99,15 @@ fn compare(a: &Entry, b: &Entry) -> Ordering {
 impl Entry {
     fn wire(self, metric: &Metric) -> Result<RecommendedDeck, Error> {
         let event_rewards = self.secondary.as_ref().map(|value| value.wire(&self.evaluation.expected_payoff));
+        let denominator = self.evaluation.expected_payoff.denominator;
+        let term_payoffs = self.terms.map(|terms| {
+            terms
+                .into_iter()
+                .map(|term| {
+                    term.map(|value| Fraction { numerator: value.to_string(), denominator: denominator.to_string() })
+                })
+                .collect()
+        });
         if matches!(metric, Metric::Power) {
             return Ok(RecommendedDeck {
                 members: self.members,
@@ -105,6 +116,7 @@ impl Entry {
                 expected_score: None,
                 expected_payoff: Some(self.evaluation.expected_payoff.into()),
                 event_rewards,
+                term_payoffs,
                 score_interval: None,
                 payoff_interval: None,
                 rank_certified: None,
@@ -135,6 +147,7 @@ impl Entry {
             expected_score: Some(self.evaluation.expected_score.into()),
             expected_payoff: Some(self.evaluation.expected_payoff.into()),
             event_rewards,
+            term_payoffs,
             score_interval: None,
             payoff_interval: None,
             rank_certified: None,
@@ -223,6 +236,7 @@ impl Engine<'_, '_> {
                         | Metric::ClientChallengePoints { .. }
                         | Metric::ClientChallengePointsWithBonuses { .. }
                         | Metric::RankedEventItems { .. }
+                        | Metric::Combined { .. }
                 ))
             || (!matches!(traversal, Traversal::Session | Traversal::Fixed)
                 && super::team_power::applies(&self.request.objective, self.metric))
@@ -296,6 +310,37 @@ impl Engine<'_, '_> {
                 .ok_or_else(arithmetic)?;
         }
         Ok(Some(value))
+    }
+
+    /// The expectation numerator of each term of a combined metric over the evaluation's score distribution.
+    fn term_payoffs(
+        &self,
+        p: &PhysicalDeck,
+        evaluation: &FiniteEvaluation,
+        power: i32,
+    ) -> Result<Option<Vec<Option<i128>>>, Error> {
+        let Some(terms) = self.metric.terms() else {
+            return Ok(None);
+        };
+        terms
+            .iter()
+            .map(|term| {
+                if matches!(term.metric, Metric::ScoreAndLifeAtLeast { .. }) {
+                    return Ok(None);
+                }
+                evaluation
+                    .score_mass
+                    .iter()
+                    .try_fold(0i128, |sum, (&score, &mass)| {
+                        let payoff =
+                            payoff_of(self.pool, self.request, &term.metric, self.event_input, p, score, power, None)?;
+                        let mass = i128::try_from(mass).map_err(|_| arithmetic())?;
+                        payoff.checked_mul(mass).and_then(|value| sum.checked_add(value)).ok_or_else(arithmetic)
+                    })
+                    .map(Some)
+            })
+            .collect::<Result<Vec<_>, Error>>()
+            .map(Some)
     }
 
     fn consider(&mut self, physical: PhysicalDeck) -> Result<bool, Error> {
@@ -378,8 +423,9 @@ impl Engine<'_, '_> {
                 Ordering::Equal => {}
             }
         }
-        let entry = Entry {
+        let mut entry = Entry {
             secondary,
+            terms: None,
             physical,
             members: physical.members.map(|i| self.pool.members[i].id),
             snaps: physical.snaps.map(|i| i.map(|i| self.pool.snaps[i].id)),
@@ -393,6 +439,7 @@ impl Engine<'_, '_> {
             .first()
             .is_none_or(|best| entry.evaluation.expected_payoff.numerator > best.evaluation.expected_payoff.numerator);
         if pos < self.request.k {
+            entry.terms = self.term_payoffs(&entry.physical, &entry.evaluation, entry.power)?;
             self.top.insert(pos, entry);
             self.top.truncate(self.request.k);
             let (best, kth, filled) = self.standing();
@@ -772,6 +819,14 @@ pub(crate) fn payoff_of(
             )?;
             ournotes_sim::scenario::item_payoff(&items, event_id, resource_type, resource_id)
         }
+        Metric::Combined { .. } => {
+            metric.terms().expect("validated combined metric").iter().try_fold(0i128, |sum, term| {
+                payoff_of(pool, request, &term.metric, event_input, p, score, power, final_life)?
+                    .checked_mul(i128::from(term.weight))
+                    .and_then(|value| sum.checked_add(value))
+                    .ok_or_else(arithmetic)
+            })
+        }
     }
 }
 
@@ -1034,6 +1089,9 @@ pub(crate) fn solve_physical_impl(
     let lottery = certified_engine::lottery_mode(pool, request, &plan.domain)?;
     if metric.secondary_priority().is_some() && lottery == certified_engine::LotteryMode::Certified {
         return Err(Error::Unsupported("Challenge-point priorities require lottery-free terminal outcomes".into()));
+    }
+    if matches!(metric, Metric::Combined { .. }) && lottery == certified_engine::LotteryMode::Certified {
+        return Err(Error::Unsupported("combined metrics require lottery-free terminal outcomes".into()));
     }
     let mut engine = Engine {
         pool,
@@ -2046,6 +2104,7 @@ mod reward_priority_tests {
                 outcomes: Vec::new(),
             },
             secondary: Some(SecondaryRewards { priority, event_points: pt, event_items: items }),
+            terms: None,
         }
     }
 

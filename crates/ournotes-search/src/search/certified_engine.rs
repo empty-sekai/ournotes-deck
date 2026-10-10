@@ -543,6 +543,7 @@ impl Engine<'_, '_> {
                     expected_score: value.exact_score.map(Into::into),
                     expected_payoff: value.exact_payoff.map(Into::into),
                     event_rewards: None,
+                    term_payoffs: None,
                     score_interval: Some(FractionInterval::from_f64(value.score.lower(), value.score.upper())?),
                     payoff_interval: Some(FractionInterval::from_f64(value.payoff.lower(), value.payoff.upper())?),
                     rank_certified: Some(ranked),

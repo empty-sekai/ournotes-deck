@@ -64,6 +64,34 @@ The result echoes the priority and resource identity. Each team's `eventRewards`
 time-limited answers contain the best observed CP layer and are unproven. Scalar upper bounds describe
 CP only. Partial-search best/K-th gaps are omitted because secondary optimality requires its own proof.
 
+## Combined metrics
+
+`metric.kind:"combined"` maximizes the expected weighted sum of several metrics of the goal:
+
+```json
+{"kind":"combined","consumption":1,"terms":[
+  {"kind":"eventPoints","eventId":7,"weight":2},
+  {"kind":"challengePoints","eventId":7,"weight":35}]}
+```
+
+Each term is a metric kind with that kind's own fields and an integer `weight` in 1..=1,000,000; a metric takes
+1..=8 terms. `metric.consumption` is given once and covers every event term; a combination without event terms
+takes neither `consumption` nor `eventContext`. Every term settles on the same terminal result, so the payoff of
+one outcome is the sum of `weight × term payoff`, and a team's value is its mean over the 120 member orders
+(deterministic Skip has denominator 1). Results keep the scalar order: expected payoff, power, canonical key.
+Weights express an exchange rate between rewards: with weights 2 and 35 above, one Challenge point counts as much
+as 17.5 event points.
+
+The lower-level metric is `{"kind":"combined","levels":[{"terms":[{"metric":{...},"weight":2}, ...]}]}` with one
+level. Played lives search with an upper bound that is the weighted sum of the terms' bounds; Skip covers the
+complete legal team domain. The supported domain is lottery-free: active LUCK ranges return `Unsupported`.
+`capabilities().combinedMetric` declares `objective:weightedExpectedSum`, the term and weight limits and
+`lotteryFree:true`.
+
+The result echoes `metric.terms`. `value.payoff` is the weighted sum, and each team's `terms` lists the exact
+expectation of every term's own payoff, unweighted and in request order, each with `score`, an exact
+numerator/denominator and `interval:null`. The entry of a `scoreAndLife` term is null.
+
 ## Event-item rewards
 
 `metric:{"kind":"eventItems","eventId":7,"resourceType":4,"resourceId":88,"consumption":1}` maximizes

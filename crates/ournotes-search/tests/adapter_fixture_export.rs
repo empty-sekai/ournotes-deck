@@ -18,6 +18,8 @@ const FIXTURE_SEED: u64 = 20_261_001;
 const SCORE_ID: i64 = 1004;
 const EVENT_ID: i64 = 7;
 
+#[path = "fixtures/combined_metric.rs"]
+mod combined_metric;
 #[path = "fixtures/combo_integer.rs"]
 mod combo_integer;
 #[path = "fixtures/conversion_partitions.rs"]

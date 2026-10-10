@@ -1318,6 +1318,35 @@ cargo test --release --locked -p ournotes-search --lib reward_priority_tests
 cargo test --release --locked -p ournotes-search --test adapter_fixture_export cp_priorities
 ```
 
+## Combined metrics
+
+`Combined` ranks the exact expectation of `sum_i w_i * payoff_i(S)` over the 120 performance orders, where
+every term is a single metric settled on the same terminal score `S` and every weight `w_i` is a positive
+integer. Each terminal outcome is settled once per term with its full probability mass, the weighted values
+are added in exact integers, and all teams share the declared expectation denominator. Ranking, ties and the
+Top-K certificate are those of a scalar metric. A team's per-term expectations are computed from the same
+score distribution when it enters the Top-K.
+
+The upper bound is the weighted sum of the terms' own bounds. For a node, every term bound `U_i` covers the
+term's expected payoff over the node's completions, the weights are nonnegative and the term rewards are
+nonnegative, so `sum_i w_i * U_i` covers the expected combined payoff. One term keeps its member and Snap event
+bonuses in the bound's additive tables. Every other term's payoff is nondecreasing in its event bonus and is
+evaluated at the largest bonus of a legal team, which no team exceeds. Where the single-metric bound reads the
+payoff of one order from a score cap, the combined bound adds the terms' order payoffs at that cap; where it
+reads a mean from a mean score cap, it adds the terms' mean bounds. When every term is a step function of the
+score, the union of the terms' step scores partitions the score axis for the per-interval order bound.
+A term without a bound of its own pays its score, which the score cap covers.
+
+Deterministic Skip uses complete legal team enumeration. A request with an active LUCK range is reported as
+unsupported.
+
+Reproduce the synthetic complete-domain comparison between exhaustive enumeration and branch-and-bound, the
+independent per-term settlement, validation and the account contract with:
+
+```sh
+cargo test --release --locked -p ournotes-search --test adapter_fixture_export combined
+```
+
 ## Member compositions, Snap pairings and power frontiers
 
 For Live with Gekisou off, branch on the leader and an unordered set of four other members. Increasing indexes in a

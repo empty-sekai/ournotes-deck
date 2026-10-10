@@ -296,6 +296,25 @@ pub enum EventRewardPriority {
     EventItemsFirst,
 }
 
+/// Most terms one level of a combined metric sums.
+pub const MAX_METRIC_TERMS: usize = 8;
+/// Largest weight of a combined metric's term.
+pub const MAX_TERM_WEIGHT: u32 = 1_000_000;
+
+/// One term of a combined metric: a metric and the positive integer weight of its terminal payoff.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MetricTerm {
+    pub metric: Metric,
+    pub weight: u32,
+}
+/// The weighted sum of its terms' terminal payoffs under one shared terminal-result distribution.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MetricLevel {
+    pub terms: Vec<MetricTerm>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Metric {
@@ -342,8 +361,33 @@ pub enum Metric {
         #[serde(rename = "resourceId")]
         resource_id: i64,
     },
+    /// Expectation of the weighted sum of other metrics' terminal payoffs, one level of terms.
+    Combined {
+        levels: Vec<MetricLevel>,
+    },
 }
 impl Metric {
+    /// The weighted terms a combined metric ranks by.
+    pub(crate) fn terms(&self) -> Option<&[MetricTerm]> {
+        match self {
+            Self::Combined { levels } => levels.first().map(|level| level.terms.as_slice()),
+            _ => None,
+        }
+    }
+    /// Whether the metric, or a term of a combined metric, satisfies `test`.
+    pub(crate) fn any(&self, test: impl Fn(&Metric) -> bool) -> bool {
+        match self {
+            Self::Combined { levels } => levels.iter().flat_map(|level| &level.terms).any(|term| test(&term.metric)),
+            _ => test(self),
+        }
+    }
+    /// Whether the metric, or every term of a combined metric, satisfies `test`.
+    pub(crate) fn all(&self, test: impl Fn(&Metric) -> bool) -> bool {
+        match self {
+            Self::Combined { levels } => levels.iter().flat_map(|level| &level.terms).all(|term| test(&term.metric)),
+            _ => test(self),
+        }
+    }
     /// Scalar objective whose upper bounds cover the primary reward dimension.
     pub(crate) fn primary_bound_metric(&self) -> Self {
         match *self {
@@ -375,7 +419,10 @@ impl Metric {
             | Self::RankedEventItems { .. } => Some(i32::MAX as i128),
             Self::ScoreAtLeast { .. } | Self::ScoreAndLifeAtLeast { .. } => Some(1),
             Self::CappedScore { threshold } => Some(*threshold as i128),
-            _ => None,
+            Self::Combined { .. } => self.terms()?.iter().try_fold(0i128, |sum, term| {
+                sum.checked_add(term.metric.upper()?.checked_mul(i128::from(term.weight))?)
+            }),
+            Self::Power => None,
         }
     }
     pub(crate) fn target(&self) -> Option<i32> {
@@ -611,6 +658,10 @@ pub struct RecommendedDeck {
     pub expected_payoff: Option<Fraction>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_rewards: Option<EventRewardExpectation>,
+    /// A combined metric: the exact expectation of each term's payoff, unweighted, in the order of the terms. Null
+    /// for a term that reads terminal life.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub term_payoffs: Option<Vec<Option<Fraction>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score_interval: Option<FractionInterval>,
     #[serde(skip_serializing_if = "Option::is_none")]
