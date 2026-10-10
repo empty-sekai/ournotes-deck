@@ -2,6 +2,12 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.5](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.4...v0.0.5) - 2026-10-10
+
+### Features
+
+- **chartstats:** Cache compiled measurement programs ([293d81c](https://github.com/empty-sekai/ournotes-deck/commit/293d81c0c3121df86cfeaa057859bc518b0e5fd4))
+
 ## [0.0.4](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.3...v0.0.4) - 2026-10-10
 
 ### Features
