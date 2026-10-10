@@ -75,8 +75,9 @@ pub(crate) use luck_score_bounds::IntegerBounds;
 pub(crate) use luck_score_bounds::luck_score_expectation_for_chart;
 mod nominal_expectation;
 pub use luck_score_bounds::{
-    LuckRangeScoreBounds, LuckScoreBounds, LuckScoreExpectation, LuckScoreSession, LuckScoreSummary, RealBounds,
-    luck_score_bounds, luck_score_bounds_with_ranking, luck_score_expectation, luck_score_expectation_with_curves,
+    LuckExactNote, LuckExactProfile, LuckExactRange, LuckExactScore, LuckRangeScoreBounds, LuckScoreBounds,
+    LuckScoreExpectation, LuckScoreSession, LuckScoreSummary, RealBounds, luck_exact_score, luck_score_bounds,
+    luck_score_bounds_with_ranking, luck_score_expectation, luck_score_expectation_with_curves,
     luck_score_summary_with_curves, luck_score_summary_with_ranking, prepare_lottery_free,
 };
 #[cfg(feature = "search-diagnostics")]
@@ -1740,7 +1741,7 @@ impl LiveModel {
         }
         self.program_has_started = true;
         self.frame_time = t;
-        self.score.bounds_potential_rush(t);
+        self.score.bounds_potential_rush(t, true);
         self.frame_rank_confirmation = self.prev_confirmed_rank.take();
         if let Some(gk) = self.gk.as_mut() {
             gk.fever.update(t, &mut gk.fever_updates);
@@ -1998,9 +1999,9 @@ impl LiveModel {
             // A lottery may file Rush commands at any judged chart time, or at this frame's pending draw.
             // These are possible filings, not observations of the recorder's particular lottery trajectory.
             for &(_, _, time, _) in &judged {
-                self.score.bounds_potential_rush(time);
+                self.score.bounds_potential_rush(time, false);
             }
-            self.score.bounds_potential_rush(t);
+            self.score.bounds_potential_rush(t, false);
             self.score.bounds_probability_ready(t);
         }
         self.scratch.gk_judged = judged;

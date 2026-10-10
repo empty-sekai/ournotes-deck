@@ -11,6 +11,10 @@ use crate::live::certified::{F32Interval, F64Interval, I32Interval, ProbabilityM
 use crate::live::score::get_luck_factor_percent;
 use serde::Serialize;
 
+mod exact;
+mod exact_paths;
+#[cfg(test)]
+mod exact_tests;
 #[cfg(test)]
 mod owner_order_tests;
 #[cfg(test)]
@@ -18,6 +22,7 @@ mod probe_lifecycle_tests;
 #[cfg(feature = "search-diagnostics")]
 mod profile;
 mod replay;
+pub use exact::{LuckExactNote, LuckExactProfile, LuckExactRange, LuckExactScore, luck_exact_score};
 #[cfg(feature = "search-diagnostics")]
 pub use profile::{LuckScoreProfile, take_luck_score_profile};
 
@@ -37,9 +42,11 @@ pub(super) enum BoundsEvent {
         frame: usize,
         command: FactorCommand,
     },
-    /// A possible Rush filing in this frame.
+    /// A possible Rush filing in this frame: at a play frame's start, where only a range FINISH disables a Rush,
+    /// or by the play frame's lotteries.
     Potential {
         frame: usize,
+        start: bool,
     },
     /// A possible probe filing at this frame time: every probe row may switch on or off here.
     Probe {
@@ -1112,7 +1119,9 @@ fn luck_score_bounds_internal(
     } else if !has_luck {
         std::sync::Arc::new(LuckDpCertifiedResult {
             probe_transitions: vec![1; play.frames.len()],
+            rush_transitions: vec![65; play.frames.len()],
             steps: Vec::new(),
+            frame_queries: Vec::new(),
             probes: vec![false; skills.shapes.len()],
             range_moments: if collect_moments {
                 vec![super::luck_dp::LuckRangeMoments::default(); setup.fevers.len()]
@@ -1300,7 +1309,7 @@ pub(super) fn complete_bounds_recording(
                     mandatory_added = Some(mandatory_added.map_or(*frame as i32, |old| old.min(*frame as i32)));
                 }
             }
-            BoundsEvent::Potential { frame } => {
+            BoundsEvent::Potential { frame, .. } => {
                 replay.potential(*frame);
                 added = Some(added.map_or(*frame as i32, |old| old.min(*frame as i32)));
             }
