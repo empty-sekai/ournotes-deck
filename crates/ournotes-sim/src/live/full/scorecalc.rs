@@ -260,13 +260,14 @@ impl IncrementalCalculator {
         });
     }
 
-    pub(super) fn bounds_potential_rush(&mut self, time_ms: i32) {
+    /// A possible Rush filing at `time_ms`: at a play frame's `start`, or by the play frame's lotteries.
+    pub(super) fn bounds_potential_rush(&mut self, time_ms: i32, start: bool) {
         if self.bounds_trace.as_ref().is_none_or(|trace| !trace.has_luck) {
             return;
         }
         let frame = get_frame(time_ms).min(self.max_frame - 1) as usize;
         if let Some(trace) = &mut self.bounds_trace {
-            trace.events.push(BoundsEvent::Potential { frame });
+            trace.events.push(BoundsEvent::Potential { frame, start });
         }
     }
 

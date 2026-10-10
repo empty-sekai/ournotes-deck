@@ -32,9 +32,21 @@ pub struct LuckDpCertifiedResult {
     /// Bit `2 * old + new` denotes a transition with positive possible mass. Quiet and repeated frames
     /// each retain their own entry.
     pub probe_transitions: Vec<u8>,
+    /// For each original play frame, the possible changes of the Rush handle. Bit `4 * before + 2 * after + filed`
+    /// denotes a transition with positive possible mass of the frame's lotteries, from the Rush once the frame's
+    /// start is processed to the Rush at the frame's end, where `filed` says whether a lottery started or ended a
+    /// Rush on the way. [`RUSH_FINISH`] marks a frame whose start finishes a range and disables an active Rush, and
+    /// [`RUSH_PROBE`] a frame after whose skill boundary every state's direct-probe class equals its Rush. Quiet
+    /// and repeated frames each retain their own entry.
+    pub rush_transitions: Vec<u16>,
     /// Joint probabilities in the order [neither, score only, Rush only, Rush and score]. Every bucket is
     /// accumulated directly from mutually exclusive DP states, never by subtracting rounded marginals.
     pub steps: Vec<(i32, [ProbabilityMass; 4])>,
+    /// For each play frame that judges notes, the joint probabilities, in the order of [`Self::steps`], of what
+    /// those notes read when a score query of that same frame runs before the frame's lottery: a note before the
+    /// frame's time, a note at the frame's time after the frame's skill boundary, and a note at the frame's time
+    /// before it.
+    pub frame_queries: Vec<(i32, [[ProbabilityMass; 4]; 3])>,
     /// All supported score probes use the same 7021 predicate; this identifies the shapes with a holder.
     pub probes: Vec<bool>,
     /// Optional additive indicators, one per range when requested; empty for score-only curves.
@@ -57,9 +69,16 @@ impl Default for LuckRangeMoments {
     }
 }
 
+/// See [`LuckDpCertifiedResult::rush_transitions`].
+pub const RUSH_FINISH: u16 = 1 << 8;
+/// See [`LuckDpCertifiedResult::rush_transitions`].
+pub const RUSH_PROBE: u16 = 1 << 9;
+
 struct DpResult<W> {
     probe_transitions: Vec<u8>,
+    rush_transitions: Vec<u16>,
     steps: Vec<(i32, W)>,
+    frame_queries: Vec<(i32, [W; 3])>,
     probes: Vec<bool>,
     range_moments: Vec<LuckRangeMoments>,
     peak_states: usize,
@@ -120,6 +139,9 @@ struct State {
     query_rush: bool,
     score: bool,
     score_before: bool,
+    /// Within a frame: the Rush once the frame's start is processed, and whether a lottery of the frame changed it.
+    rush_start: bool,
+    rush_filed: bool,
 }
 
 impl std::hash::Hash for State {
@@ -149,6 +171,30 @@ impl std::hash::Hash for State {
 
 type Distribution<M = f64> = FxHashMap<State, M>;
 
+/// The lottery state a note's score reads, relative to its native frame.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// A note before its frame's time, or a note at the frame's time scored before the frame's skill boundary: the
+    /// Rush seen by the frame's score queries and the probe class before the frame.
+    BeforeFrame,
+    /// A note at its frame's time once the frame's lottery has filed its commands: the Rush and probe class after
+    /// the frame.
+    AtFrame,
+    /// A note at its frame's time scored by a query of that frame before its skill boundary and lottery: the Rush
+    /// at the frame's time and the probe class before the frame.
+    BeforeSkills,
+}
+
+impl Phase {
+    fn reads(self, state: &State) -> (bool, bool) {
+        match self {
+            Phase::BeforeFrame => (state.query_rush, state.score_before),
+            Phase::AtFrame => (state.rush, state.score),
+            Phase::BeforeSkills => (state.rush, state.score_before),
+        }
+    }
+}
+
 /// One transition graph, with either fast nominal masses or outward-certified masses. In particular,
 /// certified arithmetic never turns a small positive upper bound into a pruned branch.
 trait Mass: Copy {
@@ -166,7 +212,7 @@ trait Mass: Copy {
     fn interval(self) -> F64Interval;
     fn bonus(machine: &LotteryMachine, kind: usize, buff: i32, minimum: i8) -> Result<Vec<(Self, i64)>, Error>;
     fn base(machine: &LotteryMachine, note_type: i32, judgement: i32) -> Result<Vec<(Self, i64)>, Error>;
-    fn weights(dist: &Distribution<Self>, probes: &[bool], at_frame: bool) -> Self::Weights;
+    fn weights(dist: &Distribution<Self>, probes: &[bool], phase: Phase) -> Self::Weights;
 }
 
 impl Mass for f64 {
@@ -210,11 +256,10 @@ impl Mass for f64 {
         machine.base_point_probabilities(note_type, judgement)
     }
 
-    fn weights(dist: &Distribution<Self>, probes: &[bool], at_frame: bool) -> Self::Weights {
+    fn weights(dist: &Distribution<Self>, probes: &[bool], phase: Phase) -> Self::Weights {
         let mut values = [0f64; 3];
         for (state, &probability) in dist {
-            let rush = if at_frame { state.rush } else { state.query_rush };
-            let score = if at_frame { state.score } else { state.score_before };
+            let (rush, score) = phase.reads(state);
             if rush {
                 values[0] += probability;
             }
@@ -289,11 +334,10 @@ impl Mass for ProbabilityMass {
         certified_weights(machine.base_point_probability_weights(note_type, judgement)?)
     }
 
-    fn weights(dist: &Distribution<Self>, _probes: &[bool], at_frame: bool) -> Self::Weights {
+    fn weights(dist: &Distribution<Self>, _probes: &[bool], phase: Phase) -> Self::Weights {
         let mut joint = [Self::ZERO; 4];
         for (state, &probability) in dist {
-            let rush = if at_frame { state.rush } else { state.query_rush };
-            let score = if at_frame { state.score } else { state.score_before };
+            let (rush, score) = phase.reads(state);
             let index = 2 * usize::from(rush) + usize::from(score);
             joint[index] = joint[index].merge_disjoint(probability);
         }
@@ -988,6 +1032,8 @@ impl<'a, M: Mass> Dp<'a, M> {
                 next.rush = result == 3;
                 next.query_rush = next.rush;
             }
+            // Native files a Rush command exactly when a lottery adds or disables the Rush handle.
+            next.rush_filed |= next.rush != state.rush;
             score.add_score(result)?;
             if let Some(moments) = self.range_moments.get_mut(range) {
                 let mass = p.multiply(pn).interval();
@@ -1062,8 +1108,8 @@ impl<'a, M: Mass> Dp<'a, M> {
         self.replace(out)
     }
 
-    fn weights(&self, probes: &[bool], at_frame: bool) -> M::Weights {
-        M::weights(&self.dist, probes, at_frame)
+    fn weights(&self, probes: &[bool], phase: Phase) -> M::Weights {
+        M::weights(&self.dist, probes, phase)
     }
 }
 
@@ -1308,7 +1354,9 @@ pub(crate) fn luck_rush_dp_certified_with_moments_cached(
         let result = propagate(&transcript)?;
         Ok(LuckDpCertifiedResult {
             probe_transitions: result.probe_transitions,
+            rush_transitions: result.rush_transitions,
             steps: result.steps,
+            frame_queries: result.frame_queries,
             probes: result.probes,
             range_moments: result.range_moments,
             peak_states: result.peak_states,
@@ -1348,7 +1396,9 @@ pub(super) fn certified_mode(
     )?;
     Ok(LuckDpCertifiedResult {
         probe_transitions: result.probe_transitions,
+        rush_transitions: result.rush_transitions,
         steps: result.steps,
+        frame_queries: result.frame_queries,
         probes: result.probes,
         range_moments: result.range_moments,
         peak_states: result.peak_states,
@@ -2087,8 +2137,12 @@ fn propagate_cancellable<M: Mass>(
         }
     }
     let mut steps: Vec<(i32, M::Weights)> = Vec::new();
+    let mut frame_queries: Vec<(i32, [M::Weights; 3])> = Vec::new();
     let mut probe_transitions = Vec::new();
+    let mut rush_transitions = Vec::new();
     let mut identity = 1u8;
+    // The Rush transitions of a frame in which no lottery runs: every state keeps its Rush.
+    let mut kept = 1u16;
     let mut previous_lot = false;
     let mut queued = vec![false; t.luck.len()];
     let (mut notes_from, mut actions_from, mut pending_from) = (0usize, 0usize, 0usize);
@@ -2116,6 +2170,7 @@ fn propagate_cancellable<M: Mass>(
                 // No lottery or dependent skill state can change here. A consumed lot forces the FOLLOWING
                 // frame through the DP for 7021 and previous-frame 7000.
                 probe_transitions.push(identity);
+                rush_transitions.push(kept);
                 continue;
             }
             if let Some(range) = frame.start {
@@ -2124,6 +2179,7 @@ fn propagate_cancellable<M: Mass>(
             }
             let starting_chain = frame.start.map(|range| Chain::of(&dp.templates[range]));
             let mut edges = 0u8;
+            let mut follows = true;
             // The certified distribution retains every state with positive possible probability.
             dp.map(|mut state| {
                 let before = state.score;
@@ -2147,6 +2203,9 @@ fn propagate_cancellable<M: Mass>(
                     }
                 }
                 edges |= 1 << (2 * usize::from(before) + usize::from(state.score));
+                follows &= state.score == state.rush;
+                state.rush_start = state.rush;
+                state.rush_filed = false;
                 if complete {
                     state.minimum = 0;
                     state.miss_used = false;
@@ -2156,6 +2215,13 @@ fn propagate_cancellable<M: Mass>(
             probe_transitions.push(edges);
             // Subsequent actions and lotteries do not alter this direct-probe class.
             identity = u8::from(edges & 0b0101 != 0) | (u8::from(edges & 0b1010 != 0) << 3);
+            // The frame's score queries run after the FINISH disable and the skill boundary, before any lottery.
+            if !notes.is_empty() {
+                frame_queries.push((
+                    frame.time_ms,
+                    [Phase::BeforeFrame, Phase::AtFrame, Phase::BeforeSkills].map(|phase| dp.weights(&t.probes, phase)),
+                ));
+            }
             if gate && frame.target >= 0 {
                 for &action in actions {
                     dp.action(action, frame.target as usize)?;
@@ -2182,7 +2248,7 @@ fn propagate_cancellable<M: Mass>(
                     hit = note.hits;
                 }
                 if time < frame.time_ms {
-                    let values = dp.weights(&t.probes, false);
+                    let values = dp.weights(&t.probes, Phase::BeforeFrame);
                     if steps.last().is_none_or(|last| last.1 != values) {
                         steps.push((time, values));
                     }
@@ -2192,8 +2258,16 @@ fn propagate_cancellable<M: Mass>(
             for &(range, buff) in pending {
                 dp.pending(range, buff)?;
             }
+            let mut lottery = 0u16;
+            for state in dp.dist.keys() {
+                lottery |=
+                    1 << (4 * u16::from(state.rush_start) + 2 * u16::from(state.rush) + u16::from(state.rush_filed));
+            }
+            rush_transitions
+                .push(lottery | if finish { RUSH_FINISH } else { 0 } | if follows { RUSH_PROBE } else { 0 });
+            kept = u16::from(lottery & 0x33 != 0) | u16::from(lottery & 0xcc != 0) << 6;
             if notes.last().is_some_and(|note| note.time_ms == frame.time_ms) {
-                let values = dp.weights(&t.probes, true);
+                let values = dp.weights(&t.probes, Phase::AtFrame);
                 if steps.last().is_none_or(|last| last.1 != values) {
                     steps.push((frame.time_ms, values));
                 }
@@ -2207,6 +2281,8 @@ fn propagate_cancellable<M: Mass>(
                 state.frame_miss = false;
                 state.frame_critical = false;
                 state.frame_lot = false;
+                state.rush_start = false;
+                state.rush_filed = false;
                 if finish {
                     state.chain = Chain::default();
                 }
@@ -2226,7 +2302,9 @@ fn propagate_cancellable<M: Mass>(
     }
     Ok(Some(DpResult {
         probe_transitions,
+        rush_transitions,
         steps,
+        frame_queries,
         probes: t.probes.clone(),
         range_moments: dp.range_moments,
         peak_states: dp.peak,
@@ -2476,7 +2554,9 @@ impl LuckDpCache {
         let Some(result) = result? else { return Ok(None) };
         let result = std::sync::Arc::new(LuckDpCertifiedResult {
             probe_transitions: result.probe_transitions,
+            rush_transitions: result.rush_transitions,
             steps: result.steps,
+            frame_queries: result.frame_queries,
             probes: result.probes,
             range_moments: result.range_moments,
             peak_states: result.peak_states,
@@ -3156,8 +3236,16 @@ mod tests {
         let mut dist = Distribution::default();
         dist.insert(State { rush: true, query_rush: true, score: true, score_before: false, ..State::default() }, 1.0);
         dp.dist = dist;
-        assert_eq!(dp.weights(&[true], false), [1.0, 0.0, 0.0]);
-        assert_eq!(dp.weights(&[true], true), [1.0, 1.0, 1.0]);
+        assert_eq!(dp.weights(&[true], Phase::BeforeFrame), [1.0, 0.0, 0.0]);
+        assert_eq!(dp.weights(&[true], Phase::AtFrame), [1.0, 1.0, 1.0]);
+        assert_eq!(dp.weights(&[true], Phase::BeforeSkills), [1.0, 0.0, 0.0]);
+        dp.dist = std::iter::once((
+            State { rush: true, query_rush: false, score: true, score_before: false, ..State::default() },
+            1.0,
+        ))
+        .collect();
+        assert_eq!(dp.weights(&[true], Phase::BeforeFrame), [0.0, 0.0, 0.0]);
+        assert_eq!(dp.weights(&[true], Phase::BeforeSkills), [1.0, 0.0, 0.0]);
     }
 
     #[test]
@@ -3621,6 +3709,49 @@ mod tests {
     }
 
     #[test]
+    fn frame_queries_read_the_probe_class_on_their_side_of_the_skill_boundary() {
+        // Probability that the probe class is on (classes 1 and 3: probe bit 0, Rush bit 1).
+        let on = |mass: &[ProbabilityMass; 4]| mass[1].interval().upper() + mass[3].interval().upper();
+        let mut switched_on = 0;
+        for result in [0, 3] {
+            let (master, notes, params, setup, play, delta) = fixture(result, 60);
+            let skills = luck_skills(&master).unwrap();
+            let deck = [Performer {
+                gekisou_skill: Some((1, 1)),
+                gekisou_support_skills: vec![(31, 1)],
+                ..Default::default()
+            }];
+            let certified = luck_rush_dp_certified_with_ranking(
+                &master,
+                &skills,
+                &notes,
+                &[],
+                params,
+                &setup,
+                &play,
+                &delta,
+                &deck,
+                None,
+                None,
+            )
+            .unwrap();
+            for (time, masses) in &certified.frame_queries {
+                let index = play.frames.iter().position(|frame| frame.time_ms == *time).unwrap();
+                // Bit 2 * before + after of each probe class transition at the frame's skill boundary.
+                let mask = certified.probe_transitions[index];
+                if mask & 0b1100 == 0 {
+                    assert_eq!(on(&masses[0]) + on(&masses[2]), 0.0, "result={result} frame={index}");
+                }
+                if mask & 0b1010 == 0 {
+                    assert_eq!(on(&masses[1]), 0.0, "result={result} frame={index}");
+                }
+                switched_on += usize::from(mask & 0b1100 == 0 && on(&masses[1]) > 0.0);
+            }
+        }
+        assert!(switched_on > 0);
+    }
+
+    #[test]
     fn probe_mask_tracks_native_skill_boundary_and_expands_quiet_frames() {
         for result in [0, 3] {
             let (master, notes, params, setup, play, delta) = fixture(result, 60);
@@ -3673,6 +3804,83 @@ mod tests {
     }
 
     #[test]
+    fn rush_transitions_match_the_native_rush_commands_of_each_frame() {
+        for result in [0, 3] {
+            let (master, notes, params, setup, play, delta) = fixture(result, 60);
+            let skills = luck_skills(&master).unwrap();
+            let deck = [Performer {
+                gekisou_skill: Some((1, 1)),
+                gekisou_support_skills: vec![(31, 1)],
+                ..Default::default()
+            }];
+            let certified = luck_rush_dp_certified_with_ranking(
+                &master,
+                &skills,
+                &notes,
+                &[],
+                params,
+                &setup,
+                &play,
+                &delta,
+                &deck,
+                None,
+                None,
+            )
+            .unwrap();
+            assert_eq!(certified.rush_transitions.len(), play.frames.len());
+            let mut native = LiveModel::new_gekisou(&master, &deck, &notes, &[], params, &setup).unwrap();
+            native.score.begin_bounds(Vec::new(), true);
+            // Native files a Rush command exactly when the handle flips; a frame's start files before its first
+            // score query, its lotteries after. The direct-probe class is the accumulated probe filing.
+            let (mut rush, mut finishes, mut lotteries, mut applied) = (false, 0, 0, 0i32);
+            let (mut diverged, mut marked) = (0, 0);
+            for (index, (frame, &dt)) in play.frames.iter().zip(&delta).enumerate() {
+                native.frame_timed(frame.time_ms, &frame.judged, dt).unwrap();
+                let (mut queried, mut at_start, mut in_lotteries) = (false, 0, 0);
+                for event in native.score.bounds_trace.as_mut().unwrap().events.drain(..) {
+                    match event {
+                        super::super::luck_score_bounds::BoundsEvent::Query { .. } => queried = true,
+                        super::super::luck_score_bounds::BoundsEvent::Factor { command, .. } => {
+                            applied += command.note_mill;
+                            if command.luck != 0 {
+                                if queried {
+                                    in_lotteries += 1;
+                                } else {
+                                    at_start += 1;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let mask = certified.rush_transitions[index];
+                if at_start > 0 {
+                    assert!(rush && at_start == 1 && mask & RUSH_FINISH != 0, "result={result} frame={index}");
+                    rush = false;
+                }
+                let start = rush;
+                if frame.time_ms < params.music_length_ms {
+                    // In every marked frame the probe class follows the Rush; a range's COMPLETE turns the probe
+                    // off one frame before its FINISH disables the Rush.
+                    let follows = (applied != 0) == start;
+                    assert!(mask & RUSH_PROBE == 0 || follows, "result={result} frame={index}");
+                    diverged += usize::from(!follows);
+                    marked += usize::from(mask & RUSH_PROBE != 0);
+                }
+                rush ^= in_lotteries % 2 == 1;
+                let bit = 4 * u16::from(start) + 2 * u16::from(rush) + u16::from(in_lotteries > 0);
+                assert_eq!(mask & 0xff, 1 << bit, "result={result} frame={index}");
+                finishes += at_start;
+                lotteries += in_lotteries;
+            }
+            // A Critical starts the Rush and the range's FINISH disables it.
+            assert_eq!((finishes, lotteries), if result == 3 { (1, 1) } else { (0, 0) });
+            assert_eq!(diverged > 0, result == 3);
+            assert!(marked > 0);
+        }
+    }
+
+    #[test]
     fn probe_mask_cached_and_uncached_certificates_keep_original_frame_ordinals() {
         let (master, notes, params, setup, mut play, mut delta) = fixture(3, 60);
         // Quiet frames have unequal times; compact propagation must still produce one mask per original frame.
@@ -3718,6 +3926,7 @@ mod tests {
                 .unwrap();
             assert_eq!(found.probe_transitions, expected.probe_transitions);
             assert_eq!(found.probe_transitions.len(), play.frames.len());
+            assert_eq!(found.rush_transitions, expected.rush_transitions);
         }
         assert_eq!(expected.probe_transitions[0], 1);
         assert_eq!(expected.probe_transitions[1], 1);
