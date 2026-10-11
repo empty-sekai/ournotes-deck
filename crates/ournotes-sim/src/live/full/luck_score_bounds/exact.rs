@@ -230,6 +230,7 @@ fn note_expectation(
 
 /// The class supports of one note in each order of a replay. Orders whose last executions of the note have the
 /// same values share their supports.
+#[derive(Default)]
 struct OrderClasses {
     /// For each order, the index of its supports in `distinct`.
     of: Vec<usize>,
@@ -271,6 +272,69 @@ fn order_classes(
         classes.of.push(index);
     }
     Ok(classes)
+}
+
+/// A filed note's class supports for one revision of its values, and their expectations under the class
+/// probabilities last read, by (class supports, law).
+#[derive(Default)]
+struct MeasuredNote {
+    revision: u32,
+    classes: OrderClasses,
+    masses: Vec<[u64; 8]>,
+    expectations: Vec<Option<(F64Interval, I32Interval)>>,
+}
+
+fn mass_bits(mass: &[ProbabilityMass; 4]) -> [u64; 8] {
+    let mut bits = [0; 8];
+    for (index, probability) in mass.iter().enumerate() {
+        bits[2 * index] = probability.interval().lower().to_bits();
+        bits[2 * index + 1] = probability.interval().upper().to_bits();
+    }
+    bits
+}
+
+impl MeasuredNote {
+    /// Brings the entry to the current values of `exact` and the class probabilities `masses` of each law.
+    #[allow(clippy::too_many_arguments)]
+    fn update(
+        &mut self,
+        calc: &LiveScoreCalculator,
+        note: &NoteCommand,
+        exact: &ExactNote,
+        rush_percent: i32,
+        shared_classes: bool,
+        lanes: usize,
+        masses: &[[ProbabilityMass; 4]],
+    ) -> Result<(), Error> {
+        let fresh = self.revision != exact.revision || self.classes.of.is_empty();
+        if fresh {
+            self.revision = exact.revision;
+            self.classes = order_classes(calc, note, exact, rush_percent, shared_classes, lanes)?;
+        }
+        if fresh
+            || self.masses.len() != masses.len()
+            || !self.masses.iter().zip(masses).all(|(a, b)| *a == mass_bits(b))
+        {
+            self.masses = masses.iter().map(mass_bits).collect();
+            self.expectations = vec![None; self.classes.distinct.len() * masses.len()];
+        }
+        Ok(())
+    }
+
+    /// The expectation and support of the note in order `lane`, whose law is `law` of `masses`.
+    fn expectation(
+        &mut self,
+        lane: usize,
+        law: usize,
+        masses: &[[ProbabilityMass; 4]],
+    ) -> Result<(F64Interval, I32Interval), Error> {
+        let index = self.classes.of[lane];
+        let slot = &mut self.expectations[index * masses.len() + law];
+        match *slot {
+            Some(expectation) => Ok(expectation),
+            None => Ok(*slot.insert(note_expectation(&self.classes.distinct[index], &masses[law])?)),
+        }
+    }
 }
 
 /// The recorded command and query schedule of one or more orders of a formation.
@@ -476,10 +540,12 @@ pub(super) fn rush_percent(master: &Master, calc: &LiveScoreCalculator) -> Resul
     Ok(rush_percent)
 }
 
-/// The score queries and rank bonuses of one order of a schedule.
+/// The score queries and rank bonuses of one order of a schedule: the first score frame each query executed, and
+/// the parts of the rank snapshot queries by query index.
 #[derive(Default)]
 struct Lane {
-    parts: Vec<QueryParts>,
+    executed_from: Vec<i32>,
+    snapshots: FxHashMap<usize, QueryParts>,
     fixed: Vec<(i32, u8, F64Interval, I32Interval)>,
     pending: Option<(i32, F64Interval, I32Interval)>,
     ranges: Vec<LuckExactRange>,
@@ -568,13 +634,18 @@ pub(super) fn exact_schedule(
     let mut lottery_frames = Vec::new();
     // The next skill boundary's play frame, and the time of the latest skill boundary.
     let (mut boundary, mut skills_at) = (0usize, i32::MIN);
-    let mut measured: Vec<Lane> = (0..lanes).map(|_| Lane::default()).collect();
-    let mut queries = 0usize;
+    let mut measured: Vec<Lane> =
+        (0..lanes).map(|_| Lane { executed_from: Vec::with_capacity(schedule.queries), ..Lane::default() }).collect();
+    // By note index in `replay.notes`.
+    let mut measured_notes = Vec::<MeasuredNote>::new();
+    let mut masses = Vec::with_capacity(distinct_laws.len());
+    let (mut queries, mut last_to) = (0usize, None);
     for (event, orders) in &schedule.events {
         match event {
             BoundsEvent::Note { frame, index, note } => {
                 let at = replay.file_note(*frame, note.time_ms, note.note_id, (*frame, *index))?;
                 filed.push((*frame, *note, at));
+                measured_notes.push(MeasuredNote::default());
             }
             BoundsEvent::Factor { frame, command } => {
                 if command.band_total_power != 0 {
@@ -619,7 +690,24 @@ pub(super) fn exact_schedule(
                     return Err(refuse("rank end query was not recorded"));
                 };
                 for lane in &mut measured {
-                    let (mean, support) = snapshot_difference(*start, end, &lane.parts, &lane.fixed)?;
+                    let (mean, support) = {
+                        let parts = |index: usize| {
+                            lane.snapshots.get(&index).ok_or_else(|| refuse("a rank snapshot query was not measured"))
+                        };
+                        let executed = match *start {
+                            Some(start) if start <= end => Some(
+                                lane.executed_from
+                                    .get(start + 1..=end)
+                                    .ok_or_else(|| refuse("a rank snapshot query was not measured"))?
+                                    .iter()
+                                    .copied()
+                                    .min()
+                                    .unwrap_or(i32::MAX),
+                            ),
+                            _ => None,
+                        };
+                        snapshot_parts_difference(start.map(parts).transpose()?, parts(end)?, executed, &lane.fixed)?
+                    };
                     let x = i128::from(support.lower()) * i128::from(*percent) / 100;
                     let y = i128::from(support.upper()) * i128::from(*percent) / 100;
                     let bonus_support = I32Interval::new(
@@ -648,58 +736,68 @@ pub(super) fn exact_schedule(
                 let mut query_watch = Stopwatch::start();
                 let executed_from = replay.query(*to, &combos)?;
                 profile.replay_ms += query_watch.lap();
-                let snapshot = snapshots.contains(&queries);
+                let query = queries;
                 queries += 1;
-                let mut sums = vec![(F64Interval::ZERO, 0i64, 0i64); lanes];
-                let mut notes = vec![snapshot.then(Vec::new); lanes];
+                last_to = Some(*to);
+                let snapshot = snapshots.contains(&query);
+                let mut sums = Vec::new();
+                let mut notes = Vec::new();
                 if snapshot {
+                    let summed = filed.iter().filter(|(frame, _, _)| *frame as i32 <= *to).count();
+                    sums = vec![(F64Interval::ZERO, 0i64, 0i64); lanes];
+                    notes = vec![Vec::with_capacity(summed); lanes];
                     for &(frame, ref note, at) in filed.iter().filter(|(frame, _, _)| *frame as i32 <= *to) {
-                        let masses = distinct_laws
-                            .iter()
-                            .map(|law| {
-                                query_mass(law, frame_times, probability_ready, skills_at, *time_ms, note.time_ms)
-                            })
-                            .collect::<Result<Vec<_>, _>>()?;
-                        let classes =
-                            order_classes(calc, note, &replay.notes[at], rush_percent, replay.shared_classes(), lanes)?;
-                        // By (class supports, law).
-                        let mut expectations = vec![None; classes.distinct.len() * masses.len()];
-                        for (lane, &index) in classes.of.iter().enumerate() {
-                            let (mean, support) = match &mut expectations[index * masses.len() + law_of[lane]] {
-                                Some(expectation) => *expectation,
-                                slot => {
-                                    *slot.insert(note_expectation(&classes.distinct[index], &masses[law_of[lane]])?)
-                                }
-                            };
+                        masses.clear();
+                        for law in &distinct_laws {
+                            masses.push(query_mass(
+                                law,
+                                frame_times,
+                                probability_ready,
+                                skills_at,
+                                *time_ms,
+                                note.time_ms,
+                            )?);
+                        }
+                        let entry = &mut measured_notes[at];
+                        entry.update(
+                            calc,
+                            note,
+                            &replay.notes[at],
+                            rush_percent,
+                            replay.shared_classes(),
+                            lanes,
+                            &masses,
+                        )?;
+                        for lane in 0..lanes {
+                            let (mean, support) = entry.expectation(lane, law_of[lane], &masses)?;
                             let sum = &mut sums[lane];
                             sum.0 = sum.0.add(mean);
                             sum.1 += i64::from(support.lower());
                             sum.2 += i64::from(support.upper());
-                            notes[lane].as_mut().expect("snapshot notes").push((frame as i32, support, mean));
+                            notes[lane].push((frame as i32, support, mean));
                         }
                     }
                 }
-                for (order, (lane, ((note_mean, lo, hi), notes))) in
-                    measured.iter_mut().zip(sums.into_iter().zip(notes)).enumerate()
-                {
-                    let note_support = checked_support(lo, hi)?;
+                for (order, lane) in measured.iter_mut().enumerate() {
                     if let Some((frame, bonus, support)) = lane.pending.take() {
                         lane.fixed.push((frame, u8::from(frame > *to), bonus, support));
                     }
-                    // Only the rank snapshots read a query's coefficients.
-                    let fixed_coefficients = if snapshot {
-                        lane.fixed.iter().map(|&(frame, offset, _, _)| offset + u8::from(frame <= *to)).collect()
-                    } else {
-                        Vec::new()
-                    };
-                    lane.parts.push(QueryParts {
-                        note_mean,
-                        note_support,
-                        fixed_coefficients,
-                        to: *to,
-                        executed_from: executed_from[order],
-                        notes,
-                    });
+                    lane.executed_from.push(executed_from[order]);
+                    // Only the rank snapshots read a query's parts.
+                    if snapshot {
+                        let (note_mean, lo, hi) = sums[order];
+                        let fixed_coefficients =
+                            lane.fixed.iter().map(|&(frame, offset, _, _)| offset + u8::from(frame <= *to)).collect();
+                        let parts = QueryParts {
+                            note_mean,
+                            note_support: checked_support(lo, hi)?,
+                            fixed_coefficients,
+                            to: *to,
+                            executed_from: executed_from[order],
+                            notes: Some(std::mem::take(&mut notes[order])),
+                        };
+                        lane.snapshots.insert(query, parts);
+                    }
                 }
             }
         }
@@ -707,7 +805,7 @@ pub(super) fn exact_schedule(
     if !lottery_frames.is_empty() || ready != frame_times.len() {
         return Err(refuse("a play frame's lotteries did not complete"));
     }
-    let Some(prev) = measured[0].parts.last().map(|last| last.to) else {
+    let Some(prev) = last_to else {
         return Err(refuse("the recorder made no score query"));
     };
     if measured.iter().any(|lane| lane.pending.is_some()) {
@@ -725,17 +823,20 @@ pub(super) fn exact_schedule(
         if note.time_ms > probability_ready {
             return Err(refuse("final note has pending lottery commands"));
         }
-        let masses: Vec<_> = distinct_laws.iter().map(|law| kept_mass(law, note.time_ms)).collect();
-        let classes = order_classes(calc, note, &replay.notes[at], rush_percent, replay.shared_classes(), lanes)?;
-        // (mean, support, spread) by (class supports, law).
-        let mut expectations = vec![None; classes.distinct.len() * masses.len()];
+        masses.clear();
+        masses.extend(distinct_laws.iter().map(|law| kept_mass(law, note.time_ms)));
+        let entry = &mut measured_notes[at];
+        entry.update(calc, note, &replay.notes[at], rush_percent, replay.shared_classes(), lanes, &masses)?;
+        // Spreads by (class supports, law).
+        let mut spreads = vec![None; entry.classes.distinct.len() * masses.len()];
         scored_notes += 1;
-        for (order, &index) in classes.of.iter().enumerate() {
-            let (buckets, mass) = (&classes.distinct[index], &masses[law_of[order]]);
-            let (mean, support, spread) = match &mut expectations[index * masses.len() + law_of[order]] {
-                Some(expectation) => *expectation,
+        for order in 0..lanes {
+            let index = entry.classes.of[order];
+            let (mean, support) = entry.expectation(order, law_of[order], &masses)?;
+            let (buckets, mass) = (&entry.classes.distinct[index], &masses[law_of[order]]);
+            let spread = match &mut spreads[index * masses.len() + law_of[order]] {
+                Some(spread) => *spread,
                 slot => {
-                    let (mean, support) = note_expectation(buckets, mass)?;
                     let spread = buckets
                         .iter()
                         .zip(mass)
@@ -743,7 +844,7 @@ pub(super) fn exact_schedule(
                         .filter_map(|(bucket, _)| bucket.map(|(lo, hi)| hi - lo))
                         .max()
                         .unwrap_or(0);
-                    *slot.insert((mean, support, spread))
+                    *slot.insert(spread)
                 }
             };
             if spread > 0 {

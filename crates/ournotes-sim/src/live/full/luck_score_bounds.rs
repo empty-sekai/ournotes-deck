@@ -609,12 +609,22 @@ fn snapshot_difference(
     queries: &[QueryParts],
     fixed: &[(i32, u8, F64Interval, I32Interval)],
 ) -> Result<(F64Interval, I32Interval), Error> {
-    let (start_index, start, end_index, end) = (start, start.map(|index| &queries[index]), end, &queries[end]);
+    let executed = start
+        .filter(|&index| index <= end)
+        .map(|index| queries[index + 1..=end].iter().map(|q| q.executed_from).min().unwrap_or(i32::MAX));
+    snapshot_parts_difference(start.map(|index| &queries[index]), &queries[end], executed, fixed)
+}
+
+/// [`snapshot_difference`] of the parts of two snapshots, given the first score frame any query after `start` up to
+/// `end` executed (`i32::MAX` when none did), or None when the snapshots share no frames.
+fn snapshot_parts_difference(
+    start: Option<&QueryParts>,
+    end: &QueryParts,
+    executed: Option<i32>,
+    fixed: &[(i32, u8, F64Interval, I32Interval)],
+) -> Result<(F64Interval, I32Interval), Error> {
     // The last frame every query after `start` up to `end` left as `start` summed it.
-    let kept = start_index.zip(start).filter(|&(index, _)| index <= end_index).map(|(index, start)| {
-        let executed = queries[index + 1..=end_index].iter().map(|q| q.executed_from).min().unwrap_or(i32::MAX);
-        start.to.min(executed.saturating_sub(1))
-    });
+    let kept = start.zip(executed).map(|(start, executed)| start.to.min(executed.saturating_sub(1)));
     let later = |notes: &[(i32, I32Interval, F64Interval)], kept: i32| {
         notes.iter().filter(|&&(frame, _, _)| frame > kept).fold(
             (F64Interval::ZERO, 0i64, 0i64),

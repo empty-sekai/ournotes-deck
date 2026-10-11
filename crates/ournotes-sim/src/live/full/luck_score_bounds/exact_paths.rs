@@ -288,6 +288,8 @@ pub(super) struct ExactNote {
     /// The recorder's (frame, index in the frame) of the note, which keys its combo observations.
     key: (usize, usize),
     pub values: Vec<NoteValues>,
+    /// How many times a query replaced `values`.
+    pub revision: u32,
 }
 
 impl ExactNote {
@@ -535,7 +537,7 @@ impl ExactReplay {
         key: (usize, usize),
     ) -> Result<usize, Error> {
         let index = self.notes.len();
-        self.notes.push(ExactNote { time_ms, note_id, frame, key, values: Vec::new() });
+        self.notes.push(ExactNote { time_ms, note_id, frame, key, values: Vec::new(), revision: 0 });
         let notes = &self.notes;
         let entry =
             self.frames.get_mut(frame).ok_or_else(|| Error::Input("note frame outside the calculator".into()))?;
@@ -686,35 +688,48 @@ impl ExactReplay {
     pub(super) fn query(&mut self, to: i32, combos: &FxHashMap<(usize, usize), (f32, f32)>) -> Result<Vec<i32>, Error> {
         let prev = self.prev;
         let start = |u: i32| if u < prev { u + 1 } else { prev + 1 };
-        let filings: Vec<Option<i32>> = self
-            .partial
-            .iter()
-            .map(|partial| match (self.mandatory, *partial) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            })
-            .collect();
-        // (path, orders, first frame executed): the orders of a path rewound to the same frame.
+        let earliest = |a: Option<i32>, b: Option<i32>| match (a, b) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        // The orders of each distinct earliest filing since the previous query.
+        let mut filings = Vec::<(Option<i32>, Orders)>::new();
+        for (order, &partial) in self.partial.iter().enumerate() {
+            let filing = earliest(self.mandatory, partial);
+            match filings.iter_mut().find(|(other, _)| *other == filing) {
+                Some((_, orders)) => *orders |= 1 << order,
+                None => filings.push((filing, 1 << order)),
+            }
+        }
+        // (path, orders, first frame executed): the orders of a path rewound to the same frame, path by path.
         let mut forks: Vec<(usize, Orders, i32)> = Vec::new();
         for (index, path) in self.paths.iter().enumerate() {
             let at = forks.len();
-            for order in each(path.orders) {
-                let own = match (filings[order], path.filed) {
-                    (Some(a), Some(b)) => Some(a.min(b)),
-                    (a, b) => a.or(b),
-                };
-                let first = start(own.map_or(to, |frame| to.min(frame - 1)));
+            for &(filing, orders) in &filings {
+                let orders = orders & path.orders;
+                if orders == 0 {
+                    continue;
+                }
+                let first = start(earliest(filing, path.filed).map_or(to, |frame| to.min(frame - 1)));
                 match forks[at..].iter_mut().find(|fork| fork.2 == first) {
-                    Some(fork) => fork.1 |= 1 << order,
-                    None => forks.push((index, 1 << order, first)),
+                    Some(fork) => fork.1 |= orders,
+                    None => forks.push((index, orders, first)),
                 }
             }
         }
-        let lowest = forks.iter().map(|&(_, _, first)| first).min().unwrap_or(prev + 1);
+        // The orders rewound to each distinct frame.
+        let mut firsts = Vec::<(i32, Orders)>::new();
+        for &(_, orders, first) in &forks {
+            match firsts.iter_mut().find(|(other, _)| *other == first) {
+                Some((_, all)) => *all |= orders,
+                None => firsts.push((first, orders)),
+            }
+        }
+        let lowest = firsts.iter().map(|&(first, _)| first).min().unwrap_or(prev + 1);
         // Per order, the latest and the earliest first frame of its paths; every order has a path.
         let mut highest = vec![i32::MIN; self.lanes];
         let mut executed = vec![i32::MAX; self.lanes];
-        for &(_, orders, first) in &forks {
+        for &(first, orders) in &firsts {
             for order in each(orders) {
                 highest[order] = highest[order].max(first);
                 executed[order] = executed[order].min(first);
@@ -726,39 +741,65 @@ impl ExactReplay {
         if lowest > to {
             self.idle_queries += 1;
         }
-        for &(index, orders, first) in &forks {
-            let path = &self.paths[index];
-            if first < self.base {
-                return Err(refuse("a query undoes a frame below the retained history"));
-            }
-            let kept = ((first - self.base) as usize).min(path.starts.len());
-            self.runs += 1;
-            self.undone_frames += (self.prev + 1 - first).max(0) as u64;
-            self.executed_frames += (to + 1 - first).max(0) as u64;
-            let lanes = self.lanes;
-            for lane in self.run(path, orders, first, to, combos, &mut observed)? {
-                let drop = ((floor - self.base) as usize).min(kept + lane.starts.len());
-                let mut starts = Vec::with_capacity(kept + lane.starts.len() - drop);
-                let mut sums = Vec::with_capacity(starts.capacity() * lanes);
-                starts.extend_from_slice(&path.starts[drop.min(kept)..kept]);
-                sums.extend_from_slice(&path.sums[drop.min(kept) * lanes..kept * lanes]);
-                let skip = drop.saturating_sub(kept);
-                starts.extend_from_slice(&lane.starts[skip..]);
-                sums.extend_from_slice(&lane.sums[skip * lanes..]);
-                let mut switches = path.switches.clone();
-                switches.retain(|&(frame, _)| frame >= floor);
-                next.push(Path {
-                    orders,
-                    class: lane.class,
-                    low: lane.low,
-                    high: lane.high,
-                    now: path.now,
-                    rush: path.rush,
-                    filed: None,
-                    starts,
-                    sums,
-                    switches,
-                });
+        let lanes = self.lanes;
+        let mut forks = forks.as_slice();
+        for (index, mut path) in std::mem::take(&mut self.paths).into_iter().enumerate() {
+            let (own, rest) = forks.split_at(forks.partition_point(|fork| fork.0 == index));
+            forks = rest;
+            for (fork, &(_, orders, first)) in own.iter().enumerate() {
+                if first < self.base {
+                    return Err(refuse("a query undoes a frame below the retained history"));
+                }
+                let kept = ((first - self.base) as usize).min(path.starts.len());
+                self.runs += 1;
+                self.undone_frames += (prev + 1 - first).max(0) as u64;
+                self.executed_frames += (to + 1 - first).max(0) as u64;
+                // The path's last fork takes over its records.
+                let last_fork = fork + 1 == own.len();
+                let executions = if first > prev && first > to {
+                    let (low, high) = if last_fork {
+                        (std::mem::take(&mut path.low), std::mem::take(&mut path.high))
+                    } else {
+                        (path.low.clone(), path.high.clone())
+                    };
+                    vec![Lane { class: path.class, low, high, starts: Vec::new(), sums: Vec::new() }]
+                } else {
+                    self.run(&path, orders, first, to, combos, &mut observed)?
+                };
+                let count = executions.len();
+                for (execution, lane) in executions.into_iter().enumerate() {
+                    let drop = ((floor - self.base) as usize).min(kept + lane.starts.len());
+                    let skip = drop.saturating_sub(kept);
+                    let (mut starts, mut sums, mut switches) = if last_fork && execution + 1 == count {
+                        let (mut starts, mut sums) = (std::mem::take(&mut path.starts), std::mem::take(&mut path.sums));
+                        starts.truncate(kept);
+                        sums.truncate(kept * lanes);
+                        starts.drain(..drop.min(kept));
+                        sums.drain(..drop.min(kept) * lanes);
+                        (starts, sums, std::mem::take(&mut path.switches))
+                    } else {
+                        let mut starts = Vec::with_capacity(kept + lane.starts.len() - drop);
+                        let mut sums = Vec::with_capacity(starts.capacity() * lanes);
+                        starts.extend_from_slice(&path.starts[drop.min(kept)..kept]);
+                        sums.extend_from_slice(&path.sums[drop.min(kept) * lanes..kept * lanes]);
+                        (starts, sums, path.switches.clone())
+                    };
+                    starts.extend_from_slice(&lane.starts[skip..]);
+                    sums.extend_from_slice(&lane.sums[skip * lanes..]);
+                    switches.retain(|&(frame, _)| frame >= floor);
+                    next.push(Path {
+                        orders,
+                        class: lane.class,
+                        low: lane.low,
+                        high: lane.high,
+                        now: path.now,
+                        rush: path.rush,
+                        filed: None,
+                        starts,
+                        sums,
+                        switches,
+                    });
+                }
             }
         }
         let mut fresh = FxHashMap::<usize, Vec<NoteValues>>::default();
@@ -784,6 +825,7 @@ impl ExactReplay {
                 return Err(capacity());
             }
             note.values = values;
+            note.revision += 1;
         }
         self.base = floor;
         self.settle(next)?;
@@ -950,10 +992,16 @@ impl ExactReplay {
                 (Some(_), None) => unreachable!("covered by the factor arm"),
             }
         }
-        for sub in subs {
-            let mut starts = lane.starts.clone();
+        // The last alternative takes over the lane's records.
+        let count = subs.len();
+        let (mut starts, mut sums) = (lane.starts, lane.sums);
+        for (index, sub) in subs.into_iter().enumerate() {
+            let (mut starts, mut sums) = if index + 1 == count {
+                (std::mem::take(&mut starts), std::mem::take(&mut sums))
+            } else {
+                (starts.clone(), sums.clone())
+            };
             starts.push(start);
-            let mut sums = lane.sums.clone();
             sums.extend(sub.sum.iter().map(|sum| sum.map(f32::to_bits)));
             out.push(Lane { class: sub.class, low: sub.low, high: sub.high, starts, sums });
         }
