@@ -711,17 +711,13 @@ impl ExactReplay {
             }
         }
         let lowest = forks.iter().map(|&(_, _, first)| first).min().unwrap_or(prev + 1);
-        let mut highest = vec![prev + 1; self.lanes];
+        // Per order, the latest and the earliest first frame of its paths; every order has a path.
+        let mut highest = vec![i32::MIN; self.lanes];
         let mut executed = vec![i32::MAX; self.lanes];
         for &(_, orders, first) in &forks {
             for order in each(orders) {
                 highest[order] = highest[order].max(first);
                 executed[order] = executed[order].min(first);
-            }
-        }
-        for first in &mut executed {
-            if *first == i32::MAX {
-                *first = prev + 1;
             }
         }
         let floor = self.floors.get(self.queries).copied().unwrap_or(i32::MAX).min(to + 1).max(self.base);

@@ -571,6 +571,94 @@ fn several_orders_replay_as_each_order_alone() {
     assert!(differing > 0);
 }
 
+/// Play frames 13 ms apart with factor commands filed up to 40 ms back, notes and rank rewinds, and no skill
+/// boundary or lottery, so each order has one native history. With more than one order, some commands belong to
+/// random subsets of the orders.
+fn single_history_schedule(rng: &mut Rng, orders: usize) -> Vec<Step> {
+    let every = first_orders(orders);
+    let mut steps = Vec::new();
+    let mut note_id = 0;
+    let mut t = 0;
+    while t < 900 {
+        if rng.chance(30) {
+            let command = FactorCommand {
+                time_ms: (t - rng.below(40) as i32).max(0),
+                owner_id: [1, 101, 150, 300][rng.below(4) as usize],
+                note_mill: [12_345, -12_345, 50_000, 3_333, -7_777][rng.below(5) as usize],
+                combo_mill: [0, 1_200, -1_200, 4_321][rng.below(4) as usize],
+                judgement: 3 + rng.below(4) as i32,
+                judge_mill: [0, 777, -777, 20_000][rng.below(4) as usize],
+                ..Default::default()
+            };
+            let mask = 1 + rng.below(every as u64) as Orders;
+            steps.push(if mask == every { Step::Command(command) } else { Step::Partial(command, mask) });
+        }
+        if rng.chance(60) {
+            let time = (t - rng.below(13) as i32).max(0);
+            steps.push(Step::Note(NoteCommand::new(time, 100, note_id, 1, 1 + rng.below(4) as i32)));
+            note_id += 1;
+        }
+        steps.push(Step::Query(t));
+        if rng.chance(10) {
+            steps.push(Step::Query((t - rng.below(40) as i32).max(0)));
+        }
+        t += 13;
+    }
+    steps.push(Step::Query(1000));
+    steps
+}
+
+/// With one native history per order, every note of every order keeps exactly the factor state of its last native
+/// execution, also when a later query executes it again under commands filed since its previous execution.
+#[test]
+fn a_single_history_keeps_the_last_native_state_of_each_note() {
+    const LANES: usize = 3;
+    let (mut checked, mut rewritten) = (0, 0);
+    for seed in 1..=12u64 {
+        let mut rng = Rng(0x7f4a_7c15_9e37_79b9 ^ seed.wrapping_mul(0x2545_f491_4f6c_dd1d));
+        for lanes in [1, LANES] {
+            let steps = single_history_schedule(&mut rng, lanes);
+            let (replay, index) = replay_schedule(&steps, lanes, Some);
+            for order in 0..lanes {
+                let mut native = calculator();
+                let combo = ComboCounter::new(64);
+                let mut first = FxHashMap::default();
+                for step in &steps {
+                    match step {
+                        Step::Note(note) => native.add_note(*note),
+                        Step::Command(command) => native.add_factor(*command),
+                        Step::Partial(command, mask) => {
+                            if mask >> order & 1 != 0 {
+                                native.add_factor(*command);
+                            }
+                        }
+                        Step::Query(t) => {
+                            native.calculate(*t, &combo, None).unwrap();
+                            for (note_id, state) in native.executed_states().1 {
+                                first.entry(note_id).or_insert(state.map(f32::to_bits));
+                            }
+                        }
+                        _ => unreachable!("one history"),
+                    }
+                }
+                for (note_id, state) in native.executed_states().1 {
+                    let state = state.map(f32::to_bits);
+                    let values: Vec<_> = replay.notes[index[note_id as usize]]
+                        .values_of(order)
+                        .map(|value| (value.class, value.low.map(f32::to_bits), value.high.map(f32::to_bits)))
+                        .collect();
+                    assert_eq!(values, [(0, state, state)], "seed {seed} lanes {lanes} order {order} note {note_id}");
+                    checked += 1;
+                    rewritten += usize::from(first[&note_id] != state);
+                }
+            }
+        }
+    }
+    assert!(checked > 1_000, "{checked}");
+    // Later commands change the state of notes executed before them.
+    assert!(rewritten > 0);
+}
+
 /// A query at a play frame reads the notes before the frame's time in the state before the frame, the notes at
 /// its time on the side of the frame's skill boundary it runs, and the earlier notes in their filed state.
 #[test]
