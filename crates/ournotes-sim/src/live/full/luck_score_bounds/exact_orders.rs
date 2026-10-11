@@ -420,17 +420,14 @@ fn splice(
         }
     };
     profile.law_ms += watch.lap();
-    // Orders that share one replay: the same probe rows, probe phase binding and possible lottery transitions.
+    // Orders that share one replay: the same probe phase binding, probe rows in all or none, and the same possible
+    // lottery transitions.
     let mut groups = Vec::<Vec<usize>>::new();
     for (index, (rows, phase)) in shapes.iter().enumerate() {
         let shares = |other: &usize| {
             let ((other_rows, other_phase), law, other_law) = (&shapes[*other], &laws[index], &laws[*other]);
             other_phase == phase
-                && other_rows.len() == rows.len()
-                && other_rows
-                    .iter()
-                    .zip(rows)
-                    .all(|(a, b)| (a.owner, a.value.to_bits()) == (b.owner, b.value.to_bits()))
+                && other_rows.is_empty() == rows.is_empty()
                 && (std::sync::Arc::ptr_eq(law, other_law)
                     || (law.probe_transitions == other_law.probe_transitions
                         && law.rush_transitions == other_law.rush_transitions))
@@ -465,12 +462,25 @@ fn splice(
                 events.push((event.clone(), all));
             }
         }
-        let (probes, phase) = &shapes[group[0]];
+        // The orders of each distinct set of probe rows.
+        let mut configs = Vec::<(Orders, Vec<ProbeRow>)>::new();
+        for (lane, &index) in group.iter().enumerate() {
+            let rows = &shapes[index].0;
+            let same = |other: &Vec<ProbeRow>| {
+                other.len() == rows.len()
+                    && other.iter().zip(rows).all(|(a, b)| (a.owner, a.value.to_bits()) == (b.owner, b.value.to_bits()))
+            };
+            match configs.iter_mut().find(|(_, other)| same(other)) {
+                Some((orders, _)) => *orders |= 1 << lane,
+                None => configs.push((1 << lane, rows.clone())),
+            }
+        }
+        let phase = &shapes[group[0]].1;
         let schedule = Schedule {
             events,
             frames: trace.frames,
             queries: trace.queries,
-            probes: probes.clone(),
+            configs,
             frame_times: frame_times.clone(),
             music_length_ms: first.music_length_ms,
             lanes: group.len(),

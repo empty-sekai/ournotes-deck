@@ -10,8 +10,13 @@
 //! keep, and the notes at the frame's own time with the Rush the frame's queries see and the probe class before
 //! or after the frame's skill boundary. A score's expectation is linear in these. A rank bonus truncates the
 //! product of a snapshot difference and its percentage, so its expectation lies within one of the linear term.
+//!
+//! The note expectations of one score are summed on a fixed-point grid, outward, so a sum does not depend on the
+//! order of its terms and the orders of a joint replay sum exactly as each order alone.
 
-use super::exact_paths::{ExactNote, ExactReplay, NoteValue, Orders, rush_mask, undo_floors};
+use super::exact_paths::{
+    ExactNote, ExactReplay, NoteValue, Orders, each, first_orders, refine, rush_mask, undo_floors,
+};
 use super::*;
 use crate::live::full::luck_dp::{RUSH_FINISH, RUSH_PROBE};
 
@@ -147,48 +152,56 @@ pub(super) fn query_mass(
     })
 }
 
-/// The integer support of each lottery class of a note's last execution.
-pub(super) fn note_classes(
+/// The integer support of each lottery class 00/01/10/11 of a note; None where no path reaches the class.
+type Buckets = [Option<(i32, i32)>; 4];
+
+fn join_buckets(buckets: &mut Buckets, other: &Buckets) {
+    for (bucket, other) in buckets.iter_mut().zip(other) {
+        if let Some((lo, hi)) = *other {
+            *bucket = Some(bucket.map_or((lo, hi), |(a, b)| (a.min(lo), b.max(hi))));
+        }
+    }
+}
+
+/// The integer support of each lottery class of a note's last execution with one value.
+pub(super) fn value_classes(
     calc: &LiveScoreCalculator,
     note: &NoteCommand,
-    values: &[NoteValue],
+    value: &NoteValue,
     rush_percent: i32,
     shared_classes: bool,
-) -> Result<[Option<(i32, i32)>; 4], Error> {
+) -> Result<Buckets, Error> {
     let mut buckets = [None::<(i32, i32)>; 4];
     let luck = [0, rush_percent].map(|rush| get_luck_factor_percent(rush) as f32 / 100f32);
-    for value in values {
-        let (ordinary, gekisou) = (f32::from_bits(value.combo.0), f32::from_bits(value.combo.1));
-        let judge = match note.score_type {
-            1 => Some(2),
-            2 => Some(3),
-            3 => Some(4),
-            4 => Some(5),
-            _ => None,
-        };
-        // Native combo and score-up factors at the field bounds; both are monotone in every field.
-        let factors = |fields: &[f32; FIELDS]| {
-            let combo = gekisou * (fields[0] + ordinary);
-            let score_up = fields[1] + judge.map_or(0.0, |field| fields[field]);
-            (combo, score_up)
-        };
-        let (combo_a, up_low) = factors(&value.low);
-        let (combo_b, up_high) = factors(&value.high);
-        let combos = corners(combo_a.min(combo_b), combo_a.max(combo_b));
-        let ups = corners(up_low, up_high);
-        let classes = if shared_classes { 0..2 } else { usize::from(value.class)..usize::from(value.class) + 1 };
-        for (rush, &luck) in luck.iter().enumerate() {
-            for &combo in combos.iter().flatten() {
-                for &score_up in ups.iter().flatten() {
-                    let score =
-                        calc.note_score_core(note.life, note.note_type, note.score_type, combo, score_up, luck)?;
-                    if score == i32::MIN {
-                        return Err(refuse("a note score may overflow"));
-                    }
-                    for class in classes.clone() {
-                        let bucket = &mut buckets[class | rush << 1];
-                        *bucket = Some(bucket.map_or((score, score), |(lo, hi)| (lo.min(score), hi.max(score))));
-                    }
+    let (ordinary, gekisou) = (f32::from_bits(value.combo.0), f32::from_bits(value.combo.1));
+    let judge = match note.score_type {
+        1 => Some(2),
+        2 => Some(3),
+        3 => Some(4),
+        4 => Some(5),
+        _ => None,
+    };
+    // Native combo and score-up factors at the field bounds; both are monotone in every field.
+    let factors = |fields: &[f32; FIELDS]| {
+        let combo = gekisou * (fields[0] + ordinary);
+        let score_up = fields[1] + judge.map_or(0.0, |field| fields[field]);
+        (combo, score_up)
+    };
+    let (combo_a, up_low) = factors(&value.low);
+    let (combo_b, up_high) = factors(&value.high);
+    let combos = corners(combo_a.min(combo_b), combo_a.max(combo_b));
+    let ups = corners(up_low, up_high);
+    let classes = if shared_classes { 0..2 } else { usize::from(value.class)..usize::from(value.class) + 1 };
+    for (rush, &luck) in luck.iter().enumerate() {
+        for &combo in combos.iter().flatten() {
+            for &score_up in ups.iter().flatten() {
+                let score = calc.note_score_core(note.life, note.note_type, note.score_type, combo, score_up, luck)?;
+                if score == i32::MIN {
+                    return Err(refuse("a note score may overflow"));
+                }
+                for class in classes.clone() {
+                    let bucket = &mut buckets[class | rush << 1];
+                    *bucket = Some(bucket.map_or((score, score), |(lo, hi)| (lo.min(score), hi.max(score))));
                 }
             }
         }
@@ -204,10 +217,7 @@ fn corners(low: f32, high: f32) -> [Option<f32>; 3] {
 }
 
 /// The expectation and support of a note given its class supports and probabilities.
-fn note_expectation(
-    buckets: &[Option<(i32, i32)>; 4],
-    mass: &[ProbabilityMass; 4],
-) -> Result<(F64Interval, I32Interval), Error> {
+fn note_expectation(buckets: &Buckets, mass: &[ProbabilityMass; 4]) -> Result<(F64Interval, I32Interval), Error> {
     let mut mean = F64Interval::ZERO;
     let (mut lower, mut upper) = (i32::MAX, i32::MIN);
     for (bucket, probability) in buckets.iter().zip(mass) {
@@ -228,60 +238,167 @@ fn note_expectation(
     Ok((mean, support))
 }
 
-/// The class supports of one note in each order of a replay. Orders whose last executions of the note have the
-/// same values share their supports.
-#[derive(Default)]
-struct OrderClasses {
-    /// For each order, the index of its supports in `distinct`.
-    of: Vec<usize>,
-    distinct: Vec<[Option<(i32, i32)>; 4]>,
+/// 2^64, the inverse grid step of a [`Sum`].
+const GRID: f64 = 18_446_744_073_709_551_616.0;
+
+/// A sum of note expectations and supports: the least mean rounded down and the greatest rounded up to multiples of
+/// 2^-64, and the integer support bounds. The sums are exact integers, so they do not depend on the order of their
+/// terms, and a difference of sums is exact.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Sum {
+    low: i128,
+    high: i128,
+    min: i64,
+    max: i64,
 }
 
-fn order_classes(
-    calc: &LiveScoreCalculator,
-    note: &NoteCommand,
-    exact: &ExactNote,
-    rush_percent: i32,
-    shared_classes: bool,
-    lanes: usize,
-) -> Result<OrderClasses, Error> {
-    if lanes == 1 {
-        let values: Vec<_> = exact.values_of(0).collect();
-        let buckets = note_classes(calc, note, &values, rush_percent, shared_classes)?;
-        return Ok(OrderClasses { of: vec![0], distinct: vec![buckets] });
-    }
-    let mut seen = FxHashMap::<Vec<u32>, usize>::default();
-    let mut classes = OrderClasses { of: Vec::with_capacity(lanes), distinct: Vec::new() };
-    let mut key = Vec::new();
-    for order in 0..lanes {
-        key.clear();
-        for value in exact.values_of(order) {
-            key.extend([u32::from(value.class), value.combo.0, value.combo.1]);
-            key.extend(value.low.map(f32::to_bits));
-            key.extend(value.high.map(f32::to_bits));
-        }
-        let index = match seen.get(key.as_slice()) {
-            Some(&index) => index,
-            None => {
-                let values: Vec<_> = exact.values_of(order).collect();
-                classes.distinct.push(note_classes(calc, note, &values, rush_percent, shared_classes)?);
-                seen.insert(key.clone(), classes.distinct.len() - 1);
-                classes.distinct.len() - 1
+impl Sum {
+    fn of(mean: F64Interval, support: I32Interval) -> Result<Self, Error> {
+        let grid = |x: f64, round: fn(f64) -> f64| {
+            if x.abs() < 2f64.powi(62) {
+                Ok(round(x * GRID) as i128)
+            } else {
+                Err(refuse("a note expectation leaves the fixed-point range"))
             }
         };
-        classes.of.push(index);
+        Ok(Self {
+            low: grid(mean.lower(), f64::floor)?,
+            high: grid(mean.upper(), f64::ceil)?,
+            min: support.lower().into(),
+            max: support.upper().into(),
+        })
     }
-    Ok(classes)
+
+    fn checked(low: Option<i128>, high: Option<i128>, min: Option<i64>, max: Option<i64>) -> Result<Self, Error> {
+        let overflow = || refuse("a note sum overflows");
+        Ok(Self {
+            low: low.ok_or_else(overflow)?,
+            high: high.ok_or_else(overflow)?,
+            min: min.ok_or_else(overflow)?,
+            max: max.ok_or_else(overflow)?,
+        })
+    }
+
+    fn plus(self, other: Self) -> Result<Self, Error> {
+        Self::checked(
+            self.low.checked_add(other.low),
+            self.high.checked_add(other.high),
+            self.min.checked_add(other.min),
+            self.max.checked_add(other.max),
+        )
+    }
+
+    /// The bound-by-bound difference, which undoes [`Self::plus`].
+    fn less(self, other: Self) -> Result<Self, Error> {
+        Self::checked(
+            self.low.checked_sub(other.low),
+            self.high.checked_sub(other.high),
+            self.min.checked_sub(other.min),
+            self.max.checked_sub(other.max),
+        )
+    }
+
+    /// The bounds of the difference of a value within `self` and a value within `other`.
+    fn minus(self, other: Self) -> Result<Self, Error> {
+        Self::checked(
+            self.low.checked_sub(other.high),
+            self.high.checked_sub(other.low),
+            self.min.checked_sub(other.max),
+            self.max.checked_sub(other.min),
+        )
+    }
+
+    fn mean(self) -> Result<F64Interval, Error> {
+        // A grid value as binary64, rounded down or up.
+        let real = |value: i128, up: bool| {
+            let near = value as f64;
+            let exact = near as i128;
+            let bound = if up && exact < value {
+                near.next_up()
+            } else if !up && exact > value {
+                near.next_down()
+            } else {
+                near
+            };
+            bound / GRID
+        };
+        F64Interval::new(real(self.low, false), real(self.high, true))
+    }
 }
 
-/// A filed note's class supports for one revision of its values, and their expectations under the class
-/// probabilities last read, by (class supports, law).
+/// Per-order sums: one sum every order shares and each order's difference to it.
+#[derive(Clone)]
+struct Totals {
+    shared: Sum,
+    own: Vec<Sum>,
+}
+
+impl Totals {
+    fn new(lanes: usize) -> Self {
+        Self { shared: Sum::default(), own: vec![Sum::default(); lanes] }
+    }
+
+    fn add(&mut self, contribution: &Contribution) -> Result<(), Error> {
+        self.shared = self.shared.plus(contribution.shared)?;
+        for &(orders, difference) in &contribution.own {
+            for order in each(orders) {
+                self.own[order] = self.own[order].plus(difference)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn of(&self, order: usize) -> Result<Sum, Error> {
+        self.shared.plus(self.own[order])
+    }
+}
+
+/// A note's expectation in each order: the orders with equal sums, the sum of the most orders, and the
+/// difference to it of each other sum.
+#[derive(Clone, Default)]
+struct Contribution {
+    blocks: Vec<(Orders, Sum)>,
+    shared: Sum,
+    own: Vec<(Orders, Sum)>,
+}
+
+impl Contribution {
+    fn of(blocks: impl IntoIterator<Item = (Orders, Sum)>) -> Result<Self, Error> {
+        let mut merged = Vec::<(Orders, Sum)>::new();
+        for (orders, sum) in blocks {
+            match merged.iter_mut().find(|(_, other)| *other == sum) {
+                Some((all, _)) => *all |= orders,
+                None => merged.push((orders, sum)),
+            }
+        }
+        let Some(most) = (0..merged.len()).max_by_key(|&index| merged[index].0.count_ones()) else {
+            return Ok(Self::default());
+        };
+        let shared = merged[most].1;
+        let mut own = Vec::with_capacity(merged.len() - 1);
+        for (index, &(orders, sum)) in merged.iter().enumerate() {
+            if index != most {
+                own.push((orders, sum.less(shared)?));
+            }
+        }
+        Ok(Self { blocks: merged, shared, own })
+    }
+}
+
+/// A filed note's class supports for one revision of its values, and its expectations under the class
+/// probabilities last read.
 #[derive(Default)]
 struct MeasuredNote {
-    revision: u32,
-    classes: OrderClasses,
+    revision: Option<u32>,
+    /// The values of the revision and their class supports.
+    values: Vec<(NoteValue, Buckets)>,
+    /// Orders with the same values, and the class supports of those values.
+    classes: Vec<(Orders, Buckets)>,
     masses: Vec<[u64; 8]>,
-    expectations: Vec<Option<(F64Interval, I32Interval)>>,
+    /// For each class supports and law with common orders: the orders, the class supports, the law and the
+    /// expectation.
+    blocks: Vec<(Orders, usize, usize, F64Interval, I32Interval)>,
+    contribution: Contribution,
 }
 
 fn mass_bits(mass: &[ProbabilityMass; 4]) -> [u64; 8] {
@@ -294,7 +411,8 @@ fn mass_bits(mass: &[ProbabilityMass; 4]) -> [u64; 8] {
 }
 
 impl MeasuredNote {
-    /// Brings the entry to the current values of `exact` and the class probabilities `masses` of each law.
+    /// Brings the entry to the current values of `exact` and the class probabilities `masses` of the laws of
+    /// orders `laws`.
     #[allow(clippy::too_many_arguments)]
     fn update(
         &mut self,
@@ -303,38 +421,181 @@ impl MeasuredNote {
         exact: &ExactNote,
         rush_percent: i32,
         shared_classes: bool,
-        lanes: usize,
+        every: Orders,
+        laws: &[Orders],
         masses: &[[ProbabilityMass; 4]],
     ) -> Result<(), Error> {
-        let fresh = self.revision != exact.revision || self.classes.of.is_empty();
+        let fresh = self.revision != Some(exact.revision);
         if fresh {
-            self.revision = exact.revision;
-            self.classes = order_classes(calc, note, exact, rush_percent, shared_classes, lanes)?;
+            self.revision = Some(exact.revision);
+            // A value of the previous revision keeps its class supports.
+            let previous = std::mem::take(&mut self.values);
+            let bits = |value: &NoteValue| {
+                (value.class, value.combo, value.low.map(f32::to_bits), value.high.map(f32::to_bits))
+            };
+            for value in &exact.values {
+                let buckets = match previous.iter().find(|(old, _)| bits(old) == bits(value)) {
+                    Some(&(_, buckets)) => buckets,
+                    None => value_classes(calc, note, value, rush_percent, shared_classes)?,
+                };
+                self.values.push((*value, buckets));
+            }
+            let mut cells = vec![every];
+            for value in &exact.values {
+                refine(&mut cells, value.orders);
+            }
+            self.classes.clear();
+            for cell in cells {
+                let order = cell.trailing_zeros() as usize;
+                let mut buckets = [None; 4];
+                for (value, classes) in &self.values {
+                    if value.orders >> order & 1 != 0 {
+                        join_buckets(&mut buckets, classes);
+                    }
+                }
+                self.classes.push((cell, buckets));
+            }
         }
         if fresh
             || self.masses.len() != masses.len()
             || !self.masses.iter().zip(masses).all(|(a, b)| *a == mass_bits(b))
         {
-            self.masses = masses.iter().map(mass_bits).collect();
-            self.expectations = vec![None; self.classes.distinct.len() * masses.len()];
+            self.masses.clear();
+            self.masses.extend(masses.iter().map(mass_bits));
+            self.blocks.clear();
+            let mut sums = Vec::new();
+            for (index, (cell, buckets)) in self.classes.iter().enumerate() {
+                for (law, &orders) in laws.iter().enumerate() {
+                    let orders = cell & orders;
+                    if orders != 0 {
+                        let (mean, support) = note_expectation(buckets, &masses[law])?;
+                        self.blocks.push((orders, index, law, mean, support));
+                        sums.push((orders, Sum::of(mean, support)?));
+                    }
+                }
+            }
+            self.contribution = Contribution::of(sums)?;
         }
         Ok(())
     }
+}
 
-    /// The expectation and support of the note in order `lane`, whose law is `law` of `masses`.
-    fn expectation(
-        &mut self,
-        lane: usize,
-        law: usize,
-        masses: &[[ProbabilityMass; 4]],
-    ) -> Result<(F64Interval, I32Interval), Error> {
-        let index = self.classes.of[lane];
-        let slot = &mut self.expectations[index * masses.len() + law];
-        match *slot {
-            Some(expectation) => Ok(expectation),
-            None => Ok(*slot.insert(note_expectation(&self.classes.distinct[index], &masses[law])?)),
+/// The least first score frame each order executed over a run of queries.
+#[derive(Clone)]
+struct Executed {
+    every: i32,
+    own: Vec<i32>,
+}
+
+impl Executed {
+    fn new() -> Self {
+        Self { every: i32::MAX, own: Vec::new() }
+    }
+
+    /// Takes in one query's first frames by orders, which [`ExactReplay::query`] returns.
+    fn add(&mut self, firsts: &[(i32, Orders)], lanes: usize) {
+        // Every order executed from the latest of them or earlier.
+        let latest = firsts.iter().map(|&(first, _)| first).max().unwrap_or(i32::MAX);
+        self.every = self.every.min(latest);
+        for &(first, orders) in firsts.iter().filter(|&&(first, _)| first < latest) {
+            if self.own.is_empty() {
+                self.own = vec![i32::MAX; lanes];
+            }
+            for order in each(orders) {
+                self.own[order] = self.own[order].min(first);
+            }
         }
     }
+
+    fn of(&self, order: usize) -> i32 {
+        self.own.get(order).map_or(self.every, |&own| own.min(self.every))
+    }
+}
+
+/// A filed rank bonus: its score frame, its coefficient offset and the bonus of each order.
+type Bonus = (i32, u8, Vec<(F64Interval, I32Interval)>);
+
+/// A rank snapshot query: its last score frame, the note sums of each order, and the notes of the frames its ranks
+/// read separately with their expectation in each order.
+struct Snapshot {
+    to: i32,
+    /// For a rank that starts here: no later query executes a frame before `low`, and the notes before it read
+    /// their final lottery state.
+    low: i32,
+    totals: Totals,
+    /// The frames of `notes`, and the notes by frame.
+    window: (i32, i32),
+    notes: Vec<(i32, Vec<(Orders, Sum)>)>,
+    /// The coefficient of each filed rank bonus.
+    coefficients: Vec<u8>,
+}
+
+/// The note sum and filed bonuses of `order` that snapshot `end` gained since snapshot `start`, given the first
+/// score frame any query after `start` up to `end` executed in the order (`i32::MAX` when none did), or None when
+/// the snapshots share no frames. The notes of the frames before that first frame, and before the start's `low`,
+/// are the same native values in both snapshots and read the same lottery state, so they cancel exactly: only the
+/// later notes are enclosed, on each side. Otherwise both whole note sums are enclosed separately.
+fn rank_difference(
+    start: Option<&Snapshot>,
+    end: &Snapshot,
+    executed: Option<i32>,
+    order: usize,
+    fixed: &[Bonus],
+) -> Result<(F64Interval, I32Interval), Error> {
+    let sum = match (start, executed) {
+        (Some(start), Some(executed)) => {
+            let kept = start.to.min(executed.saturating_sub(1));
+            let (low, high) = (start.low, start.to);
+            let holds = |window: (i32, i32)| window.0 <= low && high <= window.1;
+            if kept < low - 1 || end.to < high || !holds(start.window) || !holds(end.window) {
+                return Err(refuse("a rank snapshot difference reads notes its snapshots did not keep"));
+            }
+            let value = |blocks: &[(Orders, Sum)]| {
+                blocks
+                    .iter()
+                    .find(|(orders, _)| orders >> order & 1 != 0)
+                    .map(|&(_, sum)| sum)
+                    .ok_or_else(|| refuse("a kept note has no expectation in an order"))
+            };
+            let (mut window, mut later) = (Sum::default(), Sum::default());
+            for (frame, blocks) in start.notes.iter().filter(|(frame, _)| (low..=high).contains(frame)) {
+                let sum = value(blocks)?;
+                window = window.plus(sum)?;
+                if *frame > kept {
+                    later = later.plus(sum)?;
+                }
+            }
+            let mut early = Sum::default();
+            for (_, blocks) in end.notes.iter().filter(|(frame, _)| (low..=kept).contains(frame)) {
+                early = early.plus(value(blocks)?)?;
+            }
+            // The end's notes after `kept`: its whole sum less the notes before `low`, which are the start's, and
+            // the notes from `low` to `kept`.
+            let before = start.totals.of(order)?.less(window)?;
+            end.totals.of(order)?.less(before)?.less(early)?.minus(later)?
+        }
+        _ => end.totals.of(order)?.minus(match start {
+            Some(start) => start.totals.of(order)?,
+            None => Sum::default(),
+        })?,
+    };
+    let mut mean = sum.mean()?;
+    let (mut lower, mut upper) = (sum.min, sum.max);
+    for (index, (_, _, bonuses)) in fixed.iter().enumerate() {
+        let a = start.and_then(|start| start.coefficients.get(index)).copied().unwrap_or(0);
+        let b = end.coefficients.get(index).copied().unwrap_or(0);
+        let coefficient = i64::from(b) - i64::from(a);
+        if coefficient == 0 {
+            continue;
+        }
+        let (bonus_mean, bonus_support) = bonuses[order];
+        mean = mean.add(bonus_mean.scale_integer(i128::from(coefficient)));
+        let x = coefficient * i64::from(bonus_support.lower());
+        let y = coefficient * i64::from(bonus_support.upper());
+        lower += x.min(y);
+        upper += x.max(y);
+    }
+    Ok((mean, checked_support(lower, upper)?))
 }
 
 /// The recorded command and query schedule of one or more orders of a formation.
@@ -342,10 +603,11 @@ pub(super) struct Schedule {
     /// The events of every order in filing order, each with the orders whose schedule holds it. Only a factor
     /// command may belong to some of the orders.
     pub events: Vec<(BoundsEvent, Orders)>,
-    /// The calculator's score frames, the score queries made and the probe rows.
+    /// The calculator's score frames and the score queries made.
     pub frames: usize,
     pub queries: usize,
-    pub probes: Vec<ProbeRow>,
+    /// The probe rows of each order, by the orders that have them.
+    pub configs: Vec<(Orders, Vec<ProbeRow>)>,
     /// The completed native frame clock and the music length.
     pub frame_times: Vec<i32>,
     pub music_length_ms: i32,
@@ -396,7 +658,7 @@ pub fn luck_exact_score(
         events: trace.events.into_iter().map(|event| (event, 1)).collect(),
         frames: trace.frames,
         queries: trace.queries,
-        probes: trace.probes,
+        configs: vec![(1, trace.probes)],
         frame_times: model.trace.iter().map(|&(time, _)| time).collect(),
         music_length_ms: model.music_length_ms,
         lanes: 1,
@@ -540,17 +802,6 @@ pub(super) fn rush_percent(master: &Master, calc: &LiveScoreCalculator) -> Resul
     Ok(rush_percent)
 }
 
-/// The score queries and rank bonuses of one order of a schedule: the first score frame each query executed, and
-/// the parts of the rank snapshot queries by query index.
-#[derive(Default)]
-struct Lane {
-    executed_from: Vec<i32>,
-    snapshots: FxHashMap<usize, QueryParts>,
-    fixed: Vec<(i32, u8, F64Interval, I32Interval)>,
-    pending: Option<(i32, F64Interval, I32Interval)>,
-    ranges: Vec<LuckExactRange>,
-}
-
 /// The exact expectation of every order of `schedule`, each under its own lottery law in `laws`. The laws share
 /// their possible probe and Rush transitions, which shape the paths. `deterministic` gives the constant final score
 /// of each order of a live without a LUCK range.
@@ -573,15 +824,17 @@ pub(super) fn exact_schedule(
     if laws.len() != lanes {
         return Err(Error::Input("one lottery law per order".into()));
     }
-    // The distinct laws, and the law of each order.
+    let every = first_orders(lanes);
+    // The distinct laws and the orders of each.
     let mut distinct_laws = Vec::<&LuckDpCertifiedResult>::new();
-    let mut law_of = Vec::with_capacity(lanes);
-    for law in laws {
+    let mut law_orders = Vec::<Orders>::new();
+    for (order, law) in laws.iter().enumerate() {
         let index = distinct_laws.iter().position(|&other| std::ptr::eq(other, &**law)).unwrap_or_else(|| {
             distinct_laws.push(law);
+            law_orders.push(0);
             distinct_laws.len() - 1
         });
-        law_of.push(index);
+        law_orders[index] |= 1 << order;
     }
     let probability = distinct_laws[0];
     if distinct_laws.iter().any(|law| {
@@ -594,16 +847,17 @@ pub(super) fn exact_schedule(
         return Err(refuse("the completed recorder frame clock differs from the probability recording"));
     }
     let events = || schedule.events.iter().map(|(event, _)| event);
+    let rows = schedule.configs.iter().any(|(_, rows)| !rows.is_empty());
     check_probe_filings(
         frame_times,
         probability,
         schedule.music_length_ms,
         probe_phase_bound,
-        !schedule.probes.is_empty(),
+        rows,
         schedule.frames,
         events(),
     )?;
-    if !schedule.probes.is_empty() && probability.probe_transitions.len() != frame_times.len() {
+    if rows && probability.probe_transitions.len() != frame_times.len() {
         return Err(refuse("the probe transitions do not cover every skill boundary"));
     }
     if probability.rush_transitions.len() != frame_times.len() {
@@ -617,25 +871,32 @@ pub(super) fn exact_schedule(
         return Err(refuse("unaccounted native calculate entry point"));
     }
     let floors = undo_floors(events(), &probability.rush_transitions)?;
-    let mut replay = ExactReplay::new(schedule.frames, &schedule.probes, floors, lanes)?;
+    let mut replay = ExactReplay::new(schedule.frames, &schedule.configs, floors, lanes)?;
     // (frame, note, index in `replay.notes`)
     let mut filed = Vec::<(usize, NoteCommand, usize)>::new();
     let mut combos = FxHashMap::<(usize, usize), (f32, f32)>::default();
-    let snapshots: FxHashSet<usize> = events()
-        .flat_map(|event| match event {
-            BoundsEvent::Rank { start, end, .. } => [*start, *end],
-            _ => [None, None],
+    // The (start, end) snapshot queries of each rank bonus.
+    let pairs: Vec<(Option<usize>, usize)> = events()
+        .filter_map(|event| match event {
+            BoundsEvent::Rank { start, end: Some(end), .. } => Some((*start, *end)),
+            _ => None,
         })
-        .flatten()
         .collect();
+    let starts: FxHashSet<usize> = pairs.iter().filter_map(|&(start, _)| start).collect();
+    let mut snapshots = FxHashMap::<usize, Snapshot>::default();
+    // From each rank start on, the first frames the later queries executed; frozen at each end.
+    let mut executing = Vec::<(usize, Executed)>::new();
+    let mut executed = FxHashMap::<(usize, usize), Executed>::default();
     let mut probability_ready = i32::MIN;
     // Play frames whose lotteries have completed, and the lottery filing places of the current play frame.
     let mut ready = 0usize;
     let mut lottery_frames = Vec::new();
     // The next skill boundary's play frame, and the time of the latest skill boundary.
     let (mut boundary, mut skills_at) = (0usize, i32::MIN);
-    let mut measured: Vec<Lane> =
-        (0..lanes).map(|_| Lane { executed_from: Vec::with_capacity(schedule.queries), ..Lane::default() }).collect();
+    // The filed rank bonuses: frame, coefficient offset and each order's bonus; the bonus the next query files.
+    let mut fixed = Vec::<Bonus>::new();
+    let mut pending = None::<(i32, Vec<(F64Interval, I32Interval)>)>;
+    let mut ranges = vec![Vec::new(); lanes];
     // By note index in `replay.notes`.
     let mut measured_notes = Vec::<MeasuredNote>::new();
     let mut masses = Vec::with_capacity(distinct_laws.len());
@@ -689,25 +950,21 @@ pub(super) fn exact_schedule(
                 let Some(end) = *end else {
                     return Err(refuse("rank end query was not recorded"));
                 };
-                for lane in &mut measured {
-                    let (mean, support) = {
-                        let parts = |index: usize| {
-                            lane.snapshots.get(&index).ok_or_else(|| refuse("a rank snapshot query was not measured"))
-                        };
-                        let executed = match *start {
-                            Some(start) if start <= end => Some(
-                                lane.executed_from
-                                    .get(start + 1..=end)
-                                    .ok_or_else(|| refuse("a rank snapshot query was not measured"))?
-                                    .iter()
-                                    .copied()
-                                    .min()
-                                    .unwrap_or(i32::MAX),
-                            ),
-                            _ => None,
-                        };
-                        snapshot_parts_difference(start.map(parts).transpose()?, parts(end)?, executed, &lane.fixed)?
-                    };
+                let measured = |index: usize| {
+                    snapshots.get(&index).ok_or_else(|| refuse("a rank snapshot query was not measured"))
+                };
+                let (start_snapshot, end_snapshot) = (start.map(measured).transpose()?, measured(end)?);
+                let since = match *start {
+                    Some(start) if start < end => Some(
+                        executed.get(&(start, end)).ok_or_else(|| refuse("a rank snapshot query was not measured"))?,
+                    ),
+                    _ => None,
+                };
+                let shared = matches!(*start, Some(start) if start <= end);
+                let mut bonuses = Vec::with_capacity(lanes);
+                for (order, ranges) in ranges.iter_mut().enumerate() {
+                    let first = shared.then(|| since.map_or(i32::MAX, |since| since.of(order)));
+                    let (mean, support) = rank_difference(start_snapshot, end_snapshot, first, order, &fixed)?;
                     let x = i128::from(support.lower()) * i128::from(*percent) / 100;
                     let y = i128::from(support.upper()) * i128::from(*percent) / 100;
                     let bonus_support = I32Interval::new(
@@ -719,8 +976,8 @@ pub(super) fn exact_schedule(
                     } else {
                         rank_mean_bounds(mean, support, *percent)?
                     };
-                    lane.pending = Some((get_frame(*time_ms), bonus, bonus_support));
-                    lane.ranges.push(LuckExactRange {
+                    bonuses.push((bonus, bonus_support));
+                    ranges.push(LuckExactRange {
                         range: *range,
                         percent: *percent,
                         mean: mean.into(),
@@ -728,77 +985,84 @@ pub(super) fn exact_schedule(
                         bonus_mean: bonus.into(),
                     });
                 }
+                pending = Some((get_frame(*time_ms), bonuses));
             }
             BoundsEvent::Query { time_ms, to } => {
                 if !lottery_frames.is_empty() {
                     return Err(refuse("a score query precedes the completion of a play frame's lotteries"));
                 }
                 let mut query_watch = Stopwatch::start();
-                let executed_from = replay.query(*to, &combos)?;
+                let firsts = replay.query(*to, &combos)?;
+                for (_, since) in &mut executing {
+                    since.add(firsts, lanes);
+                }
                 profile.replay_ms += query_watch.lap();
                 let query = queries;
                 queries += 1;
                 last_to = Some(*to);
-                let snapshot = snapshots.contains(&query);
-                let mut sums = Vec::new();
-                let mut notes = Vec::new();
-                if snapshot {
-                    let summed = filed.iter().filter(|(frame, _, _)| *frame as i32 <= *to).count();
-                    sums = vec![(F64Interval::ZERO, 0i64, 0i64); lanes];
-                    notes = vec![Vec::with_capacity(summed); lanes];
-                    for &(frame, ref note, at) in filed.iter().filter(|(frame, _, _)| *frame as i32 <= *to) {
-                        masses.clear();
-                        for law in &distinct_laws {
-                            masses.push(query_mass(
-                                law,
-                                frame_times,
-                                probability_ready,
-                                skills_at,
-                                *time_ms,
-                                note.time_ms,
-                            )?);
-                        }
-                        let entry = &mut measured_notes[at];
-                        entry.update(
-                            calc,
-                            note,
-                            &replay.notes[at],
-                            rush_percent,
-                            replay.shared_classes(),
-                            lanes,
-                            &masses,
-                        )?;
-                        for lane in 0..lanes {
-                            let (mean, support) = entry.expectation(lane, law_of[lane], &masses)?;
-                            let sum = &mut sums[lane];
-                            sum.0 = sum.0.add(mean);
-                            sum.1 += i64::from(support.lower());
-                            sum.2 += i64::from(support.upper());
-                            notes[lane].push((frame as i32, support, mean));
-                        }
+                for &(start, end) in &pairs {
+                    if let Some(start) = start.filter(|&start| start < query && end == query) {
+                        let since = executing.iter().find(|(at, _)| *at == start).map(|(_, since)| since.clone());
+                        executed
+                            .insert((start, end), since.ok_or_else(|| refuse("a rank start query was not measured"))?);
                     }
                 }
-                for (order, lane) in measured.iter_mut().enumerate() {
-                    if let Some((frame, bonus, support)) = lane.pending.take() {
-                        lane.fixed.push((frame, u8::from(frame > *to), bonus, support));
+                if starts.contains(&query) {
+                    executing.push((query, Executed::new()));
+                }
+                if let Some((frame, bonuses)) = pending.take() {
+                    fixed.push((frame, u8::from(frame > *to), bonuses));
+                }
+                if !starts.contains(&query) && !pairs.iter().any(|&(_, end)| end == query) {
+                    continue;
+                }
+                // Only the rank snapshots read a query's sums.
+                let mut totals = Totals::new(lanes);
+                let mut unsettled = i32::MAX;
+                for &(frame, ref note, at) in filed.iter().filter(|(frame, _, _)| *frame as i32 <= *to) {
+                    masses.clear();
+                    for law in &distinct_laws {
+                        masses.push(query_mass(
+                            law,
+                            frame_times,
+                            probability_ready,
+                            skills_at,
+                            *time_ms,
+                            note.time_ms,
+                        )?);
                     }
-                    lane.executed_from.push(executed_from[order]);
-                    // Only the rank snapshots read a query's parts.
-                    if snapshot {
-                        let (note_mean, lo, hi) = sums[order];
-                        let fixed_coefficients =
-                            lane.fixed.iter().map(|&(frame, offset, _, _)| offset + u8::from(frame <= *to)).collect();
-                        let parts = QueryParts {
-                            note_mean,
-                            note_support: checked_support(lo, hi)?,
-                            fixed_coefficients,
-                            to: *to,
-                            executed_from: executed_from[order],
-                            notes: Some(std::mem::take(&mut notes[order])),
-                        };
-                        lane.snapshots.insert(query, parts);
+                    let entry = &mut measured_notes[at];
+                    entry.update(
+                        calc,
+                        note,
+                        &replay.notes[at],
+                        rush_percent,
+                        replay.shared_classes(),
+                        every,
+                        &law_orders,
+                        &masses,
+                    )?;
+                    totals.add(&entry.contribution)?;
+                    if note.time_ms > probability_ready {
+                        unsettled = unsettled.min(frame as i32);
                     }
                 }
+                let low = replay.base().min(unsettled);
+                let mut window = if starts.contains(&query) { (low, *to) } else { (i32::MAX, i32::MIN) };
+                for &(start, end) in &pairs {
+                    if let Some(start) = start.filter(|&start| start < query && end == query) {
+                        let start =
+                            snapshots.get(&start).ok_or_else(|| refuse("a rank start query was not measured"))?;
+                        window = (window.0.min(start.low), window.1.max(start.to));
+                    }
+                }
+                let notes = filed
+                    .iter()
+                    .filter(|&&(frame, _, _)| (window.0..=window.1.min(*to)).contains(&(frame as i32)))
+                    .map(|&(frame, _, at)| (frame as i32, measured_notes[at].contribution.blocks.clone()))
+                    .collect();
+                let coefficients = fixed.iter().map(|&(frame, offset, _)| offset + u8::from(frame <= *to)).collect();
+                snapshots.insert(query, Snapshot { to: *to, low, totals, window, notes, coefficients });
             }
         }
     }
@@ -808,14 +1072,14 @@ pub(super) fn exact_schedule(
     let Some(prev) = last_to else {
         return Err(refuse("the recorder made no score query"));
     };
-    if measured.iter().any(|lane| lane.pending.is_some()) {
+    if pending.is_some() {
         return Err(refuse("terminal query has not filed every rank bonus"));
     }
     if deterministic.is_some_and(|scores| scores.len() != lanes) {
         return Err(Error::Input("one deterministic score per order".into()));
     }
-    // (note mean, support lower, support upper) and (wide notes, widest note) per order.
-    let mut sums = vec![(F64Interval::ZERO, 0i64, 0i64); lanes];
+    let mut totals = Totals::new(lanes);
+    // (wide notes, widest note) per order.
     let mut wide = vec![(0usize, 0i32); lanes];
     let mut final_notes = vec![Vec::new(); lanes];
     let mut scored_notes = 0;
@@ -826,43 +1090,43 @@ pub(super) fn exact_schedule(
         masses.clear();
         masses.extend(distinct_laws.iter().map(|law| kept_mass(law, note.time_ms)));
         let entry = &mut measured_notes[at];
-        entry.update(calc, note, &replay.notes[at], rush_percent, replay.shared_classes(), lanes, &masses)?;
-        // Spreads by (class supports, law).
-        let mut spreads = vec![None; entry.classes.distinct.len() * masses.len()];
+        entry.update(
+            calc,
+            note,
+            &replay.notes[at],
+            rush_percent,
+            replay.shared_classes(),
+            every,
+            &law_orders,
+            &masses,
+        )?;
+        totals.add(&entry.contribution)?;
         scored_notes += 1;
-        for order in 0..lanes {
-            let index = entry.classes.of[order];
-            let (mean, support) = entry.expectation(order, law_of[order], &masses)?;
-            let (buckets, mass) = (&entry.classes.distinct[index], &masses[law_of[order]]);
-            let spread = match &mut spreads[index * masses.len() + law_of[order]] {
-                Some(spread) => *spread,
-                slot => {
-                    let spread = buckets
-                        .iter()
-                        .zip(mass)
-                        .filter(|(_, p)| p.interval().upper() > 0.0)
-                        .filter_map(|(bucket, _)| bucket.map(|(lo, hi)| hi - lo))
-                        .max()
-                        .unwrap_or(0);
-                    *slot.insert(spread)
-                }
-            };
+        for &(orders, classes, law, mean, _) in &entry.blocks {
+            let (buckets, mass) = (&entry.classes[classes].1, &masses[law]);
+            let spread = buckets
+                .iter()
+                .zip(mass)
+                .filter(|(_, p)| p.interval().upper() > 0.0)
+                .filter_map(|(bucket, _)| bucket.map(|(lo, hi)| hi - lo))
+                .max()
+                .unwrap_or(0);
             if spread > 0 {
-                wide[order].0 += 1;
-                wide[order].1 = wide[order].1.max(spread);
+                for order in each(orders) {
+                    wide[order].0 += 1;
+                    wide[order].1 = wide[order].1.max(spread);
+                }
             }
-            let sum = &mut sums[order];
-            sum.0 = sum.0.add(mean);
-            sum.1 += i64::from(support.lower());
-            sum.2 += i64::from(support.upper());
             if details {
-                final_notes[order].push(LuckExactNote {
-                    note_id: note.note_id,
-                    time_ms: note.time_ms,
-                    buckets: buckets.map(|bucket| bucket.map(|(lower, upper)| IntegerBounds { lower, upper })),
-                    probability: mass.map(|p| p.interval().into()),
-                    mean: mean.into(),
-                });
+                for order in each(orders) {
+                    final_notes[order].push(LuckExactNote {
+                        note_id: note.note_id,
+                        time_ms: note.time_ms,
+                        buckets: buckets.map(|bucket| bucket.map(|(lower, upper)| IntegerBounds { lower, upper })),
+                        probability: mass.map(|p| p.interval().into()),
+                        mean: mean.into(),
+                    });
+                }
             }
         }
     }
@@ -872,11 +1136,15 @@ pub(super) fn exact_schedule(
     profile.executed_frames = replay.executed_frames;
     profile.idle_queries = replay.idle_queries;
     let mut scores = Vec::with_capacity(lanes);
-    for (order, (((lane, (final_note_mean, mut lo, mut hi)), (wide_notes, widest_note)), notes)) in
-        measured.into_iter().zip(sums).zip(wide).zip(final_notes).enumerate()
+    for (order, ((ranges, (wide_notes, widest_note)), notes)) in
+        ranges.into_iter().zip(wide).zip(final_notes).enumerate()
     {
+        let note_sum = totals.of(order)?;
+        let final_note_mean = note_sum.mean()?;
+        let (mut lo, mut hi) = (note_sum.min, note_sum.max);
         let mut final_rank_mean = F64Interval::ZERO;
-        for &(frame, offset, bonus, support) in &lane.fixed {
+        for &(frame, offset, ref bonuses) in &fixed {
+            let (bonus, support) = bonuses[order];
             let coefficient = i64::from(offset) + i64::from(frame <= prev);
             final_rank_mean = final_rank_mean.add(bonus.scale_integer(i128::from(coefficient)));
             lo += coefficient * i64::from(support.lower());
@@ -891,7 +1159,7 @@ pub(super) fn exact_schedule(
             final_note_mean: final_note_mean.into(),
             final_rank_mean: final_rank_mean.into(),
             final_support: final_support.into(),
-            ranges: lane.ranges,
+            ranges,
             scored_notes,
             wide_notes,
             widest_note,

@@ -265,8 +265,8 @@ fn note_classes_take_the_native_score_extremes_over_the_factor_box() {
             let note = NoteCommand::new(0, 100, 1, 1, score_type);
             let (mut low, mut high) = ([0f32; FIELDS], [0f32; FIELDS]);
             (low[0], high[0], low[1], high[1]) = (combo_low, combo_high, up_low, up_high);
-            let value = NoteValue { class: 0, combo: (ordinary.to_bits(), 1f32.to_bits()), low, high };
-            let buckets = super::exact::note_classes(&calc, &note, &[value], rush_percent, false).unwrap();
+            let value = NoteValue { orders: 1, class: 0, combo: (ordinary.to_bits(), 1f32.to_bits()), low, high };
+            let buckets = super::exact::value_classes(&calc, &note, &value, rush_percent, false).unwrap();
             for (rush, &luck) in luck.iter().enumerate() {
                 let (mut least, mut greatest) = (i32::MAX, i32::MIN);
                 for field in samples(combo_low, combo_high) {
@@ -324,6 +324,8 @@ enum Step {
 }
 
 const ROWS: [(i32, i32); 2] = [(101, 50_000), (201, 80_000)];
+/// Probe rows of three orders: the second order's probe performers stand at each other's positions.
+const ORDER_ROWS: [[(i32, i32); 2]; 3] = [ROWS, [(201, 50_000), (101, 80_000)], ROWS];
 
 /// Play frames 13 ms apart, each with a skill boundary, its score queries and its lotteries. With more than one
 /// order, some commands belong to random subsets of the orders.
@@ -385,14 +387,24 @@ fn rush_command(time_ms: i32) -> FactorCommand {
     FactorCommand { time_ms, owner_id: -1, luck: 10, ..Default::default() }
 }
 
-/// The exact replay of `lanes` orders through `steps`. `select` gives the orders of this replay that hold a
-/// partial command, if any. Returns the replay and each note's index in its notes.
+/// The exact replay through `steps` of one order per entry of `rows`, with those probe rows. `select` gives the
+/// orders of this replay that hold a partial command, if any. Returns the replay and each note's index in its notes.
 fn replay_schedule(
     steps: &[Step],
-    lanes: usize,
+    rows: &[[(i32, i32); 2]],
     select: impl Fn(Orders) -> Option<Orders>,
 ) -> (ExactReplay, Vec<usize>) {
-    let rows: Vec<_> = ROWS.iter().map(|&(owner, m)| ProbeRow { owner, value: m as f32 / 100000f32 }).collect();
+    let lanes = rows.len();
+    let mut configs = Vec::<(Orders, Vec<ProbeRow>)>::new();
+    for (order, rows) in rows.iter().enumerate() {
+        let rows: Vec<_> = rows.iter().map(|&(owner, m)| ProbeRow { owner, value: m as f32 / 100000f32 }).collect();
+        let same =
+            |other: &Vec<ProbeRow>| other.iter().zip(&rows).all(|(a, b)| (a.owner, a.value) == (b.owner, b.value));
+        match configs.iter_mut().find(|(_, other)| same(other)) {
+            Some((orders, _)) => *orders |= 1 << order,
+            None => configs.push((1 << order, rows)),
+        }
+    }
     let frames = calculator().executed_states().0;
     let frame_of = |time: i32| (get_frame(time).max(0) as usize).min(frames - 1);
     let every = first_orders(lanes);
@@ -428,7 +440,7 @@ fn replay_schedule(
             Step::Query(t) => events.push(BoundsEvent::Query { time_ms: *t, to: frame_of(*t) as i32 }),
         }
     }
-    let mut replay = ExactReplay::new(frames, &rows, undo_floors(&events, &transitions).unwrap(), lanes).unwrap();
+    let mut replay = ExactReplay::new(frames, &configs, undo_floors(&events, &transitions).unwrap(), lanes).unwrap();
     let mut combos = FxHashMap::default();
     let mut index = Vec::new();
     for step in steps {
@@ -466,7 +478,7 @@ fn exact_replay_bounds_every_native_history_of_random_schedules() {
     for seed in 1..=12u64 {
         let mut rng = Rng(0x9e37_79b9_7f4a_7c15 ^ seed.wrapping_mul(0x2545_f491_4f6c_dd1d));
         let steps = schedule(&mut rng, 1);
-        let (replay, index) = replay_schedule(&steps, 1, |_| None);
+        let (replay, index) = replay_schedule(&steps, &[ROWS], |_| None);
         for _ in 0..40 {
             let mut native = calculator();
             let combo = ComboCounter::new(64);
@@ -536,8 +548,8 @@ fn exact_replay_bounds_every_native_history_of_random_schedules() {
     assert!(spread > 0);
 }
 
-/// A replay of several orders, whose schedules differ in commands that belong to some of the orders, gives every
-/// note of every order exactly the values of a replay of that order alone.
+/// A replay of several orders, whose schedules differ in commands that belong to some of the orders and in the
+/// owners of their probe rows, gives every note of every order exactly the values of a replay of that order alone.
 #[test]
 fn several_orders_replay_as_each_order_alone() {
     const LANES: usize = 3;
@@ -553,9 +565,11 @@ fn several_orders_replay_as_each_order_alone() {
     for seed in 1..=12u64 {
         let mut rng = Rng(0x0051_7cc1_b727_220a ^ seed.wrapping_mul(0x2545_f491_4f6c_dd1d));
         let steps = schedule(&mut rng, LANES);
-        let (joint, joint_index) = replay_schedule(&steps, LANES, Some);
+        let (joint, joint_index) = replay_schedule(&steps, &ORDER_ROWS[..LANES], Some);
         let alone: Vec<_> = (0..LANES)
-            .map(|order| replay_schedule(&steps, 1, move |mask| (mask >> order & 1 != 0).then_some(1)))
+            .map(|order| {
+                replay_schedule(&steps, &ORDER_ROWS[order..=order], move |mask| (mask >> order & 1 != 0).then_some(1))
+            })
             .collect();
         for (note, &at) in joint_index.iter().enumerate() {
             let per_order: Vec<_> = alone.iter().map(|(replay, index)| values(replay, index[note], 0)).collect();
@@ -618,7 +632,7 @@ fn a_single_history_keeps_the_last_native_state_of_each_note() {
         let mut rng = Rng(0x7f4a_7c15_9e37_79b9 ^ seed.wrapping_mul(0x2545_f491_4f6c_dd1d));
         for lanes in [1, LANES] {
             let steps = single_history_schedule(&mut rng, lanes);
-            let (replay, index) = replay_schedule(&steps, lanes, Some);
+            let (replay, index) = replay_schedule(&steps, &[ROWS; LANES][..lanes], Some);
             for order in 0..lanes {
                 let mut native = calculator();
                 let combo = ComboCounter::new(64);
