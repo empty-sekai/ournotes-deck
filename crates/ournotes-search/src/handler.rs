@@ -132,6 +132,20 @@ pub(crate) fn compile_execution(
     } else if matches!(metric, Metric::Combined { .. })
         && matches!(request.objective.inner(), Objective::SkipScore { .. })
     {
+        // Terms the deck alone determines are ranked by deck; any other term leaves the request without a bound.
+        if matches!(strategy, Strategy::BranchAndBound) {
+            match crate::search::deck_payoff::DeckPayoffBounds::compile(
+                pool,
+                request,
+                &domain,
+                metric,
+                event_input,
+                None,
+            ) {
+                Ok(bound) => deck_payoff = Some(bound),
+                Err(reason) => deck_payoff_refusal = Some(reason.to_string()),
+            }
+        }
         (None, None)
     } else if matches!(strategy, Strategy::BranchAndBound)
         && matches!(request.objective.inner(), Objective::SkipScore { .. })
@@ -150,19 +164,28 @@ pub(crate) fn compile_execution(
     } else if matches!(strategy, Strategy::BranchAndBound) {
         match crate::search::joint::JointBounds::compile(pool, request, &domain, metric, event_input, simulation) {
             Ok(bound) => {
-                // A played Live whose payoff steps with the local score is first ranked by deck under its score cap.
-                if let Some(steps) = bound.score_steps() {
-                    match crate::search::deck_payoff::DeckPayoffBounds::compile(
-                        pool,
-                        request,
-                        &domain,
-                        metric,
-                        event_input,
-                        Some(steps),
-                    ) {
-                        Ok(b) => deck_payoff = Some(b),
-                        Err(reason) => deck_payoff_refusal = Some(reason.to_string()),
-                    }
+                // A played Live whose payoff steps with the local score is first ranked by deck under its score cap:
+                // a combined metric when every term does.
+                let ranked = if matches!(metric, Metric::Combined { .. }) {
+                    bound.term_steps().map(|terms| {
+                        crate::search::deck_payoff::DeckPayoffBounds::stepped(pool, request, &domain, terms)
+                    })
+                } else {
+                    bound.score_steps().map(|steps| {
+                        crate::search::deck_payoff::DeckPayoffBounds::compile(
+                            pool,
+                            request,
+                            &domain,
+                            metric,
+                            event_input,
+                            Some(steps),
+                        )
+                    })
+                };
+                match ranked {
+                    Some(Ok(b)) => deck_payoff = Some(b),
+                    Some(Err(reason)) => deck_payoff_refusal = Some(reason.to_string()),
+                    None => {}
                 }
                 (Some(bound), None)
             }

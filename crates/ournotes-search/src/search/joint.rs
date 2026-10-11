@@ -738,10 +738,24 @@ impl JointBounds {
 
     /// The per-order payoff steps of a score target or of points stepped by the local score, with this envelope's
     /// global score cap (`payoff_cap_from` with every gain at the global coefficient); None for score payoffs, capped
-    /// scores and multiplayer rewards without score tiers.
+    /// scores, multiplayer rewards without score tiers and combined metrics.
     pub(crate) fn score_steps(&self) -> Option<super::deck_payoff::ScoreSteps> {
+        self.steps_of(self.points.as_ref().filter(|pt| !pt.is_combined())?)
+    }
+
+    /// The steps of every term of a combined metric with the term's weight and event bonuses; None when a term has
+    /// no steps.
+    pub(crate) fn term_steps(&self) -> Option<Vec<super::deck_payoff::TermSteps<'_>>> {
+        let pt = self.points.as_ref()?;
+        std::iter::once((pt.weight, pt))
+            .chain(pt.others.iter().map(|(weight, _, part)| (*weight, part)))
+            .map(|(weight, part)| Some((weight, part.member.as_slice(), part.snap.as_slice(), self.steps_of(part)?)))
+            .collect()
+    }
+
+    /// The steps of one term's own payoff.
+    fn steps_of(&self, pt: &PointBound) -> Option<super::deck_payoff::ScoreSteps> {
         use super::deck_payoff::Step;
-        let pt = self.points.as_ref().filter(|pt| !pt.is_combined())?;
         let steps = match (pt.target, &pt.score_tiers) {
             (Some(ScoreTarget::AtLeast(threshold)), _) => {
                 vec![(i128::MIN, Step::Target(false)), (i128::from(threshold), Step::Target(true))]

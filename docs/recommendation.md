@@ -97,8 +97,10 @@ leave the exact integer range of the search is an input error; a raw `score` ter
 the widest range.
 
 The lower-level metric is `{"kind":"combined","levels":[{"terms":[{"metric":{...},"weight":2}, ...]}, ...]}`.
-Played lives search with an upper bound that is the weighted sum of the terms' bounds over all levels; Skip covers
-the complete legal team domain. The supported domain is lottery-free: active LUCK ranges return `Unsupported`.
+The search bounds a team by the weighted sum of the terms' bounds over all levels. When every term is an event
+reward of a Skip, or steps with the local score of a played Live, teams are first ranked by that sum as a function
+of each term's event bonus and the team power. The supported domain is lottery-free: active LUCK ranges return
+`Unsupported`.
 `capabilities().combinedMetric` declares `objective:lexicographicWeightedExpectedSums`, the level, term and weight
 limits and `lotteryFree:true`.
 

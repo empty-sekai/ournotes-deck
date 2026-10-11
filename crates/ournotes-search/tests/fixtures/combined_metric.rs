@@ -219,6 +219,23 @@ fn assert_ranking(
             assert!(actual.telemetry.environment.bounds.compiled, "{label}");
             assert!(actual.telemetry.environment.bounds.fallback.is_none(), "{label}");
         }
+        // Terms the deck alone determines on a Skip, or that step with the local score of a played Live, are ranked
+        // by deck. On the fixture's played Lives the event points, the items and the score target have such steps.
+        let ranked = |term: usize| {
+            if skip { [POINTS, CHALLENGE, ITEMS].contains(&term) } else { [POINTS, ITEMS, AT_LEAST].contains(&term) }
+        };
+        if bounded && levels.iter().flat_map(|terms| terms.iter()).all(|&(term, _)| ranked(term)) {
+            let setup = actual
+                .telemetry
+                .environment
+                .bounds
+                .deck_payoff
+                .as_ref()
+                .unwrap_or_else(|| panic!("{label}: a deck payoff bound"));
+            assert!(setup.refusal.is_none(), "{label}: {:?}", setup.refusal);
+            assert!(setup.rounds > 0, "{label}");
+            assert!(actual.telemetry.environment.bounds.compiled, "{label}");
+        }
         assert_eq!(actual.results.len(), expected.len().min(5), "{label}");
         for (row, (team, sums)) in actual.results.iter().zip(&expected) {
             assert_eq!((row.members, row.snaps, row.power), *team, "{label}");

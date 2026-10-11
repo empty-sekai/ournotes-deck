@@ -822,6 +822,16 @@ Thus each order's payoff, and its lottery expectation when applicable, is at mos
 bounds the uniform-order payoff numerator. This conversion requires an orderwise score cap; a bound on mean score
 alone would not justify applying a discontinuous target or reward step in this way.
 
+A [combined metric](#combined-metrics) compiles one curve per term and the payoff
+`F = sum_i w_i * F_i(B_i,P)` with the folded weights `w_i` of its terms. Term `i` reads its own additive bonus
+`B_i`: event-point effects, event-item effects, or none for Challenge points. Terms whose bonus is equal for every
+member and every Snap share one bonus, and a payoff reads at most eight distinct bonuses. Every `F_i` is nondecreasing
+in its bonus and in power and every weight is positive, so `F` is nondecreasing in each bonus and in power. The
+checks above apply to each bonus, and the weighted sum is evaluated in checked 128-bit integers. At a member prefix
+each `B_i` is bounded on its own, by the same rule as a single bonus; `F` at these maxima and `P_upper` bounds every
+completion, again without requiring that one team attains them together. On a played Live every term is a
+score-step function at the shared cap `C(P)`, so the weighted sum bounds each order's combined payoff.
+
 ### Snap frontiers with both bonus and power
 
 The payoff frontier scans Snaps with a state `(occupied mask, bonus sum, power increment, binding)`. Common
@@ -835,6 +845,13 @@ power/key pair. Each is therefore a valid dominance witness with sufficient bonu
 gives `K` distinct teams ahead of the discarded state's completion. Induction preserves the first `K` full bindings
 under `(F(B,P), P, canonical IDs)`, and final sorting produces that order exactly. For a score-step curve, this is
 the exact order of the *bounds*, not a claim that the actual played payoffs equal them.
+
+With several bonuses, `x` dominates `y` when every bonus of `x` is at least the same bonus of `y` and the power and
+key condition holds; monotonicity in each bonus gives the same conclusion for every common extension. States are
+then processed by descending power and ascending Snap key, so every state that beats another on power and key
+precedes it, and a state is discarded once `K` retained earlier states have at least its bonus of every kind. A
+discarded state's witnesses are retained states, and the relation is transitive, so the induction above carries
+over.
 
 This frontier can keep many mutually undominated bonus/power tradeoffs in one mask. Its width is not bounded by
 `K`, unlike the power-only assignment DP. The compilation checks on `K * max(1, number_of_Snaps)` and table sizes
@@ -1347,8 +1364,19 @@ first level.
 A Challenge-point reward priority is the combined metric of three one-term levels: Challenge points, then event
 points and exact-grade items in the requested order.
 
-Deterministic Skip uses complete legal team enumeration. A request with an active LUCK range is reported as
-unsupported.
+### Ranking by deck
+
+A combined metric whose terms all have a [deck payoff curve](#deck-payoff-curves-and-bounds) is first ranked by
+the weighted sum of those curves with the folded weights. On a Skip the event-point, Challenge-point and item
+terms are determined by the deck, the sum is the exact folded payoff, and the ranking is the result. On a played
+Live a term has a curve when its payoff steps with the local score (a score target, event points or items by
+score tier, Challenge points); the sum is an upper bound of every order's folded payoff, and
+[evaluation and reranking](#evaluation-and-reranking-of-payoff-bounds) settles it, handing over to the traversal
+with the bound of the sections above under the same conditions as a single metric. A played Live with a term
+without score steps, such as a raw score, uses that traversal from the start. A Skip with a term the deck does
+not determine uses complete legal team enumeration.
+
+A request with an active LUCK range is reported as unsupported.
 
 Reproduce the folding arithmetic, the synthetic complete-domain comparison between exhaustive enumeration and
 branch-and-bound on one and several levels, the independent per-term settlement, validation and the account
@@ -1356,6 +1384,7 @@ contracts with:
 
 ```sh
 cargo test --release --locked -p ournotes-search --lib levels
+cargo test --release --locked -p ournotes-search --lib deck_payoff
 cargo test --release --locked -p ournotes-search --test adapter_fixture_export combined
 cargo test --release --locked -p ournotes-search --test adapter_fixture_export cp_priorities
 ```
