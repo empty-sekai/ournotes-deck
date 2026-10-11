@@ -384,11 +384,14 @@ enum Action<M> {
 struct Plan<M> {
     actions: Vec<(i64, Action<M>, Option<Checker>)>,
     probes: Vec<bool>,
+    /// Whether the actions of each phase all come from one performer or are the same for every condition skill
+    /// that holds some, so that their order does not depend on the performance order.
+    order_free: bool,
 }
 
 impl<M> Default for Plan<M> {
     fn default() -> Self {
-        Self { actions: Vec::new(), probes: Vec::new() }
+        Self { actions: Vec::new(), probes: Vec::new(), order_free: true }
     }
 }
 
@@ -701,7 +704,12 @@ fn compile<M: Mass>(
     collect_moments: bool,
 ) -> Result<Plan<M>, Error> {
     let mut plan = Plan::default();
+    // Per phase: the performer and the actions of the first condition skill that holds some, and whether every
+    // later one has the same performer, and the same actions.
+    let mut phase_first: [Option<(usize, Vec<String>)>; 2] = [None, None];
+    let (mut one_member, mut same_actions) = ([true; 2], [true; 2]);
     for condition in &model.cond {
+        let first = plan.actions.len();
         for (effect_index, effect) in condition.updater.effects().iter().enumerate() {
             let row = &model.rows[effect.row];
             let fail = |why| unsupported(row, why);
@@ -866,7 +874,22 @@ fn compile<M: Mass>(
                 _ => return Err(fail("an unknown lottery or score-probe shape")),
             }
         }
+        for phase in 1..=2 {
+            let actions: Vec<String> = plan.actions[first..]
+                .iter()
+                .filter(|action| action.0 == phase)
+                .map(|(_, action, checker)| format!("{:?}/{checker:?}", action_words(action)))
+                .collect();
+            if actions.is_empty() {
+                continue;
+            }
+            let index = (phase - 1) as usize;
+            let (member, kept) = phase_first[index].get_or_insert_with(|| (condition.member, actions.clone()));
+            one_member[index] &= *member == condition.member;
+            same_actions[index] &= *kept == actions;
+        }
     }
+    plan.order_free = (0..2).all(|index| one_member[index] || same_actions[index]);
     // Stable phase ordering matches the interpreter: all updater checks, then appliers in list/row order,
     // separately for phase 1 and phase 2. Rows within one condition skill are already sorted by effect id.
     plan.actions.sort_by_key(|action| action.0);
@@ -1113,9 +1136,60 @@ impl<'a, M: Mass> Dp<'a, M> {
     }
 }
 
+/// Watches a reduced recording for effects whose application order follows the performance order (see
+/// [`LuckDpCache::certified_order_free`]).
+#[derive(Default)]
+struct OrderWatch {
+    /// The performer whose effects the current phase applied: every effect but the score-ups and lot and gauge factors.
+    member: Option<usize>,
+    /// The performer whose lot or gauge factors the current phase filed.
+    factors: Option<usize>,
+    /// Whether one phase filed lot or gauge factors of two performers.
+    factor_order: bool,
+    broken: Option<&'static str>,
+}
+
+impl OrderWatch {
+    fn phase(&mut self) {
+        (self.member, self.factors) = (None, None);
+    }
+
+    fn apply(&mut self, model: &LiveModel, item: Listed) {
+        let Listed::Cond { updater, u } = item else {
+            self.broken = Some("a live skill applies in the reduced recording");
+            return;
+        };
+        let condition = &model.cond[updater];
+        let member = condition.member;
+        match model.rows[condition.updater.effect(condition.updater.updaters[u].effect).row].effect_type {
+            // Score-ups go to the reduced calculator, which the recording never reads. Result guarantees go to the
+            // lottery machine's guarantee list, which only a lottery draw reads, and the recording makes none.
+            2000 | 2001 | 2005 | 11005 => {}
+            11000 | 11001 => self.factor_order |= *self.factors.get_or_insert(member) != member,
+            _ if *self.member.get_or_insert(member) != member => {
+                self.broken = Some("one phase applies the effects of two performers");
+            }
+            _ => {}
+        }
+    }
+
+    fn finish(&mut self, model: &LiveModel) {
+        if model.random.draws() != 0 {
+            self.broken = Some("the recording draws a random value");
+        } else if self.factor_order && !model.gk.as_ref().is_some_and(|gk| gk.ctrl.factor_sums_exact()) {
+            self.broken = Some("lot or gauge factor sums may round");
+        }
+    }
+}
+
 /// Run a native weighted frame's BEFORE/skills phase. Weighted mode draws no lottery, but records deterministic
 /// gauge-speed commands with the exact updater lifecycle and binary32 filing order.
-fn record_before(model: &mut LiveModel, time: i32, delta: f32) -> Result<(), Error> {
+fn record_before(
+    model: &mut LiveModel,
+    time: i32,
+    delta: f32,
+    mut watch: Option<&mut OrderWatch>,
+) -> Result<(), Error> {
     model.frame_time = time;
     let gk = model.gk.as_mut().expect("DP requires Gekisou");
     gk.fever.update(time, &mut gk.fever_updates);
@@ -1151,7 +1225,13 @@ fn record_before(model: &mut LiveModel, time: i32, delta: f32) -> Result<(), Err
                 }
             }
         }
+        if let Some(watch) = watch.as_deref_mut() {
+            watch.phase();
+        }
         for &item in &listed {
+            if let Some(watch) = watch.as_deref_mut() {
+                watch.apply(model, item);
+            }
             model.apply(item)?;
         }
     }
@@ -1909,7 +1989,7 @@ fn record_frames<M: Mass>(
         ranking,
         collect_moments,
     )?;
-    Ok(record_prepared(prepared, notes, play, delta_times, &mut || false)?.expect("complete recording"))
+    Ok(record_prepared(prepared, notes, play, delta_times, &mut || false, None)?.expect("complete recording"))
 }
 
 fn record_prepared<M: Mass>(
@@ -1918,6 +1998,7 @@ fn record_prepared<M: Mass>(
     play: &LivePlay,
     delta_times: &[f32],
     cancelled: &mut impl FnMut() -> bool,
+    mut watch: Option<&mut OrderWatch>,
 ) -> Result<Option<Transcript<M>>, Error> {
     let PreparedRecording { mut model, mut life, plan, collect_moments, .. } = prepared;
     let gk = model.gk.as_mut().expect("Gekisou setup supplied");
@@ -1926,7 +2007,7 @@ fn record_prepared<M: Mass>(
     let machine = gk.ctrl.machine.clone();
     gk.ctrl.luck_weighted = true;
     let note_map: FxHashMap<_, _> = notes.iter().map(|note| (note.note_id, note)).collect();
-    let Plan { actions, probes: probe_flags } = plan;
+    let Plan { actions, probes: probe_flags, .. } = plan;
     let mut transcript = Transcript {
         collect_moments,
         templates,
@@ -1956,12 +2037,16 @@ fn record_prepared<M: Mass>(
             delta,
             previous_frame,
             &mut transcript,
+            watch.as_deref_mut(),
         );
         if let Err(error) = recorded {
             transcript.failure = Some(error);
             break;
         }
         previous_frame = frame.time_ms;
+    }
+    if let Some(watch) = watch {
+        watch.finish(&model);
     }
     Ok(Some(transcript))
 }
@@ -1979,6 +2064,7 @@ fn record_frame<M: Mass>(
     delta: f32,
     previous_frame: i32,
     out: &mut Transcript<M>,
+    mut watch: Option<&mut OrderWatch>,
 ) -> Result<(), Error> {
     if frame.time_ms <= previous_frame || !delta.is_finite() || delta < 0.0 {
         return Err(Error::Input("LUCK DP needs increasing frames and finite nonnegative deltas".into()));
@@ -2010,13 +2096,18 @@ fn record_frame<M: Mass>(
             return Err(Error::Unsupported("LUCK life recorder consumed a random value".into()));
         }
         for (judged, &(_, converted, _)) in judged.iter_mut().zip(life.frame_judgements()) {
+            if converted != judged.3
+                && let Some(watch) = watch.as_deref_mut()
+            {
+                watch.broken = Some("a judgement is converted");
+            }
             judged.3 = converted;
         }
         life.phase_life.expect("life recorder phase trace")
     } else {
         [model.life.current_life; 2]
     };
-    timed(|p| &mut p.before_ms, || record_before(model, frame.time_ms, delta))?;
+    timed(|p| &mut p.before_ms, || record_before(model, frame.time_ms, delta, watch))?;
     let controller = &model.gk.as_ref().expect("Gekisou checked").ctrl;
     let states = |range: usize| controller.states[range].state;
     let updates = &controller.state_updates;
@@ -2524,7 +2615,8 @@ impl LuckDpCache {
                 return Ok(Some(found.clone()));
             }
         }
-        let transcript = timed(|p| &mut p.total_ms, || record_prepared(prepared, notes, play, delta_times, cancelled));
+        let transcript =
+            timed(|p| &mut p.total_ms, || record_prepared(prepared, notes, play, delta_times, cancelled, None));
         #[cfg(feature = "search-diagnostics")]
         {
             self.stats.record_ms += started.elapsed().as_secs_f64() * 1e3;
@@ -2533,20 +2625,87 @@ impl LuckDpCache {
         if cancelled() {
             return Ok(None);
         }
+        let Some(result) = self.law_of(&transcript, cancelled)? else { return Ok(None) };
+        if let (Some(recordings), Some(key)) = (recordings, recording_key) {
+            recordings.insert(key, result.clone(), self.recording_capacity());
+        }
+        Ok(Some(result))
+    }
+
+    /// The certified lottery law of the performers of `deck` in its order when it is also their law in every other
+    /// order, or None when the recording does not show that.
+    ///
+    /// A model built for another order is the model of this order with its performers moved, as
+    /// [`OrderedLive`] uses: their skills keep their own state, and an effect reads no performer's position. Within a
+    /// phase every updater checks before any effect applies, so another order applies the same effects, in another
+    /// order only between performers. The recording is therefore the same in every order when no phase applies
+    /// effects of two performers, apart from effects whose order the recording does not observe: score-ups, which go
+    /// to the reduced calculator the recording never reads, result guarantees, which only a lottery draw reads, and
+    /// lot and gauge factors whose binary32 sums are exact and so do not depend on the order of their filings. The
+    /// recording draws no random value, so it reads no guarantee. The actions of each phase are listed in updater order, so
+    /// they must come from one performer or be the same for every condition skill that holds some.
+    ///
+    /// The recording also reads the life recorder of the whole formation: its converted judgements, and its phase
+    /// lives for actions whose conditions read the life. No action condition may read the life, and the recording
+    /// must convert no judgement; the caller establishes that no other order converts one either.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn certified_order_free(
+        &mut self,
+        master: &Master,
+        skills: &LuckSkills,
+        notes: &[LiveNote],
+        skill_events: &[(i32, i32)],
+        params: LiveParams,
+        setup: &GekisouSetup,
+        play: &LivePlay,
+        delta_times: &[f32],
+        deck: &[Performer],
+        ranking: Option<&[crate::replay::RankConfirmation]>,
+    ) -> Result<Option<std::sync::Arc<LuckDpCertifiedResult>>, Error> {
+        let prepared = prepare_recording::<ProbabilityMass>(
+            master,
+            skills,
+            notes,
+            skill_events,
+            params,
+            setup,
+            play,
+            delta_times,
+            deck,
+            None,
+            ranking,
+            false,
+        )?;
+        let plan = &prepared.plan;
+        if !plan.order_free || plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life)) {
+            return Ok(None);
+        }
+        let mut watch = OrderWatch::default();
+        let transcript = record_prepared(prepared, notes, play, delta_times, &mut || false, Some(&mut watch))?
+            .expect("an uncancelled recording");
+        if watch.broken.is_some() || transcript.failure.is_some() {
+            return Ok(None);
+        }
+        self.law_of(&transcript, &mut || false)
+    }
+
+    /// The certified law of a transcript, from the cache or propagated.
+    fn law_of(
+        &mut self,
+        transcript: &Transcript<ProbabilityMass>,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<Option<std::sync::Arc<LuckDpCertifiedResult>>, Error> {
         let key = (self.capacity_words > 0).then(|| transcript.key()).flatten();
         if let Some(key) = &key {
             self.stats.lookups += 1;
             if let Some(found) = self.entries.get(&key[..]) {
                 self.stats.hits += 1;
-                if let (Some(recordings), Some(key)) = (recordings.as_mut(), recording_key) {
-                    recordings.insert(key, found.clone(), self.recording_capacity());
-                }
                 return Ok(Some(found.clone()));
             }
         }
         #[cfg(feature = "search-diagnostics")]
         let started = std::time::Instant::now();
-        let result = propagate_cancellable(&transcript, cancelled);
+        let result = propagate_cancellable(transcript, cancelled);
         #[cfg(feature = "search-diagnostics")]
         {
             self.stats.propagate_ms += started.elapsed().as_secs_f64() * 1e3;
@@ -2564,9 +2723,6 @@ impl LuckDpCache {
         });
         if let Some(key) = key {
             self.insert(key, result.clone());
-        }
-        if let (Some(recordings), Some(key)) = (recordings, recording_key) {
-            recordings.insert(key, result.clone(), self.recording_capacity());
         }
         Ok(Some(result))
     }

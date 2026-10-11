@@ -630,6 +630,45 @@ struct FactorStorage {
     current_id: i32,
 }
 
+/// Whether every sum of a subset of `cmds`' factors is a binary32 value, so that adding them in any order rounds
+/// nowhere: each factor is an integer multiple of one power of two, and their absolute values sum to at most 2^24
+/// of it.
+fn exact_sums(cmds: &[(i32, f32)]) -> bool {
+    // (odd integer, exponent) with factor = ±integer * 2^exponent.
+    let mut parts = Vec::with_capacity(cmds.len());
+    for &(_, f) in cmds {
+        if !f.is_finite() {
+            return false;
+        }
+        let bits = f.to_bits();
+        let (biased, fraction) = (((bits >> 23) & 0xff) as i32, bits & 0x7f_ffff);
+        let (mantissa, exponent) = if biased == 0 { (fraction, -149) } else { (fraction | 0x80_0000, biased - 150) };
+        if mantissa != 0 {
+            let zeros = mantissa.trailing_zeros();
+            parts.push((mantissa >> zeros, exponent + zeros as i32));
+        }
+    }
+    let Some(least) = parts.iter().map(|&(_, exponent)| exponent).min() else {
+        return true;
+    };
+    // A sum of at most 2^24 units of 2^least is finite.
+    if least > 100 {
+        return false;
+    }
+    let mut units = 0u64;
+    for (integer, exponent) in parts {
+        let shift = exponent - least;
+        if shift > 24 {
+            return false;
+        }
+        units += u64::from(integer) << shift;
+        if units > 1 << 24 {
+            return false;
+        }
+    }
+    true
+}
+
 impl FactorStorage {
     fn at(cmds: &[(i32, f32)], t: i32) -> f32 {
         let mut s = 0f32;
@@ -1063,6 +1102,20 @@ impl Controller {
         let d = if self.limited_ids.remove(&id) { -2 } else { -1 };
         self.pr_stack.push((t, d, id, 0));
         self.flag();
+    }
+
+    /// Whether the combo and Just bonus changes filed between two judgements share one time. The recount then
+    /// takes such changes together, in whatever order they were filed.
+    pub(crate) fn bonus_changes_share_times(&self) -> bool {
+        [&self.cb_stack, &self.jb_stack]
+            .into_iter()
+            .all(|stack| stack.windows(2).all(|pair| pair[0].2 != pair[1].2 || pair[0].0 == pair[1].0))
+    }
+
+    /// Whether every binary32 sum of filed lot and gauge factors is exact in any filing order: the factors of each
+    /// kind are integer multiples of one power of two, and their absolute values sum to at most 2^24 of it.
+    pub(crate) fn factor_sums_exact(&self) -> bool {
+        [&self.storage.lot_cmds, &self.storage.gauge_cmds].into_iter().all(|cmds| exact_sums(cmds))
     }
 
     pub(crate) fn add_lot_probability_up(&mut self, t: i32, f: f32) -> i32 {
@@ -1704,6 +1757,28 @@ mod fixed_addition_tests {
     fn controller() -> Controller {
         Controller::new(vec![(0, 1000, 1), (1100, 2000, 3)], std::iter::empty(), &Master::default(), 100, 100, 0, 0)
             .unwrap()
+    }
+
+    #[test]
+    fn factor_sums_are_exact_within_2_pow_24_units_of_one_power_of_two() {
+        let mut c = controller();
+        assert!(c.factor_sums_exact());
+        let one = c.add_gauge_up(100, 1.0);
+        c.add_gauge_up(100, 2.0);
+        c.subtract_gauge_up(500, one).unwrap();
+        // One factor of any value is exact on its own.
+        c.add_lot_probability_up(100, 0.1);
+        assert!(c.factor_sums_exact());
+        // 0.1 and 0.2 are 13421773 units of 2^-27 and 2^-26: together more than 2^24 units of 2^-27.
+        c.add_lot_probability_up(100, 0.2);
+        assert!(!c.factor_sums_exact());
+        let mut c = controller();
+        c.add_gauge_up(100, 1.0);
+        c.add_gauge_up(100, f32::powi(2.0, -23));
+        assert!(c.factor_sums_exact());
+        // 1 + 2^-23 + 2^-24 needs 25 significant bits.
+        c.add_gauge_up(100, f32::powi(2.0, -24));
+        assert!(!c.factor_sums_exact());
     }
 
     #[test]

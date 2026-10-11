@@ -12,6 +12,9 @@ use crate::live::score::get_luck_factor_percent;
 use serde::Serialize;
 
 mod exact;
+mod exact_orders;
+#[cfg(test)]
+mod exact_orders_tests;
 mod exact_paths;
 #[cfg(test)]
 mod exact_tests;
@@ -23,6 +26,7 @@ mod probe_lifecycle_tests;
 mod profile;
 mod replay;
 pub use exact::{LuckExactNote, LuckExactProfile, LuckExactRange, LuckExactScore, luck_exact_score};
+pub use exact_orders::{LuckExactOrders, LuckExactOrdersProfile, luck_exact_orders};
 #[cfg(feature = "search-diagnostics")]
 pub use profile::{LuckScoreProfile, take_luck_score_profile};
 
@@ -482,7 +486,28 @@ fn check_probe_music_boundary(
     phase_bound: bool,
     trace: &BoundsTrace,
 ) -> Result<(), Error> {
-    if music_length_ms <= 0 || trace.probes.is_empty() || !frame_times.iter().any(|&time| time > music_length_ms) {
+    check_probe_filings(
+        frame_times,
+        curve,
+        music_length_ms,
+        phase_bound,
+        !trace.probes.is_empty(),
+        trace.frames,
+        trace.events.iter(),
+    )
+}
+
+/// [`check_probe_music_boundary`] of a schedule with `frames` score frames and these events.
+fn check_probe_filings<'a>(
+    frame_times: &[i32],
+    curve: &LuckDpCertifiedResult,
+    music_length_ms: i32,
+    phase_bound: bool,
+    has_probes: bool,
+    frames: usize,
+    events: impl Iterator<Item = &'a BoundsEvent>,
+) -> Result<(), Error> {
+    if music_length_ms <= 0 || !has_probes || !frame_times.iter().any(|&time| time > music_length_ms) {
         return Ok(());
     }
     let unsupported = || refuse("score probe lifetimes beyond music end need a certified inactive tail");
@@ -497,8 +522,8 @@ fn check_probe_music_boundary(
     {
         return Err(unsupported());
     }
-    let last = i32::try_from(trace.frames).ok().filter(|&frames| frames > 0).ok_or_else(unsupported)? - 1;
-    let mut events = trace.events.iter().filter_map(|event| match event {
+    let last = i32::try_from(frames).ok().filter(|&frames| frames > 0).ok_or_else(unsupported)? - 1;
+    let mut events = events.filter_map(|event| match event {
         BoundsEvent::Probe { frame, time_ms } => Some((*frame, *time_ms)),
         _ => None,
     });

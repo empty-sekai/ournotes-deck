@@ -348,7 +348,10 @@ pub(super) fn rush_may_file(mask: u16, start: bool) -> bool {
 /// For each score query of `events`, the earliest frame any later query may undo or execute again, `i32::MAX`
 /// after the last query. Every filing since a query's predecessor may set that query's rewind target. A factor
 /// command of some orders only counts as a filing too, so the floors hold for each order.
-pub(super) fn undo_floors(events: &[BoundsEvent], rush_transitions: &[u16]) -> Result<Vec<i32>, Error> {
+pub(super) fn undo_floors<'a>(
+    events: impl IntoIterator<Item = &'a BoundsEvent>,
+    rush_transitions: &[u16],
+) -> Result<Vec<i32>, Error> {
     let mut lowest = Vec::new();
     let (mut prev, mut filed, mut ready) = (-1i32, None::<i32>, 0usize);
     for event in events {
@@ -679,8 +682,8 @@ impl ExactReplay {
     }
 
     /// The native `calculate` up to score frame `to`, with the combo inputs every filed note reads at this query.
-    /// Returns the earliest frame any path executed.
-    pub(super) fn query(&mut self, to: i32, combos: &FxHashMap<(usize, usize), (f32, f32)>) -> Result<i32, Error> {
+    /// Returns, per order, the earliest frame any of its paths executed.
+    pub(super) fn query(&mut self, to: i32, combos: &FxHashMap<(usize, usize), (f32, f32)>) -> Result<Vec<i32>, Error> {
         let prev = self.prev;
         let start = |u: i32| if u < prev { u + 1 } else { prev + 1 };
         let filings: Vec<Option<i32>> = self
@@ -709,9 +712,16 @@ impl ExactReplay {
         }
         let lowest = forks.iter().map(|&(_, _, first)| first).min().unwrap_or(prev + 1);
         let mut highest = vec![prev + 1; self.lanes];
+        let mut executed = vec![i32::MAX; self.lanes];
         for &(_, orders, first) in &forks {
             for order in each(orders) {
                 highest[order] = highest[order].max(first);
+                executed[order] = executed[order].min(first);
+            }
+        }
+        for first in &mut executed {
+            if *first == i32::MAX {
+                *first = prev + 1;
             }
         }
         let floor = self.floors.get(self.queries).copied().unwrap_or(i32::MAX).min(to + 1).max(self.base);
@@ -785,7 +795,7 @@ impl ExactReplay {
         self.mandatory = None;
         self.partial.iter_mut().for_each(|partial| *partial = None);
         self.queries += 1;
-        Ok(lowest)
+        Ok(executed)
     }
 
     /// Undo `orders` of `path` from the last executed frame down to `first`, then execute `first..=to`.

@@ -75,10 +75,11 @@ pub(crate) use luck_score_bounds::IntegerBounds;
 pub(crate) use luck_score_bounds::luck_score_expectation_for_chart;
 mod nominal_expectation;
 pub use luck_score_bounds::{
-    LuckExactNote, LuckExactProfile, LuckExactRange, LuckExactScore, LuckRangeScoreBounds, LuckScoreBounds,
-    LuckScoreExpectation, LuckScoreSession, LuckScoreSummary, RealBounds, luck_exact_score, luck_score_bounds,
-    luck_score_bounds_with_ranking, luck_score_expectation, luck_score_expectation_with_curves,
-    luck_score_summary_with_curves, luck_score_summary_with_ranking, prepare_lottery_free,
+    LuckExactNote, LuckExactOrders, LuckExactOrdersProfile, LuckExactProfile, LuckExactRange, LuckExactScore,
+    LuckRangeScoreBounds, LuckScoreBounds, LuckScoreExpectation, LuckScoreSession, LuckScoreSummary, RealBounds,
+    luck_exact_orders, luck_exact_score, luck_score_bounds, luck_score_bounds_with_ranking, luck_score_expectation,
+    luck_score_expectation_with_curves, luck_score_summary_with_curves, luck_score_summary_with_ranking,
+    prepare_lottery_free,
 };
 #[cfg(feature = "search-diagnostics")]
 pub use luck_score_bounds::{LuckScoreProfile, take_luck_score_profile};
