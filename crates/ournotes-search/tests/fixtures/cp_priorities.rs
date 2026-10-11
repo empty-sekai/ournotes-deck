@@ -1,4 +1,5 @@
-//! Lexicographic event rewards over independently evaluated complete synthetic domains.
+//! Challenge points, then event points and items in either order, over independently evaluated complete synthetic
+//! domains.
 use super::{
     EVENT_ID, SCORE_ID, account_recommendation_fixture, account_request, context_document, data_document,
     joint_request_json, replace_table, roster_document, set_column, synthetic_master,
@@ -9,7 +10,7 @@ use ournotes_search::{
     handler::build_card_pool,
     recommendation::{Status, capabilities},
     search::Completion,
-    types::{EventRewardPriority, Fraction, Metric, Optimality, RecommendationRequest, Strategy},
+    types::{Fraction, Metric, MetricLevel, MetricTerm, Optimality, RecommendationRequest, Strategy},
 };
 use ournotes_sim::{cards::Roster, data::DeckData};
 use serde_json::{Value, json};
@@ -51,6 +52,19 @@ fn request(skip: bool) -> RecommendationRequest {
     serde_json::from_value(value).unwrap()
 }
 
+/// Challenge points first, then event points and event items in the order of `points_first`.
+fn priority_metric(points_first: bool) -> Metric {
+    let points = Metric::ClientEventPoints { event_id: EVENT_ID };
+    let items = Metric::RankedEventItems { event_id: EVENT_ID, resource_type: 11, resource_id: 9 };
+    let (second, third) = if points_first { (points, items) } else { (items, points) };
+    Metric::Combined {
+        levels: [Metric::ClientChallengePoints { event_id: EVENT_ID }, second, third]
+            .into_iter()
+            .map(|metric| MetricLevel::new(vec![MetricTerm { metric, weight: 1 }]))
+            .collect(),
+    }
+}
+
 fn numerator(value: &Fraction) -> i128 {
     value.numerator.parse().unwrap()
 }
@@ -65,14 +79,13 @@ struct Reference {
 }
 
 #[test]
-fn complete_cp_layer_matches_independent_point_and_item_evaluations() {
+fn complete_domain_order_matches_independent_point_and_item_evaluations() {
     let (data, roster) = inputs();
     for skip in [false, true] {
         let primary = request(skip);
         let complete = engine::recommend(&data, &roster, &primary).unwrap();
         assert_eq!(complete.completion, Completion::Complete);
         assert_eq!(complete.results.len(), 12);
-        let best_cp = numerator(complete.results[0].expected_payoff.as_ref().unwrap());
         let mut points = primary.clone();
         points.metric = Metric::ClientEventPoints { event_id: EVENT_ID };
         let point_problem = build_card_pool(&data, &roster, &points).unwrap();
@@ -82,7 +95,6 @@ fn complete_cp_layer_matches_independent_point_and_item_evaluations() {
         let mut expected = complete
             .results
             .iter()
-            .filter(|row| numerator(row.expected_payoff.as_ref().unwrap()) == best_cp)
             .map(|row| {
                 let pt = evaluate_built(&point_problem, row.members, row.snaps).unwrap();
                 let items = evaluate_built(&item_problem, row.members, row.snaps).unwrap();
@@ -96,10 +108,10 @@ fn complete_cp_layer_matches_independent_point_and_item_evaluations() {
                 }
             })
             .collect::<Vec<_>>();
-        for priority in [EventRewardPriority::EventPointsFirst, EventRewardPriority::EventItemsFirst] {
-            let key = |row: &Reference| match priority {
-                EventRewardPriority::EventPointsFirst => [numerator(&row.pt), numerator(&row.items)],
-                EventRewardPriority::EventItemsFirst => [numerator(&row.items), numerator(&row.pt)],
+        for points_first in [true, false] {
+            let key = |row: &Reference| {
+                let (pt, items) = (numerator(&row.pt), numerator(&row.items));
+                if points_first { [numerator(&row.cp), pt, items] } else { [numerator(&row.cp), items, pt] }
             };
             expected.sort_by(|a, b| {
                 key(b)
@@ -109,12 +121,7 @@ fn complete_cp_layer_matches_independent_point_and_item_evaluations() {
                     .then(a.snaps.cmp(&b.snaps))
             });
             let mut combined = primary.clone();
-            combined.metric = Metric::ClientChallengePointsWithBonuses {
-                event_id: EVENT_ID,
-                priority,
-                resource_type: 11,
-                resource_id: 9,
-            };
+            combined.metric = priority_metric(points_first);
             combined.k = 5;
             for (strategy, cache_entries) in
                 [(Strategy::Exhaustive, 0), (Strategy::BranchAndBound, 0), (Strategy::BranchAndBound, 64)]
@@ -124,32 +131,27 @@ fn complete_cp_layer_matches_independent_point_and_item_evaluations() {
                 let actual = engine::recommend(&data, &roster, &combined).unwrap();
                 assert_eq!(actual.completion, Completion::Complete);
                 assert_eq!(actual.optimality, Optimality::Proven);
-                assert_eq!(actual.results.len(), expected.len().min(5));
+                assert_eq!(actual.results.len(), 5);
                 for (row, expected) in actual.results.iter().zip(&expected) {
                     assert_eq!((row.members, row.snaps, row.power), (expected.members, expected.snaps, expected.power));
                     assert_eq!(row.expected_payoff.as_ref().unwrap(), &expected.cp);
-                    let rewards = row.event_rewards.as_ref().expect("exact reward expectations");
-                    assert_eq!(rewards.challenge_points, expected.cp);
-                    assert_eq!(rewards.event_points, expected.pt);
-                    assert_eq!(rewards.event_items, expected.items);
+                    let (second, third) =
+                        if points_first { (&expected.pt, &expected.items) } else { (&expected.items, &expected.pt) };
+                    let levels = [expected.cp.clone(), second.clone(), third.clone()];
+                    assert_eq!(row.level_payoffs.as_deref(), Some(&levels[..]));
+                    assert_eq!(row.term_payoffs.as_ref().unwrap(), &levels.map(Some));
                 }
-                let preferred = match priority {
-                    EventRewardPriority::EventPointsFirst => 1,
-                    EventRewardPriority::EventItemsFirst => 6,
-                };
-                assert!(actual.results[0].members.contains(&preferred));
+                assert!(actual.results[0].members.contains(&if points_first { 1 } else { 6 }));
             }
             combined.limits.max_candidates = Some(1);
             let stopped = engine::recommend(&data, &roster, &combined).unwrap();
             assert_eq!(stopped.completion, Completion::TimedOut);
             assert_eq!(stopped.optimality, Optimality::Unproven);
-            assert!(stopped.telemetry.proof.best_gap.is_none());
-            assert!(stopped.telemetry.proof.kth_gap.is_none());
             for row in stopped.results {
                 assert!(
                     expected.iter().any(|candidate| candidate.members == row.members && candidate.snaps == row.snaps)
                 );
-                assert!(row.event_rewards.is_some());
+                assert!(row.level_payoffs.is_some());
             }
         }
     }
@@ -173,7 +175,7 @@ fn account_priority_contract_echoes_exact_rewards_and_rejects_incomplete_fields(
         capabilities["challengePointPriorities"],
         json!({
             "priorities":["eventPointsFirst","eventItemsFirst"],"objective":"lexicographicExpected",
-            "primary":"challengePoints","bestPrimaryOnly":true,"lotteryFree":true
+            "primary":"challengePoints","lotteryFree":true
         })
     );
     for priority in ["eventPointsFirst", "eventItemsFirst"] {
@@ -213,7 +215,7 @@ fn account_priority_contract_echoes_exact_rewards_and_rejects_incomplete_fields(
 }
 
 #[test]
-fn primary_layer_excludes_lower_cp_even_when_k_has_space() {
+fn teams_with_fewer_challenge_points_follow_the_best_layer() {
     let (mut data, roster) = inputs();
     let mut all = request(false);
     all.metric = Metric::Score;
@@ -231,21 +233,18 @@ fn primary_layer_excludes_lower_cp_even_when_k_has_space() {
     let expected =
         reference.results.iter().filter(|team| team.expected_payoff.as_ref() == Some(best)).collect::<Vec<_>>();
     assert!(!expected.is_empty() && expected.len() < reference.results.len());
-    for priority in [EventRewardPriority::EventPointsFirst, EventRewardPriority::EventItemsFirst] {
-        all.metric = Metric::ClientChallengePointsWithBonuses {
-            event_id: EVENT_ID,
-            priority,
-            resource_type: 11,
-            resource_id: 9,
-        };
+    for points_first in [true, false] {
+        all.metric = priority_metric(points_first);
         for strategy in [Strategy::Exhaustive, Strategy::BranchAndBound] {
             all.strategy = strategy;
             let result = engine::recommend(&data, &roster, &all).unwrap();
             assert_eq!(result.optimality, Optimality::Proven);
-            assert_eq!(result.results.len(), expected.len());
-            assert!(result.results.len() < all.k);
-            for team in result.results {
-                assert_eq!(team.expected_payoff.as_ref(), Some(best));
+            assert_eq!(result.results.len(), reference.results.len());
+            let points: Vec<_> =
+                result.results.iter().map(|team| numerator(team.expected_payoff.as_ref().unwrap())).collect();
+            assert!(points.windows(2).all(|pair| pair[0] >= pair[1]));
+            assert_eq!(points.iter().filter(|&&value| value == numerator(best)).count(), expected.len());
+            for team in &result.results[..expected.len()] {
                 assert!(expected.iter().any(|row| row.members == team.members && row.snaps == team.snaps));
             }
         }
@@ -256,12 +255,7 @@ fn primary_layer_excludes_lower_cp_even_when_k_has_space() {
 fn played_priorities_require_proven_lottery_free_conditions() {
     let (mut data, roster) = inputs();
     let mut request = request(false);
-    request.metric = Metric::ClientChallengePointsWithBonuses {
-        event_id: EVENT_ID,
-        priority: EventRewardPriority::EventItemsFirst,
-        resource_type: 11,
-        resource_id: 9,
-    };
+    request.metric = priority_metric(false);
     data.master.live_musics[0].gekisou_mission_1 = 2;
     // Static mission metadata leaves the Free Live's actual play deterministic.
     assert_eq!(engine::recommend(&data, &roster, &request).unwrap().optimality, Optimality::Proven);
@@ -305,12 +299,7 @@ fn active_luck_ranges_reject_reward_priorities() {
     let data = DeckData::from_json(&document.to_string()).unwrap();
     let roster = Roster::from_json(&roster_document(5, 0, 5).to_string()).unwrap();
     let mut request = super::joint_request("mission", true, json!({"kind":"clientChallengePoints","eventId":EVENT_ID}));
-    request.metric = Metric::ClientChallengePointsWithBonuses {
-        event_id: EVENT_ID,
-        priority: EventRewardPriority::EventPointsFirst,
-        resource_type: 11,
-        resource_id: 9,
-    };
+    request.metric = priority_metric(true);
     let error = engine::recommend(&data, &roster, &request).unwrap_err();
     assert!(matches!(error, ournotes_sim::Error::Unsupported(_)), "{error}");
     assert!(error.to_string().contains("lottery-free terminal outcomes"), "{error}");

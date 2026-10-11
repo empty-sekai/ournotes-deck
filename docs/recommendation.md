@@ -18,7 +18,8 @@ bounds or a verified equal-program certificate. An overlapping frontier remains 
 Live values average all 120 member performance orders. Snaps stay paired with their members. Nonleader layout is
 canonical, with the leader in slot 2. Five fixed member/Snap pairs therefore give at most five teams, one per leader;
 the 120 performance orders never become additional recommended teams. Scalar results preserve the search's order:
-expected payoff, power, then its canonical key. Challenge-point reward priorities use the lexicographic order below. It does not reorder a truncated Top-K under a different secondary objective.
+expected payoff, power, then its canonical key. Combined metrics and Challenge-point reward priorities order teams by
+their levels, as described below. It does not reorder a truncated Top-K under a different secondary objective.
 
 `metric:{"kind":"challengePoints","eventId":7,"consumption":1}` maximizes newly earned Challenge points from
 an ordinary played or skipped Live. The lower-level search metric is `clientChallengePoints`. It uses the
@@ -33,7 +34,7 @@ the event's local record. Existing balances are excluded from the payoff. A chal
 
 ## Challenge-point reward priorities
 
-An optional `secondaryPriority` on `challengePoints` selects a lexicographic objective:
+An optional `secondaryPriority` on `challengePoints` ranks teams by three rewards in turn:
 
 - `eventPointsFirst`: expected CP, expected event points, expected event items, power, canonical IDs.
 - `eventItemsFirst`: expected CP, expected event items, expected event points, power, canonical IDs.
@@ -42,55 +43,70 @@ An optional `secondaryPriority` on `challengePoints` selects a lexicographic obj
 {"kind":"challengePoints","eventId":7,"consumption":1,"secondaryPriority":"eventPointsFirst","resourceType":4,"resourceId":88}
 ```
 
-Supply the event-item resource and event context as for an item projection. The lower-level metric is
-`clientChallengePointsWithBonuses`, with `priority`, `eventId`, `resourceType` and `resourceId`.
-Each terminal outcome settles all three rewards under the same scenario. Played expectations weight all
-120 member orders equally; deterministic Skip has denominator 1. Member and Snap event bonuses contribute
-to their respective PT and item quantities. CP retains its ordinary earnings formula.
+Supply the event-item resource and event context as for an item projection. The lower-level metric is a
+[combined metric](#combined-metrics) of three one-term levels: `clientChallengePoints`, then `clientEventPoints`
+and `rankedEventItems` in the requested order. Each terminal outcome settles all three rewards under the same
+scenario. Played expectations weight all 120 member orders equally; deterministic Skip has denominator 1. Member
+and Snap event bonuses contribute to their respective PT and item quantities. CP retains its ordinary earnings
+formula.
 
-The search returns at most K teams from the highest expected-CP layer it has found. A result can therefore
-contain fewer than K teams. Any positive CP advantage takes precedence over both secondary quantities;
-among exact CP ties, the requested secondary order precedes power and canonical identity. The search
-covers the complete legal team domain using bounds for the primary dimension and exact secondary values.
+The search returns the first K teams of this order over the complete legal team domain. Any positive CP advantage
+takes precedence over both secondary quantities; among exact CP ties, the requested secondary order precedes power
+and canonical identity; teams that earn fewer CP follow every team of the highest CP layer.
 
 The supported domain is lottery-free played outcomes and deterministic Skip. Active LUCK ranges and
 ordinary probability predicates with an unproved outcome distribution return `Unsupported`.
 `capabilities().challengePointPriorities` declares both priorities, `objective:lexicographicExpected`,
-`primary:challengePoints`, `bestPrimaryOnly:true` and `lotteryFree:true`.
+`primary:challengePoints` and `lotteryFree:true`.
 
 The result echoes the priority and resource identity. Each team's `eventRewards` contains
 `challengePoints`, `eventPoints` and `eventItems`, each with `score`, an exact numerator/denominator and
 `interval:null`. `value.payoff` remains CP. Complete/proven covers the full lexicographic result;
-time-limited answers contain the best observed CP layer and are unproven. Scalar upper bounds describe
-CP only. Partial-search best/K-th gaps are omitted because secondary optimality requires its own proof.
+time-limited answers hold the best teams evaluated so far and are unproven. Reported upper bounds and gaps
+describe CP.
 
 ## Combined metrics
 
-`metric.kind:"combined"` maximizes the expected weighted sum of several metrics of the goal:
+`metric.kind:"combined"` ranks teams by one or more levels, each the expected weighted sum of several metrics of
+the goal:
 
 ```json
-{"kind":"combined","consumption":1,"terms":[
-  {"kind":"eventPoints","eventId":7,"weight":2},
-  {"kind":"challengePoints","eventId":7,"weight":35}]}
+{"kind":"combined","consumption":1,"levels":[
+  [{"kind":"eventPoints","eventId":7,"weight":2},
+   {"kind":"challengePoints","eventId":7,"weight":35}],
+  [{"kind":"eventItems","eventId":7,"resourceType":4,"resourceId":88,"weight":1}]]}
 ```
 
-Each term is a metric kind with that kind's own fields and an integer `weight` in 1..=1,000,000; a metric takes
-1..=8 terms. `metric.consumption` is given once and covers every event term; a combination without event terms
-takes neither `consumption` nor `eventContext`. Every term settles on the same terminal result, so the payoff of
-one outcome is the sum of `weight × term payoff`, and a team's value is its mean over the 120 member orders
-(deterministic Skip has denominator 1). Results keep the scalar order: expected payoff, power, canonical key.
-Weights express an exchange rate between rewards: with weights 2 and 35 above, one Challenge point counts as much
-as 17.5 event points.
+A level is a list of terms. Each term is a metric kind with that kind's own fields and an integer `weight` in
+1..=1,000,000,000; a metric takes 1..=4 levels and 1..=8 terms over all levels. `metric.consumption` is given once
+and covers every event term; a combination without event terms takes neither `consumption` nor `eventContext`.
+Every term settles on the same terminal result, so a level's payoff of one outcome is the sum of
+`weight × term payoff`, and a team's value on a level is its mean over the 120 member orders (deterministic Skip
+has denominator 1).
 
-The lower-level metric is `{"kind":"combined","levels":[{"terms":[{"metric":{...},"weight":2}, ...]}]}` with one
-level. Played lives search with an upper bound that is the weighted sum of the terms' bounds; Skip covers the
-complete legal team domain. The supported domain is lottery-free: active LUCK ranges return `Unsupported`.
-`capabilities().combinedMetric` declares `objective:weightedExpectedSum`, the term and weight limits and
-`lotteryFree:true`.
+Teams are ordered by the first level, teams equal on it by the second, and so on through the levels, then by power
+and the canonical key. Any positive advantage on a level precedes every later level. The example above ranks by
+`2 × event points + 35 × Challenge points` and decides exact ties by event items.
 
-The result echoes `metric.terms`. `value.payoff` is the weighted sum, and each team's `terms` lists the exact
-expectation of every term's own payoff, unweighted and in request order, each with `score`, an exact
-numerator/denominator and `interval:null`. The entry of a `scoreAndLife` term is null.
+Weights within a level express an exchange rate between rewards: with weights 2 and 35, one Challenge point counts
+as much as 17.5 event points. Integer weights state a rational rate exactly: a rate of `p/q` is the pair of weights
+`q` and `p`. A later level suits a reward without a rate against the earlier ones.
+
+The terms of the levels after the first pay nonnegative amounts. A metric whose weights and reward ranges together
+leave the exact integer range of the search is an input error; a raw `score` term on a level before the last has
+the widest range.
+
+The lower-level metric is `{"kind":"combined","levels":[{"terms":[{"metric":{...},"weight":2}, ...]}, ...]}`.
+Played lives search with an upper bound that is the weighted sum of the terms' bounds over all levels; Skip covers
+the complete legal team domain. The supported domain is lottery-free: active LUCK ranges return `Unsupported`.
+`capabilities().combinedMetric` declares `objective:lexicographicWeightedExpectedSums`, the level, term and weight
+limits and `lotteryFree:true`.
+
+The result echoes `metric.levels`. Each team's `levels` lists, in request order, the level's `value` (its exact
+expected weighted sum) and its `terms`: the exact expectation of every term's own payoff, unweighted and in request
+order. Every entry has `score`, an exact numerator/denominator and `interval:null`; the entry of a `scoreAndLife`
+term is null. `value.payoff` is the first level's value, and reported upper bounds and gaps describe the first
+level.
 
 ## Event-item rewards
 

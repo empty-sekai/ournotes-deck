@@ -26,22 +26,23 @@ pub(crate) fn validate_payoff(
     input: Option<&EventPayoffInput>,
 ) -> Result<(), Error> {
     if let Metric::Combined { levels } = metric {
-        let [level] = levels.as_slice() else {
-            return Err(Error::Input("a combined metric has exactly one level of terms".into()));
-        };
-        if !(1..=MAX_METRIC_TERMS).contains(&level.terms.len()) {
-            return Err(Error::Input(format!("a combined metric level has 1..={MAX_METRIC_TERMS} terms")));
+        if !(1..=MAX_METRIC_LEVELS).contains(&levels.len()) {
+            return Err(Error::Input(format!("a combined metric has 1..={MAX_METRIC_LEVELS} levels")));
         }
-        for term in &level.terms {
+        if levels.iter().any(|level| level.terms.is_empty())
+            || levels.iter().map(|level| level.terms.len()).sum::<usize>() > MAX_METRIC_TERMS
+        {
+            return Err(Error::Input(format!(
+                "every level of a combined metric has a term and the levels have at most {MAX_METRIC_TERMS} terms"
+            )));
+        }
+        for term in levels.iter().flat_map(|level| &level.terms) {
             if !(1..=MAX_TERM_WEIGHT).contains(&term.weight) {
                 return Err(Error::Input(format!("a combined metric weight must be in 1..={MAX_TERM_WEIGHT}")));
             }
-            if matches!(
-                term.metric,
-                Metric::Combined { .. } | Metric::Power | Metric::ClientChallengePointsWithBonuses { .. }
-            ) {
+            if matches!(term.metric, Metric::Combined { .. } | Metric::Power) {
                 return Err(Error::Input(
-                    "a combined metric term is a score, score target, event-point, challenge-point or event-item                      metric"
+                    "a combined metric term is a score, score target, event-point, challenge-point or event-item metric"
                         .into(),
                 ));
             }
@@ -67,9 +68,7 @@ pub(crate) fn validate_payoff(
             .ok_or_else(|| Error::Input("event metrics require resolved scenario".into()))?;
         let input = input.ok_or_else(|| Error::Input("event metrics require context.eventPayoff".into()))?;
         ctx.event_request(pool.master, input, id)?;
-        if matches!(metric, Metric::ClientChallengePoints { .. } | Metric::ClientChallengePointsWithBonuses { .. })
-            && matches!(ctx.scenario, Scenario::Challenge(_))
-        {
+        if matches!(metric, Metric::ClientChallengePoints { .. }) && matches!(ctx.scenario, Scenario::Challenge(_)) {
             return Err(Error::Input(
                 "challenge-point earnings require an ordinary played/skip result; challenge Live spends points".into(),
             ));
@@ -85,7 +84,6 @@ pub(crate) fn validate_payoff(
             | Metric::ScoreAndLifeAtLeast { .. }
             | Metric::ClientEventPoints { .. }
             | Metric::ClientChallengePoints { .. }
-            | Metric::ClientChallengePointsWithBonuses { .. }
             | Metric::RankedEventItems { .. },
         ) => Ok(()),
         _ => Err(Error::Input("metric does not match execution".into())),
@@ -148,15 +146,9 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
         Metric::ClientChallengePoints { .. } => {
             "maximize expected newly earned client challenge points per declared Live Boost consumption; no deck event-point bonus"
         }
-        Metric::ClientChallengePointsWithBonuses { priority: EventRewardPriority::EventPointsFirst, .. } => {
-            "maximize expected Challenge points, then expected event points, then expected exact-grade event items"
-        }
-        Metric::ClientChallengePointsWithBonuses { priority: EventRewardPriority::EventItemsFirst, .. } => {
-            "maximize expected Challenge points, then expected exact-grade event items, then expected event points"
-        }
         Metric::RankedEventItems { .. } => "maximize expected resource quantity selected by each terminal result grade",
         Metric::Combined { .. } => {
-            "maximize the expected weighted sum of the listed metrics' payoffs, each settled on the same terminal result"
+            "maximize the expected weighted sum of the first level's metrics, then of each later level among tied teams, each payoff settled on the same terminal result"
         }
     };
     let mut assumptions = vec!["supplied roster progression and player bonuses; no upgrades or costs inferred"];
@@ -169,17 +161,15 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
             }
         });
         assumptions.push("the five members perform in a uniformly random order; paired snaps follow their members");
-        if r.metric.secondary_priority().is_some() {
-            assumptions
-                .push("lottery-free terminal outcomes; only the maximum expected Challenge-point layer is returned");
+        if matches!(r.metric, Metric::Combined { .. }) {
+            assumptions.push("lottery-free terminal outcomes");
         } else {
             assumptions.push(
                 "native lottery probability law; certified intervals remain explicit until sufficient to prove ranking",
             );
         }
     }
-    if r.metric.any(|m| matches!(m, Metric::RankedEventItems { .. } | Metric::ClientChallengePointsWithBonuses { .. }))
-    {
+    if r.metric.any(|m| matches!(m, Metric::RankedEventItems { .. })) {
         assumptions.push("one reward row per exact grade with probability marker 10000; quantities include EventItem effects and the declared item multiplier");
     }
     if r.metric.any(|m| matches!(m, Metric::ClientEventPoints { .. } | Metric::ClientChallengePoints { .. })) {

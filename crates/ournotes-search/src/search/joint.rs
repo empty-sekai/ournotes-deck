@@ -75,8 +75,8 @@ struct PointBound {
     /// event bonus of a team under the term, the term's bound). A term's payoff is nondecreasing in its event bonus,
     /// so every deck's payoff is at most the weighted sum of the first term at the deck's bonus and of the others at
     /// their largest bonuses.
-    weight: i64,
-    others: Vec<(i64, i64, PointBound)>,
+    weight: i128,
+    others: Vec<(i128, i64, PointBound)>,
 }
 
 #[derive(Clone, Copy)]
@@ -457,20 +457,19 @@ impl JointBounds {
                 _ => None,
             })
         };
-        let points = match metric.terms() {
+        let points = match metric.folded_terms() {
             // A term without a bound of its own pays its score, which no score exceeds.
             Some(terms) => {
                 let parts = terms
-                    .iter()
-                    .map(|term| {
-                        let part = term_points(&term.metric)?.unwrap_or_else(|| {
+                    .map(|(weight, term)| {
+                        let part = term_points(term)?.unwrap_or_else(|| {
                             PointBound::score_target(
                                 pool.members.len(),
                                 domain.snaps().len(),
                                 ScoreTarget::Capped(i32::MAX),
                             )
                         });
-                        Ok((i64::from(term.weight), part))
+                        Ok((weight, part))
                     })
                     .collect::<Result<Vec<_>, Error>>()?;
                 Some(PointBound::combined(pool, domain, parts)?)
@@ -2132,6 +2131,103 @@ impl JointBounds {
     }
 }
 
+/// At least the payoff of one terminal result of any team of the domain under a term of a combined metric: one for
+/// a score target met or missed, the threshold of a capped score, the largest row of an event reward table, else
+/// the largest Int32.
+pub(crate) fn term_cap(
+    pool: &Pool,
+    request: &SearchRequest,
+    domain: &CandidateDomain,
+    metric: &Metric,
+    input: Option<&EventPayoffInput>,
+) -> i128 {
+    match metric {
+        Metric::ScoreAtLeast { .. } | Metric::ScoreAndLifeAtLeast { .. } => 1,
+        Metric::CappedScore { threshold } => i128::from(*threshold),
+        _ => event_cap(pool, request, domain, metric, input).unwrap_or(i128::from(i32::MAX)),
+    }
+}
+
+/// The largest row of an event metric's reward table on the request's result route, played or skipped, at the
+/// route's rate and the largest event bonus of a team of the domain. None for another metric and for a product
+/// outside Int32.
+fn event_cap(
+    pool: &Pool,
+    request: &SearchRequest,
+    domain: &CandidateDomain,
+    metric: &Metric,
+    input: Option<&EventPayoffInput>,
+) -> Option<i128> {
+    use super::deck_payoff::{card_bonus, point_product};
+    use ournotes_sim::event::{self, EventCard, EventResultRoute};
+
+    let event_id = metric.event()?;
+    let master = pool.master;
+    let q = request.objective.context()?.event_request(master, input?, event_id).ok()?;
+    let ev = master.event(event_id)?;
+    let challenge =
+        matches!(q.route, EventResultRoute::ChallengePlayed { .. } | EventResultRoute::ChallengeSkip { .. });
+    let consumed = i64::from(q.consumed_count);
+    let rates =
+        if challenge { event::challenge_point_bonus(master, consumed) } else { event::boost_bonus(master, consumed) }
+            .ok()?;
+    let (value, rate, effect) = match *metric {
+        Metric::ClientEventPoints { .. } => {
+            let (rows, group) = if challenge {
+                (&master.challenge_live_event_points, ev.challenge_live_event_point_group)
+            } else {
+                (&master.live_event_points, ev.live_event_point_group)
+            };
+            (
+                rows.iter().filter(|row| row.group == group).map(|row| row.value).max(),
+                rates[4],
+                Some(event::EVENT_POINT),
+            )
+        }
+        Metric::ClientChallengePoints { .. } => {
+            (master.live_challenge_points.iter().map(|row| row.value).max(), rates[4], None)
+        }
+        Metric::RankedEventItems { resource_type, resource_id, .. } => {
+            let (rows, group) = if challenge {
+                (&master.challenge_live_event_rewards, ev.challenge_live_event_reward_group)
+            } else {
+                (&master.live_event_rewards, ev.live_event_reward_group)
+            };
+            let counts = rows
+                .iter()
+                .filter(|row| {
+                    row.event_group == group && row.resource_type == resource_type && row.resource_id == resource_id
+                })
+                .map(|row| row.resource_count);
+            (counts.max(), rates[0], Some(event::EVENT_ITEM))
+        }
+        _ => return None,
+    };
+    let bonus = match effect {
+        Some(kind) => {
+            let effects = event::event_effects(master, event_id);
+            let members = domain
+                .members()
+                .iter()
+                .map(|&m| {
+                    let card = ournotes_sim::bonus::event_member(master, &pool.members[m]);
+                    Ok((pool.members[m].character_id, card_bonus(&effects, EventCard::Member(&card), kind)?))
+                })
+                .collect::<Result<Vec<_>, Error>>()
+                .ok()?;
+            let snaps = domain
+                .snaps()
+                .iter()
+                .map(|&s| card_bonus(&effects, EventCard::Snap(&ournotes_sim::bonus::event_snap(&pool.snaps[s])), kind))
+                .collect::<Result<Vec<_>, Error>>()
+                .ok()?;
+            super::team_power::largest_team_bonus(members, &snaps)
+        }
+        None => 0,
+    };
+    point_product(value.unwrap_or(0).max(0), bonus, rate).ok()
+}
+
 impl PointBound {
     fn score_target(members: usize, snaps: usize, target: ScoreTarget) -> Self {
         Self::plain(
@@ -2165,7 +2261,7 @@ impl PointBound {
 
     /// The bound of a combined metric's payoff from its terms' weights and bounds. The first term whose payoff
     /// reads an event bonus keeps its member and Snap bonuses; every other term reads the largest bonus of a team.
-    fn combined(pool: &Pool, domain: &CandidateDomain, mut parts: Vec<(i64, PointBound)>) -> Result<Self, Error> {
+    fn combined(pool: &Pool, domain: &CandidateDomain, mut parts: Vec<(i128, PointBound)>) -> Result<Self, Error> {
         if parts
             .iter()
             .any(|(_, part)| part.multiplier < 0 || part.score_tiers.iter().flatten().any(|&(_, value)| value < 0))
@@ -2223,8 +2319,8 @@ impl PointBound {
             Some(_) => i128::from(self.multiplier),
             None => ((bonus + 10000) * self.multiplier / 10000) as i128,
         };
-        self.others.iter().fold(i128::from(self.weight).saturating_mul(own), |sum, (weight, bonus, part)| {
-            sum.saturating_add(i128::from(*weight).saturating_mul(part.maximum(*bonus)))
+        self.others.iter().fold(self.weight.saturating_mul(own), |sum, (weight, bonus, part)| {
+            sum.saturating_add(weight.saturating_mul(part.maximum(*bonus)))
         })
     }
     /// The event bonus of a member and choice.
@@ -2285,8 +2381,8 @@ impl PointBound {
         if !self.is_combined() {
             return own;
         }
-        self.others.iter().fold(i128::from(self.weight).saturating_mul(own), |sum, (weight, bonus, part)| {
-            sum.saturating_add(i128::from(*weight).saturating_mul(part.order_payoff(*bonus, score_cap)))
+        self.others.iter().fold(self.weight.saturating_mul(own), |sum, (weight, bonus, part)| {
+            sum.saturating_add(weight.saturating_mul(part.order_payoff(*bonus, score_cap)))
         })
     }
 
@@ -2313,8 +2409,8 @@ impl PointBound {
         if !self.is_combined() {
             return own;
         }
-        self.others.iter().fold(i128::from(self.weight).saturating_mul(own), |sum, (weight, bonus, part)| {
-            sum.saturating_add(i128::from(*weight).saturating_mul(part.mean_payoff(*bonus, score_cap, max_cap)))
+        self.others.iter().fold(self.weight.saturating_mul(own), |sum, (weight, bonus, part)| {
+            sum.saturating_add(weight.saturating_mul(part.mean_payoff(*bonus, score_cap, max_cap)))
         })
     }
 
@@ -2347,8 +2443,8 @@ impl PointBound {
         if !self.is_combined() {
             return own;
         }
-        self.others.iter().fold(i128::from(self.weight).saturating_mul(own), |sum, (weight, bonus, part)| {
-            sum.saturating_add(i128::from(*weight).saturating_mul(part.order_payoff(*bonus, score_cap)))
+        self.others.iter().fold(self.weight.saturating_mul(own), |sum, (weight, bonus, part)| {
+            sum.saturating_add(weight.saturating_mul(part.order_payoff(*bonus, score_cap)))
         })
     }
 

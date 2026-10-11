@@ -10,9 +10,9 @@ use crate::clock::Instant;
 use crate::search::Constraints;
 use crate::search::physical::ProgressHook;
 use crate::types::{
-    EventRewardPriority, Execution, Fraction, FractionInterval, Limits, MAX_K, MAX_METRIC_TERMS, MAX_TERM_WEIGHT,
-    Metric, MetricLevel, MetricTerm, Optimality, PlayPolicy, RecommendationOutcome, RecommendationRequest,
-    RecommendedDeck, Scene, SimulationInput, Strategy,
+    Execution, Fraction, FractionInterval, Limits, MAX_K, MAX_METRIC_LEVELS, MAX_METRIC_TERMS, MAX_TERM_WEIGHT, Metric,
+    MetricLevel, MetricTerm, Optimality, PlayPolicy, RecommendationOutcome, RecommendationRequest, RecommendedDeck,
+    Scene, SimulationInput, Strategy,
 };
 use ournotes_sim::Error;
 use ournotes_sim::account::{AccountInput, Exclusions, Issue};
@@ -130,9 +130,9 @@ struct MetricWire {
     resource_id: Option<i64>,
     #[serde(default)]
     consumption: Option<i32>,
-    /// The weighted terms of a `combined` metric.
+    /// The levels of a `combined` metric, each a list of weighted terms.
     #[serde(default)]
-    terms: Option<Vec<MetricTermWire>>,
+    levels: Option<Vec<Vec<MetricTermWire>>>,
 }
 
 /// One term of a `combined` metric: a metric kind with its fields and a weight. The request's
@@ -453,7 +453,7 @@ fn simple_metric(
     }
 }
 
-/// The search metric of a `combined` metric: one level of weighted terms, each a metric of the goal.
+/// The search metric of a `combined` metric: levels of weighted terms, each term a metric of the goal.
 fn combined_metric(
     kind: GoalKind,
     m: &MetricWire,
@@ -475,85 +475,31 @@ fn combined_metric(
             issues.add(format!("metric.{name}"), "input", format!("{name} does not apply to combined"));
         }
     }
-    let Some(terms) = m.terms.as_deref() else {
-        issues.add("metric.terms", "input", "combined needs terms");
+    let Some(levels) = m.levels.as_deref() else {
+        issues.add("metric.levels", "input", "combined needs levels");
         return None;
     };
-    if !(1..=MAX_METRIC_TERMS).contains(&terms.len()) {
+    if !(1..=MAX_METRIC_LEVELS).contains(&levels.len()) {
         complete = false;
-        issues.add("metric.terms", "input", format!("combined takes 1..={MAX_METRIC_TERMS} terms"));
+        issues.add("metric.levels", "input", format!("combined takes 1..={MAX_METRIC_LEVELS} levels"));
+    }
+    if levels.iter().map(Vec::len).sum::<usize>() > MAX_METRIC_TERMS {
+        complete = false;
+        issues.add("metric.levels", "input", format!("combined takes at most {MAX_METRIC_TERMS} terms"));
     }
     let mut event = false;
-    let mut typed = Vec::with_capacity(terms.len());
-    for (i, term) in terms.iter().enumerate() {
-        let path = format!("metric.terms[{i}]");
-        let weight = term.weight.filter(|weight| (1..=i64::from(MAX_TERM_WEIGHT)).contains(weight));
-        if weight.is_none() {
+    let mut typed: Vec<MetricLevel> = Vec::with_capacity(levels.len());
+    for (level, terms) in levels.iter().enumerate() {
+        if terms.is_empty() {
             complete = false;
-            issues.add(
-                format!("{path}.weight"),
-                "input",
-                format!("a term needs an integer weight in 1..={MAX_TERM_WEIGHT}"),
-            );
+            issues.add(format!("metric.levels[{level}]"), "input", "a level needs a term");
         }
-        let Some(fields) = metric_fields(&term.kind) else {
-            complete = false;
-            issues.add(format!("{path}.kind"), "input", format!("{} is not a metric of a term", term.kind));
-            continue;
-        };
-        if !kind.metrics().contains(&term.kind.as_str()) {
-            complete = false;
-            issues.add(format!("{path}.kind"), "input", format!("{} does not apply to {}", term.kind, kind.name()));
-            continue;
+        typed.push(MetricLevel::new(Vec::with_capacity(terms.len())));
+        for (i, term) in terms.iter().enumerate() {
+            combined_term(kind, term, format!("metric.levels[{level}][{i}]"), challenge_skip, explicit_play, issues)
+                .map_or_else(|| complete = false, |term| typed[level].terms.push(term));
+            event |= metric_fields(&term.kind).is_some_and(|fields| fields.contains(&"eventId"));
         }
-        if support(kind, &term.kind) == Support::Unsupported {
-            complete = false;
-            issues.add(
-                format!("{path}.kind"),
-                "unsupported",
-                format!("{} is not supported for {} yet", term.kind, kind.name()),
-            );
-        }
-        if term.kind == "scoreAndLife" && !explicit_play {
-            issues.add("goal.play", "input", "scoreAndLife requires an explicit complete play (pattern or stream); accuracy or an omitted play cannot describe life risk");
-        }
-        if challenge_skip && term.kind == "challengePoints" {
-            issues.add(
-                format!("{path}.kind"),
-                "input",
-                "challenge skip spends challenge points and cannot optimize challenge-point earnings",
-            );
-        }
-        for (name, present) in [
-            ("threshold", term.threshold.is_some()),
-            ("minFinalLife", term.min_final_life.is_some()),
-            ("eventId", term.event_id.is_some()),
-            ("resourceType", term.resource_type.is_some()),
-            ("resourceId", term.resource_id.is_some()),
-        ] {
-            match (present, fields.contains(&name)) {
-                (true, false) => {
-                    complete = false;
-                    issues.add(format!("{path}.{name}"), "input", format!("{name} does not apply to {}", term.kind));
-                }
-                (false, true) => {
-                    complete = false;
-                    issues.add(format!("{path}.{name}"), "input", format!("{} needs {name}", term.kind));
-                }
-                _ => {}
-            }
-        }
-        event |= fields.contains(&"eventId");
-        typed.push(MetricTerm {
-            metric: simple_metric(
-                &term.kind,
-                term.threshold,
-                term.min_final_life,
-                term.event_id,
-                (term.resource_type, term.resource_id),
-            ),
-            weight: weight.unwrap_or_default() as u32,
-        });
     }
     match (m.consumption.is_some(), event) {
         (false, true) => {
@@ -566,7 +512,83 @@ fn combined_metric(
         }
         _ => {}
     }
-    complete.then(|| Metric::Combined { levels: vec![MetricLevel { terms: typed }] })
+    complete.then_some(Metric::Combined { levels: typed })
+}
+
+/// One term of a `combined` metric at `path`; None when the term is incomplete.
+fn combined_term(
+    kind: GoalKind,
+    term: &MetricTermWire,
+    path: String,
+    challenge_skip: bool,
+    explicit_play: bool,
+    issues: &mut Issues,
+) -> Option<MetricTerm> {
+    let mut complete = true;
+    let weight = term.weight.filter(|weight| (1..=i64::from(MAX_TERM_WEIGHT)).contains(weight));
+    if weight.is_none() {
+        complete = false;
+        issues.add(
+            format!("{path}.weight"),
+            "input",
+            format!("a term needs an integer weight in 1..={MAX_TERM_WEIGHT}"),
+        );
+    }
+    let Some(fields) = metric_fields(&term.kind) else {
+        issues.add(format!("{path}.kind"), "input", format!("{} is not a metric of a term", term.kind));
+        return None;
+    };
+    if !kind.metrics().contains(&term.kind.as_str()) {
+        issues.add(format!("{path}.kind"), "input", format!("{} does not apply to {}", term.kind, kind.name()));
+        return None;
+    }
+    if support(kind, &term.kind) == Support::Unsupported {
+        complete = false;
+        issues.add(
+            format!("{path}.kind"),
+            "unsupported",
+            format!("{} is not supported for {} yet", term.kind, kind.name()),
+        );
+    }
+    if term.kind == "scoreAndLife" && !explicit_play {
+        issues.add("goal.play", "input", "scoreAndLife requires an explicit complete play (pattern or stream); accuracy or an omitted play cannot describe life risk");
+    }
+    if challenge_skip && term.kind == "challengePoints" {
+        issues.add(
+            format!("{path}.kind"),
+            "input",
+            "challenge skip spends challenge points and cannot optimize challenge-point earnings",
+        );
+    }
+    for (name, present) in [
+        ("threshold", term.threshold.is_some()),
+        ("minFinalLife", term.min_final_life.is_some()),
+        ("eventId", term.event_id.is_some()),
+        ("resourceType", term.resource_type.is_some()),
+        ("resourceId", term.resource_id.is_some()),
+    ] {
+        match (present, fields.contains(&name)) {
+            (true, false) => {
+                complete = false;
+                issues.add(format!("{path}.{name}"), "input", format!("{name} does not apply to {}", term.kind));
+            }
+            (false, true) => {
+                complete = false;
+                issues.add(format!("{path}.{name}"), "input", format!("{} needs {name}", term.kind));
+            }
+            _ => {}
+        }
+    }
+    complete.then(|| MetricTerm {
+        metric: simple_metric(
+            &term.kind,
+            term.threshold,
+            term.min_final_life,
+            term.event_id,
+            (term.resource_type, term.resource_id),
+        ),
+        weight: weight.unwrap_or_default() as u32,
+    })
 }
 
 /// Validate the declared play before account resolution/search, retaining its public input path.
@@ -749,10 +771,11 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
             }
             Some(fields) => {
                 let mut complete = true;
+                // Whether event points come before event items among the teams with the most Challenge points.
                 let secondary_priority = match m.secondary_priority.as_deref() {
                     None => None,
-                    Some("eventPointsFirst") => Some(EventRewardPriority::EventPointsFirst),
-                    Some("eventItemsFirst") => Some(EventRewardPriority::EventItemsFirst),
+                    Some("eventPointsFirst") => Some(true),
+                    Some("eventItemsFirst") => Some(false),
                     Some(_) => {
                         complete = false;
                         issues.add("metric.secondaryPriority", "input", "choose eventPointsFirst or eventItemsFirst");
@@ -772,7 +795,7 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
                     ("resourceType", m.resource_type.is_some()),
                     ("resourceId", m.resource_id.is_some()),
                     ("consumption", m.consumption.is_some()),
-                    ("terms", m.terms.is_some()),
+                    ("levels", m.levels.is_some()),
                 ] {
                     match (present, fields.contains(&name)) {
                         (true, false) => issues.add(
@@ -789,12 +812,22 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
                 }
                 if complete {
                     metric = Some(match (m.kind.as_str(), secondary_priority) {
-                        ("challengePoints", Some(priority)) => Metric::ClientChallengePointsWithBonuses {
-                            event_id: m.event_id.unwrap_or_default(),
-                            priority,
-                            resource_type: m.resource_type.expect("complete resource type"),
-                            resource_id: m.resource_id.expect("complete resource ID"),
-                        },
+                        ("challengePoints", Some(points_first)) => {
+                            let event_id = m.event_id.unwrap_or_default();
+                            let points = Metric::ClientEventPoints { event_id };
+                            let items = Metric::RankedEventItems {
+                                event_id,
+                                resource_type: m.resource_type.expect("complete resource type"),
+                                resource_id: m.resource_id.expect("complete resource ID"),
+                            };
+                            let (second, third) = if points_first { (points, items) } else { (items, points) };
+                            Metric::Combined {
+                                levels: [Metric::ClientChallengePoints { event_id }, second, third]
+                                    .into_iter()
+                                    .map(|metric| MetricLevel::new(vec![MetricTerm { metric, weight: 1 }]))
+                                    .collect(),
+                            }
+                        }
                         (kind, _) => simple_metric(
                             kind,
                             m.threshold,
@@ -1008,25 +1041,23 @@ fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues) -> Option
         if let Some(priority) = metric_wire.and_then(|m| m.secondary_priority.as_ref()) {
             echo["secondaryPriority"] = json!(priority);
         }
-        if let Some(terms) = metric_wire.and_then(|m| m.terms.as_ref()) {
-            echo["terms"] = terms
-                .iter()
-                .map(|term| {
-                    let mut echo = json!({"kind": term.kind, "weight": term.weight});
-                    for (name, value) in [
-                        ("threshold", term.threshold.map(i64::from)),
-                        ("minFinalLife", term.min_final_life.map(i64::from)),
-                        ("eventId", term.event_id),
-                        ("resourceType", term.resource_type),
-                        ("resourceId", term.resource_id),
-                    ] {
-                        if let Some(v) = value {
-                            echo[name] = json!(v);
-                        }
+        if let Some(levels) = metric_wire.and_then(|m| m.levels.as_ref()) {
+            let term = |term: &MetricTermWire| {
+                let mut echo = json!({"kind": term.kind, "weight": term.weight});
+                for (name, value) in [
+                    ("threshold", term.threshold.map(i64::from)),
+                    ("minFinalLife", term.min_final_life.map(i64::from)),
+                    ("eventId", term.event_id),
+                    ("resourceType", term.resource_type),
+                    ("resourceId", term.resource_id),
+                ] {
+                    if let Some(v) = value {
+                        echo[name] = json!(v);
                     }
-                    echo
-                })
-                .collect();
+                }
+                echo
+            };
+            echo["levels"] = levels.iter().map(|terms| terms.iter().map(term).collect::<Value>()).collect();
         }
         if w.event_context.as_ref().is_some_and(|c| c.reward_projection) {
             echo["rewardProjection"] = json!(true);
@@ -1191,10 +1222,21 @@ pub struct Team {
     /// Exact expectations for a Challenge-point priority objective.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_rewards: Option<TeamEventRewards>,
-    /// A combined metric: the exact expectation of each term's payoff, unweighted, in the order of `metric.terms`.
-    /// Null for a term that reads terminal life.
+    /// A combined metric: the team's value on each level, in the order of `metric.levels`. `value.payoff` is that
+    /// of the first level.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub terms: Option<Vec<Option<PayoffValue>>>,
+    pub levels: Option<Vec<TeamLevel>>,
+}
+
+/// A team's value on one level of a combined metric.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamLevel {
+    /// The exact expectation of the level's weighted sum.
+    pub value: PayoffValue,
+    /// The exact expectation of each term's payoff, unweighted, in the order of the level's terms. Null for a
+    /// term that reads terminal life.
+    pub terms: Vec<Option<PayoffValue>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1429,42 +1471,40 @@ fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_orders: bool) ->
         } else {
             None
         };
-        let event_rewards = deck
-            .event_rewards
-            .as_ref()
-            .map(|rewards| {
-                let value = |fraction: &Fraction| -> Result<PayoffValue, Error> {
-                    let (n, d) = exact(fraction)?;
-                    Ok(PayoffValue { score: n as f64 / d as f64, exact: Some(fraction.clone()), interval: None })
-                };
-                Ok::<_, Error>(TeamEventRewards {
-                    challenge_points: value(&rewards.challenge_points)?,
-                    event_points: value(&rewards.event_points)?,
-                    event_items: value(&rewards.event_items)?,
-                })
-            })
-            .transpose()?;
-        let terms = deck
-            .term_payoffs
-            .as_ref()
-            .map(|terms| {
-                terms
-                    .iter()
-                    .map(|term| {
-                        term.as_ref()
-                            .map(|fraction| {
-                                let (n, d) = exact(fraction)?;
-                                Ok(PayoffValue {
-                                    score: n as f64 / d as f64,
-                                    exact: Some(fraction.clone()),
-                                    interval: None,
-                                })
-                            })
-                            .transpose()
+        let exact_value = |fraction: &Fraction| -> Result<PayoffValue, Error> {
+            let (n, d) = exact(fraction)?;
+            Ok(PayoffValue { score: n as f64 / d as f64, exact: Some(fraction.clone()), interval: None })
+        };
+        let levels = match (metric.levels(), &deck.level_payoffs, &deck.term_payoffs) {
+            (Some(levels), Some(values), Some(terms)) => {
+                let mut terms = terms.iter();
+                let rows = levels.iter().zip(values).map(|(level, value)| {
+                    Ok(TeamLevel {
+                        value: exact_value(value)?,
+                        terms: terms
+                            .by_ref()
+                            .take(level.terms.len())
+                            .map(|term| term.as_ref().map(exact_value).transpose())
+                            .collect::<Result<_, Error>>()?,
                     })
-                    .collect::<Result<Vec<_>, Error>>()
-            })
-            .transpose()?;
+                });
+                Some(rows.collect::<Result<Vec<_>, Error>>()?)
+            }
+            _ => None,
+        };
+        // A Challenge-point priority reads its three levels: Challenge points, then the two rewards in its order.
+        let event_rewards = match (&levels, parsed.metric.as_ref().and_then(|echo| echo["secondaryPriority"].as_str()))
+        {
+            (Some(levels), Some(priority)) if levels.len() == 3 => {
+                let (points, items) = if priority == "eventPointsFirst" { (1, 2) } else { (2, 1) };
+                Some(TeamEventRewards {
+                    challenge_points: levels[0].value.clone(),
+                    event_points: levels[points].value.clone(),
+                    event_items: levels[items].value.clone(),
+                })
+            }
+            _ => None,
+        };
         rows.push(Team {
             rank: 0,
             leader,
@@ -1475,7 +1515,7 @@ fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_orders: bool) ->
             layout,
             rank_certified: deck.rank_certified,
             event_rewards,
-            terms,
+            levels,
         });
     }
     // Preserve the search ordering and its proof. Changing the tie objective here would not recover
@@ -1735,12 +1775,12 @@ pub fn capabilities() -> Value {
         "challengePointPriorities": {
             "priorities": ["eventPointsFirst", "eventItemsFirst"],
             "objective": "lexicographicExpected", "primary": "challengePoints",
-            "bestPrimaryOnly": true, "lotteryFree": true,
+            "lotteryFree": true,
         },
         "combinedMetric": {
-            "kind": "combined", "field": "metric.terms", "objective": "weightedExpectedSum",
+            "kind": "combined", "field": "metric.levels", "objective": "lexicographicWeightedExpectedSums",
             "termMetrics": "metrics", "weights": "integer",
-            "maxTerms": MAX_METRIC_TERMS, "maxWeight": MAX_TERM_WEIGHT,
+            "maxLevels": MAX_METRIC_LEVELS, "maxTerms": MAX_METRIC_TERMS, "maxWeight": MAX_TERM_WEIGHT,
             "consumption": "metric.consumption", "lotteryFree": true,
         },
         "eventItemRewards": {
@@ -1919,8 +1959,8 @@ mod tests {
                 power: 100,
                 expected_score: None,
                 expected_payoff: None,
-                event_rewards: None,
                 term_payoffs: None,
+                level_payoffs: None,
                 score_interval: Some(FractionInterval::from_f64(150.5, 150.75).unwrap()),
                 payoff_interval: Some(FractionInterval::from_f64(150.5, 150.75).unwrap()),
                 rank_certified: Some(true),

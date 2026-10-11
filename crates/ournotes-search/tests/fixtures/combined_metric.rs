@@ -1,4 +1,5 @@
-//! Combined metrics over complete synthetic domains, against the weighted sums of independently evaluated terms.
+//! Combined metrics over complete synthetic domains, against the weighted sums of independently evaluated terms on
+//! every level.
 use super::{
     EVENT_ID, SCORE_ID, account_recommendation_fixture, account_request, context_document, data_document,
     joint_request_json, replace_table, roster_document, set_column, synthetic_master,
@@ -65,9 +66,19 @@ fn request(mode: &str, gekisou: bool, skip: bool, metric: Value) -> Recommendati
     serde_json::from_value(value).unwrap()
 }
 
+fn leveled(levels: &[Vec<(Value, u32)>]) -> Value {
+    let levels: Vec<_> = levels
+        .iter()
+        .map(|terms| {
+            let terms: Vec<_> = terms.iter().map(|(metric, weight)| json!({"metric":metric,"weight":weight})).collect();
+            json!({"terms":terms})
+        })
+        .collect();
+    json!({"kind":"combined","levels":levels})
+}
+
 fn combined(terms: &[(Value, u32)]) -> Value {
-    let terms: Vec<_> = terms.iter().map(|(metric, weight)| json!({"metric":metric,"weight":weight})).collect();
-    json!({"kind":"combined","levels":[{"terms":terms}]})
+    leveled(&[terms.to_vec()])
 }
 
 fn numerator(value: &Fraction) -> i128 {
@@ -121,18 +132,25 @@ impl Domain {
         Self { terms, teams }
     }
 
-    fn metric(&self, weights: &[(usize, u32)]) -> Value {
-        let terms: Vec<_> = weights.iter().map(|&(term, weight)| (self.terms[term].clone(), weight)).collect();
-        combined(&terms)
+    fn metric(&self, levels: &[&[(usize, u32)]]) -> Value {
+        let levels: Vec<Vec<_>> = levels
+            .iter()
+            .map(|weights| weights.iter().map(|&(term, weight)| (self.terms[term].clone(), weight)).collect())
+            .collect();
+        leveled(&levels)
     }
 
-    /// The teams in the order of their weighted sums, then power and canonical identity.
-    fn ranked(&self, weights: &[(usize, u32)]) -> Vec<(Team, i128)> {
+    /// The teams in the order of their weighted sums on each level in turn, then power and canonical identity.
+    fn ranked(&self, levels: &[&[(usize, u32)]]) -> Vec<(Team, Vec<i128>)> {
         let mut rows: Vec<_> = self
             .teams
             .iter()
             .map(|(team, values)| {
-                (*team, weights.iter().map(|&(term, weight)| i128::from(weight) * values[term]).sum::<i128>())
+                let sums = levels
+                    .iter()
+                    .map(|weights| weights.iter().map(|&(term, weight)| i128::from(weight) * values[term]).sum())
+                    .collect::<Vec<i128>>();
+                (*team, sums)
             })
             .collect();
         rows.sort_by(|(a, x), (b, y)| y.cmp(x).then(b.2.cmp(&a.2)).then(a.0.cmp(&b.0)).then(a.1.cmp(&b.1)));
@@ -173,12 +191,62 @@ fn domain(data: &DeckData, roster: &Roster, mode: &str, gekisou: bool, skip: boo
     (base, domain)
 }
 
+/// Every strategy returns the first teams of `levels` over the complete domain with their level and term values.
+fn assert_ranking(
+    data: &DeckData,
+    roster: &Roster,
+    base: &RecommendationRequest,
+    domain: &Domain,
+    levels: &[&[(usize, u32)]],
+    label: &str,
+) {
+    let expected = domain.ranked(levels);
+    let mut search = base.clone();
+    search.metric = serde_json::from_value(domain.metric(levels)).unwrap();
+    search.k = 5;
+    let skip = matches!(search.execution, ournotes_search::types::Execution::Skip { .. });
+    for (strategy, cache_entries) in
+        [(Strategy::Exhaustive, 0), (Strategy::BranchAndBound, 0), (Strategy::BranchAndBound, 64)]
+    {
+        let bounded = matches!(strategy, Strategy::BranchAndBound);
+        search.strategy = strategy;
+        search.limits.cache_entries = cache_entries;
+        let actual = engine::recommend(data, roster, &search).unwrap();
+        let label = format!("{label} {levels:?} bounded={bounded}");
+        assert_eq!(actual.completion, Completion::Complete, "{label}");
+        assert_eq!(actual.optimality, Optimality::Proven, "{label}");
+        if bounded && !skip {
+            assert!(actual.telemetry.environment.bounds.compiled, "{label}");
+            assert!(actual.telemetry.environment.bounds.fallback.is_none(), "{label}");
+        }
+        assert_eq!(actual.results.len(), expected.len().min(5), "{label}");
+        for (row, (team, sums)) in actual.results.iter().zip(&expected) {
+            assert_eq!((row.members, row.snaps, row.power), *team, "{label}");
+            assert_eq!(numerator(row.expected_payoff.as_ref().unwrap()), sums[0], "{label}");
+            let values: Vec<_> = row.level_payoffs.as_ref().expect("level payoffs").iter().map(numerator).collect();
+            assert_eq!(&values, sums, "{label}");
+            let terms: Vec<_> = row
+                .term_payoffs
+                .as_ref()
+                .expect("term payoffs")
+                .iter()
+                .map(|term| numerator(term.as_ref().expect("a term without terminal life")))
+                .collect();
+            let expected: Vec<_> =
+                levels.iter().flat_map(|weights| weights.iter().map(|&(term, _)| domain.value(team, term))).collect();
+            assert_eq!(terms, expected, "{label}");
+        }
+    }
+}
+
+const MODES: [(&str, bool, bool); 3] = [("free", false, false), ("mission", true, false), ("free", false, true)];
+
 #[test]
 fn combined_metrics_rank_by_the_weighted_sum_of_independent_terms() {
     let (data, roster) = inputs();
-    for (mode, gekisou, skip) in [("free", false, false), ("mission", true, false), ("free", false, true)] {
+    for (mode, gekisou, skip) in MODES {
         let (base, domain) = domain(&data, &roster, mode, gekisou, skip);
-        let cases: [&[(usize, u32)]; 9] = [
+        let cases: [&[(usize, u32)]; 10] = [
             &[(POINTS, 2), (CHALLENGE, 35)],
             &[(CHALLENGE, 35), (POINTS, 2)],
             &[(POINTS, 1), (ITEMS, 3), (CHALLENGE, 1)],
@@ -188,51 +256,56 @@ fn combined_metrics_rank_by_the_weighted_sum_of_independent_terms() {
             &[(CAPPED, 1), (ITEMS, 7)],
             &[(CHALLENGE, 3)],
             &[(SCORE, 2), (CAPPED, 1)],
+            &[(POINTS, 1_000_000_000), (CHALLENGE, 999_999_937)],
         ];
         for weights in cases {
-            let expected = domain.ranked(weights);
-            let mut search = base.clone();
-            search.metric = serde_json::from_value(domain.metric(weights)).unwrap();
-            search.k = 5;
-            for (strategy, cache_entries) in
-                [(Strategy::Exhaustive, 0), (Strategy::BranchAndBound, 0), (Strategy::BranchAndBound, 64)]
-            {
-                let bounded = matches!(strategy, Strategy::BranchAndBound);
-                search.strategy = strategy;
-                search.limits.cache_entries = cache_entries;
-                let actual = engine::recommend(&data, &roster, &search).unwrap();
-                let label = format!("{mode} skip={skip} {weights:?} bounded={bounded}");
-                assert_eq!(actual.completion, Completion::Complete, "{label}");
-                assert_eq!(actual.optimality, Optimality::Proven, "{label}");
-                if bounded && !skip {
-                    assert!(actual.telemetry.environment.bounds.compiled, "{label}");
-                    assert!(actual.telemetry.environment.bounds.fallback.is_none(), "{label}");
-                }
-                assert_eq!(actual.results.len(), expected.len().min(5), "{label}");
-                for (row, (team, total)) in actual.results.iter().zip(&expected) {
-                    assert_eq!((row.members, row.snaps, row.power), *team, "{label}");
-                    assert_eq!(numerator(row.expected_payoff.as_ref().unwrap()), *total, "{label}");
-                    let terms: Vec<_> = row
-                        .term_payoffs
-                        .as_ref()
-                        .expect("term payoffs")
-                        .iter()
-                        .map(|term| numerator(term.as_ref().expect("a term without terminal life")))
-                        .collect();
-                    let expected: Vec<_> = weights.iter().map(|&(term, _)| domain.value(team, term)).collect();
-                    assert_eq!(terms, expected, "{label}");
-                }
-            }
+            assert_ranking(&data, &roster, &base, &domain, &[weights], &format!("{mode} skip={skip}"));
         }
     }
+}
+
+#[test]
+fn combined_metric_levels_rank_tied_teams_by_each_later_level() {
+    let (data, roster) = inputs();
+    for (mode, gekisou, skip) in MODES {
+        let (base, domain) = domain(&data, &roster, mode, gekisou, skip);
+        let cases: [&[&[(usize, u32)]]; 9] = [
+            &[&[(CHALLENGE, 1)], &[(POINTS, 1)]],
+            &[&[(CHALLENGE, 1)], &[(ITEMS, 1)], &[(POINTS, 1)]],
+            &[&[(AT_LEAST, 1)], &[(POINTS, 2), (CHALLENGE, 35)]],
+            &[&[(POINTS, 2), (CHALLENGE, 35)], &[(ITEMS, 1)]],
+            &[&[(ITEMS, 1)], &[(SCORE, 1)]],
+            &[&[(CAPPED, 1)], &[(CHALLENGE, 7), (ITEMS, 3)], &[(SCORE, 1)]],
+            &[&[(AT_LEAST, 1)], &[(CHALLENGE, 1)], &[(ITEMS, 1)], &[(POINTS, 1)]],
+            &[&[(ITEMS, 1_000_000_000)], &[(POINTS, 1_000_000_000), (CHALLENGE, 1_000_000_000)]],
+            &[&[(CHALLENGE, 2), (ITEMS, 2)], &[(AT_LEAST, 5), (CAPPED, 1)], &[(POINTS, 1), (SCORE, 1)]],
+        ];
+        for levels in cases {
+            assert_ranking(&data, &roster, &base, &domain, levels, &format!("{mode} skip={skip}"));
+        }
+    }
+}
+
+#[test]
+fn a_later_level_separates_teams_the_first_level_ties() {
+    let (data, roster) = inputs();
+    let (_, domain) = domain(&data, &roster, "free", false, false);
+    let alone = domain.ranked(&[&[(CHALLENGE, 1)]]);
+    let layer = alone.iter().take_while(|(_, sums)| sums[0] == alone[0].1[0]).count();
+    assert!(layer > 1, "several teams earn the most challenge points");
+    let leveled = domain.ranked(&[&[(CHALLENGE, 1)], &[(POINTS, 1)]]);
+    let best = leveled[..layer].iter().map(|(team, _)| domain.value(team, POINTS)).max().unwrap();
+    assert_eq!(leveled[0].1[1], best);
+    assert!(leveled[..layer].iter().any(|(_, sums)| sums[1] < best), "the layer differs on event points");
+    assert!(leveled[..layer].windows(2).all(|pair| pair[0].1[1] >= pair[1].1[1]));
 }
 
 #[test]
 fn combined_metric_weights_move_the_best_team_between_rewards() {
     let (data, roster) = inputs();
     let (_, domain) = domain(&data, &roster, "free", false, false);
-    let toward_points = domain.ranked(&[(POINTS, 1_000_000), (CHALLENGE, 1)])[0].0;
-    let toward_challenge = domain.ranked(&[(POINTS, 1), (CHALLENGE, 1_000_000)])[0].0;
+    let toward_points = domain.ranked(&[&[(POINTS, 1_000_000), (CHALLENGE, 1)]])[0].0;
+    let toward_challenge = domain.ranked(&[&[(POINTS, 1), (CHALLENGE, 1_000_000)]])[0].0;
     assert_eq!(domain.value(&toward_points, POINTS), domain.best(POINTS));
     assert_eq!(domain.value(&toward_challenge, CHALLENGE), domain.best(CHALLENGE));
     // No team earns the most of both rewards: the weights decide.
@@ -244,19 +317,28 @@ fn combined_metric_weights_move_the_best_team_between_rewards() {
 fn combined_metric_inputs_are_validated() {
     let (data, roster) = inputs();
     for (metric, message) in [
-        (json!({"kind":"combined","levels":[]}), "exactly one level"),
-        (json!({"kind":"combined","levels":[{"terms":[]}]}), "terms"),
+        (json!({"kind":"combined","levels":[]}), "levels"),
+        (leveled(&vec![vec![(points(), 1)]; 5]), "levels"),
+        (json!({"kind":"combined","levels":[{"terms":[]}]}), "term"),
+        (leveled(&[vec![(points(), 1)], vec![]]), "term"),
         (combined(&[(points(), 0)]), "weight"),
-        (combined(&[(points(), 1_000_001)]), "weight"),
+        (combined(&[(points(), 1_000_000_001)]), "weight"),
+        (leveled(&[vec![(points(), 1)], vec![(points(), 0)]]), "weight"),
         (combined(&[(json!({"kind":"power"}), 1)]), ""),
         (combined(&[(combined(&[(points(), 1)]), 1)]), ""),
         (combined(&[(json!({"kind":"scoreAtLeast","threshold":0}), 1)]), "target"),
-        (
-            json!({"kind":"combined","levels":[{"terms":[{"metric":points(),"weight":1}]},
-                {"terms":[{"metric":challenge_points(),"weight":1}]}]}),
-            "exactly one level",
-        ),
+        (leveled(&[vec![(points(), 1)], vec![(json!({"kind":"power"}), 1)]]), ""),
         (combined(&(0..9).map(|_| (points(), 1)).collect::<Vec<_>>()), "terms"),
+        (leveled(&[vec![(points(), 1); 5], vec![(challenge_points(), 1); 4]]), "terms"),
+        (
+            leveled(&[
+                vec![(items(), 1_000_000_000)],
+                vec![(points(), 1_000_000_000)],
+                vec![(json!({"kind":"score"}), 1_000_000_000)],
+                vec![(json!({"kind":"score"}), 1_000_000_000)],
+            ]),
+            "exact integer range",
+        ),
     ] {
         let request = request("free", false, false, metric.clone());
         let error = engine::recommend(&data, &roster, &request).err().unwrap_or_else(|| panic!("{metric}"));
@@ -272,90 +354,110 @@ fn active_luck_ranges_reject_combined_metrics() {
     document["charts"][0]["fevers"] = json!({"startMs":[150],"endMs":[400]});
     let data = DeckData::from_json(&document.to_string()).unwrap();
     let roster = Roster::from_json(&roster_document(5, 0, 5).to_string()).unwrap();
-    let metric = combined(&[(points(), 1), (challenge_points(), 1)]);
-    let request = super::joint_request("mission", true, metric);
-    let error = engine::recommend(&data, &roster, &request).unwrap_err();
-    assert!(matches!(error, ournotes_sim::Error::Unsupported(_)), "{error}");
-    assert!(error.to_string().contains("lottery-free terminal outcomes"), "{error}");
+    for metric in [
+        combined(&[(points(), 1), (challenge_points(), 1)]),
+        leveled(&[vec![(challenge_points(), 1)], vec![(points(), 1)]]),
+    ] {
+        let request = super::joint_request("mission", true, metric);
+        let error = engine::recommend(&data, &roster, &request).unwrap_err();
+        assert!(matches!(error, ournotes_sim::Error::Unsupported(_)), "{error}");
+        assert!(error.to_string().contains("lottery-free terminal outcomes"), "{error}");
+    }
 }
 
-fn account_combined(terms: Value) -> Value {
+fn account_leveled(levels: Value) -> Value {
     let mut request = account_request(json!({"kind":"freeLive","musicId":10,"difficulty":"expert"}));
-    request["metric"] = json!({"kind":"combined","consumption":1,"terms":terms});
+    request["metric"] = json!({"kind":"combined","consumption":1,"levels":levels});
     request["eventContext"] = json!({"rewardProjection":true,
         "resultClock":{"kind":"played","serverNowJstTicks":150},
         "eventWindows":[{"eventId":EVENT_ID,"startJstTicks":100,"endJstTicks":200}]});
     request
 }
 
+fn account_combined(terms: Value) -> Value {
+    account_leveled(json!([terms]))
+}
+
+fn exact(value: &Value) -> (i128, i128) {
+    (
+        value["exact"]["numerator"].as_str().unwrap().parse().unwrap(),
+        value["exact"]["denominator"].as_str().unwrap().parse().unwrap(),
+    )
+}
+
 #[test]
-fn account_combined_metric_contract_echoes_terms_and_rejects_incomplete_fields() {
+fn account_combined_metric_contract_echoes_levels_and_rejects_incomplete_fields() {
     let (data, account) = account_recommendation_fixture();
     assert_eq!(
         capabilities()["combinedMetric"],
         json!({
-            "kind":"combined","field":"metric.terms","objective":"weightedExpectedSum","termMetrics":"metrics",
-            "weights":"integer","maxTerms":8,"maxWeight":1_000_000,"consumption":"metric.consumption",
-            "lotteryFree":true
+            "kind":"combined","field":"metric.levels","objective":"lexicographicWeightedExpectedSums",
+            "termMetrics":"metrics","weights":"integer","maxLevels":4,"maxTerms":8,"maxWeight":1_000_000_000,
+            "consumption":"metric.consumption","lotteryFree":true
         })
     );
-    let terms = json!([
-        {"kind":"eventPoints","eventId":EVENT_ID,"weight":2},
-        {"kind":"challengePoints","eventId":EVENT_ID,"weight":35},
-        {"kind":"eventItems","eventId":EVENT_ID,"resourceType":11,"resourceId":9,"weight":1},
-        {"kind":"cappedScore","threshold":1000,"weight":3}
+    let levels = json!([
+        [{"kind":"eventPoints","eventId":EVENT_ID,"weight":2}, {"kind":"challengePoints","eventId":EVENT_ID,"weight":35}],
+        [{"kind":"eventItems","eventId":EVENT_ID,"resourceType":11,"resourceId":9,"weight":1}],
+        [{"kind":"cappedScore","threshold":1000,"weight":3}, {"kind":"score","weight":1}]
     ]);
-    let weights = [2i128, 35, 1, 3];
-    let request = account_combined(terms.clone());
+    let request = account_leveled(levels.clone());
     let answer = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
     assert!(matches!(answer.status, Status::Ok), "{:?}", answer.errors);
     let value = serde_json::to_value(answer).unwrap();
     assert_eq!(value["result"]["metric"]["kind"], "combined");
     assert_eq!(value["result"]["metric"]["consumption"], 1);
-    assert_eq!(value["result"]["metric"]["terms"], terms);
+    assert_eq!(value["result"]["metric"]["levels"], levels);
     assert_eq!(value["result"]["optimality"]["proven"], true);
     let teams = value["result"]["teams"].as_array().unwrap();
     assert!(!teams.is_empty() && teams.len() <= 5);
+    let mut order = Vec::new();
     for team in teams {
-        let exact = |value: &Value| -> (i128, i128) {
-            (
-                value["exact"]["numerator"].as_str().unwrap().parse().unwrap(),
-                value["exact"]["denominator"].as_str().unwrap().parse().unwrap(),
-            )
-        };
-        let (total, denominator) = exact(&team["value"]["payoff"]);
-        let parts = team["terms"].as_array().unwrap();
-        assert_eq!(parts.len(), weights.len());
-        let sum: i128 = parts
-            .iter()
-            .zip(weights)
-            .map(|(part, weight)| {
-                let (numerator, same) = exact(part);
-                assert_eq!(same, denominator);
-                assert!(part["score"].is_number() && part["interval"].is_null());
-                weight * numerator
-            })
-            .sum();
-        assert_eq!(sum, total);
+        assert!(team["eventRewards"].is_null());
+        let rows = team["levels"].as_array().unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(exact(&team["value"]["payoff"]), exact(&rows[0]["value"]));
+        let mut key = Vec::new();
+        for (row, terms) in rows.iter().zip(levels.as_array().unwrap()) {
+            let (total, denominator) = exact(&row["value"]);
+            let parts = row["terms"].as_array().unwrap();
+            assert_eq!(parts.len(), terms.as_array().unwrap().len());
+            let sum: i128 = parts
+                .iter()
+                .zip(terms.as_array().unwrap())
+                .map(|(part, term)| {
+                    let (numerator, same) = exact(part);
+                    assert_eq!(same, denominator);
+                    assert!(part["score"].is_number() && part["interval"].is_null());
+                    i128::from(term["weight"].as_i64().unwrap()) * numerator
+                })
+                .sum();
+            assert_eq!(sum, total);
+            key.push(total);
+        }
+        order.push(key);
     }
+    assert!(order.windows(2).all(|pair| pair[0] >= pair[1]), "{order:?}");
 
     // A score-only combination takes neither consumption nor an event context.
     let mut request = account_request(json!({"kind":"freeLive","musicId":10,"difficulty":"expert"}));
-    request["metric"] = json!({"kind":"combined","terms":[
-        {"kind":"score","weight":1},{"kind":"scoreAtLeast","threshold":1000,"weight":1000}]});
+    request["metric"] = json!({"kind":"combined","levels":[
+        [{"kind":"scoreAtLeast","threshold":1000,"weight":1}],[{"kind":"score","weight":1}]]});
     let answer = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
     assert!(matches!(answer.status, Status::Ok), "{:?}", answer.errors);
 
     let term = |term: Value| account_combined(json!([term]));
     let points = json!({"kind":"eventPoints","eventId":EVENT_ID,"weight":1});
-    let mut invalid = Vec::new();
-    let mut request = account_combined(json!([]));
-    invalid.push((request, "metric.terms"));
-    request = account_combined(Value::Array(vec![points.clone(); 9]));
-    invalid.push((request, "metric.terms"));
-    request = account_combined(json!([points]));
-    request["metric"].as_object_mut().unwrap().remove("terms");
-    invalid.push((request, "metric.terms"));
+    let mut invalid = vec![
+        (account_leveled(json!([])), "metric.levels"),
+        (account_leveled(Value::Array(vec![json!([points]); 5])), "metric.levels"),
+        (account_combined(Value::Array(vec![points.clone(); 9])), "metric.levels"),
+        (account_combined(json!([])), "metric.levels[0]"),
+        (account_leveled(json!([[points], []])), "metric.levels[1]"),
+    ];
+    let mut request = account_combined(json!([points]));
+    request["metric"].as_object_mut().unwrap().remove("levels");
+    invalid.push((request, "metric.levels"));
     request = account_combined(json!([points]));
     request["metric"].as_object_mut().unwrap().remove("consumption");
     invalid.push((request, "metric.consumption"));
@@ -367,21 +469,25 @@ fn account_combined_metric_contract_echoes_terms_and_rejects_incomplete_fields()
     request = account_combined(json!([points]));
     request["metric"]["secondaryPriority"] = json!("eventPointsFirst");
     invalid.push((request, "metric.secondaryPriority"));
-    invalid.push((term(json!({"kind":"eventPoints","eventId":EVENT_ID})), "metric.terms[0].weight"));
-    invalid.push((term(json!({"kind":"eventPoints","eventId":EVENT_ID,"weight":0})), "metric.terms[0].weight"));
-    invalid.push((term(json!({"kind":"eventPoints","eventId":EVENT_ID,"weight":1_000_001})), "metric.terms[0].weight"));
-    invalid.push((term(json!({"kind":"eventPoints","weight":1})), "metric.terms[0].eventId"));
+    invalid.push((term(json!({"kind":"eventPoints","eventId":EVENT_ID})), "metric.levels[0][0].weight"));
+    invalid.push((term(json!({"kind":"eventPoints","eventId":EVENT_ID,"weight":0})), "metric.levels[0][0].weight"));
+    invalid.push((
+        term(json!({"kind":"eventPoints","eventId":EVENT_ID,"weight":1_000_000_001i64})),
+        "metric.levels[0][0].weight",
+    ));
+    invalid.push((term(json!({"kind":"eventPoints","weight":1})), "metric.levels[0][0].eventId"));
     invalid.push((
         term(json!({"kind":"eventPoints","eventId":EVENT_ID,"threshold":5,"weight":1})),
-        "metric.terms[0].threshold",
+        "metric.levels[0][0].threshold",
     ));
-    invalid.push((term(json!({"kind":"combined","weight":1})), "metric.terms[0].kind"));
-    invalid.push((term(json!({"kind":"power","weight":1})), "metric.terms[0].kind"));
-    request = account_combined(json!([points, {"kind":"eventItems","eventId":EVENT_ID,"resourceType":11,"weight":1}]));
-    invalid.push((request, "metric.terms[1].resourceId"));
+    invalid.push((term(json!({"kind":"combined","weight":1})), "metric.levels[0][0].kind"));
+    invalid.push((term(json!({"kind":"power","weight":1})), "metric.levels[0][0].kind"));
+    request =
+        account_leveled(json!([[points], [{"kind":"eventItems","eventId":EVENT_ID,"resourceType":11,"weight":1}]]));
+    invalid.push((request, "metric.levels[1][0].resourceId"));
     request = account_request(json!({"kind":"freeLive","musicId":10,"difficulty":"expert"}));
-    request["metric"] = json!({"kind":"score","terms":[{"kind":"score","weight":1}]});
-    invalid.push((request, "metric.terms"));
+    request["metric"] = json!({"kind":"score","levels":[[{"kind":"score","weight":1}]]});
+    invalid.push((request, "metric.levels"));
     for (request, path) in invalid {
         let answer = engine::recommend_account(&data, &account.to_string(), &request.to_string(), None);
         assert!(matches!(answer.status, Status::Invalid), "{path}: {request}");
