@@ -249,25 +249,30 @@ fn cover<T: Bounded>(items: impl IntoIterator<Item = T>, out: &mut Vec<T>) {
     }
 }
 
-/// Merges the items of `items` that `order` ranks equal, see [`cover`].
-fn merge_equal<T: Bounded>(items: &mut Vec<T>, order: impl Fn(&T, &T) -> Ordering) {
+/// Merges the items of `items` that `order` ranks equal, see [`cover`]. `spare` is a buffer to merge into.
+fn merge_equal<T: Bounded>(items: &mut Vec<T>, spare: &mut Vec<T>, order: impl Fn(&T, &T) -> Ordering) {
     if items.len() < 2 {
         return;
     }
-    items.sort_by(&order);
-    let mut sorted = std::mem::take(items).into_iter().peekable();
-    let mut group = Vec::new();
-    while let Some(item) = sorted.next() {
-        group.push(item);
-        while sorted.peek().is_some_and(|next| order(&group[0], next) == Ordering::Equal) {
-            group.extend(sorted.next());
-        }
-        if group.len() == 1 {
-            items.extend(group.pop());
-        } else {
-            cover(group.drain(..), items);
-        }
+    items.sort_unstable_by(&order);
+    if items.windows(2).all(|pair| order(&pair[0], &pair[1]) != Ordering::Equal) {
+        return;
     }
+    spare.clear();
+    let mut end = items.len();
+    while end > 0 {
+        let mut start = end - 1;
+        while start > 0 && order(&items[start - 1], &items[start]) == Ordering::Equal {
+            start -= 1;
+        }
+        if end - start == 1 {
+            spare.extend(items.drain(start..));
+        } else {
+            cover(items.drain(start..), spare);
+        }
+        end = start;
+    }
+    std::mem::swap(items, spare);
 }
 
 /// One element of a probe switch: an ordinary command of the switch's time or a probe row, by index.
@@ -393,6 +398,28 @@ impl Lane {
     }
 }
 
+/// Buffers the executions of the queries reuse.
+#[derive(Default)]
+struct Scratch {
+    forks: Vec<(usize, Orders, i32)>,
+    paths: Vec<Path>,
+    out: Vec<Lane>,
+    lanes: Vec<Lane>,
+    next: Vec<Lane>,
+    switches: Vec<i32>,
+    subs: Vec<Sub>,
+    alternatives: Vec<Sub>,
+    cells: Vec<Orders>,
+    applied: Vec<Op>,
+    merges: Vec<Step>,
+    steps: [Vec<Step>; 3],
+    values: Vec<NoteValue>,
+    merged_paths: Vec<Path>,
+    merged_lanes: Vec<Lane>,
+    merged_subs: Vec<Sub>,
+    merged_values: Vec<NoteValue>,
+}
+
 /// The [`LuckDpCertifiedResult::rush_transitions`] entry of play frame `ready`. The potentials of a play frame
 /// precede its readiness mark.
 ///
@@ -449,14 +476,14 @@ pub(super) fn undo_floors<'a>(
     Ok(floors)
 }
 
-/// Every owner-local merge of the commands of one time with the probe rows that preserves the filing order of each.
-/// Owners stay in native score order; their independent interleavings form a Cartesian product.
-fn merges(group: &[Op], rows: &[ProbeRow]) -> Result<Vec<Vec<Step>>, Error> {
-    fn interleavings(ops: Range<usize>, rows: Range<usize>, out: &mut Vec<Vec<Step>>, prefix: &mut Vec<Step>) {
+/// Every owner-local merge of the commands of one time with the probe rows that preserves the filing order of each,
+/// into `out` as consecutive merges of `group.len() + rows.len()` steps. Owners stay in native score order; their
+/// independent interleavings form a Cartesian product.
+fn merges(group: &[Op], rows: &[ProbeRow], out: &mut Vec<Step>, buffers: &mut [Vec<Step>; 3]) -> Result<(), Error> {
+    fn interleavings(ops: Range<usize>, rows: Range<usize>, out: &mut Vec<Step>, prefix: &mut Vec<Step>) {
         if ops.is_empty() || rows.is_empty() {
-            let mut merge = prefix.clone();
-            merge.extend(ops.map(Step::Op).chain(rows.map(Step::Row)));
-            out.push(merge);
+            out.extend_from_slice(prefix);
+            out.extend(ops.map(Step::Op).chain(rows.map(Step::Row)));
             return;
         }
         prefix.push(Step::Op(ops.start));
@@ -477,7 +504,9 @@ fn merges(group: &[Op], rows: &[ProbeRow]) -> Result<Vec<Vec<Step>>, Error> {
         }
         Some(count)
     }
-    let mut merged = vec![Vec::with_capacity(group.len() + rows.len())];
+    let [blocks, spare, prefix] = buffers;
+    out.clear();
+    let (mut count, mut width) = (1usize, 0usize);
     let (mut g, mut r) = (0, 0);
     while g < group.len() || r < rows.len() {
         let owner = match (group.get(g), rows.get(r)) {
@@ -488,25 +517,24 @@ fn merges(group: &[Op], rows: &[ProbeRow]) -> Result<Vec<Vec<Step>>, Error> {
         };
         let ops = g..g + group[g..].partition_point(|op| op.owner == owner);
         let probes = r..r + rows[r..].partition_point(|row| row.owner == owner);
-        let count = choose(ops.len(), probes.len()).ok_or_else(capacity)?;
-        if merged.len().checked_mul(count).is_none_or(|total| total > MAX_MERGES) {
-            return Err(capacity());
+        let blocks_count = choose(ops.len(), probes.len()).ok_or_else(capacity)?;
+        count = count.checked_mul(blocks_count).filter(|&total| total <= MAX_MERGES).ok_or_else(capacity)?;
+        let block = ops.len() + probes.len();
+        blocks.clear();
+        prefix.clear();
+        interleavings(ops.clone(), probes.clone(), blocks, prefix);
+        spare.clear();
+        for merge in 0..count / blocks_count {
+            for index in 0..blocks_count {
+                spare.extend_from_slice(&out[merge * width..(merge + 1) * width]);
+                spare.extend_from_slice(&blocks[index * block..(index + 1) * block]);
+            }
         }
-        let mut blocks = Vec::with_capacity(count);
-        interleavings(ops.clone(), probes.clone(), &mut blocks, &mut Vec::new());
-        merged = merged
-            .iter()
-            .flat_map(|prefix| {
-                blocks.iter().map(move |block| {
-                    let mut merge = prefix.clone();
-                    merge.extend_from_slice(block);
-                    merge
-                })
-            })
-            .collect();
+        std::mem::swap(out, spare);
+        width += block;
         (g, r) = (ops.end, probes.end);
     }
-    Ok(merged)
+    Ok(())
 }
 
 /// The native factor histories of every lottery path through the recorder's command and query schedule, in each of
@@ -534,6 +562,7 @@ pub(super) struct ExactReplay {
     firsts: Vec<(i32, Orders)>,
     /// The note executions of the current query.
     observed: Vec<(usize, NoteValue)>,
+    scratch: Scratch,
     pub peak_paths: usize,
     /// Histories executed by queries, the score frames they undid and executed, and the queries that executed no
     /// frame.
@@ -599,6 +628,7 @@ impl ExactReplay {
             queries: 0,
             firsts: Vec::new(),
             observed: Vec::new(),
+            scratch: Scratch::default(),
             peak_paths: 1,
             runs: 0,
             undone_frames: 0,
@@ -767,7 +797,7 @@ impl ExactReplay {
 
     /// Paths with the same schedule ahead merge.
     fn settle(&mut self) -> Result<(), Error> {
-        merge_equal(&mut self.paths, Path::schedule);
+        merge_equal(&mut self.paths, &mut self.scratch.merged_paths, Path::schedule);
         if self.paths.len() > MAX_PATHS * self.lanes {
             return Err(capacity());
         }
@@ -853,8 +883,10 @@ impl ExactReplay {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
+        let mut scratch = std::mem::take(&mut self.scratch);
         // (path, orders, first frame executed): the orders of a path rewound to the same frame, path by path.
-        let mut forks: Vec<(usize, Orders, i32)> = Vec::with_capacity(self.paths.len());
+        let mut forks = std::mem::take(&mut scratch.forks);
+        forks.clear();
         for (index, path) in self.paths.iter().enumerate() {
             let at = forks.len();
             for &(filing, orders) in filings {
@@ -880,12 +912,15 @@ impl ExactReplay {
         }
         let mut observed = std::mem::take(&mut self.observed);
         observed.clear();
-        let mut next = Vec::with_capacity(forks.len());
-        let mut lanes = Vec::new();
-        let mut forks = forks.as_slice();
-        for (index, mut path) in std::mem::take(&mut self.paths).into_iter().enumerate() {
-            let (own, rest) = forks.split_at(forks.partition_point(|fork| fork.0 == index));
-            forks = rest;
+        let mut next = std::mem::take(&mut scratch.paths);
+        next.clear();
+        let mut lanes = std::mem::take(&mut scratch.out);
+        lanes.clear();
+        let mut old = std::mem::take(&mut self.paths);
+        let mut pending = forks.as_slice();
+        for (index, mut path) in old.drain(..).enumerate() {
+            let (own, rest) = pending.split_at(pending.partition_point(|fork| fork.0 == index));
+            pending = rest;
             for (fork, &(_, orders, first)) in own.iter().enumerate() {
                 if first < self.base {
                     return Err(refuse("a query undoes a frame below the retained history"));
@@ -904,7 +939,7 @@ impl ExactReplay {
                         sums: Vec::new(),
                     });
                 } else {
-                    self.run(&path, orders, first, to, combos, &mut observed, &mut lanes)?;
+                    self.run(&path, orders, first, to, combos, &mut observed, &mut lanes, &mut scratch)?;
                 }
                 // The path's last fork takes over its records.
                 let last_fork = fork + 1 == own.len();
@@ -946,8 +981,8 @@ impl ExactReplay {
         }
         // The executions of each note replace the values of its executing orders. An order with a path that
         // started after the note's frame keeps the values of its previous execution too.
-        observed.sort_by_key(|&(note, _)| note);
-        let mut values = Vec::new();
+        observed.sort_unstable_by_key(|&(note, _)| note);
+        let mut values = std::mem::take(&mut scratch.values);
         let mut at = 0;
         while at < observed.len() {
             let index = observed[at].0;
@@ -968,7 +1003,7 @@ impl ExactReplay {
                     .filter(|old| old.orders & carried != 0)
                     .map(|old| NoteValue { orders: old.orders & carried, ..*old }),
             );
-            merge_equal(&mut values, |a, b| (a.class, a.combo).cmp(&(b.class, b.combo)));
+            merge_equal(&mut values, &mut scratch.merged_values, |a, b| (a.class, a.combo).cmp(&(b.class, b.combo)));
             if values.len() > MAX_NOTE_VALUES * self.lanes {
                 return Err(capacity());
             }
@@ -976,6 +1011,11 @@ impl ExactReplay {
             note.revision += 1;
             at = end;
         }
+        scratch.values = values;
+        scratch.forks = forks;
+        scratch.out = lanes;
+        scratch.paths = old;
+        self.scratch = scratch;
         self.observed = observed;
         self.base = floor;
         self.paths = next;
@@ -994,6 +1034,7 @@ impl ExactReplay {
         combos: &FxHashMap<(usize, usize), (f32, f32)>,
         observed: &mut Vec<(usize, NoteValue)>,
         out: &mut Vec<Lane>,
+        scratch: &mut Scratch,
     ) -> Result<(), Error> {
         let (mut low, mut high, mut class) = (path.low, path.high, path.class);
         for frame in (first..=self.prev).rev() {
@@ -1008,44 +1049,56 @@ impl ExactReplay {
             finite([&low, &high])?;
             class = start;
         }
-        let mut lanes = vec![Lane { orders, class, low, high, starts: Vec::new(), sums: Vec::new() }];
-        let mut switches = Vec::new();
+        let frames = (to + 1 - first).max(0) as usize;
+        let (mut lanes, mut next) = (std::mem::take(&mut scratch.lanes), std::mem::take(&mut scratch.next));
+        lanes.clear();
+        lanes.push(Lane {
+            orders,
+            class,
+            low,
+            high,
+            starts: Vec::with_capacity(frames),
+            sums: Vec::with_capacity(frames),
+        });
         for frame in first..=to {
-            switches.clear();
-            switches.extend(path.switches.iter().filter(|&&(f, _)| f == frame).map(|&(_, time)| time));
-            switches.sort_unstable();
-            let mut next = Vec::with_capacity(lanes.len());
-            for lane in lanes {
-                self.execute(frame as usize, lane, &switches, combos, observed, &mut next)?;
+            scratch.switches.clear();
+            scratch.switches.extend(path.switches.iter().filter(|&&(f, _)| f == frame).map(|&(_, time)| time));
+            scratch.switches.sort_unstable();
+            next.clear();
+            for lane in lanes.drain(..) {
+                self.execute(frame as usize, lane, combos, observed, &mut next, scratch)?;
             }
-            merge_equal(&mut next, Lane::order);
+            merge_equal(&mut next, &mut scratch.merged_lanes, Lane::order);
             if next.len() > MAX_PATHS * self.lanes {
                 return Err(capacity());
             }
-            lanes = next;
+            std::mem::swap(&mut lanes, &mut next);
         }
-        out.extend(lanes);
+        out.append(&mut lanes);
+        (scratch.lanes, scratch.next) = (lanes, next);
         Ok(())
     }
 
+    /// Executes score frame `frame` for `lane`, with the probe switches of `scratch.switches`.
     fn execute(
         &self,
         frame: usize,
         lane: Lane,
-        switches: &[i32],
         combos: &FxHashMap<(usize, usize), (f32, f32)>,
         observed: &mut Vec<(usize, NoteValue)>,
         out: &mut Vec<Lane>,
+        scratch: &mut Scratch,
     ) -> Result<(), Error> {
         let entry = self.frames.get(frame).ok_or_else(|| Error::Input("score frame outside the calculator".into()))?;
         let (ops, notes) = (&entry.ops, &entry.notes);
         let start = lane.class;
-        let mut subs =
-            vec![Sub { orders: lane.orders, class: lane.class, low: lane.low, high: lane.high, sum: [0f32; FIELDS] }];
+        let mut subs = std::mem::take(&mut scratch.subs);
+        subs.clear();
+        subs.push(Sub { orders: lane.orders, class: lane.class, low: lane.low, high: lane.high, sum: [0f32; FIELDS] });
         let (mut op, mut switch, mut note) = (0, 0, 0);
         loop {
             let op_time = ops.get(op).map(|o| o.time);
-            let switch_time = switches.get(switch).copied();
+            let switch_time = scratch.switches.get(switch).copied();
             let factor_time = match (op_time, switch_time) {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),
@@ -1055,7 +1108,7 @@ impl ExactReplay {
                 (Some(t), n) if n.is_none_or(|n| n >= t) => {
                     if switch_time == Some(t) {
                         let end = ops[op..].partition_point(|o| o.time == t);
-                        subs = self.switch(&subs, &ops[op..op + end])?;
+                        self.switch(&mut subs, &ops[op..op + end], scratch)?;
                         op += end;
                         switch += 1;
                     } else {
@@ -1080,7 +1133,7 @@ impl ExactReplay {
                         }
                         // A command of some orders may give them the state of the others.
                         if changed && subs.len() > 1 {
-                            merge_equal(&mut subs, Sub::order);
+                            merge_equal(&mut subs, &mut scratch.merged_subs, Sub::order);
                         }
                         op += 1;
                     }
@@ -1104,26 +1157,30 @@ impl ExactReplay {
         // The last alternative takes over the lane's records.
         let count = subs.len();
         let (mut starts, mut sums) = (lane.starts, lane.sums);
-        for (index, sub) in subs.into_iter().enumerate() {
+        for (index, sub) in subs.drain(..).enumerate() {
             let (mut starts, mut sums) = if index + 1 == count {
                 (std::mem::take(&mut starts), std::mem::take(&mut sums))
             } else {
-                (starts.clone(), sums.clone())
+                let mut copy = (Vec::with_capacity(starts.capacity()), Vec::with_capacity(sums.capacity()));
+                copy.0.extend_from_slice(&starts);
+                copy.1.extend_from_slice(&sums);
+                copy
             };
             starts.push(start);
             sums.push(sub.sum.map(f32::to_bits));
             out.push(Lane { orders: sub.orders, class: sub.class, low: sub.low, high: sub.high, starts, sums });
         }
+        scratch.subs = subs;
         Ok(())
     }
 
     /// A probe switch among the ordinary commands `group` of its time: every owner-local merge of the commands with
-    /// the probe rows of each order, which flips the probe class.
-    fn switch(&self, subs: &[Sub], group: &[Op]) -> Result<Vec<Sub>, Error> {
-        let mut next = Vec::with_capacity(subs.len() * 2);
-        let mut cells = Vec::new();
-        let mut applied = Vec::new();
-        for sub in subs {
+    /// the probe rows of each order, which flips the probe class of each alternative of `subs`.
+    fn switch(&self, subs: &mut Vec<Sub>, group: &[Op], scratch: &mut Scratch) -> Result<(), Error> {
+        let mut next = std::mem::take(&mut scratch.alternatives);
+        next.clear();
+        let Scratch { cells, applied, merges: steps, steps: buffers, .. } = scratch;
+        for sub in subs.iter() {
             let sign = if sub.class == 0 { 1f32 } else { -1f32 };
             for (config, rows) in &self.configs {
                 // Orders with the same rows and the same commands of this time.
@@ -1133,15 +1190,18 @@ impl ExactReplay {
                     continue;
                 }
                 for command in group {
-                    refine(&mut cells, command.orders);
+                    refine(cells, command.orders);
                 }
-                for &cell in &cells {
+                for &cell in cells.iter() {
                     // Commands of other orders change nothing here and need no place among the rows.
                     applied.clear();
                     applied.extend(group.iter().filter(|command| command.orders & cell != 0).copied());
-                    for merge in merges(&applied, rows)? {
+                    merges(applied, rows, steps, buffers)?;
+                    let width = applied.len() + rows.len();
+                    let count = steps.len().checked_div(width).unwrap_or(1);
+                    for merge in 0..count {
                         let mut alternative = Sub { orders: cell, ..*sub };
-                        for step in merge {
+                        for &step in &steps[merge * width..(merge + 1) * width] {
                             match step {
                                 Step::Op(i) => applied[i].apply(&mut alternative),
                                 Step::Row(r) => apply_probe(sign * rows[r].value, &mut alternative),
@@ -1154,10 +1214,12 @@ impl ExactReplay {
                 }
             }
         }
-        merge_equal(&mut next, Sub::order);
+        merge_equal(&mut next, &mut scratch.merged_subs, Sub::order);
         if next.len() > MAX_PATHS * self.lanes {
             return Err(capacity());
         }
-        Ok(next)
+        std::mem::swap(subs, &mut next);
+        scratch.alternatives = next;
+        Ok(())
     }
 }
