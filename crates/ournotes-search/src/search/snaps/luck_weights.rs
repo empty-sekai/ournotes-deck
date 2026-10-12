@@ -7,6 +7,7 @@
 //! expected score by `luck (1 + a) + probe_luck r` with `luck >= E[L]` and `probe_luck >= E[L probe]`.
 use std::sync::Arc;
 
+use ournotes_sim::live::certified::ProbabilityMass;
 use ournotes_sim::live::full::LuckDpCertifiedResult;
 
 use super::Window;
@@ -21,6 +22,17 @@ const RUSH: [bool; 4] = [false, false, true, true];
 /// The certified laws that cover every team the bound describes, in every order.
 pub(crate) struct LuckLaws<'l> {
     laws: &'l [Arc<LuckDpCertifiedResult>],
+}
+
+/// Lower and upper class masses.
+type Hull = ([f64; 4], [f64; 4]);
+
+/// The class mass enclosures of a set of note times, over every law and over the laws with a probe holder (see
+/// [`LuckLaws::hulls`]).
+pub(crate) struct LawHulls {
+    times: Vec<i32>,
+    all: Vec<Option<Hull>>,
+    probed: Vec<Option<Hull>>,
 }
 
 /// The play frames whose skill boundary turns the direct-probe class on, over the laws. A direct-Rush row that
@@ -85,51 +97,59 @@ impl<'l> LuckLaws<'l> {
         ProbeStarts { most, expected: expected.min(most), luck: 1.0 }
     }
 
-    /// The class mass enclosure of a note at `time_ms`, over every reading of the note, of the laws `held` keeps:
-    /// the state its time keeps once its lotteries are filed, and the state a score query of the first judging
-    /// frame at or after its time reads before that frame's lottery. None when `held` keeps no law.
-    fn hull(&self, time_ms: i32, held: impl Fn(&LuckDpCertifiedResult) -> bool) -> Option<([f64; 4], [f64; 4])> {
-        let (mut lo, mut hi) = ([1f64; 4], [0f64; 4]);
-        let mut any = false;
-        let mut take = |masses: &[ournotes_sim::live::certified::ProbabilityMass; 4]| {
+    /// The class mass enclosures of notes at `times`, over every law and over the laws with a probe holder. A note
+    /// at a time reads, in each law, the state its time keeps once its lotteries are filed, and the state a score
+    /// query of the first judging frame at or after its time reads before that frame's lottery. Each law is read in
+    /// one pass over the times in order.
+    pub(crate) fn hulls(&self, times: &[i32]) -> LawHulls {
+        let mut times = times.to_vec();
+        times.sort_unstable();
+        times.dedup();
+        let (mut all, mut probed) = (vec![None; times.len()], vec![None; times.len()]);
+        let before = [ProbabilityMass::ONE, ProbabilityMass::ZERO, ProbabilityMass::ZERO, ProbabilityMass::ZERO];
+        let take = |hull: &mut Option<Hull>, masses: &[ProbabilityMass; 4]| {
+            let (lo, hi) = hull.get_or_insert(([1f64; 4], [0f64; 4]));
             for (b, mass) in masses.iter().enumerate() {
                 let interval = mass.interval();
                 lo[b] = lo[b].min(interval.lower());
                 hi[b] = hi[b].max(interval.upper());
             }
         };
-        for law in self.laws.iter().filter(|law| held(law)) {
-            any = true;
-            let index = law.steps.partition_point(|(time, _)| *time <= time_ms);
-            match index.checked_sub(1) {
-                Some(index) => take(&law.steps[index].1),
-                None => take(&[
-                    ournotes_sim::live::certified::ProbabilityMass::ONE,
-                    ournotes_sim::live::certified::ProbabilityMass::ZERO,
-                    ournotes_sim::live::certified::ProbabilityMass::ZERO,
-                    ournotes_sim::live::certified::ProbabilityMass::ZERO,
-                ]),
-            }
-            let index = law.frame_queries.partition_point(|(time, _)| *time < time_ms);
-            if let Some((_, reads)) = law.frame_queries.get(index) {
-                for masses in reads {
-                    take(masses);
+        for law in self.laws {
+            let held = law.probes.iter().any(|&p| p);
+            let (mut step, mut query) = (0, 0);
+            for (k, &time) in times.iter().enumerate() {
+                while law.steps.get(step).is_some_and(|(at, _)| *at <= time) {
+                    step += 1;
+                }
+                while law.frame_queries.get(query).is_some_and(|(at, _)| *at < time) {
+                    query += 1;
+                }
+                let masses = step.checked_sub(1).map_or(&before, |index| &law.steps[index].1);
+                let reads = law.frame_queries.get(query).map(|(_, reads)| reads);
+                for hull in std::iter::once(&mut all[k]).chain(held.then_some(&mut probed[k])) {
+                    take(hull, masses);
+                    reads.into_iter().flatten().for_each(|read| take(hull, read));
                 }
             }
         }
-        any.then_some((lo, hi))
+        LawHulls { times, all, probed }
     }
+}
 
-    /// `(luck, probe_luck)` of a note at `time_ms` whose luck factor in a Rush is `l >= 1`. A team whose law has no
-    /// probe holder runs no direct-Rush score up, so `probe_luck` reads the laws with one; without any it is `luck`.
+impl LawHulls {
+    /// `(luck, probe_luck)` of a note at `time_ms`, one of the times swept, whose luck factor in a Rush is `l >= 1`.
+    /// A team whose law has no probe holder runs no direct-Rush score up, so `probe_luck` reads the laws with one;
+    /// without any it is `luck`.
     pub(crate) fn entry(&self, time_ms: i32, l: f64) -> (f64, f64) {
+        let k = self.times.binary_search(&time_ms).expect("a note time the laws were swept at");
         let factor = RUSH.map(|rush| if rush { l } else { 1.0 });
-        let luck = match self.hull(time_ms, |_| true) {
+        let luck = match self.all[k] {
             Some((lo, hi)) => lp_max(lo, hi, factor).min(l),
             None => l,
         };
         let probe_factor = std::array::from_fn(|b| if PROBE[b] { factor[b] } else { 0.0 });
-        match self.hull(time_ms, |law| law.probes.iter().any(|&p| p)) {
+        match self.probed[k] {
             Some((lo, hi)) => (luck, lp_max(lo, hi, probe_factor).min(luck)),
             None => (luck, luck),
         }
@@ -257,7 +277,7 @@ mod tests {
         let held = law([5, 1, 1, 3], true, vec![0b10, 0b01, 0b10], 1.25);
         let bare = law([2, 0, 8, 0], false, vec![0b10; 7], 3.0);
         let both = [held.clone(), bare.clone()];
-        let (luck, probe_luck) = LuckLaws::new(&both).unwrap().entry(10, 2.0);
+        let (luck, probe_luck) = LuckLaws::new(&both).unwrap().hulls(&[10]).entry(10, 2.0);
         // the larger expected luck factor is the bare law's 0.2 + 2 * 0.8
         assert!((luck - 1.8).abs() < 1e-9, "{luck}");
         // the probe classes of the law with a holder: 0.1 + 2 * 0.3
@@ -266,12 +286,12 @@ mod tests {
         assert_eq!((starts.most, starts.expected, starts.luck), (2.0, 1.25, 1.0));
         // no law with a holder: the probe weight is the luck weight and no start counts
         let bare = [bare];
-        let (luck, probe_luck) = LuckLaws::new(&bare).unwrap().entry(10, 2.0);
+        let (luck, probe_luck) = LuckLaws::new(&bare).unwrap().hulls(&[10]).entry(10, 2.0);
         assert_eq!(luck, probe_luck);
         let starts = LuckLaws::new(&bare).unwrap().probe_starts();
         assert_eq!((starts.most, starts.expected), (0.0, 0.0));
         // before the first step the lottery has not run
-        let (luck, probe_luck) = LuckLaws::new(&[held]).unwrap().entry(-1, 2.0);
+        let (luck, probe_luck) = LuckLaws::new(&[held]).unwrap().hulls(&[-1, 10]).entry(-1, 2.0);
         assert!((1.0..1.0 + 1e-9).contains(&luck) && (0.0..1e-9).contains(&probe_luck), "{luck} {probe_luck}");
     }
 
