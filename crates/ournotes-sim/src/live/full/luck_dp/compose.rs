@@ -226,26 +226,26 @@ impl LotteryKinds<'_> {
         let anywhere = kinds.map(|kind| self.entries[kind.index()].anywhere);
         let mut laws: Vec<std::sync::Arc<LuckDpCertifiedResult>> = Vec::with_capacity(orders.len());
         // The placements and the composition keys met, each with the index of its first order.
-        let mut placements = Vec::<([(u32, usize); POSITIONS], usize)>::new();
-        let mut keys = Vec::<(Vec<u64>, usize)>::new();
+        let mut placements = FxHashMap::<[(u32, usize); POSITIONS], usize>::default();
+        let mut keys = FxHashMap::<Vec<u64>, usize>::default();
         for order in orders {
             let mut placed: [(u32, usize); POSITIONS] = std::array::from_fn(|position| {
                 let member = order[position];
                 (kinds[member].0, if anywhere[member] { POSITIONS } else { position })
             });
             placed.sort_unstable();
-            if let Some(&(_, index)) = placements.iter().find(|(known, _)| *known == placed) {
+            if let Some(&index) = placements.get(&placed) {
                 laws.push(laws[index].clone());
                 continue;
             }
-            placements.push((placed, laws.len()));
+            placements.insert(placed, laws.len());
             let composition =
                 self.composition(live, std::array::from_fn(|position| (kinds[order[position]], position)));
-            if let Some(&(_, index)) = keys.iter().find(|(known, _)| *known == composition.key) {
+            if let Some(&index) = keys.get(&composition.key) {
                 laws.push(laws[index].clone());
                 continue;
             }
-            keys.push((composition.key.clone(), laws.len()));
+            keys.insert(composition.key.clone(), laws.len());
             self.stats.law_lookups += 1;
             if let Some(law) = self.laws.entries.get(&composition.key[..]) {
                 self.stats.law_hits += 1;
