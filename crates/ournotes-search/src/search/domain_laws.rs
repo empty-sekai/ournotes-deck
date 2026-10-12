@@ -307,8 +307,9 @@ fn domain_laws(
     stats.formations += found.formations.len();
     let orders = crate::search::uniform::all_orders();
     let mut laws: Vec<LuckLaw> = Vec::new();
-    // The laws held, by address.
-    let mut held = std::collections::HashSet::new();
+    // The laws held, by address, and the contributions of the orders whose laws they hold.
+    let mut held = ournotes_sim::num::FxHashSet::default();
+    let mut seen = ournotes_sim::num::FxHashSet::default();
     for formation in &found.formations {
         if cancelled() {
             return Err("the search stopped".into());
@@ -317,8 +318,9 @@ fn domain_laws(
             let (i, j) = formation[k];
             kinds[i][j.map_or(0, |j| j + 1)]
         });
-        let composed =
-            lottery.formation_laws(&live, formation_kinds, &orders, curves).map_err(|error| error.to_string())?;
+        let composed = lottery
+            .formation_laws(&live, formation_kinds, &orders, curves, &mut seen)
+            .map_err(|error| error.to_string())?;
         let found = match composed {
             Some(found) => found,
             None => {

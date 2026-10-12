@@ -14,7 +14,7 @@
 use super::gekisou::{LotteryMachine, LuckScore, M_LUCK, S_COMPLETE, S_END, S_FINISH, S_PLAYING, S_START, exact_sums};
 use super::*;
 use crate::live::certified::{F64Interval, ProbabilityMass};
-use crate::num::{FxHashMap, floor_to_i32};
+use crate::num::{FxHashMap, FxHashSet, floor_to_i32};
 
 mod cache;
 mod compose;

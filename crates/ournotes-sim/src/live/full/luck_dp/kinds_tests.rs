@@ -401,3 +401,50 @@ fn formations_that_differ_only_in_their_score_probes_share_one_propagation() {
         assert_eq!(curve_words(law), curve_words(&native), "{deck:?}");
     }
 }
+
+#[test]
+fn formations_read_with_one_seen_set_give_each_law_of_their_orders_once() {
+    let (master, notes, params, setup, play, delta) = kinds_fixture();
+    let skills = luck_skills(&master).unwrap();
+    let live = lottery_live(&master, &skills, (&notes, params, &setup, &play, &delta));
+    let mut kinds = LotteryKinds::new(&master, usize::MAX);
+    let mut curves = LuckDpCache::new(usize::MAX);
+    let first = [
+        holding(Some(2), &[31, 96]),
+        holding(Some(3), &[66, 96]),
+        holding(Some(1), &[66]),
+        holding(None, &[66]),
+        holding(None, &[]),
+    ];
+    let second = [
+        holding(Some(2), &[31, 96]),
+        holding(Some(2), &[31, 96]),
+        holding(Some(1), &[66]),
+        holding(None, &[66]),
+        holding(Some(3), &[66, 96]),
+    ];
+    let orders = [[0, 1, 2, 3, 4], [1, 0, 2, 3, 4], [2, 3, 4, 0, 1], [4, 3, 2, 1, 0], [0, 2, 1, 4, 3]];
+    let kind = |kinds: &mut LotteryKinds<'_>, performer: &Performer| match kinds.role(&live, performer) {
+        LotteryRole::Kind(kind) => kind,
+        LotteryRole::Breaks(why) => panic!("no kind: {why:?}"),
+    };
+    let mut seen = crate::num::FxHashSet::default();
+    let mut read = Vec::new();
+    for deck in [&first, &second] {
+        let formation = std::array::from_fn(|k| kind(&mut kinds, &deck[k]));
+        read.extend(kinds.formation_laws(&live, formation, &orders, &mut curves, &mut seen).unwrap().unwrap());
+    }
+    // A formation read again reads no new law.
+    let again = std::array::from_fn(|k| kind(&mut kinds, &first[k]));
+    assert!(kinds.formation_laws(&live, again, &orders, &mut curves, &mut seen).unwrap().unwrap().is_empty());
+    let mut all = Vec::new();
+    for deck in [&first, &second] {
+        all.extend(kinds.order_laws(&live, deck, &orders, &mut curves).unwrap().unwrap());
+    }
+    let addresses = |laws: &[std::sync::Arc<LuckDpCertifiedResult>]| {
+        laws.iter().map(std::sync::Arc::as_ptr).collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(addresses(&read).len(), read.len());
+    assert_eq!(addresses(&read), addresses(&all));
+    assert!(read.len() >= 2, "{}", read.len());
+}

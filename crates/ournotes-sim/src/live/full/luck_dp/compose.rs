@@ -295,14 +295,17 @@ impl LotteryKinds<'_> {
         self.kind_laws(live, kinds, orders, curves)
     }
 
-    /// [`Self::order_laws`] of a formation of performers with `kinds` in `live`, whose kinds these are
-    /// ([`Self::role`]).
+    /// The laws of `orders` of a formation of performers with `kinds` in `live`, whose kinds these are
+    /// ([`Self::role`]), but for the orders whose contributions `seen` holds: each law once, and the contributions of
+    /// the orders read join `seen`. None as [`Self::order_laws`], `seen` then unchanged. Orders with the same
+    /// contributions share their law, so the laws of formations read with one `seen` are those of all their orders.
     pub fn formation_laws(
         &mut self,
         live: &LotteryLive<'_>,
         kinds: [LotteryKind; POSITIONS],
         orders: &[[usize; POSITIONS]],
         curves: &mut LuckDpCache,
+        seen: &mut FxHashSet<[u32; POSITIONS]>,
     ) -> Result<Option<Vec<std::sync::Arc<LuckDpCertifiedResult>>>, Error> {
         if !self.live.as_ref().is_some_and(|held| held.is(live)) {
             return Err(Error::Input("lottery kinds are read in the live they were found in".into()));
@@ -310,7 +313,30 @@ impl LotteryKinds<'_> {
         if kinds.iter().any(|kind| kind.index() >= self.entries.len()) {
             return Err(Error::Input("a lottery kind of another live".into()));
         }
-        self.kind_laws(live, kinds, orders, curves)
+        if !self.composes(kinds, orders)? {
+            return Ok(None);
+        }
+        let mut fresh: Vec<(OrderIds, usize)> =
+            orders.iter().enumerate().map(|(o, order)| (self.order_ids(kinds, order), o)).collect();
+        fresh.sort_unstable();
+        fresh.dedup_by_key(|(ids, _)| *ids);
+        fresh.retain(|(ids, _)| !seen.contains(ids));
+        let mut laws: Vec<std::sync::Arc<LuckDpCertifiedResult>> = Vec::with_capacity(fresh.len());
+        for &(ids, o) in &fresh {
+            match self.order_law(live, kinds, &orders[o], ids, curves)? {
+                Some(law) => {
+                    if !laws.iter().any(|held| std::sync::Arc::ptr_eq(held, &law)) {
+                        laws.push(law);
+                    }
+                }
+                None => {
+                    self.stats.uncomposed += 1;
+                    return Ok(None);
+                }
+            }
+        }
+        seen.extend(fresh.iter().map(|&(ids, _)| ids));
+        Ok(Some(laws))
     }
 
     fn kind_laws(
@@ -320,82 +346,20 @@ impl LotteryKinds<'_> {
         orders: &[[usize; POSITIONS]],
         curves: &mut LuckDpCache,
     ) -> Result<Option<Vec<std::sync::Arc<LuckDpCertifiedResult>>>, Error> {
-        if orders.iter().flatten().any(|&member| member >= POSITIONS) {
-            return Err(Error::Input("an order is a permutation of the five performers".into()));
-        }
-        self.stats.teams += 1;
-        let held =
-            |flag: fn(&Conversions) -> bool| kinds.iter().any(|kind| flag(&self.entries[kind.index()].conversions));
-        if held(|conversions| conversions.relabels) && held(|conversions| conversions.read_relabels) {
-            self.stats.relabel_conflicts += 1;
+        if !self.composes(kinds, orders)? {
             return Ok(None);
         }
         let mut laws: Vec<std::sync::Arc<LuckDpCertifiedResult>> = Vec::with_capacity(orders.len());
         // The contributions met in this formation, with the index of their first order.
         let mut met = FxHashMap::<OrderIds, usize>::default();
         for order in orders {
-            let mut ids: OrderIds =
-                std::array::from_fn(|position| self.entries[kinds[order[position]].index()].ids[position]);
-            ids.sort_unstable();
+            let ids = self.order_ids(kinds, order);
             if let Some(&index) = met.get(&ids) {
                 laws.push(laws[index].clone());
                 continue;
             }
             met.insert(ids, laws.len());
-            self.stats.law_lookups += 1;
-            let composed = match self.laws.orders.get(&ids) {
-                Some(composed) => {
-                    self.stats.law_hits += 1;
-                    composed.clone()
-                }
-                None => {
-                    let composition =
-                        self.composition(live, std::array::from_fn(|position| (kinds[order[position]], position)));
-                    let composed = match self.laws.entries.get(&composition.key[..]) {
-                        Some(law) => {
-                            self.stats.law_hits += 1;
-                            Some(law.clone())
-                        }
-                        None => {
-                            let (key, unprobed) = (composition.key.clone(), composition.unprobed_key());
-                            let law = match self.laws.entries.get(&unprobed[..]) {
-                                Some(propagated) => {
-                                    self.stats.probe_variants += 1;
-                                    let probes = composition.probes;
-                                    Some(std::sync::Arc::new(LuckDpCertifiedResult {
-                                        probes,
-                                        ..(**propagated).clone()
-                                    }))
-                                }
-                                None => match self.transcript(composition) {
-                                    None => None,
-                                    Some(transcript) => {
-                                        self.stats.composed += 1;
-                                        let law = curves
-                                            .propagated(&transcript, &mut || false)?
-                                            .expect("an uncancelled propagation");
-                                        self.stats.composed_transitions += law.transitions;
-                                        self.stats.composed_peak_states =
-                                            self.stats.composed_peak_states.max(law.peak_states);
-                                        self.laws.insert(unprobed, law.clone(), &mut self.stats);
-                                        Some(law)
-                                    }
-                                },
-                            };
-                            match law {
-                                Some(law) if !self.laws.insert(key, law.clone(), &mut self.stats) => {
-                                    laws.push(law);
-                                    continue;
-                                }
-                                law => law,
-                            }
-                        }
-                    };
-                    self.laws.alias(ids, composed.clone(), &mut self.stats);
-                    composed
-                }
-            };
-            match composed {
+            match self.order_law(live, kinds, order, ids, curves)? {
                 Some(law) => laws.push(law),
                 None => {
                     self.stats.uncomposed += 1;
@@ -404,6 +368,81 @@ impl LotteryKinds<'_> {
             }
         }
         Ok(Some(laws))
+    }
+
+    /// Whether the orders of a formation with `kinds` may compose (counting the formation): false when conversions
+    /// that turn a Perfect and a Just into one another meet conversions that read such a change.
+    fn composes(&mut self, kinds: [LotteryKind; POSITIONS], orders: &[[usize; POSITIONS]]) -> Result<bool, Error> {
+        if orders.iter().flatten().any(|&member| member >= POSITIONS) {
+            return Err(Error::Input("an order is a permutation of the five performers".into()));
+        }
+        self.stats.teams += 1;
+        let held =
+            |flag: fn(&Conversions) -> bool| kinds.iter().any(|kind| flag(&self.entries[kind.index()].conversions));
+        if held(|conversions| conversions.relabels) && held(|conversions| conversions.read_relabels) {
+            self.stats.relabel_conflicts += 1;
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    /// The contributions of `order` of a formation with `kinds`, sorted.
+    fn order_ids(&self, kinds: [LotteryKind; POSITIONS], order: &[usize; POSITIONS]) -> OrderIds {
+        let mut ids: OrderIds =
+            std::array::from_fn(|position| self.entries[kinds[order[position]].index()].ids[position]);
+        ids.sort_unstable();
+        ids
+    }
+
+    /// The law the contributions `ids` of `order` of a formation with `kinds` compose to, or none.
+    fn order_law(
+        &mut self,
+        live: &LotteryLive<'_>,
+        kinds: [LotteryKind; POSITIONS],
+        order: &[usize; POSITIONS],
+        ids: OrderIds,
+        curves: &mut LuckDpCache,
+    ) -> Result<Composed, Error> {
+        self.stats.law_lookups += 1;
+        if let Some(composed) = self.laws.orders.get(&ids) {
+            self.stats.law_hits += 1;
+            return Ok(composed.clone());
+        }
+        let composition = self.composition(live, std::array::from_fn(|position| (kinds[order[position]], position)));
+        let composed = match self.laws.entries.get(&composition.key[..]) {
+            Some(law) => {
+                self.stats.law_hits += 1;
+                Some(law.clone())
+            }
+            None => {
+                let (key, unprobed) = (composition.key.clone(), composition.unprobed_key());
+                let law = match self.laws.entries.get(&unprobed[..]) {
+                    Some(propagated) => {
+                        self.stats.probe_variants += 1;
+                        let probes = composition.probes;
+                        Some(std::sync::Arc::new(LuckDpCertifiedResult { probes, ..(**propagated).clone() }))
+                    }
+                    None => match self.transcript(composition) {
+                        None => None,
+                        Some(transcript) => {
+                            self.stats.composed += 1;
+                            let law =
+                                curves.propagated(&transcript, &mut || false)?.expect("an uncancelled propagation");
+                            self.stats.composed_transitions += law.transitions;
+                            self.stats.composed_peak_states = self.stats.composed_peak_states.max(law.peak_states);
+                            self.laws.insert(unprobed, law.clone(), &mut self.stats);
+                            Some(law)
+                        }
+                    },
+                };
+                match law {
+                    Some(law) if !self.laws.insert(key, law.clone(), &mut self.stats) => return Ok(Some(law)),
+                    law => law,
+                }
+            }
+        };
+        self.laws.alias(ids, composed.clone(), &mut self.stats);
+        Ok(composed)
     }
 
     /// The composition of the contributions of `(kind, position)` at each position.
