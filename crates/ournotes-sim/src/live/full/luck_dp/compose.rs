@@ -258,7 +258,7 @@ impl LotteryKinds<'_> {
                 return Ok(None);
             };
             self.stats.composed += 1;
-            let law = curves.law_of(&transcript, &mut || false)?.expect("an uncancelled propagation");
+            let law = curves.propagated(&transcript, &mut || false)?.expect("an uncancelled propagation");
             self.stats.composed_transitions += law.transitions;
             self.stats.composed_peak_states = self.stats.composed_peak_states.max(law.peak_states);
             self.laws.insert(key, law.clone(), &mut self.stats);

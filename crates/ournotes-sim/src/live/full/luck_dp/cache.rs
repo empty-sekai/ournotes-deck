@@ -399,6 +399,19 @@ impl LuckDpCache {
                 return Ok(Some(found.clone()));
             }
         }
+        let result = self.propagated(transcript, cancelled)?;
+        if let (Some(key), Some(result)) = (key, &result) {
+            self.insert(key, result.clone());
+        }
+        Ok(result)
+    }
+
+    /// The certified law of a transcript, propagated without a cache lookup and kept by the caller.
+    pub(super) fn propagated(
+        &mut self,
+        transcript: &Transcript<ProbabilityMass>,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<Option<std::sync::Arc<LuckDpCertifiedResult>>, Error> {
         #[cfg(feature = "search-diagnostics")]
         let started = std::time::Instant::now();
         let result = propagate_cancellable(transcript, cancelled);
@@ -418,9 +431,6 @@ impl LuckDpCache {
             peak_states: result.peak_states,
             transitions: result.transitions,
         });
-        if let Some(key) = key {
-            self.insert(key, result.clone());
-        }
         Ok(Some(result))
     }
 

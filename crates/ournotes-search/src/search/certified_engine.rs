@@ -120,8 +120,13 @@ pub(super) struct CertifiedState<'m> {
 /// Key bytes the request's lottery-curve cache may hold.
 pub(super) const LUCK_CURVE_CACHE_BYTES: usize = 32 * 1024 * 1024;
 
+/// Bytes the composed lottery laws of a request may hold with their keys. The joint bounds of a domain hold the laws
+/// of all its teams, so the composed laws they share take little more.
+const LOTTERY_LAW_CACHE_BYTES: usize = 1024 * 1024 * 1024;
+
 impl CertifiedState<'_> {
-    /// `cache_bytes` bounds the keys of the lottery curves, and the composed lottery laws with their keys.
+    /// `cache_bytes` bounds the keys of the lottery curves; the composed lottery laws with their keys take at most
+    /// [`LOTTERY_LAW_CACHE_BYTES`], and none when `cache_bytes` is zero.
     pub(super) fn new(k: usize, cache_bytes: usize) -> Result<Self, Error> {
         Ok(Self {
             frontier: IntervalTopK::new(k)?,
@@ -133,7 +138,7 @@ impl CertifiedState<'_> {
             luck_skills: None,
             luck_curves: ournotes_sim::live::full::LuckDpCache::new(cache_bytes),
             luck_kinds: None,
-            kind_bytes: cache_bytes,
+            kind_bytes: if cache_bytes == 0 { 0 } else { LOTTERY_LAW_CACHE_BYTES },
             law_bounds: super::leaf::LawBounds::default(),
         })
     }

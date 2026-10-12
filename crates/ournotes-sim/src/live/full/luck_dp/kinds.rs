@@ -147,8 +147,8 @@ pub struct LotteryKindStats {
     pub unkinded: u64,
     pub uncomposed: u64,
     pub relabel_conflicts: u64,
-    /// Laws of orders asked, those found held, and the composed transcripts propagated or found in the curve cache,
-    /// with the transitions and the largest state count of their propagations.
+    /// Laws of orders asked, those found held, and the composed transcripts propagated, with the transitions and the
+    /// largest state count of their propagations.
     pub law_lookups: u64,
     pub law_hits: u64,
     pub composed: u64,
