@@ -120,6 +120,85 @@ pub(crate) fn leaves_life_range(master: &Master, performer: &Performer, range: (
     leaves
 }
 
+/// Whether `checker` reads only what is the same in every formation of a live until a judgement of its play is
+/// converted: the declared judgements and the live combo they make, the frame times and the chart's skill events of its
+/// holder's position, the range states, which follow the fevers and the frame times, and its holder, which decides a
+/// fixed answer.
+fn formation_blind(checker: &Checker) -> bool {
+    match checker {
+        Checker::Fixed(_)
+        | Checker::ElapsedTime { .. }
+        | Checker::LiveComboMultiple { .. }
+        | Checker::LiveComboAtLeast(_)
+        | Checker::SameMemberLiveSkill(_)
+        | Checker::NoteJudgementMatch { .. }
+        | Checker::NoteJudgementCount { .. }
+        | Checker::RangeStart { .. }
+        | Checker::RangePlaying { .. }
+        | Checker::RangeComplete
+        | Checker::SnapGekisouStart { .. }
+        | Checker::GkLiveStart(_) => true,
+        Checker::And { items, .. } | Checker::Or(items) => items.iter().all(formation_blind),
+        Checker::Not(inner) => formation_blind(inner),
+        _ => false,
+    }
+}
+
+/// Whether the judgement conversions of `performer` can change a judgement of `play` in a formation: a conversion
+/// effect reads something other than what [`formation_blind`] lets it read or has a cumulative condition, the
+/// performer's life recorder ([`life_recorder`]) cannot be built or run, or it changes a judgement when the performer
+/// plays alone at some position, after blank performers.
+///
+/// Otherwise no formation whose performers all pass this check changes a judgement of the play. Until the first
+/// judgement such a formation changes, its life recorder plays the declared judgements, so each conversion effect of a
+/// performer reads what it reads in the performer's run alone at the same position, and its converter is registered,
+/// counts and is released as it is there. The converter list holds the converters of that performer in the same
+/// order, so the first judgement the formation changes is one the performer changes alone.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn conversions_reach_play(
+    master: &Master,
+    performer: &Performer,
+    notes: &[LiveNote],
+    events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+) -> bool {
+    let converts = |row: &EffectRow| matches!(row.effect_type, 12006 | 13005);
+    let blind = |cumulative: Option<&conditions::Cumulative>, checkers: &[&Option<Checker>]| {
+        cumulative.is_none() && checkers.iter().all(|checker| checker.as_ref().is_none_or(formation_blind))
+    };
+    (0..5).any(|position| {
+        let mut deck = vec![Performer::default(); position];
+        deck.push(performer.clone());
+        let Ok(mut model) = life_recorder(master, &deck, notes, events, params, setup, ranking) else { return true };
+        let live = model.live.iter().flat_map(|skill| &skill.effects).all(|effect| {
+            !converts(&model.rows[effect.row])
+                || blind(effect.cumulative.as_ref(), &[&effect.condition, &effect.release])
+        });
+        let condition =
+            model.cond.iter().all(|skill| {
+                let effects = skill.updater.effects();
+                effects.iter().all(|effect| {
+                    !converts(&model.rows[effect.row])
+                        || blind(effect.cumulative.as_ref(), &[&effect.trigger, &effect.condition, &effect.reset])
+                }) && skill.updater.updaters.iter().all(|updater| {
+                    !converts(&model.rows[effects[updater.effect].row]) || blind(None, &[&updater.release])
+                })
+            });
+        if !(live && condition) || play.frames.len() != delta_times.len() {
+            return true;
+        }
+        play.frames.iter().zip(delta_times).any(|(frame, &delta)| {
+            model.frame_timed(frame.time_ms, &frame.judged, delta).is_err()
+                || model.draws() != 0
+                || model.converted_judgements() != 0
+        })
+    })
+}
+
 /// The life range of the formation `deck` through `play` ([`play_life_range`]) when it holds, for a formation that
 /// changes no judgement of the play.
 pub(crate) fn life_range(master: &Master, deck: &[Performer], play: &LivePlay) -> Option<(i32, i32)> {

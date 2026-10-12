@@ -268,6 +268,8 @@ pub struct DomainLaws {
     pub kinds: usize,
     /// Snaps searched in parts of their own because a member takes no lottery kind with them.
     pub separated_snaps: usize,
+    /// The plan domain's members with each Snap choice that take no lottery kind, by the reason.
+    pub breaks: RoleBreaks,
     /// Domains whose census ran, and those whose bounds weigh the laws read.
     pub censuses: usize,
     pub weighed: usize,
@@ -281,6 +283,21 @@ pub struct DomainLaws {
     pub compile_ms: f64,
     /// Why the last census read no laws, or its bounds did not compile.
     pub unavailable: Option<String>,
+}
+
+/// Performers that take no lottery kind, by the reason (see `ournotes_sim::live::full::LotteryBreak`), with the first
+/// reason given of the kinds that carry one.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleBreaks {
+    pub unsupported: usize,
+    pub converts: usize,
+    pub leaves_life_range: usize,
+    pub reads_life: usize,
+    pub reads_formation: usize,
+    pub interacts: usize,
+    pub first_unsupported: Option<String>,
+    pub first_interacts: Option<String>,
 }
 
 /// Proof status. `upperBound` is a true upper bound of the payoff numerator of every deck the search has not
@@ -743,9 +760,12 @@ pub struct LuckKinds {
     pub teams: u64,
     pub unkinded: u64,
     pub uncomposed: u64,
-    /// Composed laws of distinct orders: held laws found, and transcripts composed.
+    /// Composed laws of distinct orders: held laws found, and transcripts composed with the transitions and the
+    /// largest state count of their propagations.
     pub laws: CacheUse,
     pub composed: u64,
+    pub composed_transitions: u64,
+    pub composed_peak_states: usize,
     /// The most bytes the held laws and their keys took.
     pub peak_law_bytes: usize,
 }
@@ -769,6 +789,8 @@ impl LuckKinds {
                 peak_entries: stats.peak_laws,
             },
             composed: stats.composed,
+            composed_transitions: stats.composed_transitions,
+            composed_peak_states: stats.composed_peak_states,
             peak_law_bytes: stats.peak_law_bytes,
         };
     }

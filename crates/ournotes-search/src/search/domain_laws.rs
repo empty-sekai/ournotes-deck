@@ -22,7 +22,9 @@ use crate::domain::CandidateDomain;
 use crate::search::certified_search::LuckLaw;
 use crate::search::expectation::LiveSetting;
 use crate::search::joint::JointBounds;
-use ournotes_sim::live::full::{LotteryKinds, LotteryLive, LotteryRole, LuckDpCache, LuckSkills, luck_order_laws};
+use ournotes_sim::live::full::{
+    LotteryBreak, LotteryKinds, LotteryLive, LotteryRole, LuckDpCache, LuckSkills, luck_order_laws,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -66,6 +68,31 @@ impl DomainRoles {
             .filter(|&j| self.roles.iter().any(|row| alone(row) && matches!(row[j + 1], LotteryRole::Breaks(_))))
             .map(|j| self.snaps[j])
             .collect()
+    }
+
+    /// The members with each choice that take no kind, by the reason.
+    fn breaks(&self) -> telemetry::RoleBreaks {
+        let mut counts = telemetry::RoleBreaks::default();
+        for why in self.roles.iter().flatten().filter_map(|role| match role {
+            LotteryRole::Breaks(why) => Some(why),
+            LotteryRole::Kind(_) => None,
+        }) {
+            match why {
+                LotteryBreak::Unsupported(text) => {
+                    counts.unsupported += 1;
+                    counts.first_unsupported.get_or_insert_with(|| text.clone());
+                }
+                LotteryBreak::Converts => counts.converts += 1,
+                LotteryBreak::LeavesLifeRange => counts.leaves_life_range += 1,
+                LotteryBreak::ReadsLife => counts.reads_life += 1,
+                LotteryBreak::ReadsFormation => counts.reads_formation += 1,
+                LotteryBreak::Interacts(text) => {
+                    counts.interacts += 1;
+                    counts.first_interacts.get_or_insert_with(|| text.clone());
+                }
+            }
+        }
+        counts
     }
 }
 
@@ -333,6 +360,7 @@ impl Engine<'_, '_> {
         let census = match roles {
             Ok((skills, roles)) => {
                 stats.separated_snaps = roles.breaking_snaps().len();
+                stats.breaks = roles.breaks();
                 Some(LotteryCensus { live, skills, roles })
             }
             Err(why) => {

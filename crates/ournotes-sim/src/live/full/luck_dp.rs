@@ -37,7 +37,7 @@ pub use kinds::{LotteryBreak, LotteryKind, LotteryKindStats, LotteryKinds, Lotte
 use life_recorder::life_recorder;
 pub use life_recorder::luck_has_judgement_conversion;
 pub(crate) use life_recorder::luck_play_converts;
-use life_recorder::{leaves_life_range, life_range, play_life_range};
+use life_recorder::{conversions_reach_play, leaves_life_range, life_range, play_life_range};
 use mass::{Draws, Mass};
 pub(super) use plan::fixed_condition;
 use plan::{Action, Plan, chance, compile, fold_life_conditions, reads_life, unsupported};

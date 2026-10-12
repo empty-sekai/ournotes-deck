@@ -3,7 +3,9 @@ use crate::master::{GekisouSkillEffectRow, SkillRow};
 
 /// The lottery fixture with skills that convert, read or damage the life, read the formation or the holder, or are
 /// refused, and gauge speeds of 0.1 (809) and of 0.5 beside a range-start gauge that a chance gates (810). The life
-/// starts at 1000 and its play deals no note damage.
+/// starts at 1000 and its play, all Perfect, deals no note damage. The Gekisou support skills 800, 812 and 813 convert
+/// a Perfect to a Great once their range starts: 800 always, 812 for a holder of mission 2, and 813 for such a holder
+/// while it reads a life of at least 500.
 fn kinds_fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
     let (mut master, notes, params, setup, play, delta) = random_fixture();
     let effect = |id, key: &str, skill, effect, condition| {
@@ -32,8 +34,13 @@ fn kinds_fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay
     master.gekisou_skill_effects.push(gekisou(811, 810, 11003, 4011));
     // A support skill that damages the life (902).
     master.support_skill_effects.push(serde_json::from_value(effect(902, "_supportSkillID", 902, 3002, 0)).unwrap());
-    // A Gekisou support skill that converts Perfect to Just (800) and one outside the lottery (999).
-    master.gekisou_support_skill_effects.push(gekisou(800, 800, 12006, 0));
+    // Gekisou support skills that convert (800, 812, 813) and one outside the lottery (999).
+    for (skill, condition) in [(800, 0), (812, 5000), (813, 2002)] {
+        let mut converter = effect(skill, "_gekisouSkillID", skill, 12006, condition);
+        converter["_skillTriggerConditionGroup"] = json!(7010);
+        (converter["_effectValue"], converter["_activationTimeSecond"]) = (json!(4), json!(99999.0));
+        master.gekisou_support_skill_effects.push(serde_json::from_value(converter).unwrap());
+    }
     let mut unrelated = gekisou(999, 999, 2000, 0);
     unrelated.skill_trigger_condition_group = 0;
     unrelated.skill_release_condition_group = 0;
@@ -48,7 +55,7 @@ fn kinds_fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay
             "_maxCumulativeCount":5}))
         .unwrap(),
     );
-    for skill in [800, 808, 999] {
+    for skill in [800, 808, 812, 813, 999] {
         let row: SkillRow = serde_json::from_value(json!({"_id":skill,"_gekisouMissionType":2})).unwrap();
         master.gekisou_support_skills.push(row);
     }
@@ -73,6 +80,8 @@ fn kinds_fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay
             .skill_condition_sets
             .push(serde_json::from_value(json!({"_id":id,"_group":id,"_conditionIds":[id]})).unwrap());
     }
+    let both = json!({"_id":2002,"_group":2002,"_conditionIds":[2000, 5000]});
+    master.skill_condition_sets.push(serde_json::from_value(both).unwrap());
     master.reindex().unwrap();
     (master, notes, params, setup, play, delta)
 }
@@ -93,18 +102,36 @@ fn holding(skill: Option<i64>, supports: &[i64]) -> Performer {
     }
 }
 
-/// The words of the native transcript of `deck`, with the actions of each frame in the order of their words.
+/// The words of the native transcript of `deck`, with the actions filed in each frame in the order of their words.
 fn native_words(live: &LotteryLive<'_>, deck: &[Performer]) -> Vec<u64> {
-    let LotteryLive { master, skills, notes, params, play, delta_times, .. } = *live;
+    let LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking } = *live;
     let prepared =
         prepare_recording::<ProbabilityMass>(master, skills, notes, params, play, delta_times, deck, None, false)
             .unwrap();
-    assert!(prepared.life_deck.is_none());
-    let skeleton = live.skeleton(&prepared.reduced).unwrap();
-    let mut actions: Vec<_> = prepared.plan.actions.iter().map(|&(_, action, _)| (1, action, None)).collect();
-    actions.sort_by_key(|(_, action, _)| action_words(action));
-    let plan = Plan { actions, probes: prepared.plan.probes.clone(), order_pairs: 0 };
-    file(&skeleton, &plan, false).key().unwrap()
+    let life = prepared.life_deck.as_deref();
+    let skeleton = record_skeleton(
+        master,
+        skills,
+        notes,
+        events,
+        params,
+        setup,
+        play,
+        delta_times,
+        &prepared.reduced,
+        life,
+        ranking,
+        &mut || false,
+    )
+    .unwrap()
+    .unwrap();
+    let mut transcript = file(&skeleton, &prepared.plan, false);
+    let mut from = 0;
+    for frame in &transcript.frames {
+        transcript.actions[from..frame.actions].sort_by_key(action_words);
+        from = frame.actions;
+    }
+    transcript.key().unwrap()
 }
 
 /// The words of the transcript `kinds` composes for `deck` in its order, or None when it composes none.
@@ -132,8 +159,10 @@ fn performers_of_equal_kinds_compose_the_native_transcripts_of_their_formations(
         holding(Some(3), &[66, 96]),
         // The member's attributes and its live and support skills leave the kind alone.
         Performer { band_id: 7, live_skill: Some((900, 1)), support_skills: vec![(901, 1)], ..speed.clone() },
-        // So does a Gekisou support skill outside the lottery.
+        // So does a Gekisou support skill outside the lottery, and a conversion that changes no judgement: its holder
+        // is not of mission 2, and its native recording runs the life recorder.
         holding(Some(2), &[31, 999, 96]),
+        holding(Some(2), &[31, 812, 96]),
         holding(None, &[66]),
         // The holder's own mission decides its condition.
         Performer { gekisou_mission_type: 2, ..holding(Some(804), &[]) },
@@ -148,9 +177,9 @@ fn performers_of_equal_kinds_compose_the_native_transcripts_of_their_formations(
         LotteryRole::Breaks(why) => panic!("no kind: {why:?}"),
     };
     let ids: Vec<_> = performers.iter().map(|p| kind(kinds.role(&live, p))).collect();
-    assert_eq!((ids[3], ids[4]), (ids[0], ids[1]));
-    assert_ne!(ids[6], ids[7]);
-    assert_eq!(ids[8], ids[6]);
+    assert_eq!((ids[3], ids[4], ids[5]), (ids[0], ids[1], ids[1]));
+    assert_ne!(ids[7], ids[8]);
+    assert_eq!(ids[9], ids[7]);
     assert_eq!(kinds.len(), 8);
     // Every formation composes the native transcript of its performers, with each frame's actions in the order of
     // their words, unless it holds the gauge speed of 0.1, whose sum with its removal is not shown to be exact.
@@ -186,7 +215,13 @@ fn lottery_kinds_refuse_performers_whose_contributions_depend_on_other_performer
     let live = lottery_live(&master, &skills, (&notes, params, &setup, &play, &[0.1; 21]));
     let mut kinds = LotteryKinds::new(&master, usize::MAX);
     let unsupported = |role: LotteryRole| matches!(role, LotteryRole::Breaks(LotteryBreak::Unsupported(_)));
-    assert_eq!(kinds.role(&live, &holding(Some(2), &[800])), LotteryRole::Breaks(LotteryBreak::Converts));
+    let converts = LotteryRole::Breaks(LotteryBreak::Converts);
+    assert_eq!(kinds.role(&live, &holding(Some(2), &[800])), converts);
+    // A conversion that changes no judgement alone takes a kind; one that reads the life does not.
+    assert!(matches!(kinds.role(&live, &holding(Some(2), &[812])), LotteryRole::Kind(_)));
+    let mission = |performer: Performer| Performer { gekisou_mission_type: 2, ..performer };
+    assert_eq!(kinds.role(&live, &mission(holding(Some(2), &[812]))), converts);
+    assert_eq!(kinds.role(&live, &holding(Some(2), &[813])), converts);
     assert!(unsupported(kinds.role(&live, &holding(Some(806), &[]))));
     assert!(unsupported(kinds.role(&live, &holding(Some(2), &[807]))));
     assert_eq!(kinds.role(&live, &holding(Some(2), &[808])), LotteryRole::Breaks(LotteryBreak::ReadsFormation));
@@ -202,9 +237,11 @@ fn lottery_kinds_refuse_performers_whose_contributions_depend_on_other_performer
         holding(Some(806), &[]),
         holding(Some(1), &[]),
     ];
-    let snaps: [(&[i64], &[i64]); 8] = [
+    let snaps: [(&[i64], &[i64]); 10] = [
         (&[], &[]),
         (&[], &[800]),
+        (&[], &[812]),
+        (&[], &[813]),
         (&[], &[807]),
         (&[], &[66]),
         (&[], &[999]),
@@ -220,9 +257,11 @@ fn lottery_kinds_refuse_performers_whose_contributions_depend_on_other_performer
                 ..member.clone()
             };
             let deck = std::slice::from_ref(&performer);
+            let converts = luck_play_converts(&master, deck, &notes, &play)
+                && conversions_reach_play(&master, &performer, &notes, &[], params, &setup, &play, &[0.1; 21], None);
             let refused = !matches!(luck::luck_signature(&master, &performer), Ok(Some(_)))
                 || check_held_state_identities(&master, deck).is_err()
-                || luck_play_converts(&master, deck, &notes, &play)
+                || converts
                 || leaves_life_range(&master, &performer, (1000, 2000));
             assert_eq!(kinds.breaks(&live, &performer).is_some(), refused, "{performer:?}");
         }
@@ -244,4 +283,5 @@ fn lottery_kinds_fold_no_life_condition_of_a_play_with_note_damage() {
     let damaging = Performer { support_skills: vec![(902, 1)], ..holding(Some(2), &[]) };
     assert!(matches!(kinds.role(&live, &damaging), LotteryRole::Kind(_)));
 }
+
 

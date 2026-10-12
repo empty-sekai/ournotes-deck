@@ -39,14 +39,14 @@ impl LotteryLive<'_> {
     }
 }
 
-/// A copy of a [`LotteryLive`] without its master, its skill events and its total power, binary32 values by bit
-/// pattern. The skill events drive only the life recorder, which no recording of a performer with a kind runs. The
-/// total power sets the reduced score calculator alone, which a lottery recording never reads: the controller is given
-/// a zero current score, no condition reads the score, and the appliers only file score commands into it.
+/// A copy of a [`LotteryLive`] without its master and its total power, binary32 values by bit pattern. The total
+/// power sets the reduced score calculator alone, which a lottery recording never reads: the controller is given a
+/// zero current score, no condition reads the score, and the appliers only file score commands into it.
 #[derive(PartialEq)]
 pub(super) struct HeldLive {
     skills: LuckSkills,
     notes: Vec<LiveNote>,
+    events: Vec<(i32, i32)>,
     params: (i64, i32, i32, i32, Option<i32>, u32),
     setup: GekisouSetup,
     play: LivePlay,
@@ -79,6 +79,7 @@ impl HeldLive {
         Self {
             skills: live.skills.clone(),
             notes: live.notes.to_vec(),
+            events: live.events.to_vec(),
             params: Self::params(live.params),
             setup: live.setup.clone(),
             play: live.play.clone(),
@@ -90,6 +91,7 @@ impl HeldLive {
     pub(super) fn is(&self, live: &LotteryLive<'_>) -> bool {
         self.params == Self::params(live.params)
             && self.notes == live.notes
+            && self.events == live.events
             && self.setup == *live.setup
             && self.ranking.as_deref() == live.ranking
             && self.delta_times.len() == live.delta_times.len()
@@ -158,8 +160,8 @@ impl LotteryKinds<'_> {
     /// The law of an order is the propagation of its transcript ([`record_skeleton`], [`file`]); the composed law
     /// encloses it:
     ///
-    /// - No performer converts a judgement and no action reads the life (see the [`kinds`](super::kinds) module), so
-    ///   the skeleton is the native run of the performers' factor skills alone. Its controller's range states follow
+    /// - No formation of performers with a kind converts a judgement and no action reads the life (see the
+    ///   [`kinds`](super::kinds) module), so the skeleton is the native run of the performers' factor skills alone. Its controller's range states follow
     ///   the fevers and the frame times, and its judgements are those of the play. Each performer's own recording
     ///   records the skeleton of the live without performers but for the gauge speeds of its hits, and files no lot
     ///   factor; so does the order, with the lot buffs of the live, and its factor skills file their gauge factor
@@ -229,6 +231,8 @@ impl LotteryKinds<'_> {
             };
             self.stats.composed += 1;
             let law = curves.law_of(&transcript, &mut || false)?.expect("an uncancelled propagation");
+            self.stats.composed_transitions += law.transitions;
+            self.stats.composed_peak_states = self.stats.composed_peak_states.max(law.peak_states);
             self.laws.insert(key.clone(), law.clone(), &mut self.stats);
             laws.push(law);
             keys.push(key);

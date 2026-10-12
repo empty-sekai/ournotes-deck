@@ -65,7 +65,8 @@ pub(super) fn node_upper(
 /// falls back to one pool-wide search.
 ///
 /// Certified LUCK score: the Snaps with which a member takes no lottery kind are selected as well, and the bounds of
-/// the part without selected Snaps weigh the lottery laws of its teams (see `domain_laws`).
+/// every part whose members take a lottery kind with each of its Snap choices weigh the lottery laws of its teams (see
+/// `domain_laws`).
 pub(super) fn joint_regimes(
     p: &mut PhysicalDeck,
     plan: &crate::handler::ExecutionPlan,
@@ -171,8 +172,7 @@ pub(super) fn joint_regimes(
         }
         e.rec.begin(&mut e.tel, "conversionCompile", None);
         let prepare = Instant::now();
-        // The first part holds no selected Snap.
-        let weighed = census.as_ref().filter(|_| i == 0).and_then(|census| e.weighed_bounds(census, &domain));
+        let weighed = census.as_ref().and_then(|census| e.weighed_bounds(census, &domain));
         let result = match weighed {
             Some(weighed) => Ok(weighed),
             None => JointBounds::compile(e.pool, e.request, &domain, e.metric, e.event_input, e.simulation),
