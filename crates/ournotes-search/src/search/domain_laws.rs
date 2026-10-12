@@ -307,6 +307,8 @@ fn domain_laws(
     stats.formations += found.formations.len();
     let orders = crate::search::uniform::all_orders();
     let mut laws: Vec<LuckLaw> = Vec::new();
+    // The laws held, by address.
+    let mut held = std::collections::HashSet::new();
     for formation in &found.formations {
         if cancelled() {
             return Err("the search stopped".into());
@@ -335,7 +337,7 @@ fn domain_laws(
             }
         };
         for law in found {
-            if !laws.iter().any(|known| Arc::ptr_eq(known, &law)) {
+            if held.insert(Arc::as_ptr(&law)) {
                 laws.push(law);
             }
         }

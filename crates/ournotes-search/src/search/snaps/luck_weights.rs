@@ -80,7 +80,12 @@ impl<'l> LuckLaws<'l> {
             (a.steps == b.steps && a.frame_queries == b.frame_queries && a.probes == b.probes)
                 && (a.probe_transitions == b.probe_transitions && a.probe_starts == b.probe_starts)
         };
+        let mut read = Vec::new();
         own.iter().all(|law| {
+            if read.contains(&Arc::as_ptr(law)) {
+                return true;
+            }
+            read.push(Arc::as_ptr(law));
             self.laws.iter().any(|known| Arc::ptr_eq(known, law)) || self.laws.iter().any(|known| same(known, law))
         })
     }
