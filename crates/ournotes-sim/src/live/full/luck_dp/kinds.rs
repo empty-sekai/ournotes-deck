@@ -112,6 +112,14 @@ impl Contribution {
     }
 }
 
+/// What a kind holds: the contribution of its performers at each position, whether these are the same at every
+/// position, and their conversions.
+pub(super) struct KindEntry {
+    pub(super) contributions: [Contribution; POSITIONS],
+    pub(super) anywhere: bool,
+    pub(super) conversions: Conversions,
+}
+
 /// The gauge speeds a performer's factor skills file at the hits of the live: the speed at each hit, and the factor
 /// commands, whose binary32 sums decide whether the speeds of several performers add exactly.
 pub(super) struct FactorPart {
@@ -172,11 +180,9 @@ pub struct LotteryKinds<'m> {
     conversions: FxHashMap<Performer, Result<Conversions, LotteryBreak>>,
     /// The role of each reduced performer ([`LotteryKinds::reduced`]) with its conversions.
     roles: FxHashMap<(Performer, Conversions), LotteryRole>,
-    /// The kind of each word list of five contributions and conversions, and the contributions and conversions of
-    /// each kind.
+    /// The kind of each word list of five contributions and conversions, and what each kind holds.
     kinds: FxHashMap<Vec<u64>, LotteryKind>,
-    pub(super) contributions: Vec<[Contribution; POSITIONS]>,
-    pub(super) kind_conversions: Vec<Conversions>,
+    pub(super) entries: Vec<KindEntry>,
     /// The factor parts; part 0 files no gauge speed.
     pub(super) parts: Vec<FactorPart>,
     /// The part of each speed and command list, and of each factor text ([`factor_text`]).
@@ -201,8 +207,7 @@ impl<'m> LotteryKinds<'m> {
             conversions: FxHashMap::default(),
             roles: FxHashMap::default(),
             kinds: FxHashMap::default(),
-            contributions: Vec::new(),
-            kind_conversions: Vec::new(),
+            entries: Vec::new(),
             parts: Vec::new(),
             part_ids: FxHashMap::default(),
             part_texts: FxHashMap::default(),
@@ -213,15 +218,15 @@ impl<'m> LotteryKinds<'m> {
 
     /// The kinds met in the live held.
     pub fn len(&self) -> usize {
-        self.contributions.len()
+        self.entries.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.contributions.is_empty()
+        self.entries.is_empty()
     }
 
     pub fn stats(&self) -> LotteryKindStats {
-        LotteryKindStats { kinds: self.contributions.len(), parts: self.parts.len(), ..self.stats }
+        LotteryKindStats { kinds: self.entries.len(), parts: self.parts.len(), ..self.stats }
     }
 
     /// Hold `live`, dropping the kinds of another; false for a live of another master. The skeleton of the live
@@ -241,8 +246,7 @@ impl<'m> LotteryKinds<'m> {
         self.conversions.clear();
         self.roles.clear();
         self.kinds.clear();
-        self.contributions.clear();
-        self.kind_conversions.clear();
+        self.entries.clear();
         self.part_texts.clear();
         self.laws.clear();
         self.life = play_life_range(self.master, live.play);
@@ -441,13 +445,20 @@ impl<'m> LotteryKinds<'m> {
             contributions.push(self.contribution(live, &deck)?);
         }
         let mut words = Vec::new();
-        contributions.iter().for_each(|contribution| contribution.push_words(&mut words));
+        let mut first = Vec::new();
+        contributions[0].push_words(&mut first);
+        let mut anywhere = true;
+        for contribution in &contributions {
+            let from = words.len();
+            contribution.push_words(&mut words);
+            anywhere &= words[from..] == first[..];
+        }
         words.extend([u64::from(conversions.relabels), u64::from(conversions.read_relabels)]);
-        let next = LotteryKind(self.contributions.len() as u32);
+        let next = LotteryKind(self.entries.len() as u32);
         let kind = *self.kinds.entry(words).or_insert(next);
         if kind == next {
-            self.contributions.push(contributions.try_into().expect("one contribution per position"));
-            self.kind_conversions.push(conversions);
+            let contributions = contributions.try_into().expect("one contribution per position");
+            self.entries.push(KindEntry { contributions, anywhere, conversions });
         }
         Ok(kind)
     }

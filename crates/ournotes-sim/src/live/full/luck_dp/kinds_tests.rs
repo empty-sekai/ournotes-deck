@@ -334,7 +334,7 @@ fn conversions_between_perfect_and_just_compose_the_native_laws() {
     assert_eq!(changes(&hurt, &relabel), PlayConversions::Change);
     let mut kinds = LotteryKinds::new(&master, usize::MAX);
     let mut conversions = |performer: &Performer| match kinds.role(&live, performer) {
-        LotteryRole::Kind(kind) => (kind, kinds.kind_conversions[kind.index()]),
+        LotteryRole::Kind(kind) => (kind, kinds.entries[kind.index()].conversions),
         LotteryRole::Breaks(why) => panic!("no kind: {why:?}"),
     };
     // The conversions set a kind apart from that of the same contributions without them. A conversion that changes

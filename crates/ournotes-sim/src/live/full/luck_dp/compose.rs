@@ -215,26 +215,41 @@ impl LotteryKinds<'_> {
                 }
             }
         }
-        let held = |flag: fn(&Conversions) -> bool| kinds.iter().any(|kind| flag(&self.kind_conversions[kind.index()]));
+        let held =
+            |flag: fn(&Conversions) -> bool| kinds.iter().any(|kind| flag(&self.entries[kind.index()].conversions));
         if held(|conversions| conversions.relabels) && held(|conversions| conversions.read_relabels) {
             self.stats.relabel_conflicts += 1;
             return Ok(None);
         }
+        // The composition of an order reads the contribution of each position's kind there, so orders that place the
+        // same kinds at the same positions, but for kinds whose contributions are the same at every position, share it.
+        let anywhere = kinds.map(|kind| self.entries[kind.index()].anywhere);
         let mut laws: Vec<std::sync::Arc<LuckDpCertifiedResult>> = Vec::with_capacity(orders.len());
-        let mut keys = Vec::<Vec<u64>>::with_capacity(orders.len());
+        // The placements and the composition keys met, each with the index of its first order.
+        let mut placements = Vec::<([(u32, usize); POSITIONS], usize)>::new();
+        let mut keys = Vec::<(Vec<u64>, usize)>::new();
         for order in orders {
-            let composition =
-                self.composition(live, std::array::from_fn(|position| (kinds[order[position]], position)));
-            if let Some(index) = keys.iter().position(|known| *known == composition.key) {
+            let mut placed: [(u32, usize); POSITIONS] = std::array::from_fn(|position| {
+                let member = order[position];
+                (kinds[member].0, if anywhere[member] { POSITIONS } else { position })
+            });
+            placed.sort_unstable();
+            if let Some(&(_, index)) = placements.iter().find(|(known, _)| *known == placed) {
                 laws.push(laws[index].clone());
-                keys.push(composition.key);
                 continue;
             }
+            placements.push((placed, laws.len()));
+            let composition =
+                self.composition(live, std::array::from_fn(|position| (kinds[order[position]], position)));
+            if let Some(&(_, index)) = keys.iter().find(|(known, _)| *known == composition.key) {
+                laws.push(laws[index].clone());
+                continue;
+            }
+            keys.push((composition.key.clone(), laws.len()));
             self.stats.law_lookups += 1;
             if let Some(law) = self.laws.entries.get(&composition.key[..]) {
                 self.stats.law_hits += 1;
                 laws.push(law.clone());
-                keys.push(composition.key);
                 continue;
             }
             let key = composition.key.clone();
@@ -246,16 +261,15 @@ impl LotteryKinds<'_> {
             let law = curves.law_of(&transcript, &mut || false)?.expect("an uncancelled propagation");
             self.stats.composed_transitions += law.transitions;
             self.stats.composed_peak_states = self.stats.composed_peak_states.max(law.peak_states);
-            self.laws.insert(key.clone(), law.clone(), &mut self.stats);
+            self.laws.insert(key, law.clone(), &mut self.stats);
             laws.push(law);
-            keys.push(key);
         }
         Ok(Some(laws))
     }
 
     /// The composition of the contributions of `(kind, position)` at each position.
     pub(super) fn composition(&self, live: &LotteryLive<'_>, at: [(LotteryKind, usize); POSITIONS]) -> Composition {
-        let contributions = at.map(|(kind, position)| &self.contributions[kind.index()][position]);
+        let contributions = at.map(|(kind, position)| &self.entries[kind.index()].contributions[position]);
         let mut parts: Vec<u32> =
             contributions.iter().map(|contribution| contribution.part).filter(|&part| part != 0).collect();
         parts.sort_unstable();
