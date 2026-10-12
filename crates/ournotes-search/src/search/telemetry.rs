@@ -278,8 +278,8 @@ pub struct DomainLaws {
     pub snap_types: usize,
     pub classes: usize,
     pub laws: usize,
-    /// Formations read over every census, and the time the censuses took to enumerate them and to build their
-    /// performers, within `laws_ms`.
+    /// Formations read over every census, and the time the censuses took to enumerate them and to build the performers
+    /// of those whose laws do not compose from their kinds, within `laws_ms`.
     pub formations: usize,
     pub roles_ms: f64,
     pub laws_ms: f64,

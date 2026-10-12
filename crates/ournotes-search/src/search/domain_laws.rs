@@ -311,18 +311,29 @@ fn domain_laws(
         if cancelled() {
             return Err("the search stopped".into());
         }
-        let started = Instant::now();
-        let deck = formation
-            .iter()
-            .map(|&(i, j)| {
-                let snap = j.map(|j| &pool.snaps[domain.snaps()[j]]);
-                crate::search::snaps::performer(&pool.members[domain.members()[i]], snap)
-            })
-            .collect::<Result<Vec<_>, Error>>()
-            .map_err(|error| error.to_string())?;
-        stats.performers_ms += started.elapsed().as_secs_f64() * 1000.0;
-        let found =
-            luck_order_laws(&live, &deck, &orders, curves, Some(&mut *lottery)).map_err(|error| error.to_string())?;
+        let formation_kinds: [_; 5] = std::array::from_fn(|k| {
+            let (i, j) = formation[k];
+            kinds[i][j.map_or(0, |j| j + 1)]
+        });
+        let composed =
+            lottery.formation_laws(&live, formation_kinds, &orders, curves).map_err(|error| error.to_string())?;
+        let found = match composed {
+            Some(found) => found,
+            None => {
+                let started = Instant::now();
+                let deck = formation
+                    .iter()
+                    .map(|&(i, j)| {
+                        let snap = j.map(|j| &pool.snaps[domain.snaps()[j]]);
+                        crate::search::snaps::performer(&pool.members[domain.members()[i]], snap)
+                    })
+                    .collect::<Result<Vec<_>, Error>>()
+                    .map_err(|error| error.to_string())?;
+                stats.performers_ms += started.elapsed().as_secs_f64() * 1000.0;
+                luck_order_laws(&live, &deck, &orders, curves, Some(&mut *lottery))
+                    .map_err(|error| error.to_string())?
+            }
+        };
         for law in found {
             if !laws.iter().any(|known| Arc::ptr_eq(known, &law)) {
                 laws.push(law);

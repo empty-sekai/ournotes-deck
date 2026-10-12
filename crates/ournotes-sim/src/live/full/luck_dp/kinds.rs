@@ -112,11 +112,11 @@ impl Contribution {
     }
 }
 
-/// What a kind holds: the contribution of its performers at each position, whether these are the same at every
-/// position, and their conversions.
+/// What a kind holds: the contribution of its performers at each position, the identity of each contribution among
+/// the contributions of the live held (equal contributions share one), and their conversions.
 pub(super) struct KindEntry {
     pub(super) contributions: [Contribution; POSITIONS],
-    pub(super) anywhere: bool,
+    pub(super) ids: [u32; POSITIONS],
     pub(super) conversions: Conversions,
 }
 
@@ -147,8 +147,8 @@ pub struct LotteryKindStats {
     pub unkinded: u64,
     pub uncomposed: u64,
     pub relabel_conflicts: u64,
-    /// Laws of orders asked, those found held, and the composed transcripts propagated, with the transitions and the
-    /// largest state count of their propagations.
+    /// Laws of orders asked, those found held for the same contributions or the same composition, and the composed
+    /// transcripts propagated, with the transitions and the largest state count of their propagations.
     pub law_lookups: u64,
     pub law_hits: u64,
     pub composed: u64,
@@ -183,6 +183,8 @@ pub struct LotteryKinds<'m> {
     /// The kind of each word list of five contributions and conversions, and what each kind holds.
     kinds: FxHashMap<Vec<u64>, LotteryKind>,
     pub(super) entries: Vec<KindEntry>,
+    /// The identity of each contribution, by its words.
+    contribution_ids: FxHashMap<Vec<u64>, u32>,
     /// The factor parts; part 0 files no gauge speed.
     pub(super) parts: Vec<FactorPart>,
     /// The part of each speed and command list, and of each factor text ([`factor_text`]).
@@ -208,6 +210,7 @@ impl<'m> LotteryKinds<'m> {
             roles: FxHashMap::default(),
             kinds: FxHashMap::default(),
             entries: Vec::new(),
+            contribution_ids: FxHashMap::default(),
             parts: Vec::new(),
             part_ids: FxHashMap::default(),
             part_texts: FxHashMap::default(),
@@ -247,6 +250,7 @@ impl<'m> LotteryKinds<'m> {
         self.roles.clear();
         self.kinds.clear();
         self.entries.clear();
+        self.contribution_ids.clear();
         self.part_texts.clear();
         self.laws.clear();
         self.life = play_life_range(self.master, live.play);
@@ -445,20 +449,19 @@ impl<'m> LotteryKinds<'m> {
             contributions.push(self.contribution(live, &deck)?);
         }
         let mut words = Vec::new();
-        let mut first = Vec::new();
-        contributions[0].push_words(&mut first);
-        let mut anywhere = true;
-        for contribution in &contributions {
+        let mut ids = [0u32; POSITIONS];
+        for (id, contribution) in ids.iter_mut().zip(&contributions) {
             let from = words.len();
             contribution.push_words(&mut words);
-            anywhere &= words[from..] == first[..];
+            let next = self.contribution_ids.len() as u32;
+            *id = *self.contribution_ids.entry(words[from..].to_vec()).or_insert(next);
         }
         words.extend([u64::from(conversions.relabels), u64::from(conversions.read_relabels)]);
         let next = LotteryKind(self.entries.len() as u32);
         let kind = *self.kinds.entry(words).or_insert(next);
         if kind == next {
             let contributions = contributions.try_into().expect("one contribution per position");
-            self.entries.push(KindEntry { contributions, anywhere, conversions });
+            self.entries.push(KindEntry { contributions, ids, conversions });
         }
         Ok(kind)
     }

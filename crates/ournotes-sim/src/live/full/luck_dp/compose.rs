@@ -101,35 +101,72 @@ impl HeldLive {
     }
 }
 
-/// Composed laws by the words of their composition, dropped oldest first once their keys and laws exceed the capacity.
+/// The identities of the contributions an order composes, sorted ([`KindEntry::ids`]).
+type OrderIds = [u32; POSITIONS];
+
+/// The law, or none, an order's contributions compose to.
+type Composed = Option<std::sync::Arc<LuckDpCertifiedResult>>;
+
+/// The bytes one entry of [`ComposedLaws::orders`] holds, with its share of the table.
+const ORDER_BYTES: usize = 2 * std::mem::size_of::<(OrderIds, Composed)>();
+
+/// Composed laws by the words of their composition, and the law each order's contributions compose to; the laws are
+/// dropped oldest first once the held bytes exceed the capacity, and then every order's with them.
 pub(super) struct ComposedLaws {
     entries: FxHashMap<std::sync::Arc<[u64]>, std::sync::Arc<LuckDpCertifiedResult>>,
     order: std::collections::VecDeque<(std::sync::Arc<[u64]>, usize)>,
+    orders: FxHashMap<OrderIds, Composed>,
     bytes: usize,
     capacity: usize,
 }
 
 impl ComposedLaws {
     pub(super) fn new(capacity: usize) -> Self {
-        Self { entries: FxHashMap::default(), order: std::collections::VecDeque::new(), bytes: 0, capacity }
+        Self {
+            entries: FxHashMap::default(),
+            order: std::collections::VecDeque::new(),
+            orders: FxHashMap::default(),
+            bytes: 0,
+            capacity,
+        }
     }
 
     pub(super) fn clear(&mut self) {
         self.entries.clear();
         self.order.clear();
+        self.orders.clear();
         self.bytes = 0;
     }
 
-    fn insert(&mut self, key: Vec<u64>, law: std::sync::Arc<LuckDpCertifiedResult>, stats: &mut LotteryKindStats) {
-        let bytes = key.len() * std::mem::size_of::<u64>() + law_bytes(&law);
+    /// Make room for `bytes` more, dropping the oldest laws and every order's; false when they exceed the capacity.
+    fn reserve(&mut self, bytes: usize, stats: &mut LotteryKindStats) -> bool {
         if bytes > self.capacity {
-            return;
+            return false;
         }
         while self.bytes + bytes > self.capacity {
+            if !self.orders.is_empty() {
+                self.bytes -= self.orders.len() * ORDER_BYTES;
+                self.orders.clear();
+                continue;
+            }
             let (oldest, held) = self.order.pop_front().expect("held laws account for the held bytes");
             self.bytes -= held;
             self.entries.remove(&oldest);
             stats.law_evictions += 1;
+        }
+        true
+    }
+
+    /// Hold `law` under its composition key; false when it exceeds the capacity.
+    fn insert(
+        &mut self,
+        key: Vec<u64>,
+        law: std::sync::Arc<LuckDpCertifiedResult>,
+        stats: &mut LotteryKindStats,
+    ) -> bool {
+        let bytes = key.len() * std::mem::size_of::<u64>() + law_bytes(&law);
+        if !self.reserve(bytes, stats) {
+            return false;
         }
         let key: std::sync::Arc<[u64]> = key.into();
         self.bytes += bytes;
@@ -137,6 +174,16 @@ impl ComposedLaws {
         self.entries.insert(key, law);
         stats.peak_laws = stats.peak_laws.max(self.entries.len());
         stats.peak_law_bytes = stats.peak_law_bytes.max(self.bytes);
+        true
+    }
+
+    /// Hold what the contributions `ids` compose to: `composed`, a law held under its composition key, or none.
+    fn alias(&mut self, ids: OrderIds, composed: Composed, stats: &mut LotteryKindStats) {
+        if self.reserve(ORDER_BYTES, stats) {
+            self.bytes += ORDER_BYTES;
+            self.orders.insert(ids, composed);
+            stats.peak_law_bytes = stats.peak_law_bytes.max(self.bytes);
+        }
     }
 }
 
@@ -189,8 +236,8 @@ impl LotteryKinds<'_> {
     ///   frame's result and the used flag, which no action changes. The composed transcript files them in the order
     ///   of their words, so its law and the order's are one law, which each propagation encloses.
     ///
-    /// The composition reads the contributions of the order's positions alone, so orders and formations with the same
-    /// contributions at every position share their composed law.
+    /// The composition reads the contributions of the order's positions alone, and the multiset of them: orders and
+    /// formations with the same contributions share their composed law.
     pub(crate) fn order_laws(
         &mut self,
         live: &LotteryLive<'_>,
@@ -204,65 +251,113 @@ impl LotteryKinds<'_> {
         if !self.enter(live) {
             return Ok(None);
         }
-        self.stats.teams += 1;
         let mut kinds = [LotteryKind(0); POSITIONS];
         for (kind, performer) in kinds.iter_mut().zip(deck) {
             match self.held_role(live, performer) {
                 LotteryRole::Kind(found) => *kind = found,
                 LotteryRole::Breaks(_) => {
+                    self.stats.teams += 1;
                     self.stats.unkinded += 1;
                     return Ok(None);
                 }
             }
         }
+        self.kind_laws(live, kinds, orders, curves)
+    }
+
+    /// [`Self::order_laws`] of a formation of performers with `kinds` in `live`, whose kinds these are
+    /// ([`Self::role`]).
+    pub fn formation_laws(
+        &mut self,
+        live: &LotteryLive<'_>,
+        kinds: [LotteryKind; POSITIONS],
+        orders: &[[usize; POSITIONS]],
+        curves: &mut LuckDpCache,
+    ) -> Result<Option<Vec<std::sync::Arc<LuckDpCertifiedResult>>>, Error> {
+        if !self.live.as_ref().is_some_and(|held| held.is(live)) {
+            return Err(Error::Input("lottery kinds are read in the live they were found in".into()));
+        }
+        if kinds.iter().any(|kind| kind.index() >= self.entries.len()) {
+            return Err(Error::Input("a lottery kind of another live".into()));
+        }
+        self.kind_laws(live, kinds, orders, curves)
+    }
+
+    fn kind_laws(
+        &mut self,
+        live: &LotteryLive<'_>,
+        kinds: [LotteryKind; POSITIONS],
+        orders: &[[usize; POSITIONS]],
+        curves: &mut LuckDpCache,
+    ) -> Result<Option<Vec<std::sync::Arc<LuckDpCertifiedResult>>>, Error> {
+        if orders.iter().flatten().any(|&member| member >= POSITIONS) {
+            return Err(Error::Input("an order is a permutation of the five performers".into()));
+        }
+        self.stats.teams += 1;
         let held =
             |flag: fn(&Conversions) -> bool| kinds.iter().any(|kind| flag(&self.entries[kind.index()].conversions));
         if held(|conversions| conversions.relabels) && held(|conversions| conversions.read_relabels) {
             self.stats.relabel_conflicts += 1;
             return Ok(None);
         }
-        // The composition of an order reads the contribution of each position's kind there, so orders that place the
-        // same kinds at the same positions, but for kinds whose contributions are the same at every position, share it.
-        let anywhere = kinds.map(|kind| self.entries[kind.index()].anywhere);
         let mut laws: Vec<std::sync::Arc<LuckDpCertifiedResult>> = Vec::with_capacity(orders.len());
-        // The placements and the composition keys met, each with the index of its first order.
-        let mut placements = FxHashMap::<[(u32, usize); POSITIONS], usize>::default();
-        let mut keys = FxHashMap::<Vec<u64>, usize>::default();
+        // The contributions met in this formation, with the index of their first order.
+        let mut met = FxHashMap::<OrderIds, usize>::default();
         for order in orders {
-            let mut placed: [(u32, usize); POSITIONS] = std::array::from_fn(|position| {
-                let member = order[position];
-                (kinds[member].0, if anywhere[member] { POSITIONS } else { position })
-            });
-            placed.sort_unstable();
-            if let Some(&index) = placements.get(&placed) {
+            let mut ids: OrderIds =
+                std::array::from_fn(|position| self.entries[kinds[order[position]].index()].ids[position]);
+            ids.sort_unstable();
+            if let Some(&index) = met.get(&ids) {
                 laws.push(laws[index].clone());
                 continue;
             }
-            placements.insert(placed, laws.len());
-            let composition =
-                self.composition(live, std::array::from_fn(|position| (kinds[order[position]], position)));
-            if let Some(&index) = keys.get(&composition.key) {
-                laws.push(laws[index].clone());
-                continue;
-            }
-            keys.insert(composition.key.clone(), laws.len());
+            met.insert(ids, laws.len());
             self.stats.law_lookups += 1;
-            if let Some(law) = self.laws.entries.get(&composition.key[..]) {
-                self.stats.law_hits += 1;
-                laws.push(law.clone());
-                continue;
-            }
-            let key = composition.key.clone();
-            let Some(transcript) = self.transcript(composition) else {
-                self.stats.uncomposed += 1;
-                return Ok(None);
+            let composed = match self.laws.orders.get(&ids) {
+                Some(composed) => {
+                    self.stats.law_hits += 1;
+                    composed.clone()
+                }
+                None => {
+                    let composition =
+                        self.composition(live, std::array::from_fn(|position| (kinds[order[position]], position)));
+                    let composed = match self.laws.entries.get(&composition.key[..]) {
+                        Some(law) => {
+                            self.stats.law_hits += 1;
+                            Some(law.clone())
+                        }
+                        None => {
+                            let key = composition.key.clone();
+                            match self.transcript(composition) {
+                                None => None,
+                                Some(transcript) => {
+                                    self.stats.composed += 1;
+                                    let law = curves
+                                        .propagated(&transcript, &mut || false)?
+                                        .expect("an uncancelled propagation");
+                                    self.stats.composed_transitions += law.transitions;
+                                    self.stats.composed_peak_states =
+                                        self.stats.composed_peak_states.max(law.peak_states);
+                                    if !self.laws.insert(key, law.clone(), &mut self.stats) {
+                                        laws.push(law);
+                                        continue;
+                                    }
+                                    Some(law)
+                                }
+                            }
+                        }
+                    };
+                    self.laws.alias(ids, composed.clone(), &mut self.stats);
+                    composed
+                }
             };
-            self.stats.composed += 1;
-            let law = curves.propagated(&transcript, &mut || false)?.expect("an uncancelled propagation");
-            self.stats.composed_transitions += law.transitions;
-            self.stats.composed_peak_states = self.stats.composed_peak_states.max(law.peak_states);
-            self.laws.insert(key, law.clone(), &mut self.stats);
-            laws.push(law);
+            match composed {
+                Some(law) => laws.push(law),
+                None => {
+                    self.stats.uncomposed += 1;
+                    return Ok(None);
+                }
+            }
         }
         Ok(Some(laws))
     }
