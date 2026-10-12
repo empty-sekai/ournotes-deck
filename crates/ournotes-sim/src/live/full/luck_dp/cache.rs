@@ -27,13 +27,17 @@ pub(crate) struct OrderClass {
 /// the lottery skills, the chart, the frame schedule and its delta times, the live parameters and the rank arrivals.
 /// The reduced performers hold no live or support skill, so the build of the reduced model reads them only to make
 /// their lottery-related Gekisou condition skills, and the key holds those skills with their effect rows
-/// ([`lottery_conditions_text`]). It leaves out the condition skills without an effect: such a skill only reads the
-/// Gekisou gate when it updates, and changes nothing. The live is held whole except for the total power: it sets the
-/// reduced score calculator alone, which the recording never reads (the controller is given a zero current score, no
-/// condition reads the score, and the appliers only file score commands into it). A formation whose performers may
-/// convert a judgement of the play ([`luck_play_converts`]) records the life of the complete formation and takes no
-/// key, and so does a class whose actions read the life. The checks of the complete formation that precede a
-/// recording run on every lookup, and a formation they refuse takes no key.
+/// ([`class_text`]). It leaves out the condition skills without an effect: such a skill only reads the Gekisou gate
+/// when it updates, and changes nothing. The live is held whole except for the total power: it sets the reduced score
+/// calculator alone, which the recording never reads (the controller is given a zero current score, no condition
+/// reads the score, and the appliers only file score commands into it). A formation whose performers may convert a
+/// judgement of the play ([`luck_play_converts`]) records the life of the complete formation and takes no key, and so
+/// does a class whose actions read the life. The checks of the complete formation that precede a recording run on
+/// every lookup, and a formation they refuse takes no key.
+///
+/// The key holds the life comparisons of the conditions folded over the life range of the formation, when it holds
+/// one ([`life_range`]), as its recording does ([`prepare_recording`]). A class that is kept reads no life, so it is
+/// a function of the folded conditions whether or not they were folded.
 ///
 /// A recording without a life recorder takes its native part from the skeleton of its lot and gauge factor skills
 /// ([`record_skeleton`]), which the classes hold for the formations of the live that share those skills.
@@ -196,9 +200,7 @@ impl<'m> LuckOrderClasses<'m> {
         }
         let keyed = check_recording(master, skills, play, delta_times, None, deck).is_ok()
             && !luck_play_converts(master, deck, notes, play);
-        let key = keyed
-            .then(|| lottery_conditions_text(master, &reduced_deck(deck), params.skill_target_music_type, skills).ok())
-            .flatten();
+        let key = keyed.then(|| class_text(master, skills, play, params.skill_target_music_type, deck).ok()).flatten();
         if key.is_none() {
             self.stats.unkeyed += 1;
         }
@@ -244,6 +246,21 @@ impl<'m> LuckOrderClasses<'m> {
         self.stats.peak_entries = self.stats.peak_entries.max(self.entries.len());
         self.stats.peak_key_bytes = self.stats.peak_key_bytes.max(self.bytes);
     }
+}
+
+/// The lottery condition skills of the reduced performers of `deck` with their effect rows ([`lottery_conditions`])
+/// as text, for a formation that changes no judgement of `play`: their life comparisons folded over the life range of
+/// the formation when it holds one ([`life_range`]).
+pub(super) fn class_text(
+    master: &Master,
+    skills: &LuckSkills,
+    play: &LivePlay,
+    skill_target_music_type: i64,
+    deck: &[Performer],
+) -> Result<String, Error> {
+    let (mut cond, rows) = lottery_conditions(master, &reduced_deck(deck), skill_target_music_type, skills)?;
+    fold_life_conditions(&mut cond, &rows, || life_range(master, deck, play));
+    Ok(format!("{rows:?}/{cond:?}"))
 }
 
 impl RecordingCache {

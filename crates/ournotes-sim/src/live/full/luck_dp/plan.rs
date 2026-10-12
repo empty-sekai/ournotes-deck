@@ -92,6 +92,28 @@ pub(super) fn reads_life(checker: &Checker) -> bool {
     })
 }
 
+/// Folds the life comparisons of the conditions of the lottery effects of `cond`, with effect rows `rows`, over the
+/// life range `life` gives ([`Checker::fold_life`]), which is asked only when one of them reads the life. The
+/// conditions of the note score-ups stay as built: the score recordings read them in their own models.
+pub(super) fn fold_life_conditions(
+    cond: &mut [CondSkill],
+    rows: &[EffectRow],
+    life: impl FnOnce() -> Option<(i32, i32)>,
+) {
+    let lottery = |row: usize| !matches!(rows[row].effect_type, 2000 | 2005);
+    let reads = |skill: &CondSkill| {
+        let effects = skill.updater.effects().iter();
+        effects.filter(|effect| lottery(effect.row)).any(|effect| effect.condition.as_ref().is_some_and(reads_life))
+    };
+    if cond.iter().any(reads)
+        && let Some(range) = life()
+    {
+        for skill in cond {
+            skill.updater.fold_life_conditions(range, lottery);
+        }
+    }
+}
+
 /// The plan of the lottery condition skills `cond` with effect rows `rows` ([`lottery_conditions`]): their actions,
 /// the score probes and the pairs of performers whose actions in one phase differ.
 pub(super) fn compile<M: Mass>(

@@ -641,6 +641,164 @@ fn range_start_life_reads_before_its_phase_and_after_previous_phase_healing() {
 }
 
 #[test]
+fn life_range_needs_harmless_judgements_and_no_skill_that_leaves_it() {
+    let (mut master, _, _, _, play, _) = fixture(3, 0);
+    let top = i64::from(i32::MAX);
+    let effects =
+        [(501, 3001, 600), (502, 3001, top - 2000), (503, 3001, top - 1999), (504, 3000, 100), (505, 3002, 100)];
+    for (id, effect, value) in effects.into_iter().chain([(506, 3003, 0), (507, 3004, 5000)]) {
+        let support = row(id, "_supportSkillID", id, effect, value, 7000, 0, 0);
+        master.support_skill_effects.push(serde_json::from_value(support).unwrap());
+    }
+    let damage = row(508, "_gekisouSupportSkillID", 508, 3002, 100, 7000, 0, 0);
+    master.gekisou_support_skill_effects.push(serde_json::from_value(damage).unwrap());
+    let holding = |skill| Performer { support_skills: vec![(skill, 1)], ..Default::default() };
+    let range = (1000, 2000);
+    assert_eq!(play_life_range(&master, &play), Some(range));
+    let leaves = |skill| leaves_life_range(&master, &holding(skill), range);
+    assert_eq!([501, 502, 503, 504, 505, 506, 507].map(leaves), [false, false, true, true, true, false, false]);
+    // A Gekisou support skill runs only beside a Gekisou skill.
+    let snap = Performer { gekisou_support_skills: vec![(508, 1)], ..Default::default() };
+    assert!(!leaves_life_range(&master, &snap, range));
+    assert!(leaves_life_range(&master, &Performer { gekisou_skill: Some((2, 1)), ..snap }, range));
+    assert_eq!(life_range(&master, &[holding(501), holding(506)], &play), Some(range));
+    assert_eq!(life_range(&master, &[holding(501), holding(505)], &play), None);
+    // A judgement with damage or without a damage entry gives no range; Wait and Pass file no damage.
+    let judged = |judgement| {
+        let mut play = play.clone();
+        play.frames[1].judged[0].judgement = judgement;
+        play
+    };
+    assert_eq!([0, 6, 7].map(|judgement| play_life_range(&master, &judged(judgement)).is_some()), [true, false, true]);
+    master.judgement_parameters[0].damage = 1;
+    assert_eq!(play_life_range(&master, &play), None);
+}
+
+#[test]
+fn life_conditions_fold_over_the_life_range_as_the_native_life_answers_them() {
+    // No note deals damage, and a recovery in the range-start frame takes the life from 1000 to 1600 between the two
+    // phases. A recording reads the life only for a comparison that the life range 1000..=2000 does not answer.
+    for phase in [1, 2] {
+        for kind in [2000, 2001, 2002, 2003] {
+            for value in [700, 1000, 1500, 1600, 2000, 2500] {
+                for positive in [true, false] {
+                    let (mut master, notes, params, setup, play, delta) = fixture(3, 0);
+                    let condition = master.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap();
+                    (condition.condition_type, condition.is_positive) = (kind, positive);
+                    condition.condition_values = vec![value];
+                    master.skill_conditions.iter_mut().find(|row| row.id == 7000).unwrap().condition_type = 4010;
+                    master.gekisou_support_skill_effects.retain(|row| row.id != 96);
+                    for (id, effect, phase) in [(1, 11003, phase), (2, 3001, 1)] {
+                        let setting = json!({"_id":id,"_skillEffectType":effect,"_phase":phase});
+                        master.skill_effect_settings.push(serde_json::from_value(setting).unwrap());
+                    }
+                    let recovery = row(501, "_supportSkillID", 501, 3001, 600, 7000, 0, 0);
+                    master.support_skill_effects.push(serde_json::from_value(recovery).unwrap());
+                    let deck = [Performer {
+                        gekisou_skill: Some((2, 1)),
+                        support_skills: vec![(501, 1)],
+                        ..Default::default()
+                    }];
+                    let events = [(0, 100)];
+                    let mut recorder = life_recorder(&master, &deck, &notes, &events, params, &setup, None).unwrap();
+                    for (frame, &dt) in play.frames.iter().zip(&delta).take_while(|(frame, _)| frame.time_ms <= 100) {
+                        recorder.frame_timed(frame.time_ms, &frame.judged, dt).unwrap();
+                    }
+                    assert_eq!(recorder.phase_life, Some([1000, 1600]));
+                    let answer = |life: i64| match kind {
+                        2000 => life > value,
+                        2001 => life >= value,
+                        2002 => life < value,
+                        _ => life <= value,
+                    };
+                    let name = format!("phase {phase}, type {kind}, value {value}, positive {positive}");
+                    let skills = luck_skills(&master).unwrap();
+                    let prepared = prepare_recording::<ProbabilityMass>(
+                        &master, &skills, &notes, params, &play, &delta, &deck, None, false,
+                    )
+                    .unwrap();
+                    assert_eq!(prepared.life_deck.is_none(), answer(1000) == answer(2000), "{name}");
+                    let curve =
+                        assert_native_life_curve(&master, &notes, &events, params, &setup, &play, &delta, &deck);
+                    let starts = answer(if phase == 1 { 1000 } else { 1600 }) == positive;
+                    assert_eq!(curve.steps.iter().any(|step| step.1[0] > 0.0), starts, "{name}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn order_classes_share_folded_life_conditions_only_inside_the_life_range() {
+    // A range-start gauge for a life of 700 or more. Formations whose life stays in the range of the play share the
+    // class of the folded condition, with or without a recovery; one that a skill damages keeps the comparison in its
+    // key and reads its life.
+    let (mut master, notes, params, setup, play, delta) = fixture(3, 0);
+    let condition = master.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap();
+    (condition.condition_type, condition.condition_values) = (2001, vec![700]);
+    master.skill_conditions.iter_mut().find(|row| row.id == 7000).unwrap().condition_type = 4010;
+    master.gekisou_support_skill_effects.retain(|row| row.id != 96);
+    for (id, effect, phase) in [(1, 11003, 2), (2, 3001, 1), (3, 3002, 1)] {
+        let setting = json!({"_id":id,"_skillEffectType":effect,"_phase":phase});
+        master.skill_effect_settings.push(serde_json::from_value(setting).unwrap());
+    }
+    for (id, effect) in [(501, 3001), (502, 3002)] {
+        let support = row(id, "_supportSkillID", id, effect, 600, 7000, 0, 0);
+        master.support_skill_effects.push(serde_json::from_value(support).unwrap());
+    }
+    let skills = luck_skills(&master).unwrap();
+    let gauge = Performer { gekisou_skill: Some((2, 1)), ..Default::default() };
+    let healed = Performer { support_skills: vec![(501, 1)], ..gauge.clone() };
+    let damaged = Performer { support_skills: vec![(502, 1)], ..gauge.clone() };
+    let events = [(0, 100)];
+    let text = |performer: &Performer| class_text(&master, &skills, &play, 0, std::slice::from_ref(performer)).unwrap();
+    assert_eq!(text(&gauge), text(&healed));
+    assert!(text(&gauge).contains("Fixed(true)") && !text(&gauge).contains("LifeAtLeast"));
+    assert!(text(&damaged).contains("LifeAtLeast"));
+
+    let mut classes = LuckOrderClasses::new(&master, usize::MAX);
+    let mut curves = LuckDpCache::new(usize::MAX);
+    let mut class = |performer: &Performer, classes: &mut LuckOrderClasses<'_>| {
+        let deck = std::slice::from_ref(performer);
+        curves
+            .certified_order_class(
+                &master,
+                &skills,
+                &notes,
+                &events,
+                params,
+                &setup,
+                &play,
+                &delta,
+                deck,
+                None,
+                Some(classes),
+            )
+            .unwrap()
+    };
+    let counts = |classes: &LuckOrderClasses<'_>| (classes.stats().lookups, classes.stats().hits);
+    let first = class(&gauge, &mut classes).unwrap();
+    assert_eq!(counts(&classes), (1, 0));
+    let shared = class(&healed, &mut classes).unwrap();
+    assert_eq!(counts(&classes), (2, 1));
+    assert!(std::sync::Arc::ptr_eq(&first.law, &shared.law));
+    assert!(class(&damaged, &mut classes).is_none());
+    assert_eq!(counts(&classes), (3, 1));
+    for (performer, starts) in [(&gauge, true), (&healed, true), (&damaged, false)] {
+        let deck = std::slice::from_ref(performer);
+        let curve = assert_native_life_curve(&master, &notes, &events, params, &setup, &play, &delta, deck);
+        assert_eq!(curve.steps.iter().any(|step| step.1[0] > 0.0), starts);
+        let certified = luck_rush_dp_certified_with_events(
+            &master, &skills, &notes, &events, params, &setup, &play, &delta, deck, None,
+        )
+        .unwrap();
+        if starts {
+            assert_eq!(format!("{:?}", first.law), format!("{certified:?}"));
+        }
+    }
+}
+
+#[test]
 fn native_consume_count_bound_proves_rush_saturation_cannot_wrap() {
     assert!(consume_bound(10, [20, 30].into_iter()).is_ok());
     assert!(consume_bound(i32::MAX as usize, [0].into_iter()).is_ok());

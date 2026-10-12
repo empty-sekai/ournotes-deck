@@ -116,7 +116,6 @@ mod condition_rows;
 mod effects;
 mod frames;
 pub(crate) use condition_rows::LuckScoreRow;
-pub(super) use condition_rows::lottery_conditions_text;
 use condition_rows::{
     CondRow, GEKISOU_APPLIER_TYPES, condition_skill, effect_phases, gekisou_conditions, gekisou_mission_group,
     lottery_conditions, lottery_conditions_read, luck_score_rows, setting,

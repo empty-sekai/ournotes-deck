@@ -50,49 +50,81 @@ pub fn luck_has_judgement_conversion(master: &Master, deck: &[Performer]) -> boo
     !held_conversions(master, deck).is_empty()
 }
 
-/// The effect type and targets of each judgement conversion effect (12006, 13005) the performers hold.
-fn held_conversions<'m>(master: &'m Master, deck: &[Performer]) -> Vec<(i64, &'m [i64])> {
-    let converts = |effect| matches!(effect, 12006 | 13005);
-    let mut held = Vec::new();
-    for p in deck {
-        if let Some((id, lv)) = p.live_skill {
-            held.extend(
-                master
-                    .live_skill_effects
-                    .iter()
-                    .filter(|r| r.live_skill_id == id && r.level == lv && converts(r.skill_effect_type))
-                    .map(|r| (r.skill_effect_type, r.skill_target_ids.as_slice())),
-            );
+/// Calls `each` with the effect type, the effect value and the target ids of every effect row of the skills
+/// `performer` holds in a live with Gekisou: its live, support and Gekisou skills, and its Gekisou support skills beside
+/// a Gekisou skill.
+fn held_effects<'m>(master: &'m Master, performer: &Performer, mut each: impl FnMut(i64, i64, &'m [i64])) {
+    if let Some((id, lv)) = performer.live_skill {
+        for r in master.live_skill_effects.iter().filter(|r| r.live_skill_id == id && r.level == lv) {
+            each(r.skill_effect_type, r.effect_value, &r.skill_target_ids);
         }
-        for &(id, lv) in &p.support_skills {
-            held.extend(
-                master
-                    .support_skill_effects
-                    .iter()
-                    .filter(|r| r.support_skill_id == id && r.level == lv && converts(r.skill_effect_type))
-                    .map(|r| (r.skill_effect_type, r.skill_target_ids.as_slice())),
-            );
+    }
+    for &(id, lv) in &performer.support_skills {
+        for r in master.support_skill_effects.iter().filter(|r| r.support_skill_id == id && r.level == lv) {
+            each(r.skill_effect_type, r.effect_value, &r.skill_target_ids);
         }
-        if let Some((id, lv)) = p.gekisou_skill {
-            held.extend(
-                master
-                    .gekisou_skill_effects
-                    .iter()
-                    .filter(|r| r.skill_id == id && r.level == lv && converts(r.skill_effect_type))
-                    .map(|r| (r.skill_effect_type, r.skill_target_ids.as_slice())),
-            );
-            for &(id, lv) in &p.gekisou_support_skills {
-                held.extend(
-                    master
-                        .gekisou_support_skill_effects
-                        .iter()
-                        .filter(|r| r.skill_id == id && r.level == lv && converts(r.skill_effect_type))
-                        .map(|r| (r.skill_effect_type, r.skill_target_ids.as_slice())),
-                );
+    }
+    if let Some((id, lv)) = performer.gekisou_skill {
+        for r in master.gekisou_skill_effects.iter().filter(|r| r.skill_id == id && r.level == lv) {
+            each(r.skill_effect_type, r.effect_value, &r.skill_target_ids);
+        }
+        for &(id, lv) in &performer.gekisou_support_skills {
+            for r in master.gekisou_support_skill_effects.iter().filter(|r| r.skill_id == id && r.level == lv) {
+                each(r.skill_effect_type, r.effect_value, &r.skill_target_ids);
             }
         }
     }
+}
+
+/// The effect type and targets of each judgement conversion effect (12006, 13005) the performers hold.
+fn held_conversions<'m>(master: &'m Master, deck: &[Performer]) -> Vec<(i64, &'m [i64])> {
+    let mut held = Vec::new();
+    for performer in deck {
+        held_effects(master, performer, |effect, _, targets| {
+            if matches!(effect, 12006 | 13005) {
+                held.push((effect, targets));
+            }
+        });
+    }
     held
+}
+
+/// The life range `(initial, 2 × initial)` of `play` when none of its judgements deals note damage: the life stays in
+/// it at every time, for a formation that changes no judgement of the play ([`luck_play_converts`]) and holds no
+/// performer that [`leaves_life_range`].
+///
+/// The life starts at the initial life, which is also its maximum, and only the commands of the life controller change
+/// it. A note files damage only for a judgement whose damage is positive, and every judgement reaches the controller as
+/// the play declares it. A skill files damage only by the effect 3002, and only the life limit 3000 changes the
+/// maximum. That leaves the recovery 3001: it sets a positive life to its sum with a positive amount, or to twice the
+/// maximum when the sum is not below it, which is a life of the range when the sum does not wrap. Guards and damage
+/// reductions change no life.
+pub(crate) fn play_life_range(master: &Master, play: &LivePlay) -> Option<(i32, i32)> {
+    let (initial, damage) = life::life_settings(master).ok()?;
+    let range = (initial, initial.checked_mul(2)?);
+    let harmless = |note: &JudgedNote| life::harmless_judgement(&damage, note.judgement);
+    (initial > 0 && play.frames.iter().flat_map(|frame| &frame.judged).all(harmless)).then_some(range)
+}
+
+/// Whether a skill of `performer` can take the life out of `range` ([`play_life_range`]): a life limit (3000), a skill
+/// damage (3002), or a recovery (3001) whose sum with a life of the range wraps.
+pub(crate) fn leaves_life_range(master: &Master, performer: &Performer, range: (i32, i32)) -> bool {
+    let mut leaves = false;
+    held_effects(master, performer, |effect, value, _| {
+        leaves |= match effect {
+            3000 | 3002 => true,
+            3001 => (value as i32).checked_add(range.1).is_none(),
+            _ => false,
+        };
+    });
+    leaves
+}
+
+/// The life range of the formation `deck` through `play` ([`play_life_range`]) when it holds, for a formation that
+/// changes no judgement of the play.
+pub(crate) fn life_range(master: &Master, deck: &[Performer], play: &LivePlay) -> Option<(i32, i32)> {
+    let range = play_life_range(master, play)?;
+    (!deck.iter().any(|performer| leaves_life_range(master, performer, range))).then_some(range)
 }
 
 /// Whether a conversion effect the performers hold can change a judgement of `play`. The converter changes a

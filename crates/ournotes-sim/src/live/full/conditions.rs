@@ -249,6 +249,33 @@ impl Checker {
             }
     }
 
+    /// Replaces each life comparison this checker combines by its answer when every life in `low..=high` gives the
+    /// same one. A comparison is monotone in the life, so the answers at the two ends decide it.
+    pub(crate) fn fold_life(&mut self, (low, high): (i32, i32)) {
+        let same = |value: i64, test: fn(i64, i64) -> bool| {
+            let answer = test(i64::from(low), value);
+            (answer == test(i64::from(high), value)).then_some(answer)
+        };
+        let answer = match self {
+            Checker::LifeAtLeast(Some(value)) => same(*value, |life, value| life >= value),
+            Checker::LifeAtMost(Some(value)) => same(*value, |life, value| life <= value),
+            Checker::LifeGreater(Some(value)) => same(*value, |life, value| life > value),
+            Checker::LifeLess(Some(value)) => same(*value, |life, value| life < value),
+            Checker::And { items, .. } | Checker::Or(items) => {
+                items.iter_mut().for_each(|item| item.fold_life((low, high)));
+                None
+            }
+            Checker::Not(inner) => {
+                inner.fold_life((low, high));
+                None
+            }
+            _ => None,
+        };
+        if let Some(answer) = answer {
+            *self = Checker::Fixed(answer);
+        }
+    }
+
     /// Whether the checker can hold given the fixed answers it combines (formation predicates); every other checker
     /// is taken as able to hold.
     pub(crate) fn may_hold(&self) -> bool {

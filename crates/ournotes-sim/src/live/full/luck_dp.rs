@@ -27,15 +27,18 @@ mod state_identity;
 mod transcript;
 pub(crate) use cache::OrderClass;
 pub(super) use cache::RecordingCache;
+#[cfg(test)]
+use cache::class_text;
 pub use cache::{LuckDpCache, LuckDpCacheStats, LuckOrderClassStats, LuckOrderClasses};
 use dp::{Distribution, DpResult, Phase, propagate, propagate_cancellable};
 pub use kinds::{LotteryBreak, LotteryKind, LotteryKinds, LotteryRole};
 use life_recorder::life_recorder;
 pub use life_recorder::luck_has_judgement_conversion;
 pub(crate) use life_recorder::luck_play_converts;
+use life_recorder::{leaves_life_range, life_range, play_life_range};
 use mass::{Draws, Mass};
 pub(super) use plan::fixed_condition;
-use plan::{Action, Plan, chance, compile, reads_life, unsupported};
+use plan::{Action, Plan, chance, compile, fold_life_conditions, reads_life, unsupported};
 pub use record::{LuckRecordProfile, take_luck_record_profile};
 use record::{
     PreparedRecording, Skeleton, check_recording, file, prepare_recording, record, record_skeleton, reduced_deck,

@@ -269,17 +269,6 @@ pub(super) fn lottery_conditions_read(
     Ok((cond, rows, factory.formation_read()))
 }
 
-/// [`lottery_conditions`] as text.
-pub(crate) fn lottery_conditions_text(
-    master: &Master,
-    deck: &[Performer],
-    skill_target_music_type: i64,
-    lottery: &LuckSkills,
-) -> Result<String, Error> {
-    let (cond, rows) = lottery_conditions(master, deck, skill_target_music_type, lottery)?;
-    Ok(format!("{rows:?}/{cond:?}"))
-}
-
 /// The lottery-dependent note score-ups of the Gekisou (support) condition skills `cond` with effect rows `rows`
 /// ([`luck_skills`]).
 pub(super) fn luck_score_rows(cond: &[CondSkill], rows: &[EffectRow], skills: &LuckSkills) -> Vec<LuckScoreRow> {

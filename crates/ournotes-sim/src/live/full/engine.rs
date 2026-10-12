@@ -442,6 +442,19 @@ impl ConditionSkillUpdater {
         Ok(found)
     }
 
+    /// Folds the life comparisons of the conditions of the effects whose row `folds` over the life range `range`
+    /// ([`Checker::fold_life`]). An effect reads its condition only once it triggered, so the triggers, the resets
+    /// and the idle plan stand.
+    pub(super) fn fold_life_conditions(&mut self, range: (i32, i32), folds: impl Fn(usize) -> bool) {
+        for effect in &mut self.effects {
+            if folds(effect.row)
+                && let Some(condition) = effect.condition.as_mut()
+            {
+                condition.fold_life(range);
+            }
+        }
+    }
+
     /// Effect metadata stays private so a compiled idle plan cannot be invalidated
     /// by a caller replacing a trigger, reset checker or trigger type after build.
     pub(super) fn effect(&self, index: usize) -> &CondEffect {

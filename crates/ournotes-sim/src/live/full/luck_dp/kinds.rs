@@ -1,7 +1,7 @@
 //! Lottery kinds: what a performer brings to the lottery recordings of a live, apart from where it plays.
 //!
 //! The order classes of a live ([`LuckOrderClasses`]) key a formation by the text of the lottery condition skills
-//! of its reduced performers ([`lottery_conditions_text`]). A lottery kind reads that text one performer at a time:
+//! of its reduced performers ([`cache::class_text`]). A lottery kind reads that text one performer at a time:
 //! the text of the performer's own lottery condition skills at each of the five positions, with blank performers
 //! before it. A formation whose performers all have a kind takes a key, and two such formations with the same kind
 //! at every position take the same key, so they share their order class and their law:
@@ -19,8 +19,13 @@
 //!   fails for one of its performers: they are disjunctions over the performers' skill lists, and the state
 //!   identities of different performers never meet (an effect id holds the skill type and the position below the row
 //!   id, and a kind refuses row ids whose effect ids wrap). A kind refuses a performer that fails them alone.
-//! - A recording that reads the life of the formation keys no class ([`LotteryBreak::ReadsLife`]). The plan of the
-//!   lottery condition skills makes its actions, and refuses a shape, effect by effect, so a kind refuses a
+//! - The key folds the life comparisons of a formation over its life range ([`life_range`]): the range of the play,
+//!   for a formation without a performer whose skills can take the life out of it. The kinds of a play with a life
+//!   range fold their texts over it and refuse such a performer ([`LotteryBreak::LeavesLifeRange`]), so a formation
+//!   whose performers all have a kind holds the range. A fold replaces comparisons inside one condition, so the folded
+//!   text of the formation is made of the folded texts of its performers as the text is made of theirs.
+//! - A recording that still reads the life of the formation keys no class ([`LotteryBreak::ReadsLife`]). The plan of
+//!   the lottery condition skills makes its actions, and refuses a shape, effect by effect, so a kind refuses a
 //!   performer whose own plan does either.
 //!
 //! The checks split further between the member's skills and the Snap's skills, which [`LotteryKinds`] reads apart
@@ -38,7 +43,9 @@ pub enum LotteryBreak {
     Unsupported(String),
     /// A judgement conversion the performer holds can change a judgement of the play.
     Converts,
-    /// A lottery action of the performer reads the life.
+    /// A skill of the performer can take the life out of the range the play keeps it in.
+    LeavesLifeRange,
+    /// A lottery action of the performer reads the life beyond what that range answers.
     ReadsLife,
     /// A lottery condition of the performer reads performers other than its holder.
     ReadsFormation,
@@ -80,6 +87,8 @@ pub struct LotteryKinds<'a> {
     notes: &'a [LiveNote],
     play: &'a LivePlay,
     skill_target_music_type: i64,
+    /// The life range of the play ([`play_life_range`]).
+    life: Option<(i32, i32)>,
     /// The checks of the member's skills, by live and Gekisou skill.
     members: FxHashMap<MemberSkills, Option<LotteryBreak>>,
     /// The checks of the Snap's skills, by support and Gekisou support skills, beside a Gekisou skill or not.
@@ -106,6 +115,7 @@ impl<'a> LotteryKinds<'a> {
             notes,
             play,
             skill_target_music_type,
+            life: play_life_range(master, play),
             members: FxHashMap::default(),
             snaps: FxHashMap::default(),
             related: FxHashMap::default(),
@@ -137,7 +147,8 @@ impl<'a> LotteryKinds<'a> {
         role
     }
 
-    /// Why the performer checks of a recording or the conversions of `performer` keep its formations from a key.
+    /// Why the performer checks of a recording, the conversions of `performer` or its effects on the life keep its
+    /// formations from a key folded as the kinds are.
     ///
     /// The checks of the live and Gekisou skills of the member and those of the support and Gekisou support skills
     /// of the Snap are made apart: every check is a disjunction over the skill lists, the Gekisou support list read
@@ -175,7 +186,7 @@ impl<'a> LotteryKinds<'a> {
         self.snaps[&snap].clone()
     }
 
-    /// The performer checks of a recording and the conversions, for `performer` alone.
+    /// The performer checks of a recording, the conversions and the life range, for `performer` alone.
     fn performer_breaks(&self, performer: &Performer) -> Option<LotteryBreak> {
         let unsupported = |error: Error| Some(LotteryBreak::Unsupported(error.to_string()));
         match luck::luck_signature(self.master, performer) {
@@ -193,8 +204,12 @@ impl<'a> LotteryKinds<'a> {
         if self.effect_ids_wrap(performer) {
             return unsupported(Error::Unsupported("a condition effect id wraps".into()));
         }
-        luck_play_converts(self.master, std::slice::from_ref(performer), self.notes, self.play)
-            .then_some(LotteryBreak::Converts)
+        if luck_play_converts(self.master, std::slice::from_ref(performer), self.notes, self.play) {
+            return Some(LotteryBreak::Converts);
+        }
+        self.life
+            .is_some_and(|range| leaves_life_range(self.master, performer, range))
+            .then_some(LotteryBreak::LeavesLifeRange)
     }
 
     /// Whether the effect id of a condition skill row of `performer` (row id × 100 + skill type × 10 + position)
@@ -239,14 +254,14 @@ impl<'a> LotteryKinds<'a> {
     }
 
     /// The kind of a reduced performer: the text of its lottery condition skills at each position, with blank
-    /// performers before it.
+    /// performers before it, folded over the life range of the play.
     fn kind_of(&mut self, reduced: &Performer) -> LotteryRole {
         let mut texts = Vec::with_capacity(POSITIONS);
         for position in 0..POSITIONS {
             let mut deck = vec![Performer::default(); position];
             deck.push(reduced.clone());
             let unsupported = |error: Error| LotteryRole::Breaks(LotteryBreak::Unsupported(error.to_string()));
-            let (cond, rows, formation) =
+            let (mut cond, rows, formation) =
                 match lottery_conditions_read(self.master, &deck, self.skill_target_music_type, self.skills) {
                     Ok(built) => built,
                     Err(error) => return unsupported(error),
@@ -254,6 +269,7 @@ impl<'a> LotteryKinds<'a> {
             if formation {
                 return LotteryRole::Breaks(LotteryBreak::ReadsFormation);
             }
+            fold_life_conditions(&mut cond, &rows, || self.life);
             let plan = match compile::<ProbabilityMass>(self.master, &cond, &rows, self.skills, None, false) {
                 Ok(plan) => plan,
                 Err(error) => return unsupported(error),

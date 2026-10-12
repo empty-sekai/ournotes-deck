@@ -281,6 +281,10 @@ pub(super) fn reduced_deck(deck: &[Performer]) -> Vec<Performer> {
 /// The lottery condition skills of the reduced performers of `deck` with their plan, and whether the recording reads
 /// the life of the complete formation: when an action reads the life, or a held conversion can change a judgement of
 /// the play. Otherwise every judgement reaches the controller as declared and no action reads a phase life.
+///
+/// The life comparisons of the conditions are folded over the life range of the formation when it holds one
+/// ([`life_range`]). The reduced model plays the same judgements with a part of the formation's skills, so its life
+/// stays in that range too, and its native run answers a folded comparison as the fold does.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn prepare_recording<M: Mass>(
     master: &Master,
@@ -295,14 +299,15 @@ pub(super) fn prepare_recording<M: Mass>(
 ) -> Result<PreparedRecording<M>, Error> {
     check_recording(master, skills, play, delta_times, probes, deck)?;
     let reduced = reduced_deck(deck);
-    let (cond, rows) = lottery_conditions(master, &reduced, params.skill_target_music_type, skills)?;
+    let (mut cond, rows) = lottery_conditions(master, &reduced, params.skill_target_music_type, skills)?;
+    let converts = luck_play_converts(master, deck, notes, play);
+    fold_life_conditions(&mut cond, &rows, || if converts { None } else { life_range(master, deck, play) });
     let plan = compile::<M>(master, &cond, &rows, skills, probes, collect_moments)?;
     count(|p| &mut p.calls);
     if cond.is_empty() {
         count(|p| &mut p.without_skills);
     }
-    let life = plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life))
-        || luck_play_converts(master, deck, notes, play);
+    let life = converts || plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life));
     if life {
         count(|p| &mut p.with_life);
     }
