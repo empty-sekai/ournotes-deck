@@ -248,8 +248,8 @@ mod tests {
         Arc::new(LuckDpCertifiedResult {
             probe_transitions,
             rush_transitions: Vec::new(),
-            steps: vec![(0, tenths.map(|weight| ProbabilityMass::from_ratio(weight, 10).unwrap()))],
-            frame_queries: Vec::new(),
+            steps: vec![(0, tenths.map(|weight| ProbabilityMass::from_ratio(weight, 10).unwrap()))].into(),
+            frame_queries: Vec::new().into(),
             probes: vec![probe],
             probe_starts: F64Interval::point(starts).unwrap(),
             range_moments: Vec::new(),

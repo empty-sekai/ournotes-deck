@@ -423,8 +423,8 @@ impl LuckDpCache {
         let result = std::sync::Arc::new(LuckDpCertifiedResult {
             probe_transitions: result.probe_transitions,
             rush_transitions: result.rush_transitions,
-            steps: result.steps,
-            frame_queries: result.frame_queries,
+            steps: result.steps.into(),
+            frame_queries: result.frame_queries.into(),
             probes: result.probes,
             probe_starts: result.probe_starts,
             range_moments: result.range_moments,

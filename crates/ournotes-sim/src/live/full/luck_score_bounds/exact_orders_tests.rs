@@ -410,7 +410,7 @@ fn assert_laws_overlap(a: &LuckDpCertifiedResult, b: &LuckDpCertifiedResult) {
         (&b.probe_transitions, &b.rush_transitions, &b.probes)
     );
     assert_eq!(a.frame_queries.len(), b.frame_queries.len());
-    for ((time, x), (other, y)) in a.frame_queries.iter().zip(&b.frame_queries) {
+    for ((time, x), (other, y)) in a.frame_queries.iter().zip(b.frame_queries.iter()) {
         assert_eq!(time, other);
         for (x, y) in x.iter().flatten().zip(y.iter().flatten()) {
             let (x, y) = (x.interval(), y.interval());

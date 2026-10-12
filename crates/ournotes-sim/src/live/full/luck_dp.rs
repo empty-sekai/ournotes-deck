@@ -78,13 +78,14 @@ pub struct LuckDpCertifiedResult {
     /// and repeated frames each retain their own entry.
     pub rush_transitions: Vec<u16>,
     /// Joint probabilities in the order [neither, score only, Rush only, Rush and score]. Every bucket is
-    /// accumulated directly from mutually exclusive DP states, never by subtracting rounded marginals.
-    pub steps: Vec<(i32, [ProbabilityMass; 4])>,
+    /// accumulated directly from mutually exclusive DP states, never by subtracting rounded marginals. Laws that
+    /// differ only in [`Self::probes`] share them.
+    pub steps: std::sync::Arc<[(i32, [ProbabilityMass; 4])]>,
     /// For each play frame that judges notes, the joint probabilities, in the order of [`Self::steps`], of what
     /// those notes read when a score query of that same frame runs before the frame's lottery: a note before the
     /// frame's time, a note at the frame's time after the frame's skill boundary, and a note at the frame's time
     /// before it.
-    pub frame_queries: Vec<(i32, [[ProbabilityMass; 4]; 3])>,
+    pub frame_queries: std::sync::Arc<[(i32, [[ProbabilityMass; 4]; 3])]>,
     /// All supported score probes use the same 7021 predicate; this identifies the shapes with a holder.
     pub probes: Vec<bool>,
     /// The expected number of play frames whose skill boundary turns the direct-probe class on. A frame counts in
@@ -316,8 +317,8 @@ pub(crate) fn luck_rush_dp_certified_with_moments_cached(
         Ok(LuckDpCertifiedResult {
             probe_transitions: result.probe_transitions,
             rush_transitions: result.rush_transitions,
-            steps: result.steps,
-            frame_queries: result.frame_queries,
+            steps: result.steps.into(),
+            frame_queries: result.frame_queries.into(),
             probes: result.probes,
             probe_starts: result.probe_starts,
             range_moments: result.range_moments,
@@ -359,8 +360,8 @@ pub(super) fn certified_mode(
     Ok(LuckDpCertifiedResult {
         probe_transitions: result.probe_transitions,
         rush_transitions: result.rush_transitions,
-        steps: result.steps,
-        frame_queries: result.frame_queries,
+        steps: result.steps.into(),
+        frame_queries: result.frame_queries.into(),
         probes: result.probes,
         probe_starts: result.probe_starts,
         range_moments: result.range_moments,

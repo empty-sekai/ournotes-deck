@@ -393,6 +393,9 @@ fn formations_that_differ_only_in_their_score_probes_share_one_propagation() {
     let without = kinds.order_laws(&live, &plain, &order, &mut curves).unwrap().unwrap();
     assert_eq!((kinds.stats().composed, kinds.stats().probe_variants), (1, 1));
     assert_ne!(with[0].probes, without[0].probes);
+    // The two laws share their curves.
+    assert!(std::sync::Arc::ptr_eq(&with[0].steps, &without[0].steps));
+    assert!(std::sync::Arc::ptr_eq(&with[0].frame_queries, &without[0].frame_queries));
     for (deck, law) in [(&probing, &with[0]), (&plain, &without[0])] {
         let native = curves.law_of(&native_transcript(&live, deck), &mut || false).unwrap().unwrap();
         assert_eq!(curve_words(law), curve_words(&native), "{deck:?}");

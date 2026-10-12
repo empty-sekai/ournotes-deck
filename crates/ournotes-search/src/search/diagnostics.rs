@@ -1306,8 +1306,8 @@ mod luck_certified_tests {
         LuckDpCertifiedResult {
             probe_transitions: Vec::new(),
             rush_transitions: Vec::new(),
-            steps: vec![(123, [tenth, tenth, tenth, ProbabilityMass::from_ratio(7, 10).unwrap()])],
-            frame_queries: Vec::new(),
+            steps: vec![(123, [tenth, tenth, tenth, ProbabilityMass::from_ratio(7, 10).unwrap()])].into(),
+            frame_queries: Vec::new().into(),
             probes: vec![true],
             probe_starts: ournotes_sim::live::certified::F64Interval::ZERO,
             range_moments: Vec::new(),

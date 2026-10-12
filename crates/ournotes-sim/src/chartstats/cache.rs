@@ -571,8 +571,8 @@ impl Record for LuckDpCertifiedResult {
         Some(Self {
             probe_transitions: stored.probe_transitions,
             rush_transitions: stored.rush_transitions,
-            steps,
-            frame_queries,
+            steps: steps.into(),
+            frame_queries: frame_queries.into(),
             probes: stored.probes,
             probe_starts: stored.probe_starts.interval()?,
             range_moments,
@@ -636,11 +636,13 @@ mod tests {
         let curve = LuckDpCertifiedResult {
             probe_transitions: vec![1, 3, 8],
             rush_transitions: vec![65, 0x302, 0x1aa],
-            steps: vec![(12, [ProbabilityMass::from_bounds(0.25f64.next_down(), 0.25f64.next_up()).unwrap(); 4])],
+            steps: vec![(12, [ProbabilityMass::from_bounds(0.25f64.next_down(), 0.25f64.next_up()).unwrap(); 4])]
+                .into(),
             frame_queries: vec![(
                 12,
                 [[ProbabilityMass::ONE, ProbabilityMass::ZERO, ProbabilityMass::ZERO, ProbabilityMass::ZERO]; 3],
-            )],
+            )]
+            .into(),
             probes: vec![false, true],
             probe_starts: F64Interval::new(0.5, 0.5f64.next_up()).unwrap(),
             range_moments: vec![LuckRangeMoments {
@@ -730,8 +732,8 @@ mod tests {
             Ok(LuckDpCertifiedResult {
                 probe_transitions: Vec::new(),
                 rush_transitions: Vec::new(),
-                steps: Vec::new(),
-                frame_queries: Vec::new(),
+                steps: Vec::new().into(),
+                frame_queries: Vec::new().into(),
                 probes: Vec::new(),
                 probe_starts: F64Interval::ZERO,
                 range_moments: Vec::new(),

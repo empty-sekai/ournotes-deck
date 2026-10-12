@@ -813,8 +813,8 @@ pub(super) fn no_lottery(play: &LivePlay, skills: &LuckSkills) -> std::sync::Arc
     std::sync::Arc::new(LuckDpCertifiedResult {
         probe_transitions: vec![1; play.frames.len()],
         rush_transitions: vec![65; play.frames.len()],
-        steps: Vec::new(),
-        frame_queries: Vec::new(),
+        steps: Vec::new().into(),
+        frame_queries: Vec::new().into(),
         probes: vec![false; skills.shapes.len()],
         probe_starts: crate::live::certified::F64Interval::ZERO,
         range_moments: Vec::new(),

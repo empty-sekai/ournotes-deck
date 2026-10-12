@@ -111,10 +111,14 @@ type Composed = Option<std::sync::Arc<LuckDpCertifiedResult>>;
 const ORDER_BYTES: usize = 2 * std::mem::size_of::<(OrderIds, Composed)>();
 
 /// Composed laws by the words of their composition, and the law each order's contributions compose to; the laws are
-/// dropped oldest first once the held bytes exceed the capacity, and then every order's with them.
+/// dropped oldest first once the held bytes exceed the capacity, and then every order's with them. Laws that share
+/// their curves ([`LuckDpCertifiedResult::steps`] and [`LuckDpCertifiedResult::frame_queries`]) count them once.
 pub(super) struct ComposedLaws {
     entries: FxHashMap<std::sync::Arc<[u64]>, std::sync::Arc<LuckDpCertifiedResult>>,
-    order: std::collections::VecDeque<(std::sync::Arc<[u64]>, usize)>,
+    /// The held laws oldest first: key, bytes of their own and the address of their curves.
+    order: std::collections::VecDeque<(std::sync::Arc<[u64]>, usize, usize)>,
+    /// The held laws and the bytes of each curve held, by its address.
+    curves: FxHashMap<usize, (usize, usize)>,
     orders: FxHashMap<OrderIds, Composed>,
     bytes: usize,
     capacity: usize,
@@ -125,6 +129,7 @@ impl ComposedLaws {
         Self {
             entries: FxHashMap::default(),
             order: std::collections::VecDeque::new(),
+            curves: FxHashMap::default(),
             orders: FxHashMap::default(),
             bytes: 0,
             capacity,
@@ -134,6 +139,7 @@ impl ComposedLaws {
     pub(super) fn clear(&mut self) {
         self.entries.clear();
         self.order.clear();
+        self.curves.clear();
         self.orders.clear();
         self.bytes = 0;
     }
@@ -149,8 +155,14 @@ impl ComposedLaws {
                 self.orders.clear();
                 continue;
             }
-            let (oldest, held) = self.order.pop_front().expect("held laws account for the held bytes");
+            let (oldest, held, curve) = self.order.pop_front().expect("held laws account for the held bytes");
             self.bytes -= held;
+            let (laws, bytes) = self.curves.get_mut(&curve).expect("a held law's curve");
+            *laws -= 1;
+            if *laws == 0 {
+                self.bytes -= *bytes;
+                self.curves.remove(&curve);
+            }
             self.entries.remove(&oldest);
             stats.law_evictions += 1;
         }
@@ -165,12 +177,22 @@ impl ComposedLaws {
         stats: &mut LotteryKindStats,
     ) -> bool {
         let bytes = key.len() * std::mem::size_of::<u64>() + law_bytes(&law);
-        if !self.reserve(bytes, stats) {
+        let (curve, curve_bytes) = (curve_address(&law), curve_bytes(&law));
+        // Room for the curves too unless held, also when making room drops the laws that held them.
+        let held = self.curves.contains_key(&curve);
+        if !self.reserve(bytes + if held { 0 } else { curve_bytes }, stats)
+            || (held && !self.curves.contains_key(&curve) && !self.reserve(bytes + curve_bytes, stats))
+        {
             return false;
         }
         let key: std::sync::Arc<[u64]> = key.into();
+        let (laws, _) = self.curves.entry(curve).or_insert((0, curve_bytes));
+        if *laws == 0 {
+            self.bytes += curve_bytes;
+        }
+        *laws += 1;
         self.bytes += bytes;
-        self.order.push_back((key.clone(), bytes));
+        self.order.push_back((key.clone(), bytes, curve));
         self.entries.insert(key, law);
         stats.peak_laws = stats.peak_laws.max(self.entries.len());
         stats.peak_law_bytes = stats.peak_law_bytes.max(self.bytes);
@@ -187,16 +209,24 @@ impl ComposedLaws {
     }
 }
 
-/// The bytes a law holds.
+/// The bytes a law holds besides its curves.
 fn law_bytes(law: &LuckDpCertifiedResult) -> usize {
     use std::mem::size_of_val;
     std::mem::size_of::<LuckDpCertifiedResult>()
         + size_of_val(&law.probe_transitions[..])
         + size_of_val(&law.rush_transitions[..])
-        + size_of_val(&law.steps[..])
-        + size_of_val(&law.frame_queries[..])
         + size_of_val(&law.probes[..])
         + size_of_val(&law.range_moments[..])
+}
+
+/// The bytes of a law's curves.
+fn curve_bytes(law: &LuckDpCertifiedResult) -> usize {
+    std::mem::size_of_val(&law.steps[..]) + std::mem::size_of_val(&law.frame_queries[..])
+}
+
+/// The address of a law's curves, which the laws that share them share.
+fn curve_address(law: &LuckDpCertifiedResult) -> usize {
+    law.steps.as_ptr() as usize
 }
 
 impl LotteryKinds<'_> {
@@ -466,4 +496,44 @@ fn gauge_actions_commute(base: &Skeleton, actions: &[Action<ProbabilityMass>]) -
             })
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn law(probe: bool) -> LuckDpCertifiedResult {
+        LuckDpCertifiedResult {
+            probe_transitions: Vec::new(),
+            rush_transitions: Vec::new(),
+            steps: vec![(0, [ProbabilityMass::ONE; 4]); 100].into(),
+            frame_queries: vec![(0, [[ProbabilityMass::ONE; 4]; 3]); 100].into(),
+            probes: vec![probe],
+            probe_starts: F64Interval::ZERO,
+            range_moments: Vec::new(),
+            peak_states: 1,
+            transitions: 1,
+        }
+    }
+
+    #[test]
+    fn laws_that_share_their_curves_hold_them_once() {
+        let base = law(false);
+        let variant = LuckDpCertifiedResult { probes: vec![true], ..base.clone() };
+        let own = |law: &LuckDpCertifiedResult| std::mem::size_of::<u64>() + law_bytes(law);
+        let curves = curve_bytes(&base);
+        let capacity = own(&base) + own(&variant) + curves;
+        let mut stats = LotteryKindStats::default();
+        let mut laws = ComposedLaws::new(capacity);
+        assert!(laws.insert(vec![1], Arc::new(base), &mut stats));
+        assert!(laws.insert(vec![2], Arc::new(variant), &mut stats));
+        assert_eq!((stats.peak_laws, stats.law_evictions, laws.bytes), (2, 0, capacity));
+        // A law with curves of its own drops both, and their curves with the second.
+        let other = law(false);
+        let held = own(&other) + curve_bytes(&other);
+        assert!(laws.insert(vec![3], Arc::new(other), &mut stats));
+        assert_eq!((laws.entries.len(), stats.law_evictions, laws.bytes), (1, 2, held));
+        assert_eq!(laws.curves.len(), 1);
+    }
 }

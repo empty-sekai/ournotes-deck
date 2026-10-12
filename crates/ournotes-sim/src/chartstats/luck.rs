@@ -546,8 +546,8 @@ mod certified_tests {
         full::LuckDpCertifiedResult {
             probe_transitions: Vec::new(),
             rush_transitions: Vec::new(),
-            steps: vec![(100, joint)],
-            frame_queries: Vec::new(),
+            steps: vec![(100, joint)].into(),
+            frame_queries: Vec::new().into(),
             probes,
             probe_starts: crate::live::certified::F64Interval::ZERO,
             range_moments: Vec::new(),

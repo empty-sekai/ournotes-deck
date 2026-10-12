@@ -17,7 +17,7 @@ use crate::live::certified::F64Interval;
 use serde_json::{Value, json};
 
 fn assert_certified_encloses_nominal(certified: &LuckDpCertifiedResult, nominal: &LuckDpResult) {
-    for &(time, joint) in &certified.steps {
+    for &(time, joint) in certified.steps.iter() {
         let total = joint.iter().fold(F64Interval::ZERO, |sum, mass| sum.add(mass.interval()));
         assert!(total.contains(1.0), "t={time} total={total:?}");
         let values = &nominal.steps[nominal.steps.partition_point(|step| step.0 <= time) - 1].1;
@@ -539,7 +539,7 @@ fn certified_deterministic_curves_keep_exact_zero_and_one() {
         let native =
             luck::luck_rush_samples(&master, &skills, &notes, params, &setup, &play, &delta, &deck, None, &[0, 1, 7])
                 .unwrap();
-        for &(time, joint) in &certified.steps {
+        for &(time, joint) in certified.steps.iter() {
             let weights = &native[native.partition_point(|step| step.0 <= time) - 1].1;
             let index = 2 * usize::from(weights[0] == 1.0) + usize::from(weights[1] == 1.0);
             for (bucket, mass) in joint.into_iter().enumerate() {
@@ -939,7 +939,7 @@ fn quiet_frames_preserve_pending_lots_and_next_frame_miss_effects() {
 fn curve_words(curve: &LuckDpCertifiedResult) -> Vec<u64> {
     let mut out = vec![curve.probe_transitions.len() as u64];
     out.extend(curve.probe_transitions.iter().map(|&mask| u64::from(mask)));
-    for (time, joint) in &curve.steps {
+    for (time, joint) in curve.steps.iter() {
         out.push(u64::from(*time as u32));
         joint.iter().for_each(|mass| out.extend(mass.bits()));
     }
@@ -1386,7 +1386,7 @@ fn frame_queries_read_the_probe_class_on_their_side_of_the_skill_boundary() {
             None,
         )
         .unwrap();
-        for (time, masses) in &certified.frame_queries {
+        for (time, masses) in certified.frame_queries.iter() {
             let index = play.frames.iter().position(|frame| frame.time_ms == *time).unwrap();
             // Bit 2 * before + after of each probe class transition at the frame's skill boundary.
             let mask = certified.probe_transitions[index];

@@ -687,8 +687,8 @@ fn queries_read_frame_notes_on_their_side_of_the_skill_boundary() {
     let curve = LuckDpCertifiedResult {
         probe_transitions: vec![1; 2],
         rush_transitions: vec![65; 2],
-        steps: Vec::new(),
-        frame_queries: vec![(100, [mass(1), mass(2), mass(3)])],
+        steps: Vec::new().into(),
+        frame_queries: vec![(100, [mass(1), mass(2), mass(3)])].into(),
         probes: Vec::new(),
         probe_starts: crate::live::certified::F64Interval::ZERO,
         range_moments: Vec::new(),
