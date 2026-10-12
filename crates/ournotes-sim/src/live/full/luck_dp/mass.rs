@@ -65,8 +65,8 @@ impl Mass for f64 {
 
     fn weights(dist: &Distribution<Self>, probes: &[bool], phase: Phase) -> Self::Weights {
         let mut values = [0f64; 3];
-        for (state, &probability) in dist {
-            let (rush, score) = phase.reads(state);
+        for &(state, probability) in dist {
+            let (rush, score) = phase.reads(&state);
             if rush {
                 values[0] += probability;
             }
@@ -143,8 +143,8 @@ impl Mass for ProbabilityMass {
 
     fn weights(dist: &Distribution<Self>, _probes: &[bool], phase: Phase) -> Self::Weights {
         let mut joint = [Self::ZERO; 4];
-        for (state, &probability) in dist {
-            let (rush, score) = phase.reads(state);
+        for &(state, probability) in dist {
+            let (rush, score) = phase.reads(&state);
             let index = 2 * usize::from(rush) + usize::from(score);
             joint[index] = joint[index].merge_disjoint(probability);
         }

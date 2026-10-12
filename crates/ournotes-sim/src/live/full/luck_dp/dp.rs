@@ -14,11 +14,38 @@ pub(super) struct DpResult<W> {
     pub(super) transitions: u64,
 }
 
+/// The next lottery result of a chain. Nothing reads a drawn result before the chain consumes it, and the lottery it
+/// is drawn from reads only the lot table, the buff and the guarantee at the draw. So a chain keeps that lottery
+/// rather than one state for each of its outcomes, and the consumption takes the outcomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum Next {
+    /// A known result, or -1 before any draw.
+    Known(i8),
+    /// The outcome of the lottery with this index in [`Dp::lotteries`].
+    Drawn(u16),
+}
+
+impl Default for Next {
+    fn default() -> Self {
+        Next::Known(0)
+    }
+}
+
+impl Next {
+    /// Distinct words for distinct values.
+    fn word(self) -> u64 {
+        match self {
+            Next::Known(result) => u64::from(result as u8),
+            Next::Drawn(index) => (u64::from(index) + 1) << 8,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(super) struct Chain {
     pub(super) gauge: i32,
     pub(super) lots: i32,
-    pub(super) next: i8,
+    pub(super) next: Next,
     pub(super) rush: u8,
     pub(super) maximum: i64,
 }
@@ -28,7 +55,7 @@ impl Chain {
         Self {
             gauge: score.gauge,
             lots: score.lot_count,
-            next: score.next as i8,
+            next: Next::Known(score.next as i8),
             // From the fourth Critical onwards the table is always CHANCE_LOW. No retained mechanism reads
             // the exact count; saturation avoids retaining an unbounded, irrelevant history.
             rush: score.rush_combo.min(4) as u8,
@@ -36,11 +63,19 @@ impl Chain {
         }
     }
 
+    /// The chain of `score` with this chain's next result: no step of a score reads its next result.
+    fn with(self, score: &LuckScore) -> Self {
+        Self { next: self.next, ..Self::of(score) }
+    }
+
+    /// The score of `template` with this chain's gauge, lots and table, and its next result when known.
     pub(super) fn score(self, template: &LuckScore) -> LuckScore {
         let mut score = template.clone();
         score.gauge = self.gauge;
         score.lot_count = self.lots;
-        score.next = i64::from(self.next);
+        if let Next::Known(result) = self.next {
+            score.next = i64::from(result);
+        }
         score.rush_combo = i32::from(self.rush);
         score.gauge_max = self.maximum;
         score
@@ -79,18 +114,18 @@ impl std::hash::Hash for State {
         // byte-sized flag. The signed fields keep all their original bits; this imposes no gauge or lot cap.
         hasher.write_i64(self.chain.maximum);
         hasher.write_u64(u64::from(self.chain.gauge as u32) | (u64::from(self.chain.lots as u32) << 32));
-        hasher.write_u32(
-            u32::from(self.chain.next as u8)
-                | (u32::from(self.chain.rush) << 8)
-                | (u32::from(self.minimum as u8) << 16)
-                | ((self.miss_used as u32) << 24)
-                | ((self.previous_miss as u32) << 25)
-                | ((self.frame_lot as u32) << 26)
-                | ((self.frame_miss as u32) << 27)
-                | ((self.rush as u32) << 28)
-                | ((self.query_rush as u32) << 29)
-                | ((self.score as u32) << 30)
-                | ((self.score_before as u32) << 31),
+        hasher.write_u64(
+            self.chain.next.word()
+                | (u64::from(self.chain.rush) << 32)
+                | (u64::from(self.minimum as u8) << 40)
+                | ((self.miss_used as u64) << 48)
+                | ((self.previous_miss as u64) << 49)
+                | ((self.frame_lot as u64) << 50)
+                | ((self.frame_miss as u64) << 51)
+                | ((self.rush as u64) << 52)
+                | ((self.query_rush as u64) << 53)
+                | ((self.score as u64) << 54)
+                | ((self.score_before as u64) << 55),
         );
         if self.previous_critical || self.frame_critical {
             hasher.write_u8(u8::from(self.previous_critical) | (u8::from(self.frame_critical) << 1));
@@ -98,7 +133,9 @@ impl std::hash::Hash for State {
     }
 }
 
-pub(super) type Distribution<M = f64> = FxHashMap<State, M>;
+/// The lottery states and their masses. A state may have several entries, whose masses add up: the steps that keep
+/// one state for each state change the entries in place, and those that branch merge equal states.
+pub(super) type Distribution<M = f64> = Vec<(State, M)>;
 
 /// The lottery state a note's score reads, relative to its native frame.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -128,9 +165,12 @@ pub(super) struct Dp<'a, M: Mass> {
     pub(super) templates: Vec<LuckScore>,
     active_range: Option<usize>,
     pub(super) machine: &'a LotteryMachine,
-    pub(super) draws: FxHashMap<(usize, i32, i8), Draws<M>>,
+    /// The index of each lottery drawn, by its lot table, buff and guarantee, and the outcomes of each.
+    lotteries: FxHashMap<(usize, i32, i8), u16>,
+    outcomes: Vec<Draws<M>>,
     pub(super) dist: Distribution<M>,
-    spare: Distribution<M>,
+    /// The states a branching step files, merged.
+    table: FxHashMap<State, M>,
     peak: usize,
     pub(super) transitions: u64,
     pub(super) range_moments: Vec<LuckRangeMoments>,
@@ -139,8 +179,6 @@ pub(super) struct Dp<'a, M: Mass> {
 
 impl<'a, M: Mass> Dp<'a, M> {
     pub(super) fn new(templates: Vec<LuckScore>, machine: &'a LotteryMachine, collect_moments: bool) -> Self {
-        let mut dist = Distribution::<M>::default();
-        dist.insert(State::default(), M::ONE);
         Self {
             range_moments: if collect_moments {
                 vec![LuckRangeMoments::default(); templates.len()]
@@ -151,15 +189,16 @@ impl<'a, M: Mass> Dp<'a, M> {
             templates,
             active_range: None,
             machine,
-            draws: FxHashMap::default(),
-            dist,
-            spare: Distribution::default(),
+            lotteries: FxHashMap::default(),
+            outcomes: Vec::new(),
+            dist: vec![(State::default(), M::ONE)],
+            table: FxHashMap::default(),
             peak: 1,
             transitions: 0,
         }
     }
 
-    pub(super) fn push(&mut self, out: &mut Distribution<M>, state: State, probability: M) -> Result<(), Error> {
+    pub(super) fn push(&mut self, out: &mut FxHashMap<State, M>, state: State, probability: M) -> Result<(), Error> {
         if probability.possible() {
             let existing = out.entry(state).or_insert(M::ZERO);
             *existing = existing.merge(probability);
@@ -171,12 +210,16 @@ impl<'a, M: Mass> Dp<'a, M> {
         Ok(())
     }
 
-    fn replace(&mut self, out: Distribution<M>) -> Result<(), Error> {
-        self.peak = self.peak.max(out.len());
-        if out.len() > 2_000_000 {
+    /// Make the states a branching step filed in `out` the distribution, in the entries of the one it replaces.
+    fn settle(&mut self, mut out: FxHashMap<State, M>, mut entries: Distribution<M>) -> Result<(), Error> {
+        entries.clear();
+        entries.extend(out.drain());
+        self.table = out;
+        self.peak = self.peak.max(entries.len());
+        if entries.len() > 2_000_000 {
             return Err(Error::Capacity("LUCK DP exceeds two million states".into()));
         }
-        self.dist = out;
+        self.dist = entries;
         Ok(())
     }
 
@@ -184,15 +227,17 @@ impl<'a, M: Mass> Dp<'a, M> {
         self.map_masses(|state, _| transform(state))
     }
 
-    /// [`Self::map`] with the mass of each state.
+    /// [`Self::map`] with the mass of each state. The entries change in place; states the transform makes equal merge
+    /// at the next branching step.
     fn map_masses(&mut self, mut transform: impl FnMut(State, M) -> Result<State, Error>) -> Result<(), Error> {
-        let mut out = std::mem::take(&mut self.spare);
-        let mut previous = std::mem::take(&mut self.dist);
-        for (state, probability) in previous.drain() {
-            self.push(&mut out, transform(state, probability)?, probability)?;
+        for entry in &mut self.dist {
+            entry.0 = transform(entry.0, entry.1)?;
         }
-        self.spare = previous;
-        self.replace(out)
+        self.transitions = self
+            .transitions
+            .checked_add(self.dist.len() as u64)
+            .ok_or_else(|| Error::Capacity("LUCK DP transitions overflow".into()))?;
+        Ok(())
     }
 
     pub(super) fn action(&mut self, action: Action<M>, target: usize) -> Result<(), Error> {
@@ -202,14 +247,14 @@ impl<'a, M: Mass> Dp<'a, M> {
                 .dist
                 .iter()
                 .filter(|(state, _)| matches!(action, Action::StartPoints { .. }) || state.previous_critical)
-                .fold(M::ZERO, |sum, (_, &probability)| sum.merge(probability));
+                .fold(M::ZERO, |sum, (_, probability)| sum.merge(*probability));
             let points = mass.multiply(chance).interval().multiply(F64Interval::integer(i128::from(value)));
             self.range_moments[target].luck_points = self.range_moments[target].luck_points.add(points);
             return Ok(());
         }
-        let mut out = std::mem::take(&mut self.spare);
+        let mut out = std::mem::take(&mut self.table);
         let mut previous = std::mem::take(&mut self.dist);
-        for (state, probability) in previous.drain() {
+        for (state, probability) in previous.drain(..) {
             // All accepted Miss rows share the same once/reset trigger. Leave their used flag untouched
             // until every row has run so that multiple eligible rows each apply once in native order.
             if matches!(action, Action::MissGauge { .. }) && (!state.previous_miss || state.miss_used) {
@@ -227,7 +272,7 @@ impl<'a, M: Mass> Dp<'a, M> {
                     let mut score = state.chain.score(&self.templates[target]);
                     let gauge = (score.gauge_max as i128 * value as i128) as i32;
                     score.add_gauge(floor_to_i32(gauge as f32 / 10000f32))?;
-                    next.chain = Chain::of(&score);
+                    next.chain = state.chain.with(&score);
                     if let Action::StartGauge { chance, .. } = action { chance } else { M::ONE }
                 }
                 Action::CriticalPoints { .. } | Action::StartPoints { .. } => unreachable!(),
@@ -238,18 +283,20 @@ impl<'a, M: Mass> Dp<'a, M> {
                 self.push(&mut out, state, probability.multiply(complement))?;
             }
         }
-        self.spare = previous;
-        self.replace(out)
+        self.settle(out, previous)
     }
 
-    pub(super) fn draw(&mut self, kind: usize, buff: i32, minimum: i8) -> Result<Draws<M>, Error> {
+    /// The index of the lottery of lot table `kind` with `buff` and the guarantee `minimum`.
+    fn lottery(&mut self, kind: usize, buff: i32, minimum: i8) -> Result<u16, Error> {
         let key = (kind, buff, minimum);
-        if let Some(draws) = self.draws.get(&key) {
-            return Ok(*draws);
+        if let Some(&index) = self.lotteries.get(&key) {
+            return Ok(index);
         }
-        let draws = Draws::of(&M::bonus(self.machine, kind, buff, minimum)?)?;
-        self.draws.insert(key, draws);
-        Ok(draws)
+        let index = u16::try_from(self.outcomes.len())
+            .map_err(|_| Error::Capacity("LUCK DP exceeds 65536 distinct lotteries".into()))?;
+        self.outcomes.push(Draws::of(&M::bonus(self.machine, kind, buff, minimum)?)?);
+        self.lotteries.insert(key, index);
+        Ok(index)
     }
 
     pub(super) fn consume(
@@ -258,15 +305,17 @@ impl<'a, M: Mass> Dp<'a, M> {
         range: usize,
         buff: i32,
         p: M,
-        out: &mut Distribution<M>,
+        out: &mut FxHashMap<State, M>,
     ) -> Result<(), Error> {
         state.chain.lots -= 1;
-        let first = if state.chain.next == -1 {
-            let draws = self.draw(0, buff, state.minimum)?;
-            state.minimum = 0;
-            draws
-        } else {
-            Draws::one(i64::from(state.chain.next))
+        let first = match state.chain.next {
+            Next::Known(-1) => {
+                let index = self.lottery(0, buff, state.minimum)?;
+                state.minimum = 0;
+                self.outcomes[usize::from(index)]
+            }
+            Next::Known(result) => Draws::one(i64::from(result)),
+            Next::Drawn(index) => self.outcomes[usize::from(index)],
         };
         for (pn, result) in first.iter() {
             let mut next = state;
@@ -285,17 +334,13 @@ impl<'a, M: Mass> Dp<'a, M> {
                 let points = if result == 0 { 0 } else { super::gekisou::BONUS_POINT_BY_RESULT[result as usize - 1] };
                 moments.luck_points = moments.luck_points.add(mass.multiply(F64Interval::integer(i128::from(points))));
             }
-            next.chain = Chain::of(&score);
             next.frame_lot = true;
             next.frame_miss |= result == 0;
             next.frame_critical |= self.track_critical && result == 3;
-            let draws = self.draw(score.current_lot_type(), buff, next.minimum)?;
+            let lottery = self.lottery(score.current_lot_type(), buff, next.minimum)?;
+            next.chain = Chain { next: Next::Drawn(lottery), ..Chain::of(&score) };
             next.minimum = 0;
-            for (pr, result) in draws.iter() {
-                let mut after = next;
-                after.chain.next = result as i8;
-                self.push(out, after, p.multiply(pn).multiply(pr))?;
-            }
+            self.push(out, next, p.multiply(pn))?;
         }
         Ok(())
     }
@@ -317,14 +362,14 @@ impl<'a, M: Mass> Dp<'a, M> {
             .into_iter()
             .map(|(probability, point)| (probability, floor_to_i32((speed + 1f32) * point as f32)))
             .collect();
-        let mut out = std::mem::take(&mut self.spare);
+        let mut out = std::mem::take(&mut self.table);
         let mut previous = std::mem::take(&mut self.dist);
-        for (state, probability) in previous.drain() {
+        for (state, probability) in previous.drain(..) {
             for &(pb, gauge) in &base {
                 let mut next = state;
                 let mut score = next.chain.score(&self.templates[range]);
                 score.add_gauge(gauge)?;
-                next.chain = Chain::of(&score);
+                next.chain = next.chain.with(&score);
                 if consumes && score.lot_count > 0 {
                     self.consume(next, range, buff, probability.multiply(pb), &mut out)?;
                 } else {
@@ -332,23 +377,21 @@ impl<'a, M: Mass> Dp<'a, M> {
                 }
             }
         }
-        self.spare = previous;
-        self.replace(out)
+        self.settle(out, previous)
     }
 
     pub(super) fn pending(&mut self, range: usize, buff: i32) -> Result<(), Error> {
         debug_assert_eq!(self.active_range, Some(range));
-        let mut out = std::mem::take(&mut self.spare);
+        let mut out = std::mem::take(&mut self.table);
         let mut previous = std::mem::take(&mut self.dist);
-        for (state, probability) in previous.drain() {
+        for (state, probability) in previous.drain(..) {
             if state.chain.lots > 0 && !state.frame_lot {
                 self.consume(state, range, buff, probability, &mut out)?;
             } else {
                 self.push(&mut out, state, probability)?;
             }
         }
-        self.spare = previous;
-        self.replace(out)
+        self.settle(out, previous)
     }
 
     pub(super) fn weights(&self, probes: &[bool], phase: Phase) -> M::Weights {
@@ -523,7 +566,7 @@ pub(super) fn propagate_cancellable<M: Mass>(
                 dp.pending(range, buff)?;
             }
             let mut lottery = 0u16;
-            for state in dp.dist.keys() {
+            for (state, _) in &dp.dist {
                 lottery |=
                     1 << (4 * u16::from(state.rush_start) + 2 * u16::from(state.rush) + u16::from(state.rush_filed));
             }
@@ -536,7 +579,7 @@ pub(super) fn propagate_cancellable<M: Mass>(
                     steps.push((frame.time_ms, values));
                 }
             }
-            previous_lot = dp.dist.keys().any(|state| state.frame_lot);
+            previous_lot = dp.dist.iter().any(|(state, _)| state.frame_lot);
             dp.map(|mut state| {
                 state.previous_miss = state.frame_miss;
                 state.previous_critical = state.frame_critical;
@@ -557,7 +600,7 @@ pub(super) fn propagate_cancellable<M: Mass>(
             }
             queued.fill(false);
             if let Some(range) = dp.active_range {
-                queued[range] = dp.dist.keys().any(|state| state.chain.lots > 0);
+                queued[range] = dp.dist.iter().any(|(state, _)| state.chain.lots > 0);
             }
         }
     }

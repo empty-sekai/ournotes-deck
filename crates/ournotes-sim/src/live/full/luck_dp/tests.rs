@@ -835,9 +835,7 @@ fn before_frame_probe_is_distinct_from_new_rush() {
     let model = LiveModel::new_gekisou(&master, &[], &notes, &[], params, &setup).unwrap();
     let machine = &model.gk.as_ref().unwrap().ctrl.machine;
     let mut dp = Dp::<f64>::new(vec![LuckScore::default(); 3], machine, false);
-    let mut dist = Distribution::default();
-    dist.insert(State { rush: true, query_rush: true, score: true, score_before: false, ..State::default() }, 1.0);
-    dp.dist = dist;
+    dp.dist = vec![(State { rush: true, query_rush: true, score: true, score_before: false, ..State::default() }, 1.0)];
     assert_eq!(dp.weights(&[true], Phase::BeforeFrame), [1.0, 0.0, 0.0]);
     assert_eq!(dp.weights(&[true], Phase::AtFrame), [1.0, 1.0, 1.0]);
     assert_eq!(dp.weights(&[true], Phase::BeforeSkills), [1.0, 0.0, 0.0]);
