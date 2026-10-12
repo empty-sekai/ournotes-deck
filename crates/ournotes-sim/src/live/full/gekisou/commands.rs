@@ -137,6 +137,11 @@ impl Controller {
         [&self.storage.lot_cmds, &self.storage.gauge_cmds].into_iter().all(|cmds| exact_sums(cmds))
     }
 
+    /// The lot and gauge factor commands `(time, change)` filed so far, each in filing order.
+    pub(crate) fn factor_commands(&self) -> [&[(i32, f32)]; 2] {
+        [&self.storage.lot_cmds, &self.storage.gauge_cmds]
+    }
+
     pub(crate) fn add_lot_probability_up(&mut self, t: i32, f: f32) -> i32 {
         self.storage.add(false, t, f)
     }

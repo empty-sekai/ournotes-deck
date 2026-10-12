@@ -11,12 +11,13 @@
 //! start guarantees, a once-per-range Miss gauge addition, and Critical bonus points (which do not feed back).
 //! Supported score probes are untimed sustained direct 7021 score-ups. Other shapes fail explicitly.
 
-use super::gekisou::{LotteryMachine, LuckScore, M_LUCK, S_COMPLETE, S_END, S_FINISH, S_PLAYING, S_START};
+use super::gekisou::{LotteryMachine, LuckScore, M_LUCK, S_COMPLETE, S_END, S_FINISH, S_PLAYING, S_START, exact_sums};
 use super::*;
 use crate::live::certified::{F64Interval, ProbabilityMass};
 use crate::num::{FxHashMap, floor_to_i32};
 
 mod cache;
+mod compose;
 mod dp;
 mod kinds;
 mod life_recorder;
@@ -27,11 +28,12 @@ mod state_identity;
 mod transcript;
 pub(crate) use cache::OrderClass;
 pub(super) use cache::RecordingCache;
-#[cfg(test)]
-use cache::class_text;
-pub use cache::{LuckDpCache, LuckDpCacheStats, LuckOrderClassStats, LuckOrderClasses};
+pub use cache::{LuckDpCache, LuckDpCacheStats};
+pub use compose::LotteryLive;
+use compose::{ComposedLaws, HeldLive};
 use dp::{Distribution, DpResult, Phase, propagate, propagate_cancellable};
-pub use kinds::{LotteryBreak, LotteryKind, LotteryKinds, LotteryRole};
+use kinds::POSITIONS;
+pub use kinds::{LotteryBreak, LotteryKind, LotteryKindStats, LotteryKinds, LotteryRole};
 use life_recorder::life_recorder;
 pub use life_recorder::luck_has_judgement_conversion;
 pub(crate) use life_recorder::luck_play_converts;
@@ -41,8 +43,8 @@ pub(super) use plan::fixed_condition;
 use plan::{Action, Plan, chance, compile, fold_life_conditions, reads_life, unsupported};
 pub use record::{LuckRecordProfile, take_luck_record_profile};
 use record::{
-    PreparedRecording, Skeleton, check_recording, file, prepare_recording, record, record_skeleton, reduced_deck,
-    skeleton_key, timed,
+    PreparedRecording, Skeleton, check_recording, factor_text, file, file_hits, prepare_recording, record,
+    record_skeleton, timed,
 };
 use state_identity::check_held_state_identities;
 pub(super) use state_identity::check_model_state_identities;

@@ -9,9 +9,9 @@ impl Controller {
         if self.luck_weighted {
             return Ok(());
         }
-        let buff = floor_to_i32(FactorStorage::at(&self.storage.lot_cmds, tn) * 100f32);
+        let buff = floor_to_i32(factor_at(&self.storage.lot_cmds, tn) * 100f32);
         self.machine.set_weight_buff(buff);
-        let gup = FactorStorage::at(&self.storage.gauge_cmds, tn);
+        let gup = factor_at(&self.storage.gauge_cmds, tn);
         let base = self.machine.base_point(nt, j, env.random)?;
         let add = floor_to_i32((gup + 1f32) * base as f32);
         self.states[idx].luck.add_gauge(add)?;
@@ -70,7 +70,7 @@ impl Controller {
                 && rs.luck.lot_count != 0
                 && self.lot_result == INVALID
             {
-                let buff = floor_to_i32(FactorStorage::at(&self.storage.lot_cmds, t) * 100f32);
+                let buff = floor_to_i32(factor_at(&self.storage.lot_cmds, t) * 100f32);
                 self.machine.set_weight_buff(buff);
                 self.consume_lot(idx, t, -1, env)?;
             }

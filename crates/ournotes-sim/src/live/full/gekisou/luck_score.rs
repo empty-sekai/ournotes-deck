@@ -53,6 +53,12 @@ impl LuckScore {
         out.extend([*next as u64, *gauge_max as u64, *gauge_max_default as u64, *gauge_max_rush as u64]);
     }
 
+    /// The gauge maxima the range can take: the current one, and those of the default and Rush tables, the only
+    /// ones a lottery result sets.
+    pub(crate) fn gauge_maxima(&self) -> [i64; 3] {
+        [self.gauge_max, self.gauge_max_default, self.gauge_max_rush]
+    }
+
     pub(crate) fn add_gauge(&mut self, v: i32) -> Result<(), Error> {
         let g = self.gauge.wrapping_add(v) as i64;
         let m = self.gauge_max;

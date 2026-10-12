@@ -533,31 +533,28 @@ pub fn evaluate_orders(
 pub type LuckLaw = std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>;
 
 /// The certified lottery law of every performance order of the formation, in [`uniform::all_orders`] order and in
-/// the declared context as [`evaluate_luck_exact`] reads it. `classes` holds the order classes of other formations
-/// of the same live.
+/// the declared context as [`evaluate_luck_exact`] reads it. `kinds` composes them from the lottery kinds of the
+/// performers when it can.
 pub fn luck_order_laws(
     master: &ournotes_sim::master::Master,
     skills: &ournotes_sim::live::full::LuckSkills,
     input: &super::expectation::FiniteSeedContext,
     curves: &mut ournotes_sim::live::full::LuckDpCache,
-    classes: Option<&mut ournotes_sim::live::full::LuckOrderClasses<'_>>,
+    kinds: Option<&mut ournotes_sim::live::full::LotteryKinds<'_>>,
 ) -> Result<Vec<LuckLaw>, Error> {
     let setup = input.gekisou.as_ref().ok_or_else(|| invalid("LUCK requires Gekisou context"))?;
-    ournotes_sim::live::full::luck_order_laws(
+    let live = ournotes_sim::live::full::LotteryLive {
         master,
         skills,
-        &input.performers,
-        &input.notes,
-        &input.events,
-        input.params,
+        notes: &input.notes,
+        events: &input.events,
+        params: input.params,
         setup,
-        &input.play,
-        &input.delta_times,
-        input.rank_confirmations.as_deref(),
-        &uniform::all_orders(),
-        curves,
-        classes,
-    )
+        play: &input.play,
+        delta_times: &input.delta_times,
+        ranking: input.rank_confirmations.as_deref(),
+    };
+    ournotes_sim::live::full::luck_order_laws(&live, &input.performers, &uniform::all_orders(), curves, kinds)
 }
 
 /// The expected native score of every performance order from one joint evaluation of the formation

@@ -20,7 +20,8 @@ mod luck_score;
 mod rank;
 mod recount;
 mod update;
-use factors::{FactorStorage, exact_sums};
+use factors::FactorStorage;
+pub(crate) use factors::{exact_sums, factor_at};
 pub(crate) use lottery::LotteryMachine;
 pub(crate) use luck_score::LuckScore;
 pub use rank::{
@@ -308,10 +309,7 @@ impl Controller {
 
     /// The commands installed SO FAR, accumulated in native filing order with binary32 arithmetic.
     pub(super) fn dp_factors_at(&self, t: i32) -> (i32, f32) {
-        (
-            floor_to_i32(FactorStorage::at(&self.storage.lot_cmds, t) * 100f32),
-            FactorStorage::at(&self.storage.gauge_cmds, t),
-        )
+        (floor_to_i32(factor_at(&self.storage.lot_cmds, t) * 100f32), factor_at(&self.storage.gauge_cmds, t))
     }
 }
 /// The chart's fevers: each goes Wait -> Fever at its start and Fever -> End at its end (chart time), at most one step

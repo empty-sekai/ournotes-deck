@@ -11,6 +11,19 @@ pub(super) enum Action<M> {
     StartPoints { value: i32, chance: M },
 }
 
+impl<M: Mass> Action<M> {
+    /// The chance the action's condition gives at any life; one for an unconditional action.
+    pub(super) fn chance(&self) -> M {
+        match *self {
+            Action::StartGauge { chance, .. }
+            | Action::StartMinimum { chance, .. }
+            | Action::CriticalPoints { chance, .. }
+            | Action::StartPoints { chance, .. } => chance,
+            Action::MissGauge { .. } => M::ONE,
+        }
+    }
+}
+
 pub(super) struct Plan<M> {
     pub(super) actions: Vec<(i64, Action<M>, Option<Checker>)>,
     pub(super) probes: Vec<bool>,

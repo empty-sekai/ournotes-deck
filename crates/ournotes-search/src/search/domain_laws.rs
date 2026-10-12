@@ -22,7 +22,7 @@ use crate::domain::CandidateDomain;
 use crate::search::certified_search::LuckLaw;
 use crate::search::expectation::LiveSetting;
 use crate::search::joint::JointBounds;
-use ournotes_sim::live::full::{LotteryKinds, LotteryRole, LuckDpCache, LuckOrderClasses, LuckSkills, luck_order_laws};
+use ournotes_sim::live::full::{LotteryKinds, LotteryLive, LotteryRole, LuckDpCache, LuckSkills, luck_order_laws};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -35,11 +35,12 @@ pub(super) struct DomainRoles {
 }
 
 impl DomainRoles {
-    /// The roles of `domain`'s members and Snaps, or why they cannot be read.
+    /// The roles of `domain`'s members and Snaps in `live`, or why they cannot be read.
     fn new(
         pool: &Pool,
         domain: &CandidateDomain,
         kinds: &mut LotteryKinds<'_>,
+        live: &LotteryLive<'_>,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<Self, String> {
         let mut roles = Vec::with_capacity(domain.members().len());
@@ -50,7 +51,7 @@ impl DomainRoles {
             let member = &pool.members[m];
             let row = std::iter::once(None)
                 .chain(domain.snaps().iter().map(|&s| Some(&pool.snaps[s])))
-                .map(|snap| Ok(kinds.role(&crate::search::snaps::performer(member, snap)?)))
+                .map(|snap| Ok(kinds.role(live, &crate::search::snaps::performer(member, snap)?)))
                 .collect::<Result<Vec<_>, Error>>()
                 .map_err(|error| error.to_string())?;
             roles.push(row);
@@ -217,6 +218,25 @@ pub(super) struct LotteryCensus {
     pub(super) roles: DomainRoles,
 }
 
+/// The live of the lottery recordings of `live`; None without a Gekisou range.
+fn lottery_live<'a>(
+    master: &'a ournotes_sim::master::Master,
+    skills: &'a LuckSkills,
+    live: &'a LiveSetting,
+) -> Option<LotteryLive<'a>> {
+    Some(LotteryLive {
+        master,
+        skills,
+        notes: &live.notes,
+        events: &live.events,
+        params: live.params,
+        setup: live.gekisou.as_ref()?,
+        play: &live.play,
+        delta_times: &live.delta_times,
+        ranking: live.rank_confirmations.as_deref(),
+    })
+}
+
 /// The laws of the teams of `domain`, whose members and Snaps `roles` holds, distinct by address, or why the census
 /// reads none.
 #[allow(clippy::too_many_arguments)]
@@ -225,12 +245,12 @@ fn domain_laws(
     census: &LotteryCensus,
     domain: &CandidateDomain,
     curves: &mut LuckDpCache,
-    classes: &mut LuckOrderClasses<'_>,
+    lottery: &mut LotteryKinds<'_>,
     stats: &mut telemetry::DomainLaws,
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<Vec<LuckLaw>, String> {
     let roles = &census.roles;
-    let gekisou = census.live.gekisou.as_ref().ok_or("the live has no Gekisou range")?;
+    let live = lottery_live(pool.master, &census.skills, &census.live).ok_or("the live has no Gekisou range")?;
     let column = |s: usize| roles.snaps.iter().position(|&r| r == s).map(|j| j + 1);
     let columns: Vec<usize> = std::iter::once(Some(0))
         .chain(domain.snaps().iter().map(|&s| column(s)))
@@ -269,23 +289,8 @@ fn domain_laws(
             })
             .collect::<Result<Vec<_>, Error>>()
             .map_err(|error| error.to_string())?;
-        let live = &census.live;
-        let found = luck_order_laws(
-            pool.master,
-            &census.skills,
-            &deck,
-            &live.notes,
-            &live.events,
-            live.params,
-            gekisou,
-            &live.play,
-            &live.delta_times,
-            live.rank_confirmations.as_deref(),
-            &orders,
-            curves,
-            Some(classes),
-        )
-        .map_err(|error| error.to_string())?;
+        let found =
+            luck_order_laws(&live, &deck, &orders, curves, Some(&mut *lottery)).map_err(|error| error.to_string())?;
         for law in found {
             if !laws.iter().any(|known| Arc::ptr_eq(known, &law)) {
                 laws.push(law);
@@ -312,14 +317,18 @@ impl Engine<'_, '_> {
         live.gekisou.as_ref()?;
         let started = Instant::now();
         let mut stats = telemetry::DomainLaws::default();
-        let roles = self.certified_luck_skills().map_err(|error| error.to_string()).and_then(|skills| {
-            let pool = self.pool;
-            let mut kinds =
-                LotteryKinds::new(pool.master, &skills, &live.notes, &live.play, live.params.skill_target_music_type);
-            let roles = DomainRoles::new(pool, domain, &mut kinds, || self.expired());
-            stats.kinds = kinds.len();
-            roles.map(|roles| (skills.clone(), roles))
-        });
+        let roles = match self.certified_luck_skills() {
+            Ok(skills) => {
+                let pool = self.pool;
+                let mut kinds = self.take_luck_kinds();
+                let lottery = lottery_live(pool.master, &skills, &live).expect("a live with a Gekisou range");
+                let roles = DomainRoles::new(pool, domain, &mut kinds, &lottery, || self.expired());
+                stats.kinds = kinds.len();
+                self.keep_luck_kinds(kinds);
+                roles.map(|roles| (skills.clone(), roles))
+            }
+            Err(error) => Err(error.to_string()),
+        };
         stats.roles_ms = started.elapsed().as_secs_f64() * 1000.0;
         let census = match roles {
             Ok((skills, roles)) => {
@@ -339,19 +348,16 @@ impl Engine<'_, '_> {
     /// they do not compile (the reason then in the telemetry).
     pub(super) fn weighed_bounds(&mut self, census: &LotteryCensus, domain: &CandidateDomain) -> Option<JointBounds> {
         let pool = self.pool;
-        let state = self.certified.as_mut().expect("certified request");
-        let class_bytes = state.class_bytes;
-        let mut classes = state.luck_classes.take().unwrap_or_else(|| LuckOrderClasses::new(pool.master, class_bytes));
-        let mut curves = std::mem::take(&mut state.luck_curves);
+        let mut kinds = self.take_luck_kinds();
+        let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
         let mut stats = self.tel.environment.bounds.domain_laws.take().unwrap_or_default();
         stats.censuses += 1;
         let started = Instant::now();
-        let laws = domain_laws(pool, census, domain, &mut curves, &mut classes, &mut stats, || self.expired());
+        let laws = domain_laws(pool, census, domain, &mut curves, &mut kinds, &mut stats, || self.expired());
         stats.laws_ms += started.elapsed().as_secs_f64() * 1000.0;
-        self.tel.caches.luck_classes.record(classes.stats());
         self.tel.caches.luck_curves.record(curves.stats());
-        let state = self.certified.as_mut().expect("certified request");
-        (state.luck_classes, state.luck_curves) = (Some(classes), curves);
+        self.keep_luck_kinds(kinds);
+        self.certified.as_mut().expect("certified request").luck_curves = curves;
         let started = Instant::now();
         let bounds = laws.and_then(|laws| {
             let (request, metric, event_input, simulation) =

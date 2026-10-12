@@ -24,9 +24,10 @@
 //! - The rotations share their calculators and agree on every event that is not a member command.
 //!
 //! A member's conversions likewise depend only on the member, its position and the common events, so with none in any
-//! rotation no order converts a judgement. The lottery law of an order is recorded once for the class of orders that
-//! its recording shows to share it ([`LuckDpCache::certified_order_class`]), and per order when a recording shows
-//! no class.
+//! rotation no order converts a judgement. The lottery law of an order is composed from the lottery kinds of its
+//! performers when the caller holds them ([`LotteryKinds::order_laws`]), and otherwise recorded once for the class of
+//! orders that its recording shows to share it ([`LuckDpCache::certified_order_class`]), and per order when a
+//! recording shows no class.
 //!
 //! Orders the certificate does not cover are evaluated one by one with [`luck_exact_score`].
 
@@ -36,7 +37,7 @@ use super::exact::{
 };
 use super::exact_paths::{MAX_LANES, Orders, first_orders};
 use super::*;
-use crate::live::full::luck_dp::{LuckOrderClasses, OrderClass, PAIR_POSITIONS, PositionPairs};
+use crate::live::full::luck_dp::{LotteryKinds, LotteryLive, OrderClass, PAIR_POSITIONS, PositionPairs};
 
 const MEMBERS: usize = 5;
 
@@ -69,20 +70,7 @@ pub struct LuckExactOrdersProfile {
     pub evaluate_ms: f64,
 }
 
-/// The live every order plays.
-struct Live<'a> {
-    master: &'a Master,
-    skills: &'a LuckSkills,
-    notes: &'a [LiveNote],
-    events: &'a [(i32, i32)],
-    params: LiveParams,
-    setup: &'a GekisouSetup,
-    play: &'a LivePlay,
-    delta_times: &'a [f32],
-    ranking: Option<&'a [crate::replay::RankConfirmation]>,
-}
-
-impl Live<'_> {
+impl LotteryLive<'_> {
     fn model(&self, deck: &[Performer]) -> Result<LiveModel, Error> {
         exact_model(self.master, deck, self.notes, self.events, self.params, self.setup, self.ranking)
     }
@@ -92,31 +80,14 @@ impl Live<'_> {
         deck: &[Performer],
         curves: &mut LuckDpCache,
     ) -> Result<std::sync::Arc<LuckDpCertifiedResult>, Error> {
-        let Live { master, skills, notes, events, params, setup, play, delta_times, ranking } = *self;
+        let Self { master, skills, notes, events, params, setup, play, delta_times, ranking } = *self;
         lottery_law(master, skills, notes, events, params, setup, play, delta_times, deck, ranking, curves)
     }
 
     /// The law of `deck` with the orders of its performers that share it.
-    fn order_class(
-        &self,
-        deck: &[Performer],
-        curves: &mut LuckDpCache,
-        classes: Option<&mut LuckOrderClasses<'_>>,
-    ) -> Result<Option<OrderClass>, Error> {
-        let Live { master, skills, notes, events, params, setup, play, delta_times, ranking } = *self;
-        curves.certified_order_class(
-            master,
-            skills,
-            notes,
-            events,
-            params,
-            setup,
-            play,
-            delta_times,
-            deck,
-            ranking,
-            classes,
-        )
+    fn order_class(&self, deck: &[Performer], curves: &mut LuckDpCache) -> Result<Option<OrderClass>, Error> {
+        let Self { master, skills, notes, events, params, setup, play, delta_times, ranking } = *self;
+        curves.certified_order_class(master, skills, notes, events, params, setup, play, delta_times, deck, ranking)
     }
 }
 
@@ -138,7 +109,7 @@ pub fn luck_exact_orders(
     curves: Option<&mut LuckDpCache>,
     details: bool,
 ) -> Result<LuckExactOrders, Error> {
-    let live = Live { master, skills, notes, events, params, setup, play, delta_times, ranking };
+    let live = LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking };
     exact_orders(&live, deck, orders, None, curves, details)
 }
 
@@ -164,19 +135,19 @@ pub fn luck_exact_orders_with_laws(
     if laws.len() != orders.len() {
         return Err(Error::Input("one lottery law per order".into()));
     }
-    let live = Live { master, skills, notes, events, params, setup, play, delta_times, ranking };
+    let live = LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking };
     exact_orders(&live, deck, orders, Some(laws), curves, details)
 }
 
 fn exact_orders(
-    live: &Live,
+    live: &LotteryLive,
     deck: &[Performer],
     orders: &[[usize; MEMBERS]],
     laws: Option<&[std::sync::Arc<LuckDpCertifiedResult>]>,
     curves: Option<&mut LuckDpCache>,
     details: bool,
 ) -> Result<LuckExactOrders, Error> {
-    let Live { master, skills, notes, events, params, setup, play, delta_times, ranking } = *live;
+    let LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking } = *live;
     if deck.len() != MEMBERS {
         return Err(Error::Input("an order evaluation takes five performers".into()));
     }
@@ -394,17 +365,22 @@ fn certify(model: &LiveModel) -> Result<IntegerBounds, Error> {
     Ok(IntegerBounds { lower: bound(low)?, upper: bound(high)? })
 }
 
-/// The lottery law of each order, and how many reduced recordings it took. Each order takes the law of the first
-/// class whose pairs of performers it orders as the class's order does, and an order that no class covers records its
-/// own class, or takes it from `known` when that holds it. Once a recording shows no class, every order not yet
-/// covered records its law alone.
+/// The lottery law of each order, and how many reduced recordings it took. The laws are composed from the lottery
+/// kinds of the performers when `kinds` holds them all. Otherwise each order takes the law of the first class whose
+/// pairs of performers it orders as the class's order does, and an order that no class covers records its own class.
+/// Once a recording shows no class, every order not yet covered records its law alone.
 fn order_laws(
-    live: &Live,
+    live: &LotteryLive,
     deck: &[Performer],
     orders: &[[usize; MEMBERS]],
     curves: &mut LuckDpCache,
-    mut known: Option<&mut LuckOrderClasses<'_>>,
+    kinds: Option<&mut LotteryKinds<'_>>,
 ) -> Result<(Vec<std::sync::Arc<LuckDpCertifiedResult>>, usize), Error> {
+    if let Some(kinds) = kinds
+        && let Some(laws) = kinds.order_laws(live, deck, orders, curves)?
+    {
+        return Ok((laws, 0));
+    }
     let pair = |a: usize, b: usize| -> PositionPairs { 1 << (PAIR_POSITIONS * a.min(b) + a.max(b)) };
     type Class = ([usize; MEMBERS], PositionPairs, std::sync::Arc<LuckDpCertifiedResult>);
     let mut classes = Vec::<Class>::new();
@@ -426,7 +402,7 @@ fn order_laws(
         let deck = ordered(deck, order);
         law_recordings += 1;
         if !classless {
-            match live.order_class(&deck, curves, known.as_deref_mut())? {
+            match live.order_class(&deck, curves)? {
                 Some(OrderClass { law, pairs: positions }) => {
                     let mut pairs = 0;
                     for a in 0..MEMBERS {
@@ -449,23 +425,14 @@ fn order_laws(
 }
 
 /// The certified lottery law of each of `orders` of a five-performer formation (`deck` in slot order, each order the
-/// slots in performance order), as [`luck_exact_orders`] takes them. `classes` gives the order classes of formations
-/// whose lottery conditions it has seen in this live, and keeps the classes recorded here.
-#[allow(clippy::too_many_arguments)]
+/// slots in performance order) in `live`, as [`luck_exact_orders`] takes them. `kinds` composes them from the lottery
+/// kinds of the performers when it can, and keeps the kinds and laws read here.
 pub fn luck_order_laws(
-    master: &Master,
-    skills: &LuckSkills,
+    live: &LotteryLive<'_>,
     deck: &[Performer],
-    notes: &[LiveNote],
-    events: &[(i32, i32)],
-    params: LiveParams,
-    setup: &GekisouSetup,
-    play: &LivePlay,
-    delta_times: &[f32],
-    ranking: Option<&[crate::replay::RankConfirmation]>,
     orders: &[[usize; MEMBERS]],
     curves: &mut LuckDpCache,
-    classes: Option<&mut LuckOrderClasses<'_>>,
+    kinds: Option<&mut LotteryKinds<'_>>,
 ) -> Result<Vec<std::sync::Arc<LuckDpCertifiedResult>>, Error> {
     if deck.len() != MEMBERS {
         return Err(Error::Input("an order evaluation takes five performers".into()));
@@ -477,8 +444,7 @@ pub fn luck_order_laws(
     if !orders.iter().all(permutation) {
         return Err(Error::Input("an order is a permutation of the five performers".into()));
     }
-    let live = Live { master, skills, notes, events, params, setup, play, delta_times, ranking };
-    Ok(order_laws(&live, deck, orders, curves, classes)?.0)
+    Ok(order_laws(live, deck, orders, curves, kinds)?.0)
 }
 
 /// The probe rows in native filing order and the probe phase binding of a formation's model before it plays.
@@ -493,7 +459,7 @@ pub(super) fn order_shape(model: &mut LiveModel, skills: &LuckSkills) -> Result<
 /// The scores of `orders` from the rotations' recordings, or why the certificate does not cover them. `given` holds
 /// the law of each order when the caller has them.
 fn splice(
-    live: &Live,
+    live: &LotteryLive,
     deck: &[Performer],
     orders: &[[usize; MEMBERS]],
     given: Option<&[std::sync::Arc<LuckDpCertifiedResult>]>,

@@ -296,22 +296,8 @@ fn given_laws_replace_the_law_recordings() {
     let orders = permutations();
     let mut curves = LuckDpCache::new(usize::MAX);
     let recorded = joint(&formation, &orders, None, &mut curves);
-    let laws = luck_order_laws(
-        master,
-        &skills,
-        deck,
-        notes,
-        events,
-        *params,
-        setup,
-        play,
-        delta,
-        None,
-        &orders,
-        &mut curves,
-        None,
-    )
-    .unwrap();
+    let live = lottery_live(&formation, &skills, *params, play);
+    let laws = luck_order_laws(&live, deck, &orders, &mut curves, None).unwrap();
     let mut given = |laws: &[std::sync::Arc<LuckDpCertifiedResult>]| {
         luck_exact_orders_with_laws(
             master,
@@ -396,79 +382,110 @@ fn a_law_serves_the_orders_that_keep_the_relative_order_of_different_actions() {
     }
 }
 
+/// The live of `formation` with the parameters `params` and the play `play`.
+fn lottery_live<'a>(
+    formation: &'a Formation,
+    skills: &'a LuckSkills,
+    params: LiveParams,
+    play: &'a LivePlay,
+) -> crate::live::full::LotteryLive<'a> {
+    let (master, _, notes, events, _, setup, _, delta) = formation;
+    crate::live::full::LotteryLive {
+        master,
+        skills,
+        notes,
+        events,
+        params,
+        setup,
+        play,
+        delta_times: delta,
+        ranking: None,
+    }
+}
+
+/// Asserts that two laws of the same formation have the same possible transitions and overlapping masses.
+fn assert_laws_overlap(a: &LuckDpCertifiedResult, b: &LuckDpCertifiedResult) {
+    assert_eq!(
+        (&a.probe_transitions, &a.rush_transitions, &a.probes),
+        (&b.probe_transitions, &b.rush_transitions, &b.probes)
+    );
+    assert_eq!(a.frame_queries.len(), b.frame_queries.len());
+    for ((time, x), (other, y)) in a.frame_queries.iter().zip(&b.frame_queries) {
+        assert_eq!(time, other);
+        for (x, y) in x.iter().flatten().zip(y.iter().flatten()) {
+            let (x, y) = (x.interval(), y.interval());
+            assert!(x.lower() <= y.upper() && y.lower() <= x.upper(), "{time}: {x:?} {y:?}");
+        }
+    }
+}
+
 #[test]
-fn order_classes_serve_formations_with_the_same_lottery_conditions() {
-    // Two performers guarantee a LUCK range's first result with different guarantees, so the orders form two classes.
-    // Live skills and the total power are no lottery condition: a formation that changes them takes the classes of
-    // the first, and they hold the laws its own recordings give. Moving a guarantee to another performer changes the
-    // conditions, a live skill that may convert a judgement of the play takes no key, and another play drops the
-    // classes. The recordings of formations with the same lot and gauge factor skills share their native run.
+fn lottery_kinds_compose_one_law_for_every_order_of_their_performers() {
+    // Two performers guarantee a LUCK range's first result with different guarantees. Their recordings form two
+    // classes of orders, whose laws the one composed law overlaps, and the scores under either agree. Live skills and
+    // the total power leave the kinds alone, and contributions here do not depend on the position, so a formation that
+    // changes them or moves a guarantee to another performer takes the composed law of the first. A live skill that may
+    // convert a judgement of the play takes no kind, and another play drops the kinds.
     let first = formation(&[(16, 12006, 4, 0)], &[], &[(1, 11005, 3), (2, 11005, 4)]);
     let (master, deck, notes, events, params, setup, play, delta) = &first;
     let skills = luck_skills(master).unwrap();
     let orders = permutations();
-    let mut classes = LuckOrderClasses::new(master, usize::MAX);
-    let laws = |deck: &[Performer], params: LiveParams, play: &LivePlay, classes: Option<&mut LuckOrderClasses<'_>>| {
-        let mut curves = LuckDpCache::new(usize::MAX);
-        let laws = luck_order_laws(
-            master,
-            &skills,
-            deck,
-            notes,
-            events,
-            params,
-            setup,
-            play,
-            delta,
-            None,
-            &orders,
-            &mut curves,
-            classes,
-        );
-        laws.map(|laws| laws.iter().map(|law| format!("{law:?}")).collect::<Vec<_>>())
+    let mut kinds = LotteryKinds::new(master, usize::MAX);
+    let mut curves = LuckDpCache::new(usize::MAX);
+    let mut laws = |deck: &[Performer], params: LiveParams, play: &LivePlay, kinds: Option<&mut LotteryKinds<'_>>| {
+        let live = lottery_live(&first, &skills, params, play);
+        luck_order_laws(&live, deck, &orders, &mut curves, kinds)
     };
-    let counts = |classes: &LuckOrderClasses<'_>| {
-        let stats = classes.stats();
-        (stats.lookups, stats.hits, stats.unkeyed, stats.lives)
+    let same = |laws: &[std::sync::Arc<LuckDpCertifiedResult>], law: &std::sync::Arc<LuckDpCertifiedResult>| {
+        laws.iter().all(|other| std::sync::Arc::ptr_eq(other, law))
     };
-    let skeletons = |classes: &LuckOrderClasses<'_>| {
-        let stats = classes.stats();
-        (stats.skeleton_lookups, stats.skeleton_hits)
+    let composed = laws(deck, *params, play, Some(&mut kinds)).unwrap();
+    assert!(same(&composed, &composed[0]));
+    let native = laws(deck, *params, play, None).unwrap();
+    let mut distinct = Vec::<&std::sync::Arc<LuckDpCertifiedResult>>::new();
+    for law in &native {
+        if !distinct.iter().any(|other| std::sync::Arc::ptr_eq(other, law)) {
+            distinct.push(law);
+        }
+    }
+    assert_eq!(distinct.len(), 2);
+    distinct.iter().for_each(|law| assert_laws_overlap(&composed[0], law));
+    let scores = |laws: &[std::sync::Arc<LuckDpCertifiedResult>]| {
+        luck_exact_orders_with_laws(
+            master, &skills, deck, notes, events, *params, setup, play, delta, None, &orders, laws, None, false,
+        )
+        .unwrap()
+        .scores
     };
-    let recorded = laws(deck, *params, play, Some(&mut classes)).unwrap();
-    assert_eq!(recorded, laws(deck, *params, play, None).unwrap());
-    assert_eq!(counts(&classes), (2, 0, 0, 1));
-    assert_eq!(skeletons(&classes), (2, 1));
+    for (a, b) in scores(&composed).iter().zip(&scores(&native)) {
+        assert!(a.final_mean.lower <= b.final_mean.upper && b.final_mean.lower <= a.final_mean.upper);
+    }
+    let stats = kinds.stats();
+    assert_eq!((stats.teams, stats.composed, stats.law_lookups, stats.law_hits), (1, 1, 1, 0));
 
     let mut other = deck.clone();
     other.swap(0, 4);
     (other[0].gekisou_skill, other[4].gekisou_skill) = (other[4].gekisou_skill, other[0].gekisou_skill);
     other[3].live_skill = None;
     let other_params = LiveParams { total_power: 5000, ..*params };
-    let fresh = laws(&other, other_params, play, None).unwrap();
-    assert_eq!(laws(&other, other_params, play, Some(&mut classes)).unwrap(), fresh);
-    assert_eq!(counts(&classes), (4, 2, 0, 1));
-    assert_eq!(skeletons(&classes), (2, 1));
-
+    assert!(same(&laws(&other, other_params, play, Some(&mut kinds)).unwrap(), &composed[0]));
     let mut moved = deck.clone();
     (moved[2].gekisou_skill, moved[3].gekisou_skill) = (None, moved[2].gekisou_skill);
-    let fresh = laws(&moved, *params, play, None).unwrap();
-    assert_eq!(laws(&moved, *params, play, Some(&mut classes)).unwrap(), fresh);
-    assert_eq!(counts(&classes), (6, 2, 0, 1));
-    assert_eq!(skeletons(&classes), (4, 3));
+    assert!(same(&laws(&moved, *params, play, Some(&mut kinds)).unwrap(), &composed[0]));
+    let stats = kinds.stats();
+    assert_eq!((stats.teams, stats.composed, stats.law_lookups, stats.law_hits, stats.lives), (3, 1, 3, 2, 1));
 
     let mut converting = deck.clone();
     converting[4].live_skill = Some((16, 1));
-    let _ = laws(&converting, *params, play, Some(&mut classes));
-    let (lookups, hits, unkeyed, lives) = counts(&classes);
-    assert_eq!((lookups, hits, lives), (6, 2, 1));
-    assert!(unkeyed > 0);
+    // Its recording reads the converted judgement, which the play gives no damage.
+    let fallback = laws(&converting, *params, play, Some(&mut kinds)).unwrap_err();
+    assert_eq!(fallback.to_string(), laws(&converting, *params, play, None).unwrap_err().to_string());
+    assert_eq!(kinds.stats().unkinded, 1);
 
     let other_play = LivePlay { base_seed: 1, ..play.clone() };
-    let fresh = laws(deck, *params, &other_play, None).unwrap();
-    assert_eq!(laws(deck, *params, &other_play, Some(&mut classes)).unwrap(), fresh);
-    assert_eq!(counts(&classes), (8, 2, unkeyed, 2));
-    assert_eq!(skeletons(&classes), (6, 4));
+    let replayed = laws(deck, *params, &other_play, Some(&mut kinds)).unwrap();
+    assert_eq!(format!("{:?}", replayed[0]), format!("{:?}", composed[0]));
+    assert_eq!((kinds.stats().lives, kinds.stats().composed), (2, 2));
 }
 
 #[test]

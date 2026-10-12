@@ -729,10 +729,10 @@ fn life_conditions_fold_over_the_life_range_as_the_native_life_answers_them() {
 }
 
 #[test]
-fn order_classes_share_folded_life_conditions_only_inside_the_life_range() {
-    // A range-start gauge for a life of 700 or more. Formations whose life stays in the range of the play share the
-    // class of the folded condition, with or without a recovery; one that a skill damages keeps the comparison in its
-    // key and reads its life.
+fn lottery_kinds_share_folded_life_conditions_only_inside_the_life_range() {
+    // A range-start gauge for a life of 700 or more. Performers whose life stays in the range of the play share the
+    // kind of the folded condition, with or without a recovery; one that a skill damages takes no kind, and its
+    // recording reads its life.
     let (mut master, notes, params, setup, play, delta) = fixture(3, 0);
     let condition = master.skill_conditions.iter_mut().find(|row| row.id == 4011).unwrap();
     (condition.condition_type, condition.condition_values) = (2001, vec![700]);
@@ -751,16 +751,35 @@ fn order_classes_share_folded_life_conditions_only_inside_the_life_range() {
     let healed = Performer { support_skills: vec![(501, 1)], ..gauge.clone() };
     let damaged = Performer { support_skills: vec![(502, 1)], ..gauge.clone() };
     let events = [(0, 100)];
-    let text = |performer: &Performer| class_text(&master, &skills, &play, 0, std::slice::from_ref(performer)).unwrap();
-    assert_eq!(text(&gauge), text(&healed));
-    assert!(text(&gauge).contains("Fixed(true)") && !text(&gauge).contains("LifeAtLeast"));
-    assert!(text(&damaged).contains("LifeAtLeast"));
-
-    let mut classes = LuckOrderClasses::new(&master, usize::MAX);
+    let live = LotteryLive {
+        master: &master,
+        skills: &skills,
+        notes: &notes,
+        events: &events,
+        params,
+        setup: &setup,
+        play: &play,
+        delta_times: &delta,
+        ranking: None,
+    };
+    let mut kinds = LotteryKinds::new(&master, usize::MAX);
     let mut curves = LuckDpCache::new(usize::MAX);
-    let mut class = |performer: &Performer, classes: &mut LuckOrderClasses<'_>| {
-        let deck = std::slice::from_ref(performer);
-        curves
+    let formation = |performer: &Performer| {
+        let mut deck = vec![Performer::default(); 5];
+        deck[0] = performer.clone();
+        deck
+    };
+    let mut laws = |performer: &Performer, kinds: &mut LotteryKinds<'_>| {
+        kinds.order_laws(&live, &formation(performer), &[[0, 1, 2, 3, 4]], &mut curves).unwrap()
+    };
+    let first = laws(&gauge, &mut kinds).unwrap();
+    let shared = laws(&healed, &mut kinds).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&first[0], &shared[0]));
+    assert_eq!((kinds.stats().composed, kinds.stats().law_hits), (1, 1));
+    assert!(laws(&damaged, &mut kinds).is_none());
+    assert_eq!(kinds.role(&live, &damaged), LotteryRole::Breaks(LotteryBreak::LeavesLifeRange));
+    let class = |performer: &Performer| {
+        LuckDpCache::new(usize::MAX)
             .certified_order_class(
                 &master,
                 &skills,
@@ -770,30 +789,23 @@ fn order_classes_share_folded_life_conditions_only_inside_the_life_range() {
                 &setup,
                 &play,
                 &delta,
-                deck,
+                &formation(performer),
                 None,
-                Some(classes),
             )
             .unwrap()
     };
-    let counts = |classes: &LuckOrderClasses<'_>| (classes.stats().lookups, classes.stats().hits);
-    let first = class(&gauge, &mut classes).unwrap();
-    assert_eq!(counts(&classes), (1, 0));
-    let shared = class(&healed, &mut classes).unwrap();
-    assert_eq!(counts(&classes), (2, 1));
-    assert!(std::sync::Arc::ptr_eq(&first.law, &shared.law));
-    assert!(class(&damaged, &mut classes).is_none());
-    assert_eq!(counts(&classes), (3, 1));
+    assert!(class(&damaged).is_none());
     for (performer, starts) in [(&gauge, true), (&healed, true), (&damaged, false)] {
-        let deck = std::slice::from_ref(performer);
-        let curve = assert_native_life_curve(&master, &notes, &events, params, &setup, &play, &delta, deck);
+        let deck = formation(performer);
+        let curve = assert_native_life_curve(&master, &notes, &events, params, &setup, &play, &delta, &deck);
         assert_eq!(curve.steps.iter().any(|step| step.1[0] > 0.0), starts);
         let certified = luck_rush_dp_certified_with_events(
-            &master, &skills, &notes, &events, params, &setup, &play, &delta, deck, None,
+            &master, &skills, &notes, &events, params, &setup, &play, &delta, &deck, None,
         )
         .unwrap();
         if starts {
-            assert_eq!(format!("{:?}", first.law), format!("{certified:?}"));
+            assert_eq!(format!("{:?}", first[0]), format!("{certified:?}"));
+            assert_eq!(format!("{:?}", class(performer).unwrap().law), format!("{certified:?}"));
         }
     }
 }

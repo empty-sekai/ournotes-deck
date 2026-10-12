@@ -267,7 +267,7 @@ pub(super) fn check_recording(
 }
 
 /// The performers of a reduced recording: without their live and support skills.
-pub(super) fn reduced_deck(deck: &[Performer]) -> Vec<Performer> {
+fn reduced_deck(deck: &[Performer]) -> Vec<Performer> {
     deck.iter()
         .cloned()
         .map(|mut performer| {
@@ -351,7 +351,7 @@ fn record_frames<M: Mass>(
 
 /// Keep the condition skills that hold a lot or gauge factor (11000, 11001), with the effect rows they read
 /// renumbered in the order they are first read.
-fn factor_skills(cond: &mut Vec<CondSkill>, rows: &mut Vec<EffectRow>) {
+pub(super) fn factor_skills(cond: &mut Vec<CondSkill>, rows: &mut Vec<EffectRow>) {
     cond.retain(|skill| {
         skill.updater.effects().iter().any(|effect| matches!(rows[effect.row].effect_type, 11000 | 11001))
     });
@@ -369,12 +369,12 @@ fn factor_skills(cond: &mut Vec<CondSkill>, rows: &mut Vec<EffectRow>) {
     *rows = kept;
 }
 
-/// The identity of the skeleton of a prepared recording without a life recorder: its factor skills with their rows
-/// ([`factor_skills`]). The live and the reduced model's other inputs are those of the classes that hold it.
-pub(super) fn skeleton_key<M>(prepared: &PreparedRecording<M>) -> Vec<u8> {
-    let (mut cond, mut rows) = (prepared.cond.clone(), prepared.rows.clone());
+/// The identity of the skeleton of a recording without a life recorder in one live: the factor skills of its lottery
+/// condition skills `cond` with their rows `rows` ([`factor_skills`]), or None when it has none. The reduced model's
+/// other inputs are fixed by the live: the recording reads no other part of its performers.
+pub(super) fn factor_text(mut cond: Vec<CondSkill>, mut rows: Vec<EffectRow>) -> Option<Vec<u8>> {
     factor_skills(&mut cond, &mut rows);
-    format!("{rows:?}/{cond:?}").into_bytes()
+    (!cond.is_empty()).then(|| format!("{rows:?}/{cond:?}").into_bytes())
 }
 
 /// The skeleton of a recording of the reduced performers `reduced`: the native run of their model with only the
@@ -447,6 +447,7 @@ pub(super) fn record_native(
         pending: Vec::new(),
         failure: None,
         pairs: None,
+        factors: [Vec::new(), Vec::new()],
     };
     let mut watch = OrderWatch::default();
     let mut previous_frame = i32::MIN;
@@ -473,6 +474,8 @@ pub(super) fn record_native(
     }
     watch.finish(&model);
     skeleton.pairs = watch.broken.is_none().then_some(watch.pairs);
+    let controller = &model.gk.as_ref().expect("Gekisou checked").ctrl;
+    skeleton.factors = controller.factor_commands().map(<[_]>::to_vec);
     Ok(Some(skeleton))
 }
 
@@ -588,8 +591,19 @@ fn record_frame(
 }
 
 /// The transcript of a recording: the native frames of `skeleton`, with the actions of `plan` filed in every gated
-/// frame with a playing range. A range-start action is filed only in the frame where a Luck range starts.
+/// frame with a playing range. A range-start action is filed only in the frame where a Luck range starts. An action
+/// without a condition is filed with its own chance.
 pub(super) fn file<M: Mass>(skeleton: &Skeleton, plan: &Plan<M>, collect_moments: bool) -> Transcript<M> {
+    file_hits(skeleton, skeleton.hits.clone(), plan, collect_moments)
+}
+
+/// [`file`] with the hits `hits` in place of those of `skeleton`.
+pub(super) fn file_hits<M: Mass>(
+    skeleton: &Skeleton,
+    hits: Vec<Hit>,
+    plan: &Plan<M>,
+    collect_moments: bool,
+) -> Transcript<M> {
     let mut out = Transcript {
         collect_moments,
         templates: skeleton.templates.clone(),
@@ -599,7 +613,7 @@ pub(super) fn file<M: Mass>(skeleton: &Skeleton, plan: &Plan<M>, collect_moments
         miss_rows: plan.actions.iter().any(|(_, action, _)| matches!(action, Action::MissGauge { .. })),
         frames: Vec::with_capacity(skeleton.frames.len()),
         notes: skeleton.notes.clone(),
-        hits: skeleton.hits.clone(),
+        hits,
         actions: Vec::new(),
         pending: Vec::new(),
         failure: skeleton.failure.clone(),
@@ -610,7 +624,9 @@ pub(super) fn file<M: Mass>(skeleton: &Skeleton, plan: &Plan<M>, collect_moments
             for (phase, action, condition) in &plan.actions {
                 let chance = condition
                     .as_ref()
-                    .map_or(Some(M::ONE), |checker| chance::<M>(checker, frame.phase_life[(*phase - 1) as usize]))
+                    .map_or(Some(action.chance()), |checker| {
+                        chance::<M>(checker, frame.phase_life[(*phase - 1) as usize])
+                    })
                     .expect("compiled start condition");
                 match *action {
                     Action::StartGauge { value, .. } if frame.start.is_some() => {
@@ -648,6 +664,7 @@ pub(super) fn file<M: Mass>(skeleton: &Skeleton, plan: &Plan<M>, collect_moments
 }
 
 /// The native part of a recording ([`record_native`]): everything its transcript reads except the actions.
+#[derive(Clone)]
 pub(super) struct Skeleton {
     pub(super) templates: Vec<LuckScore>,
     pub(super) machine: LotteryMachine,
@@ -663,10 +680,12 @@ pub(super) struct Skeleton {
     /// The pairs of performers whose effects one phase applied and may not commute ([`OrderWatch`]); None when the
     /// recording shows no order class.
     pub(super) pairs: Option<PositionPairs>,
+    /// The lot and gauge factor commands `(time, change)` the run filed, each in filing order.
+    pub(super) factors: [Vec<(i32, f32)>; 2],
 }
 
 /// One native frame, or `repeat` consecutive quiet frames (no note, no Luck range transition) with equal records.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct NativeFrame {
     pub(super) time_ms: i32,
     pub(super) repeat: u32,

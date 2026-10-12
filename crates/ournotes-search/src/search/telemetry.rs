@@ -688,8 +688,8 @@ pub struct Caches {
     pub rush_windows: CacheUse,
     /// Certified lottery curves of LUCK lives, shared across performance orders and teams.
     pub luck_curves: LuckCurves,
-    /// Lottery-law order classes of teams by their lottery conditions.
-    pub luck_classes: LuckClasses,
+    /// Lottery kinds of performers and the lottery laws composed from them.
+    pub luck_kinds: LuckKinds,
 }
 
 /// Use of the certified lottery-curve cache.
@@ -725,38 +725,51 @@ impl LuckCurves {
     }
 }
 
-/// Use of the order-class cache of lottery laws.
+/// Use of the lottery kinds of performers and the laws composed from them.
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LuckClasses {
-    pub usage: CacheUse,
-    /// The largest total key size held.
-    pub peak_key_bytes: usize,
-    /// Teams whose lottery conditions take no key, and lives that replaced the held one.
-    pub unkeyed: u64,
+pub struct LuckKinds {
+    /// Lives that replaced the held one.
     pub lives: u64,
-    /// Native recordings of key misses, shared by teams with the same lot and gauge factor skills.
-    pub skeletons: CacheUse,
+    /// Roles asked, the reduced performers whose kind was read, the kinds and factor parts met, and the native
+    /// recordings of factor skills made for them.
+    pub roles: u64,
+    pub performers: u64,
+    pub kinds: usize,
+    pub parts: usize,
+    pub factor_recordings: u64,
+    /// Teams whose laws were asked, those with a performer without a kind, and those whose gauge speeds or gauge
+    /// actions may not compose.
+    pub teams: u64,
+    pub unkinded: u64,
+    pub uncomposed: u64,
+    /// Composed laws of distinct orders: held laws found, and transcripts composed.
+    pub laws: CacheUse,
+    pub composed: u64,
+    /// The most bytes the held laws and their keys took.
+    pub peak_law_bytes: usize,
 }
 
-impl LuckClasses {
-    pub(crate) fn record(&mut self, stats: ournotes_sim::live::full::LuckOrderClassStats) {
+impl LuckKinds {
+    pub(crate) fn record(&mut self, stats: ournotes_sim::live::full::LotteryKindStats) {
         *self = Self {
-            usage: CacheUse {
-                lookups: stats.lookups,
-                hits: stats.hits,
-                evictions: stats.evictions,
-                peak_entries: stats.peak_entries,
-            },
-            peak_key_bytes: stats.peak_key_bytes,
-            unkeyed: stats.unkeyed,
             lives: stats.lives,
-            skeletons: CacheUse {
-                lookups: stats.skeleton_lookups,
-                hits: stats.skeleton_hits,
-                evictions: stats.skeleton_evictions,
-                peak_entries: stats.skeleton_peak_entries,
+            roles: stats.roles,
+            performers: stats.performers,
+            kinds: stats.kinds,
+            parts: stats.parts,
+            factor_recordings: stats.factor_recordings,
+            teams: stats.teams,
+            unkinded: stats.unkinded,
+            uncomposed: stats.uncomposed,
+            laws: CacheUse {
+                lookups: stats.law_lookups,
+                hits: stats.law_hits,
+                evictions: stats.law_evictions,
+                peak_entries: stats.peak_laws,
             },
+            composed: stats.composed,
+            peak_law_bytes: stats.peak_law_bytes,
         };
     }
 }

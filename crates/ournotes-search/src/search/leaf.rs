@@ -196,21 +196,15 @@ impl Engine<'_, '_> {
                     && (cutoff.is_some() || !bounds.laws().is_empty())
                 {
                     let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
-                    let state = self.certified.as_mut().expect("certified request");
-                    let class_bytes = state.class_bytes;
-                    let mut classes = state
-                        .luck_classes
-                        .take()
-                        .unwrap_or_else(|| ournotes_sim::live::full::LuckOrderClasses::new(master, class_bytes));
+                    let mut kinds = self.take_luck_kinds();
                     let found = crate::search::certified_search::luck_order_laws(
                         master,
                         &skills,
                         &input,
                         &mut curves,
-                        Some(&mut classes),
+                        Some(&mut kinds),
                     );
-                    self.tel.caches.luck_classes.record(classes.stats());
-                    self.certified.as_mut().expect("certified request").luck_classes = Some(classes);
+                    self.keep_luck_kinds(kinds);
                     self.rec.clock.lap(resume);
                     if !bounds.laws().is_empty() {
                         match &found {

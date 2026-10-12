@@ -51,7 +51,7 @@ impl Frame {
 }
 
 /// A judged note in chart-time order, with its judgement after any deterministic conversion.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Judged {
     pub(super) time_ms: i32,
     pub(super) note_type: i32,

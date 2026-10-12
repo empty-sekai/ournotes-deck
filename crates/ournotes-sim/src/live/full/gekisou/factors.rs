@@ -15,7 +15,7 @@ pub(super) struct FactorStorage {
 /// Whether every sum of a subset of `cmds`' factors is a binary32 value, so that adding them in any order rounds
 /// nowhere: each factor is an integer multiple of one power of two, and their absolute values sum to at most 2^24
 /// of it.
-pub(super) fn exact_sums(cmds: &[(i32, f32)]) -> bool {
+pub(crate) fn exact_sums(cmds: &[(i32, f32)]) -> bool {
     // (odd integer, exponent) with factor = ±integer * 2^exponent.
     let mut parts = Vec::with_capacity(cmds.len());
     for &(_, f) in cmds {
@@ -51,17 +51,18 @@ pub(super) fn exact_sums(cmds: &[(i32, f32)]) -> bool {
     true
 }
 
-impl FactorStorage {
-    pub(super) fn at(cmds: &[(i32, f32)], t: i32) -> f32 {
-        let mut s = 0f32;
-        for &(ct, d) in cmds {
-            if ct <= t {
-                s += d;
-            }
+/// The binary32 sum of the changes of `cmds` filed at or before `t`, added in filing order.
+pub(crate) fn factor_at(cmds: &[(i32, f32)], t: i32) -> f32 {
+    let mut s = 0f32;
+    for &(ct, d) in cmds {
+        if ct <= t {
+            s += d;
         }
-        s
     }
+    s
+}
 
+impl FactorStorage {
     pub(super) fn add(&mut self, gauge: bool, t: i32, f: f32) -> i32 {
         self.current_id = self.current_id.wrapping_add(1);
         let (cmds, ids) =

@@ -110,9 +110,9 @@ pub(super) struct CertifiedState<'m> {
     luck_skills: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
     /// Certified lottery curves of this request, shared by every performance order and team.
     pub(super) luck_curves: ournotes_sim::live::full::LuckDpCache,
-    /// Order classes of this request's teams by their lottery conditions, made at the first law recording.
-    pub(super) luck_classes: Option<ournotes_sim::live::full::LuckOrderClasses<'m>>,
-    pub(super) class_bytes: usize,
+    /// Lottery kinds of this request's performers and the laws composed from them, made at their first use.
+    pub(super) luck_kinds: Option<ournotes_sim::live::full::LotteryKinds<'m>>,
+    pub(super) kind_bytes: usize,
     /// Joint bounds under the lottery laws of single teams.
     pub(super) law_bounds: super::leaf::LawBounds,
 }
@@ -121,7 +121,7 @@ pub(super) struct CertifiedState<'m> {
 pub(super) const LUCK_CURVE_CACHE_BYTES: usize = 32 * 1024 * 1024;
 
 impl CertifiedState<'_> {
-    /// `cache_bytes` bounds the keys of the lottery curves and of the order classes, each.
+    /// `cache_bytes` bounds the keys of the lottery curves, and the composed lottery laws with their keys.
     pub(super) fn new(k: usize, cache_bytes: usize) -> Result<Self, Error> {
         Ok(Self {
             frontier: IntervalTopK::new(k)?,
@@ -132,8 +132,8 @@ impl CertifiedState<'_> {
             retain_refinement: None,
             luck_skills: None,
             luck_curves: ournotes_sim::live::full::LuckDpCache::new(cache_bytes),
-            luck_classes: None,
-            class_bytes: cache_bytes,
+            luck_kinds: None,
+            kind_bytes: cache_bytes,
             law_bounds: super::leaf::LawBounds::default(),
         })
     }
@@ -559,6 +559,19 @@ impl Engine<'_, '_> {
             })
             .collect::<Result<Vec<_>, Error>>()?;
         Ok((results, proof))
+    }
+}
+
+impl<'m> Engine<'_, 'm> {
+    /// The request's lottery kinds, made at their first use; [`Self::keep_luck_kinds`] puts them back.
+    pub(super) fn take_luck_kinds(&mut self) -> ournotes_sim::live::full::LotteryKinds<'m> {
+        let state = self.certified.as_mut().expect("certified request");
+        let bytes = state.kind_bytes;
+        state.luck_kinds.take().unwrap_or_else(|| ournotes_sim::live::full::LotteryKinds::new(self.pool.master, bytes))
+    }
+    pub(super) fn keep_luck_kinds(&mut self, kinds: ournotes_sim::live::full::LotteryKinds<'m>) {
+        self.tel.caches.luck_kinds.record(kinds.stats());
+        self.certified.as_mut().expect("certified request").luck_kinds = Some(kinds);
     }
 }
 
