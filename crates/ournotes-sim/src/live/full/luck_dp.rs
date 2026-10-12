@@ -32,12 +32,14 @@ pub use cache::{LuckDpCache, LuckDpCacheStats};
 pub use compose::LotteryLive;
 use compose::{ComposedLaws, HeldLive};
 use dp::{Distribution, DpResult, Phase, propagate, propagate_cancellable};
-use kinds::POSITIONS;
+use kinds::{Conversions, POSITIONS};
 pub use kinds::{LotteryBreak, LotteryKind, LotteryKindStats, LotteryKinds, LotteryRole};
 use life_recorder::life_recorder;
 pub use life_recorder::luck_has_judgement_conversion;
 pub(crate) use life_recorder::luck_play_converts;
-use life_recorder::{conversions_reach_play, leaves_life_range, life_range, play_life_range};
+use life_recorder::{
+    PlayConversions, leaves_life_range, life_range, play_conversions, play_life_range, quiet_conversions,
+};
 use mass::{Draws, Mass};
 pub(super) use plan::fixed_condition;
 use plan::{Action, Plan, chance, compile, fold_life_conditions, reads_life, unsupported};

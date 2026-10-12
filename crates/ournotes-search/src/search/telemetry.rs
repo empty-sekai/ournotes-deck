@@ -755,11 +755,13 @@ pub struct LuckKinds {
     pub kinds: usize,
     pub parts: usize,
     pub factor_recordings: u64,
-    /// Teams whose laws were asked, those with a performer without a kind, and those whose gauge speeds or gauge
-    /// actions may not compose.
+    /// Teams whose laws were asked, those with a performer without a kind, those whose gauge speeds or gauge
+    /// actions may not compose, and those whose conversions turn Perfects and Justs into one another beside
+    /// conversions that read such a change.
     pub teams: u64,
     pub unkinded: u64,
     pub uncomposed: u64,
+    pub relabel_conflicts: u64,
     /// Composed laws of distinct orders: held laws found, and transcripts composed with the transitions and the
     /// largest state count of their propagations.
     pub laws: CacheUse,
@@ -782,6 +784,7 @@ impl LuckKinds {
             teams: stats.teams,
             unkinded: stats.unkinded,
             uncomposed: stats.uncomposed,
+            relabel_conflicts: stats.relabel_conflicts,
             laws: CacheUse {
                 lookups: stats.law_lookups,
                 hits: stats.law_hits,

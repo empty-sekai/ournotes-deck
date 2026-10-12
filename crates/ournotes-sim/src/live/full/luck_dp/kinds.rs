@@ -14,9 +14,13 @@
 //!   fails for a formation when it fails for one of its performers: they are disjunctions over the performers' skill
 //!   lists, and the state identities of different performers never meet (an effect id holds the skill type and the
 //!   position below the row id, and a kind refuses row ids whose effect ids wrap).
-//! - Its judgement conversions change no judgement of the play in a formation whose other performers' conversions
-//!   change none ([`conversions_reach_play`], [`LotteryBreak::Converts`]), so no formation of performers with a kind
-//!   changes one.
+//! - Its judgement conversions change no judgement of the play but Perfects and Justs into one another
+//!   ([`LotteryBreak::Converts`]): whatever their conditions, they make no other change ([`play_conversions`]), or
+//!   they change no judgement in a formation whose other performers' conversions change none ([`quiet_conversions`]).
+//!   The kind records whether its conversions can turn a Perfect and a Just into one another, and whether they change
+//!   none only while no other performer's conversions do ([`Conversions`]); a formation holding both takes no composed
+//!   law ([`LotteryKinds::order_laws`]). Every other formation of performers with a kind changes no judgement of the
+//!   play but Perfects and Justs into one another.
 //! - Its lottery conditions read no performer other than their holder ([`LotteryBreak::ReadsFormation`]), so the
 //!   condition skills it brings to a formation are those it brings alone at the same position.
 //! - Its skills keep the life in the range the play keeps it in ([`LotteryBreak::LeavesLifeRange`]), and the life
@@ -40,7 +44,8 @@ pub(super) const POSITIONS: usize = 5;
 pub enum LotteryBreak {
     /// A lottery recording refuses the performer, for the reason given.
     Unsupported(String),
-    /// A judgement conversion the performer holds can change a judgement of the play in a formation.
+    /// A judgement conversion the performer holds can change a judgement of the play in a formation, beyond turning
+    /// a Perfect and a Just into one another.
     Converts,
     /// A skill of the performer can take the life out of the range the play keeps it in.
     LeavesLifeRange,
@@ -69,6 +74,15 @@ impl LotteryKind {
     pub fn index(self) -> usize {
         self.0 as usize
     }
+}
+
+/// How the judgement conversions of a performer with a kind act in a formation: whether they can turn a Perfect and a
+/// Just of the play into one another ([`PlayConversions::Relabel`]), and whether they change no judgement only while no
+/// other performer's conversions do so ([`quiet_conversions`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(super) struct Conversions {
+    pub(super) relabels: bool,
+    pub(super) read_relabels: bool,
 }
 
 /// A skill and its level.
@@ -118,11 +132,13 @@ pub struct LotteryKindStats {
     pub kinds: usize,
     pub parts: usize,
     pub factor_recordings: u64,
-    /// Formations whose laws were asked, those with a performer without a kind, and those whose gauge speeds may
-    /// round or whose gauge actions may wrap.
+    /// Formations whose laws were asked, those with a performer without a kind, those whose gauge speeds may round or
+    /// whose gauge actions may wrap, and those where conversions that turn a Perfect and a Just into one another meet
+    /// conversions that read such a change ([`Conversions`]).
     pub teams: u64,
     pub unkinded: u64,
     pub uncomposed: u64,
+    pub relabel_conflicts: u64,
     /// Laws of orders asked, those found held, and the composed transcripts propagated or found in the curve cache,
     /// with the transitions and the largest state count of their propagations.
     pub law_lookups: u64,
@@ -151,13 +167,16 @@ pub struct LotteryKinds<'m> {
     snaps: FxHashMap<SnapSkills, Option<LotteryBreak>>,
     /// Whether a Gekisou support skill holds a lottery-related row.
     related: FxHashMap<Held, bool>,
-    /// Whether the conversions of a performer can change a judgement of the play ([`conversions_reach_play`]).
-    conversions: FxHashMap<Performer, bool>,
-    /// The role of each reduced performer ([`LotteryKinds::reduced`]).
-    roles: FxHashMap<Performer, LotteryRole>,
-    /// The kind of each word list of five contributions, and the contributions of each kind.
+    /// The conversions of a performer whose skill lists pass every check but those of their conversions, or why its
+    /// formations take no kind ([`LotteryKinds::admit`]).
+    conversions: FxHashMap<Performer, Result<Conversions, LotteryBreak>>,
+    /// The role of each reduced performer ([`LotteryKinds::reduced`]) with its conversions.
+    roles: FxHashMap<(Performer, Conversions), LotteryRole>,
+    /// The kind of each word list of five contributions and conversions, and the contributions and conversions of
+    /// each kind.
     kinds: FxHashMap<Vec<u64>, LotteryKind>,
     pub(super) contributions: Vec<[Contribution; POSITIONS]>,
+    pub(super) kind_conversions: Vec<Conversions>,
     /// The factor parts; part 0 files no gauge speed.
     pub(super) parts: Vec<FactorPart>,
     /// The part of each speed and command list, and of each factor text ([`factor_text`]).
@@ -183,6 +202,7 @@ impl<'m> LotteryKinds<'m> {
             roles: FxHashMap::default(),
             kinds: FxHashMap::default(),
             contributions: Vec::new(),
+            kind_conversions: Vec::new(),
             parts: Vec::new(),
             part_ids: FxHashMap::default(),
             part_texts: FxHashMap::default(),
@@ -222,6 +242,7 @@ impl<'m> LotteryKinds<'m> {
         self.roles.clear();
         self.kinds.clear();
         self.contributions.clear();
+        self.kind_conversions.clear();
         self.part_texts.clear();
         self.laws.clear();
         self.life = play_life_range(self.master, live.play);
@@ -256,32 +277,34 @@ impl<'m> LotteryKinds<'m> {
             let why = format!("the live composes no lottery law: {why}");
             return LotteryRole::Breaks(LotteryBreak::Unsupported(why));
         }
-        if let Some(why) = self.breaks(live, performer) {
-            return LotteryRole::Breaks(why);
-        }
-        let reduced = self.reduced(live, performer);
-        if let Some(role) = self.roles.get(&reduced) {
+        let conversions = match self.admit(live, performer) {
+            Ok(conversions) => conversions,
+            Err(why) => return LotteryRole::Breaks(why),
+        };
+        let key = (self.reduced(live, performer), conversions);
+        if let Some(role) = self.roles.get(&key) {
             return role.clone();
         }
         self.stats.performers += 1;
-        let role = match self.kind_of(live, &reduced) {
+        let role = match self.kind_of(live, &key.0, conversions) {
             Ok(kind) => LotteryRole::Kind(kind),
             Err(why) => LotteryRole::Breaks(why),
         };
-        self.roles.insert(reduced, role.clone());
+        self.roles.insert(key, role.clone());
         role
     }
 
-    /// Why the performer checks of a recording, the conversions of `performer` or its effects on the life keep its
-    /// formations from a kind.
+    /// The conversions of `performer` ([`Conversions`]), or why the performer checks of a recording, its conversions
+    /// or its effects on the life keep its formations from a kind.
     ///
     /// The checks of the live and Gekisou skills of the member and those of the support and Gekisou support skills
     /// of the Snap are made apart: every check is a disjunction over the skill lists, the Gekisou support list read
     /// only beside a Gekisou skill, and state identities of different lists never meet. The Snap's lists are
     /// checked beside the performer's own Gekisou skill once that skill passes, which then adds nothing to them. A
-    /// part whose held conversion can change a judgement of the play leaves the conversions to the run of the
-    /// complete performer, whose holder conditions they read ([`conversions_reach_play`]).
-    pub(super) fn breaks(&mut self, live: &LotteryLive<'_>, performer: &Performer) -> Option<LotteryBreak> {
+    /// part whose held conversion can change a judgement of the play leaves the conversions to the complete
+    /// performer: their changes ([`play_conversions`]), and the run whose holder conditions they read
+    /// ([`quiet_conversions`]).
+    pub(super) fn admit(&mut self, live: &LotteryLive<'_>, performer: &Performer) -> Result<Conversions, LotteryBreak> {
         let member = (performer.live_skill, performer.gekisou_skill);
         if !self.members.contains_key(&member) {
             let part = Performer {
@@ -293,8 +316,8 @@ impl<'m> LotteryKinds<'m> {
             self.members.insert(member, why);
         }
         let member = self.members[&member].clone();
-        if member.as_ref().is_some_and(|why| *why != LotteryBreak::Converts) {
-            return member;
+        if let Some(why) = member.as_ref().filter(|why| **why != LotteryBreak::Converts) {
+            return Err(why.clone());
         }
         let snap = (
             performer.support_skills.clone(),
@@ -312,32 +335,27 @@ impl<'m> LotteryKinds<'m> {
             self.snaps.insert(snap.clone(), why);
         }
         let snap = self.snaps[&snap].clone();
-        if snap.as_ref().is_some_and(|why| *why != LotteryBreak::Converts) {
-            return snap;
+        if let Some(why) = snap.as_ref().filter(|why| **why != LotteryBreak::Converts) {
+            return Err(why.clone());
         }
         if member.is_none() && snap.is_none() {
-            return None;
+            return Ok(Conversions::default());
         }
-        let converts = match self.conversions.get(performer) {
-            Some(&converts) => converts,
-            None => {
-                let LotteryLive { notes, events, params, setup, play, delta_times, ranking, .. } = *live;
-                let converts = conversions_reach_play(
-                    self.master,
-                    performer,
-                    notes,
-                    events,
-                    params,
-                    setup,
-                    play,
-                    delta_times,
-                    ranking,
-                );
-                self.conversions.insert(performer.clone(), converts);
-                converts
+        if let Some(found) = self.conversions.get(performer) {
+            return found.clone();
+        }
+        let LotteryLive { notes, events, params, setup, play, delta_times, ranking, .. } = *live;
+        let found = match play_conversions(self.master, std::slice::from_ref(performer), notes, play) {
+            PlayConversions::None => Ok(Conversions::default()),
+            PlayConversions::Relabel => Ok(Conversions { relabels: true, read_relabels: false }),
+            PlayConversions::Change => {
+                quiet_conversions(self.master, performer, notes, events, params, setup, play, delta_times, ranking)
+                    .map(|blind| Conversions { relabels: false, read_relabels: !blind })
+                    .ok_or(LotteryBreak::Converts)
             }
         };
-        converts.then_some(LotteryBreak::Converts)
+        self.conversions.insert(performer.clone(), found.clone());
+        found
     }
 
     /// The performer checks of a recording, the life range and the conversions, for `performer` alone; a conversion
@@ -408,8 +426,14 @@ impl<'m> LotteryKinds<'m> {
         reduced
     }
 
-    /// The kind of a reduced performer: its contribution at each position, with blank performers before it.
-    fn kind_of(&mut self, live: &LotteryLive<'_>, reduced: &Performer) -> Result<LotteryKind, LotteryBreak> {
+    /// The kind of a reduced performer with `conversions`: its contribution at each position, with blank performers
+    /// before it, and the conversions.
+    fn kind_of(
+        &mut self,
+        live: &LotteryLive<'_>,
+        reduced: &Performer,
+        conversions: Conversions,
+    ) -> Result<LotteryKind, LotteryBreak> {
         let mut contributions = Vec::with_capacity(POSITIONS);
         for position in 0..POSITIONS {
             let mut deck = vec![Performer::default(); position];
@@ -418,10 +442,12 @@ impl<'m> LotteryKinds<'m> {
         }
         let mut words = Vec::new();
         contributions.iter().for_each(|contribution| contribution.push_words(&mut words));
+        words.extend([u64::from(conversions.relabels), u64::from(conversions.read_relabels)]);
         let next = LotteryKind(self.contributions.len() as u32);
         let kind = *self.kinds.entry(words).or_insert(next);
         if kind == next {
             self.contributions.push(contributions.try_into().expect("one contribution per position"));
+            self.kind_conversions.push(conversions);
         }
         Ok(kind)
     }

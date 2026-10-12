@@ -155,14 +155,22 @@ fn law_bytes(law: &LuckDpCertifiedResult) -> usize {
 impl LotteryKinds<'_> {
     /// The lottery law of each of `orders` of the five performers of `deck` in `live`, composed from the
     /// contributions of their kinds: `order[q]` is the index in `deck` of the performer at position `q`. None when a
-    /// performer has no kind, or when the gauge speeds or gauge actions of an order may not compose.
+    /// performer has no kind, when conversions of the performers that turn a Perfect and a Just into one another meet
+    /// conversions that read such a change ([`Conversions`]), or when the gauge speeds or gauge actions of an order may
+    /// not compose.
     ///
     /// The law of an order is the propagation of its transcript ([`record_skeleton`], [`file`]); the composed law
     /// encloses it:
     ///
-    /// - No formation of performers with a kind converts a judgement and no action reads the life (see the
-    ///   [`kinds`](super::kinds) module), so the skeleton is the native run of the performers' factor skills alone. Its controller's range states follow
-    ///   the fevers and the frame times, and its judgements are those of the play. Each performer's own recording
+    /// - The formations composed change no judgement of the play but Perfects and Justs into one another (see the
+    ///   [`kinds`](super::kinds) module). The propagation reads a judgement only through the base points of the
+    ///   lottery machine, which take Perfect and Just alike, and the skeleton reads none beyond that: the triggers,
+    ///   releases and resets a lottery plan admits read the range states and the lottery results, and its conditions
+    ///   only chances, the holder and the life ([`compile`]). So the order's law is that of its transcript with the
+    ///   judgements of the play.
+    /// - No action reads the life (see the [`kinds`](super::kinds) module), so the skeleton is the native run of the
+    ///   performers' factor skills alone. Its controller's range states follow the fevers and the frame times. Each
+    ///   performer's own recording
     ///   records the skeleton of the live without performers but for the gauge speeds of its hits, and files no lot
     ///   factor; so does the order, with the lot buffs of the live, and its factor skills file their gauge factor
     ///   commands in the same frames and phases and with the same times as in their own recordings: their triggers
@@ -206,6 +214,11 @@ impl LotteryKinds<'_> {
                     return Ok(None);
                 }
             }
+        }
+        let held = |flag: fn(&Conversions) -> bool| kinds.iter().any(|kind| flag(&self.kind_conversions[kind.index()]));
+        if held(|conversions| conversions.relabels) && held(|conversions| conversions.read_relabels) {
+            self.stats.relabel_conflicts += 1;
+            return Ok(None);
         }
         let mut laws: Vec<std::sync::Arc<LuckDpCertifiedResult>> = Vec::with_capacity(orders.len());
         let mut keys = Vec::<Vec<u64>>::with_capacity(orders.len());

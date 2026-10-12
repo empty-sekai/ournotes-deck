@@ -3,14 +3,17 @@ use crate::master::{GekisouSkillEffectRow, SkillRow};
 
 /// The lottery fixture with skills that convert, read or damage the life, read the formation or the holder, or are
 /// refused, and gauge speeds of 0.1 (809) and of 0.5 beside a range-start gauge that a chance gates (810). The life
-/// starts at 1000 and its play, all Perfect, deals no note damage. The Gekisou support skills 800, 812 and 813 convert
-/// a Perfect to a Great once their range starts: 800 always, 812 for a holder of mission 2, and 813 for such a holder
-/// while it reads a life of at least 500.
+/// starts at 1000 and its play, all Perfect, deals no note damage; its notes have a Just timing, and a Just deals no
+/// note damage either. The Gekisou support skills 800, 812, 813, 816 and 817 convert a Perfect to a Great once their
+/// range starts: 800 always, 812 for a holder of mission 2, 813 for such a holder while it reads a life of at least
+/// 500, 816 on a Just of the frame and 817 on a Great of the frame. The Gekisou support skill 814 converts every
+/// Perfect to a Just once its range starts.
 fn kinds_fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
     let (mut master, notes, params, setup, play, delta) = random_fixture();
     let effect = |id, key: &str, skill, effect, condition| {
-        let mut value = row(id, key, skill, effect, 10000, if effect == 12006 { 0 } else { 7010 }, condition, 7013);
-        if effect == 12006 {
+        let converts = matches!(effect, 12006 | 13005);
+        let mut value = row(id, key, skill, effect, 10000, if converts { 0 } else { 7010 }, condition, 7013);
+        if converts {
             value["_skillTargetIDs"] = json!([57]);
             value["_skillReleaseConditionGroup"] = json!(0);
         }
@@ -34,9 +37,11 @@ fn kinds_fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay
     master.gekisou_skill_effects.push(gekisou(811, 810, 11003, 4011));
     // A support skill that damages the life (902).
     master.support_skill_effects.push(serde_json::from_value(effect(902, "_supportSkillID", 902, 3002, 0)).unwrap());
-    // Gekisou support skills that convert (800, 812, 813) and one outside the lottery (999).
-    for (skill, condition) in [(800, 0), (812, 5000), (813, 2002)] {
-        let mut converter = effect(skill, "_gekisouSkillID", skill, 12006, condition);
+    // Gekisou support skills that convert (800, 812, 813, 814, 816, 817) and one outside the lottery (999).
+    for (skill, kind, condition) in
+        [(800, 12006, 0), (812, 12006, 5000), (813, 12006, 2002), (814, 13005, 0), (816, 12006, 1006), (817, 12006, 1004)]
+    {
+        let mut converter = effect(skill, "_gekisouSkillID", skill, kind, condition);
         converter["_skillTriggerConditionGroup"] = json!(7010);
         (converter["_effectValue"], converter["_activationTimeSecond"]) = (json!(4), json!(99999.0));
         master.gekisou_support_skill_effects.push(serde_json::from_value(converter).unwrap());
@@ -55,7 +60,7 @@ fn kinds_fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay
             "_maxCumulativeCount":5}))
         .unwrap(),
     );
-    for skill in [800, 808, 812, 813, 999] {
+    for skill in [800, 808, 812, 813, 814, 816, 817, 999] {
         let row: SkillRow = serde_json::from_value(json!({"_id":skill,"_gekisouMissionType":2})).unwrap();
         master.gekisou_support_skills.push(row);
     }
@@ -67,10 +72,21 @@ fn kinds_fixture() -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay
     (cumulative.id, cumulative.skill_id) = (807, 807);
     master.gekisou_support_skill_effects.push(cumulative);
     master.gekisou_support_skills.push(serde_json::from_value(json!({"_id":807,"_gekisouMissionType":2})).unwrap());
-    master.skill_targets.push(serde_json::from_value(json!({"_id":57,"_skillTargetType":2,"_judgement":5})).unwrap());
-    for (id, kind, values, targets) in
-        [(2000, 2000, vec![500], vec![]), (2001, 2001, vec![1500], vec![]), (5000, 5000, vec![], vec![56])]
-    {
+    for (id, judgement) in [(57, 5), (58, 6), (59, 4)] {
+        let target = json!({"_id":id,"_skillTargetType":2,"_judgement":judgement});
+        master.skill_targets.push(serde_json::from_value(target).unwrap());
+    }
+    let just = json!({"_id":2,"_noteJudgementType":1,"_noteSimulateJudgement":6,"_afterMs":0});
+    master.live_judgement_timings.push(serde_json::from_value(just).unwrap());
+    let just = json!({"_id":2,"_noteSimulateJudgement":6,"_scorePercent":100,"_damage":0});
+    master.judgement_parameters.push(serde_json::from_value(just).unwrap());
+    for (id, kind, values, targets) in [
+        (2000, 2000, vec![500], vec![]),
+        (2001, 2001, vec![1500], vec![]),
+        (5000, 5000, vec![], vec![56]),
+        (1006, 1000, vec![], vec![58]),
+        (1004, 1000, vec![], vec![59]),
+    ] {
         master.skill_conditions.push(
             serde_json::from_value(json!({"_id":id,"_conditionType":kind,"_conditionValues":values,
                 "_conditionTargetIDs":targets,"_isPositive":true}))
@@ -102,8 +118,8 @@ fn holding(skill: Option<i64>, supports: &[i64]) -> Performer {
     }
 }
 
-/// The words of the native transcript of `deck`, with the actions filed in each frame in the order of their words.
-fn native_words(live: &LotteryLive<'_>, deck: &[Performer]) -> Vec<u64> {
+/// The native transcript of `deck`, with the actions filed in each frame in the order of their words.
+fn native_transcript(live: &LotteryLive<'_>, deck: &[Performer]) -> Transcript<ProbabilityMass> {
     let LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking } = *live;
     let prepared =
         prepare_recording::<ProbabilityMass>(master, skills, notes, params, play, delta_times, deck, None, false)
@@ -131,17 +147,31 @@ fn native_words(live: &LotteryLive<'_>, deck: &[Performer]) -> Vec<u64> {
         transcript.actions[from..frame.actions].sort_by_key(action_words);
         from = frame.actions;
     }
-    transcript.key().unwrap()
+    transcript
 }
 
-/// The words of the transcript `kinds` composes for `deck` in its order, or None when it composes none.
-fn composed_words(kinds: &mut LotteryKinds<'_>, live: &LotteryLive<'_>, deck: &[Performer]) -> Option<Vec<u64>> {
+/// The words of [`native_transcript`].
+fn native_words(live: &LotteryLive<'_>, deck: &[Performer]) -> Vec<u64> {
+    native_transcript(live, deck).key().unwrap()
+}
+
+/// The transcript `kinds` composes for `deck` in its order, or None when it composes none.
+fn composed_transcript(
+    kinds: &mut LotteryKinds<'_>,
+    live: &LotteryLive<'_>,
+    deck: &[Performer],
+) -> Option<Transcript<ProbabilityMass>> {
     let at = std::array::from_fn(|position| match kinds.role(live, &deck[position]) {
         LotteryRole::Kind(kind) => (kind, position),
         LotteryRole::Breaks(why) => panic!("no kind: {why:?}"),
     });
     let composition = kinds.composition(live, at);
-    kinds.transcript(composition).map(|transcript| transcript.key().unwrap())
+    kinds.transcript(composition)
+}
+
+/// The words of [`composed_transcript`].
+fn composed_words(kinds: &mut LotteryKinds<'_>, live: &LotteryLive<'_>, deck: &[Performer]) -> Option<Vec<u64>> {
+    composed_transcript(kinds, live, deck).map(|transcript| transcript.key().unwrap())
 }
 
 #[test]
@@ -257,13 +287,14 @@ fn lottery_kinds_refuse_performers_whose_contributions_depend_on_other_performer
                 ..member.clone()
             };
             let deck = std::slice::from_ref(&performer);
-            let converts = luck_play_converts(&master, deck, &notes, &play)
-                && conversions_reach_play(&master, &performer, &notes, &[], params, &setup, &play, &[0.1; 21], None);
+            let converts = play_conversions(&master, deck, &notes, &play) == PlayConversions::Change
+                && quiet_conversions(&master, &performer, &notes, &[], params, &setup, &play, &[0.1; 21], None)
+                    .is_none();
             let refused = !matches!(luck::luck_signature(&master, &performer), Ok(Some(_)))
                 || check_held_state_identities(&master, deck).is_err()
                 || converts
                 || leaves_life_range(&master, &performer, (1000, 2000));
-            assert_eq!(kinds.breaks(&live, &performer).is_some(), refused, "{performer:?}");
+            assert_eq!(kinds.admit(&live, &performer).is_err(), refused, "{performer:?}");
         }
     }
     // A live whose recording without performers fails composes no law.
@@ -284,4 +315,56 @@ fn lottery_kinds_fold_no_life_condition_of_a_play_with_note_damage() {
     assert!(matches!(kinds.role(&live, &damaging), LotteryRole::Kind(_)));
 }
 
-
+#[test]
+fn conversions_between_perfect_and_just_compose_the_native_laws() {
+    let (master, notes, params, setup, play, delta) = kinds_fixture();
+    let skills = luck_skills(&master).unwrap();
+    let live = lottery_live(&master, &skills, (&notes, params, &setup, &play, &delta));
+    let changes = |master: &Master, performer: &Performer| {
+        play_conversions(master, std::slice::from_ref(performer), &notes, &play)
+    };
+    let relabel = holding(Some(2), &[31, 814, 96]);
+    let (reads, blind) = (holding(Some(3), &[816]), holding(Some(3), &[66, 817]));
+    assert_eq!(changes(&master, &relabel), PlayConversions::Relabel);
+    assert_eq!(changes(&master, &reads), PlayConversions::Change);
+    assert_eq!(changes(&master, &holding(Some(1), &[])), PlayConversions::None);
+    // A conversion to a Just that deals note damage is another change.
+    let mut hurt = master.clone();
+    hurt.judgement_parameters[1].damage = 10;
+    assert_eq!(changes(&hurt, &relabel), PlayConversions::Change);
+    let mut kinds = LotteryKinds::new(&master, usize::MAX);
+    let mut conversions = |performer: &Performer| match kinds.role(&live, performer) {
+        LotteryRole::Kind(kind) => (kind, kinds.kind_conversions[kind.index()]),
+        LotteryRole::Breaks(why) => panic!("no kind: {why:?}"),
+    };
+    // The conversions set a kind apart from that of the same contributions without them. A conversion that changes
+    // no judgement alone reads a Just of the frame (816) or reads a Great alike for Perfects and Justs (817).
+    let (plain, none) = conversions(&holding(Some(2), &[31, 96]));
+    let (relabelling, relabels) = conversions(&relabel);
+    assert_ne!(plain, relabelling);
+    assert_eq!((none, relabels), (Conversions::default(), Conversions { relabels: true, read_relabels: false }));
+    assert_eq!(conversions(&reads).1, Conversions { relabels: false, read_relabels: true });
+    assert_eq!(conversions(&blind).1, Conversions::default());
+    // The native transcript of a formation with the relabelling performer has Justs, its composed transcript has
+    // Perfects in their place, and the two propagate to one law.
+    let mut curves = LuckDpCache::new(usize::MAX);
+    let decks = [
+        [relabel.clone(), holding(Some(1), &[66]), blind.clone(), holding(Some(3), &[66, 96]), holding(Some(2), &[31, 96])],
+        [blind.clone(), holding(Some(810), &[]), relabel.clone(), holding(Some(803), &[]), holding(None, &[66])],
+    ];
+    for deck in &decks {
+        let mut native = native_transcript(&live, deck);
+        let law = curve_words(&curves.law_of(&native, &mut || false).unwrap().unwrap());
+        assert!(native.notes.iter().any(|note| note.judgement == 6), "{deck:?}");
+        native.notes.iter_mut().filter(|note| note.judgement == 6).for_each(|note| note.judgement = 5);
+        let composed = composed_transcript(&mut kinds, &live, deck).unwrap();
+        assert_eq!(composed.key(), native.key(), "{deck:?}");
+        assert_eq!(curve_words(&curves.law_of(&composed, &mut || false).unwrap().unwrap()), law, "{deck:?}");
+        let orders = kinds.order_laws(&live, deck, &[[0, 1, 2, 3, 4]], &mut curves).unwrap();
+        assert!(orders.is_some(), "{deck:?}");
+    }
+    // A formation where the relabelling conversion meets one that reads a Just takes no composed law.
+    let deck = [relabel, reads, blind, holding(Some(1), &[66]), holding(None, &[66])];
+    assert!(kinds.order_laws(&live, &deck, &[[0, 1, 2, 3, 4]], &mut curves).unwrap().is_none());
+    assert_eq!(kinds.stats().relabel_conflicts, 1);
+}
