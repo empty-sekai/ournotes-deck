@@ -316,11 +316,16 @@ impl LotteryKinds<'_> {
         if !self.composes(kinds, orders)? {
             return Ok(None);
         }
-        let mut fresh: Vec<(OrderIds, usize)> =
-            orders.iter().enumerate().map(|(o, order)| (self.order_ids(kinds, order), o)).collect();
-        fresh.sort_unstable();
-        fresh.dedup_by_key(|(ids, _)| *ids);
-        fresh.retain(|(ids, _)| !seen.contains(ids));
+        // The new contributions, each with its first order.
+        let rows = kinds.map(|kind| self.entries[kind.index()].ids);
+        let mut fresh: Vec<(OrderIds, usize)> = Vec::new();
+        for (o, order) in orders.iter().enumerate() {
+            let mut ids: OrderIds = std::array::from_fn(|position| rows[order[position]][position]);
+            ids.sort_unstable();
+            if !seen.contains(&ids) && !fresh.iter().any(|(held, _)| *held == ids) {
+                fresh.push((ids, o));
+            }
+        }
         let mut laws: Vec<std::sync::Arc<LuckDpCertifiedResult>> = Vec::with_capacity(fresh.len());
         for &(ids, o) in &fresh {
             match self.order_law(live, kinds, &orders[o], ids, curves)? {
