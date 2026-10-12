@@ -6,12 +6,12 @@ use super::*;
 pub(super) struct PointBound {
     pub(super) member: Vec<i64>,
     pub(super) snap: Vec<i64>,
-    multiplier: i64,
+    pub(super) multiplier: i64,
     /// Prefix maximum reward multiplier at reachable score thresholds (solo rank rules only).
     pub(super) score_tiers: Option<Vec<(i64, i64)>>,
     /// The concave majorants of the step multiplier truncated at each tier: `hulls[k]` is that of `score_tiers[..=k]`
     /// (see `uniform::concave_majorant`), which equals the step multiplier's majorant on the scores below tier `k + 1`.
-    hulls: Option<Vec<Vec<(i64, i64)>>>,
+    pub(super) hulls: Option<Vec<Vec<(i64, i64)>>>,
     pub(super) target: Option<ScoreTarget>,
     /// The scores at which an order's payoff may step, when it is constant between them and zero below all of them.
     step_scores: Option<Vec<i64>>,
