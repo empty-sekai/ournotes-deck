@@ -394,6 +394,14 @@ pub struct Leaves {
     pub order_bound_pruned: u64,
     /// Whole-live simulations (one performance order each) run to the end.
     pub simulations: u64,
+    /// LUCK teams whose performance orders were evaluated jointly, and those whose joint evaluation declined and
+    /// whose orders the all-path bounds evaluated instead.
+    pub exact_teams: u64,
+    pub exact_declined: u64,
+    /// LUCK teams dropped before their evaluation because their raw and fine caps under the lottery laws of their
+    /// own orders stay below the K-th, and the bounds compiled for such laws.
+    pub law_pruned: u64,
+    pub law_bounds: u64,
     pub cutoff: Cutoff,
     pub order_tree: OrderTree,
     pub peak_retained: usize,

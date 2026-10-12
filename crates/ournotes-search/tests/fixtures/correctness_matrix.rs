@@ -459,3 +459,41 @@ fn nominal_luck_objectives_certify_equivalent_leader_programs() {
         "nominal LUCK matrix: {cases} cases, 55 fixed physical candidates, 5 equivalent leader programs per case"
     );
 }
+
+#[test]
+fn luck_score_caps_under_team_laws_keep_the_exhaustive_ranking() {
+    let (data, roster) = fixture(7, 0, 7, true);
+    let mut current = request(&data, "mission", false, json!({"kind":"score"}));
+    current.constraints.leader = None;
+    current.constraints.no_snaps = true;
+    current.limits.cache_entries = 64;
+    let rows = |decks: &[RecommendedDeck]| {
+        decks.iter().map(|deck| (key(deck), serde_json::to_value(&deck.payoff_interval).unwrap())).collect::<Vec<_>>()
+    };
+    let (mut bounds, mut pruned) = (0, 0);
+    for k in [1, 3, 10] {
+        current.k = k;
+        current.strategy = Strategy::Exhaustive;
+        let oracle = engine::recommend(&data, &roster, &current).unwrap();
+        current.strategy = Strategy::BranchAndBound;
+        let bounded = engine::recommend(&data, &roster, &current).unwrap();
+        assert_eq!((oracle.completion, bounded.completion), (Completion::Complete, Completion::Complete), "k={k}");
+        assert_eq!(rows(&bounded.results), rows(&oracle.results), "k={k}");
+        let leaves = &bounded.telemetry.leaves;
+        assert!(leaves.exact_teams <= oracle.telemetry.leaves.exact_teams, "k={k}");
+        // A team's laws compile bounds only for the teams the pool-wide caps leave open.
+        assert!(leaves.law_bounds <= leaves.visited && leaves.law_pruned <= leaves.visited, "k={k}");
+        bounds += leaves.law_bounds;
+        pruned += leaves.law_pruned;
+        eprintln!(
+            "k={k}: visited {} exact {} cheap {} fine {} law {} bounds {}",
+            leaves.visited,
+            leaves.exact_teams,
+            leaves.cheap_pruned,
+            leaves.fine_pruned,
+            leaves.law_pruned,
+            leaves.law_bounds
+        );
+    }
+    assert!(bounds > 0 && pruned > 0, "{bounds} bounds dropped {pruned} teams");
+}

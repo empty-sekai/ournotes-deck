@@ -160,6 +160,8 @@ Exclusive time (milliseconds) by activity from the start of solving to its end; 
 | `started` | Teams whose performance orders started to run |
 | `orderBoundPruned` | Teams dropped after some orders: their exact payoffs plus the caps of the other orders stay below the K-th |
 | `simulations` | Whole-live simulations (one performance order each) run to the end |
+| `exactTeams`, `exactDeclined` | LUCK teams whose performance orders were evaluated jointly, and those the joint evaluation does not cover, whose orders the all-path bounds evaluated one by one |
+| `lawPruned`, `lawBounds` | LUCK teams dropped before their evaluation: the sum of their raw and fine caps weighted by the lottery laws of their own orders stays below the K-th; and the bounds compiled for such laws |
 | `cutoff.tables` | Performance orders simulated with a cutoff table |
 | `cutoff.unavailable` | Performance orders without a finite cutoff table |
 | `cutoff.stopped` | Simulations stopped early (the team cannot reach the Top-K) |
