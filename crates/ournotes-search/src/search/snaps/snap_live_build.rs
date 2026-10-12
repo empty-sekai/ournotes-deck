@@ -9,7 +9,9 @@ impl<'a> SnapLive<'a> {
         t: &Tables,
         allowed_members: &[bool],
         setup: &'a FullSetup,
+        laws: &[std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>],
     ) -> Result<SnapLive<'a>, Error> {
+        let luck = LuckLaws::new(laws);
         let master: &'a Master = pool.master;
         let settings = LiveScoreSettings::from_master(master)?;
         let combo = ComboTable::from_master(master)?;
@@ -528,6 +530,9 @@ impl<'a> SnapLive<'a> {
         let mdf64 = mdf as f64;
         let mut pre: Vec<f64> = Vec::with_capacity(order.len());
         let mut pre_plain: Vec<f64> = Vec::with_capacity(order.len());
+        // with certified laws: each entry's weight of the direct-Rush score ups (see `LuckLaws::entry`)
+        let mut rush_weight: Vec<f64> = Vec::with_capacity(order.len());
+        let mut probe_starts = luck.as_ref().map(|laws| laws.probe_starts());
         // with a Gekisou combo range: each coefficient around its combo factor (see `carrier_level_envelopes`)
         let mut level_terms: Vec<(f64, f64, f64)> = Vec::new();
         // with Gekisou on: the Gekisou combo, luck and rank bonus factors of each entry (chart-time order)
@@ -627,13 +632,25 @@ impl<'a> SnapLive<'a> {
             let mut rank = 1.0;
             let mut gpool = 1.0;
             if let Some(g) = &gkf {
+                // the expected luck factor under the laws, else its largest value
+                let l = match &luck {
+                    Some(laws) => {
+                        let (luck_e, probe_e) = laws.entry(n.time_ms, g.l[pos]);
+                        rush_weight.push((probe_e / luck_e).next_up().min(1.0));
+                        if let Some(starts) = &mut probe_starts {
+                            starts.luck = starts.luck.max((g.l[pos] / luck_e).next_up());
+                        }
+                        luck_e
+                    }
+                    None => g.l[pos],
+                };
                 if g.combo.is_some() {
                     // the candidate bound reads its own Gekisou combo factor
-                    pre_e *= g.l[pos];
+                    pre_e *= l;
                     gpool = g.g[pos];
                 } else {
                     plain_e *= g.g[pos];
-                    pre_e *= g.g[pos] * g.l[pos];
+                    pre_e *= g.g[pos] * l;
                 }
                 rank = g.r[pos];
             }
@@ -684,7 +701,10 @@ impl<'a> SnapLive<'a> {
         }
         let mut fine = Fine {
             score_frames: ScoreFrames::new(&setup.params),
-            rush_eligible: rush::eligible(&env, &entries),
+            // Rush masks follow one lottery realization; an expectation over the lottery reads none
+            rush_eligible: luck.is_none() && rush::eligible(&env, &entries),
+            expected: luck.is_some(),
+            probe_starts,
             raw: order.iter().map(|&i| entries[i].2 as u8).collect(),
             group: Vec::with_capacity(ne),
             pre_plain: if gkf.as_ref().is_some_and(|g| g.l.iter().any(|&l| l != 1.0)) { pre_plain } else { Vec::new() },
@@ -973,6 +993,10 @@ impl<'a> SnapLive<'a> {
         // command and factor totals for the drift margin: per position, the largest over members and classes
         let mut cmd_k = [0f64; 5];
         let mut executions_k = [0f64; 5];
+        // with certified laws, the same split by the starts of the direct-probe class: `(executions, commands)`
+        // whatever the starts, and for each start
+        let mut fixed_k = [(0f64, 0f64); 5];
+        let mut run_k = [(0f64, 0f64); 5];
         let mut fac_k = [0f64; 5];
         let mut frame_norm_k = [0f64; 5];
         let forward_clamp = setup.params.music_length_ms > 0
@@ -990,10 +1014,26 @@ impl<'a> SnapLive<'a> {
             for c in &classes[m] {
                 let mut arr: [Contrib; 5] = Default::default();
                 for k in 0..5 {
-                    let (w, cmds, fac, ops, spans, ramps, rush, ops_plain, cmds_plain) =
+                    let (w, mut cmds, fac, mut ops, spans, ramps, rush, ops_plain, cmds_plain) =
                         windows(&geo, k, &member_live[m], &c.rows, &ev_by_k[k]);
+                    let w = if rush_weight.is_empty() { w } else { weigh_rush_windows(w, &rush_weight) };
                     let fac = fac.iter().copied().fold(0f64, f64::max);
                     let judge = w.iter().any(|x| x.judge.iter().any(|&j| j != 0.0));
+                    if let Some(starts) = fine.probe_starts {
+                        let (mut fixed, mut run) = ((ops_plain, cmds_plain), (0f64, 0f64));
+                        let mut most = fixed;
+                        for row in &rush {
+                            let (row_fixed, row_run) = row.by_start(None);
+                            fixed = ((fixed.0 + row_fixed.0).next_up(), (fixed.1 + row_fixed.1).next_up());
+                            run = ((run.0 + row_run.0).next_up(), (run.1 + row_run.1).next_up());
+                            // no play files more than its open-gate frames allow
+                            most.0 = (most.0 + starts.at_most(row_fixed.0, row_run.0).min(row.ops)).next_up();
+                            most.1 = (most.1 + starts.at_most(row_fixed.1, row_run.1).min(row.cmds)).next_up();
+                        }
+                        (ops, cmds) = (ops.min(most.0), cmds.min(most.1));
+                        fixed_k[k] = (fixed_k[k].0.max(fixed.0), fixed_k[k].1.max(fixed.1));
+                        run_k[k] = (run_k[k].0.max(run.0), run_k[k].1.max(run.1));
+                    }
                     cmd_k[k] = cmd_k[k].max(cmds);
                     executions_k[k] = executions_k[k].max(if ops.is_nan() { f64::INFINITY } else { ops });
                     fac_k[k] = fac_k[k].max(fac);
@@ -1132,6 +1172,29 @@ impl<'a> SnapLive<'a> {
         let chain_extra = if gk_on { GK_CHAIN_EPS } else { 0.0 };
         let eps = float_margin::with_chain(drift, chain_extra)
             .ok_or_else(|| Error::Domain("nonfinite factor drift certificate".into()))?;
+        // With certified laws the bounds are expectations over the lottery, and the margin of a play grows with its
+        // starts of the direct-probe class along a convex curve: take the expected margin (see
+        // `ProbeStarts::expected_drift`) between the play without a start and the play with the most. The margin
+        // of every play stays below the signed-value and rounding reserves, which read `eps` per play.
+        let eps = match &fine.probe_starts {
+            Some(starts) if eps < 0.5 => {
+                let total = |part: fn(&(f64, f64)) -> f64, of: &[(f64, f64); 5]| {
+                    of.iter().fold(0.0f64, |sum, x| (sum + part(x)).next_up())
+                };
+                let margin = |executions: f64, commands: f64| {
+                    float_margin::with_chain(factor_drift(executions, commands, frame_norm)?, chain_extra)
+                };
+                let (fixed_e, fixed_n) = (total(|x| x.0, &fixed_k), total(|x| x.1, &fixed_k));
+                let (run_e, run_n) = (total(|x| x.0, &run_k), total(|x| x.1, &run_k));
+                let fixed = margin(fixed_e, fixed_n);
+                let most = margin(starts.at_most(fixed_e, run_e), starts.at_most(fixed_n, run_n));
+                match (fixed, most) {
+                    (Some(fixed), Some(most)) => starts.expected_drift(fixed, most).min(eps),
+                    _ => eps,
+                }
+            }
+            _ => eps,
+        };
         // The positive comparison chain bounds either sign of the factor state.
         // Representatives separately certify the observed lower endpoint when
         // the pool drift does not provide it.
