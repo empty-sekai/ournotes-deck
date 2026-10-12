@@ -29,11 +29,11 @@
 //! orders that its recording shows to share it ([`LuckDpCache::certified_order_class`]), and per order when a
 //! recording shows no class.
 //!
-//! Orders the certificate does not cover are evaluated one by one with [`luck_exact_score`].
+//! Orders the certificate does not cover are evaluated one by one with [`luck_exact_score`](super::luck_exact_score).
 
 use super::exact::{
-    LuckExactProfile, LuckExactScore, Schedule, Stopwatch, check_probes, exact_model, exact_schedule, has_luck,
-    lottery_law, luck_exact_score, record_exact, rush_percent,
+    LuckExactProfile, LuckExactScore, Schedule, Stopwatch, check_probes, exact_model, exact_schedule, exact_score,
+    has_luck, lottery_law, record_exact, rush_percent,
 };
 use super::exact_paths::{MAX_LANES, Orders, first_orders};
 use super::*;
@@ -91,7 +91,7 @@ impl LotteryLive<'_> {
     }
 }
 
-/// The expected native score of each of `orders` of the five performers of `deck`, as [`luck_exact_score`] gives
+/// The expected native score of each of `orders` of the five performers of `deck`, as [`luck_exact_score`](super::luck_exact_score) gives
 /// it for the deck in that order; `order[q]` is the index in `deck` of the performer at position `q`.
 #[allow(clippy::too_many_arguments)]
 pub fn luck_exact_orders(
@@ -147,7 +147,6 @@ fn exact_orders(
     curves: Option<&mut LuckDpCache>,
     details: bool,
 ) -> Result<LuckExactOrders, Error> {
-    let LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking } = *live;
     if deck.len() != MEMBERS {
         return Err(Error::Input("an order evaluation takes five performers".into()));
     }
@@ -168,22 +167,10 @@ fn exact_orders(
     let mut watch = Stopwatch::start();
     let scores = orders
         .iter()
-        .map(|order| {
-            let deck = ordered(deck, order);
-            luck_exact_score(
-                master,
-                skills,
-                &deck,
-                notes,
-                events,
-                params,
-                setup,
-                play,
-                delta_times,
-                ranking,
-                Some(&mut *curves),
-                details,
-            )
+        .enumerate()
+        .map(|(index, order)| {
+            let law = laws.map(|laws| laws[index].clone());
+            exact_score(live, &ordered(deck, order), law, Some(&mut *curves), details)
         })
         .collect::<Result<Vec<_>, _>>()?;
     profile.evaluate_ms += watch.lap();

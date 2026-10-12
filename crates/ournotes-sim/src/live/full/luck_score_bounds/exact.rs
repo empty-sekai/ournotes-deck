@@ -692,18 +692,33 @@ pub fn luck_exact_score(
     curves: Option<&mut LuckDpCache>,
     details: bool,
 ) -> Result<LuckExactScore, Error> {
+    let live = LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking };
+    exact_score(&live, deck, None, curves, details)
+}
+
+/// [`luck_exact_score`] in `live`, under `law` when given: the lottery law of `deck` in its order.
+pub(super) fn exact_score(
+    live: &LotteryLive<'_>,
+    deck: &[Performer],
+    law: Option<std::sync::Arc<LuckDpCertifiedResult>>,
+    curves: Option<&mut LuckDpCache>,
+    details: bool,
+) -> Result<LuckExactScore, Error> {
+    let LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking } = *live;
     let mut watch = Stopwatch::start();
     let mut profile = LuckExactProfile::default();
     let mut model = exact_model(master, deck, notes, events, params, setup, ranking)?;
     check_recorder(&model, skills)?;
     profile.setup_ms = watch.lap();
     let has_luck = has_luck(setup);
-    let probability = if has_luck {
-        let mut empty = LuckDpCache::new(0);
-        let curves = curves.unwrap_or(&mut empty);
-        lottery_law(master, skills, notes, events, params, setup, play, delta_times, deck, ranking, curves)?
-    } else {
-        no_lottery(play, skills)
+    let probability = match law {
+        Some(law) if has_luck => law,
+        _ if has_luck => {
+            let mut empty = LuckDpCache::new(0);
+            let curves = curves.unwrap_or(&mut empty);
+            lottery_law(master, skills, notes, events, params, setup, play, delta_times, deck, ranking, curves)?
+        }
+        _ => no_lottery(play, skills),
     };
     profile.law_ms = watch.lap();
     let probes = probes_in_native_order(&model, skills)?;
