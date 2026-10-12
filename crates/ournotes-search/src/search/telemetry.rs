@@ -435,6 +435,8 @@ pub struct Leaves {
     /// Performance orders whose raw and fine caps were computed; the computation of a team's caps stops once
     /// they prove it below the K-th.
     pub fine_orders: u64,
+    /// Played-live teams whose fine caps were summed over their performance orders at once instead.
+    pub order_sums: u64,
     /// Played-live teams whose performance orders started to run.
     pub started: u64,
     /// Teams dropped after some orders: their exact payoffs plus the caps of the other orders stay below the K-th.

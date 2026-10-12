@@ -18,6 +18,48 @@ impl JointBounds {
         Some(self.points.as_ref().map_or(score_cap, |pt| pt.order_payoff(self.bonus_of(p, &choices), score_cap)))
     }
 
+    /// At least the sum of [`JointBounds::fine_upper`] over the performance orders `orders` of a complete deck, as one
+    /// cap ([`JointFineBounds::upper_orders`]), for a score payoff without a least final life; None otherwise.
+    pub(crate) fn fine_upper_orders(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        power: i64,
+        orders: &[[usize; 5]],
+        scratch: &mut JointScratch,
+    ) -> Option<i128> {
+        if self.points.is_some() || self.min_final_life.is_some() {
+            return None;
+        }
+        let choices = Self::prefix_choices(domain, p, 5);
+        self.fine.as_ref()?.upper_orders(power, p.members, choices, orders, scratch).map(i128::from)
+    }
+
+    /// Whether `below` holds for the payoff numerator of a complete team over the performance orders `orders`, from
+    /// its per-order caps `caps`: for the lesser of their sum and [`JointBounds::fine_upper_orders`] when that
+    /// applies, and by [`JointBounds::tighten_order_caps_until`] otherwise. `summed` counts the teams whose fine caps
+    /// were summed at once, `computed` the orders whose caps were computed one by one.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn below_over_orders(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        power: i64,
+        orders: &[[usize; 5]],
+        caps: &mut [i128],
+        scratch: &mut JointScratch,
+        below: impl Fn(i128) -> bool,
+        (summed, computed): (&mut u64, &mut u64),
+    ) -> bool {
+        match self.fine_upper_orders(domain, p, power, orders, scratch) {
+            Some(sum) => {
+                *summed += 1;
+                below(sum.min(caps.iter().fold(0i128, |a, &c| a.saturating_add(c))))
+            }
+            None => self.tighten_order_caps_until(domain, p, power, orders, caps, scratch, below, computed),
+        }
+    }
+
     /// The event bonus of a complete deck (0 without a PT objective).
     pub(super) fn bonus_of(&self, p: &PhysicalDeck, choices: &[usize; 5]) -> i64 {
         self.points.as_ref().map_or(0, |pt| {

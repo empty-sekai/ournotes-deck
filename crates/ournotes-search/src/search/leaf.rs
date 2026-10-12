@@ -119,7 +119,7 @@ impl Engine<'_, '_> {
         let below = |total: i128| total < threshold || (total == threshold && power < kth_power);
         let pruned = bounds.is_some_and(|bounds| {
             let mut caps = bounds.order_cheap_caps(domain, physical, i64::from(power), &self.positions);
-            bounds.tighten_order_caps_until(
+            bounds.below_over_orders(
                 domain,
                 physical,
                 i64::from(power),
@@ -127,7 +127,7 @@ impl Engine<'_, '_> {
                 &mut caps,
                 &mut self.bound_scratch,
                 below,
-                &mut self.tel.leaves.fine_orders,
+                (&mut self.tel.leaves.order_sums, &mut self.tel.leaves.fine_orders),
             )
         });
         self.rec.clock.lap(resume);
@@ -156,7 +156,7 @@ impl Engine<'_, '_> {
                 }
                 if bounds.has_fine() {
                     let (_, resume) = self.rec.clock.lap(slot::FINE);
-                    let pruned = bounds.tighten_order_caps_until(
+                    let pruned = bounds.below_over_orders(
                         domain,
                         physical,
                         i64::from(power),
@@ -164,7 +164,7 @@ impl Engine<'_, '_> {
                         &mut caps,
                         &mut self.bound_scratch,
                         below,
-                        &mut self.tel.leaves.fine_orders,
+                        (&mut self.tel.leaves.order_sums, &mut self.tel.leaves.fine_orders),
                     );
                     self.rec.clock.lap(resume);
                     if pruned {

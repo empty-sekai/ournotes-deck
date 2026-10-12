@@ -157,6 +157,7 @@ Exclusive time (milliseconds) by activity from the start of solving to its end; 
 | `evaluated` | Candidates evaluated completely (every performance order) |
 | `partial` | Candidates whose evaluation a stop interrupted |
 | `cheapPruned`, `finePruned` | Teams dropped before any simulation: the sum of their per-order cheap caps, or of their raw and fine caps, stays below the K-th |
+| `fineOrders`, `orderSums` | Performance orders whose raw and fine caps were computed one by one (a team's stop once they prove it below the K-th); and teams whose fine caps were summed over their orders at once, which applies to expected scores when no member converts judgements |
 | `started` | Teams whose performance orders started to run |
 | `orderBoundPruned` | Teams dropped after some orders: their exact payoffs plus the caps of the other orders stay below the K-th |
 | `simulations` | Whole-live simulations (one performance order each) run to the end |

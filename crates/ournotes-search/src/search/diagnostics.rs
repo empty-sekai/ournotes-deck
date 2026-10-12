@@ -438,6 +438,42 @@ pub fn audit_order_caps(
     Ok(serde_json::json!({"orders":orders.len(),"violations":bad.len(),"first":bad.first(),"lifeCapped":life_capped}))
 }
 
+/// A complete deck's fine caps over the 120 performance orders, under bounds compiled for the lottery laws of its own
+/// orders: their sum one order at a time beside [`super::joint::JointBounds::fine_upper_orders`] (None where that
+/// does not apply).
+pub fn luck_fine_order_sums(
+    built: &BuiltProblem<'_>,
+    members: [i64; 5],
+    snaps: [Option<i64>; 5],
+) -> Result<(i128, Option<i128>), Error> {
+    let p = physical(built, members, snaps)?;
+    let power = power_of(built, &p)?;
+    let (input, _) = luck_input(built, members, snaps)?;
+    let master = built.pool.master;
+    let skills = ournotes_sim::live::full::luck_skills(master)?;
+    let mut curves = ournotes_sim::live::full::LuckDpCache::new(1 << 26);
+    let laws = super::certified_search::luck_order_laws(master, &skills, &input, &mut curves, None)?;
+    let spec = &built.context.spec;
+    let bounds = super::joint::JointBounds::compile_with_laws(
+        &built.pool,
+        &built.context.request,
+        built.domain(),
+        &spec.metric,
+        built.context.context_input.event_payoff.as_ref(),
+        &spec.simulation,
+        &laws,
+    )?;
+    let positions: Vec<_> = uniform::all_orders().iter().map(uniform::positions_of).collect();
+    let mut scratch = super::snaps::JointScratch::default();
+    let mut each = 0i128;
+    for at in &positions {
+        each += bounds
+            .fine_upper(built.domain(), &p, power, at, &mut scratch)
+            .ok_or_else(|| Error::Input("bounds without a fine cap".into()))?;
+    }
+    Ok((each, bounds.fine_upper_orders(built.domain(), &p, power, &positions, &mut scratch)))
+}
+
 /// The joint traversal's bounds along the path that reaches a complete legal deck: the leader, then the other pairs
 /// in choice order. Per depth: the carrier level and the node bounds as payoff numerators (pool-wide, carrier level,
 /// keyed, correlated, resource) and the pair cap of the path's next pair from the parent; at depth 5 the sums of the

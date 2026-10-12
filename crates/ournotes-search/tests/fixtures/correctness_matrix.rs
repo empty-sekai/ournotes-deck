@@ -594,9 +594,52 @@ fn luck_score_bounds_under_domain_laws_keep_the_exhaustive_ranking() {
             assert_eq!(census.profiles, if kinds { 3 } else { 1 }, "{name}");
             assert!(census.classes >= census.profiles && census.laws > 0, "{name}: {census:?}");
             eprintln!(
-                "{name}: {} classes, {} laws, {} teams audited",
-                census.classes, census.laws, bounded.telemetry.leaves.law_audits
+                "{name}: {} classes, {} laws, {} teams audited, {} order sums, {} fine orders, {} fine {} law pruned",
+                census.classes,
+                census.laws,
+                bounded.telemetry.leaves.law_audits,
+                bounded.telemetry.leaves.order_sums,
+                bounded.telemetry.leaves.fine_orders,
+                bounded.telemetry.leaves.fine_pruned,
+                bounded.telemetry.leaves.law_pruned
             );
         }
     }
+}
+
+/// Under the lottery laws of a team's own orders, its fine caps summed over the orders at once cover the caps of each
+/// order but for their rounding, stay close to their sum, and cover the team's exact payoff.
+#[cfg(feature = "search-diagnostics")]
+#[test]
+fn luck_fine_caps_summed_at_once_cover_the_cap_of_each_order() {
+    use ournotes_search::search::diagnostics;
+    let mut summed = 0;
+    for (members, snaps, characters, kinds) in [(7, 0, 7, false), (7, 2, 7, true)] {
+        let (data, roster) = fixture_with(members, snaps, characters, true, |master| {
+            if kinds {
+                lottery_kinds(master);
+            }
+        });
+        let mut current = request(&data, "mission", false, json!({"kind":"score"}));
+        current.constraints.leader = None;
+        current.constraints.no_snaps = snaps == 0;
+        current.k = 3;
+        let oracle = engine::recommend(&data, &roster, &current).unwrap();
+        assert_eq!(oracle.completion, Completion::Complete);
+        let built = handler::build_card_pool(&data, &roster, &current).unwrap();
+        for deck in &oracle.results {
+            let name = format!("{members} members, {snaps} Snaps, lottery kinds {kinds}: {:?}", key(deck));
+            let (each, at_once) = diagnostics::luck_fine_order_sums(&built, deck.members, deck.snaps).unwrap();
+            let upper = &deck.payoff_interval.as_ref().unwrap().upper;
+            let (numerator, denominator) =
+                (upper.numerator.parse::<i128>().unwrap(), upper.denominator.parse::<i128>().unwrap());
+            let Some(at_once) = at_once else { continue };
+            summed += 1;
+            // Each order's cap rounds up on its own.
+            assert!(each <= at_once + 120 && at_once - each <= each / 100_000, "{name}: {each} {at_once}");
+            // The payoff upper is the mean over the orders.
+            assert!(at_once * denominator >= 120 * numerator, "{name}: {at_once} {numerator}/{denominator}");
+        }
+    }
+    assert!(summed > 0);
 }
