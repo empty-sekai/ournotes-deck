@@ -807,6 +807,8 @@ pub struct LuckKinds {
     pub composed: u64,
     pub composed_transitions: u64,
     pub composed_peak_states: usize,
+    /// Composed laws read from the propagation of a composition that differs only in its score probes.
+    pub probe_variants: u64,
     /// The most bytes the held laws and their keys took.
     pub peak_law_bytes: usize,
 }
@@ -833,6 +835,7 @@ impl LuckKinds {
             composed: stats.composed,
             composed_transitions: stats.composed_transitions,
             composed_peak_states: stats.composed_peak_states,
+            probe_variants: stats.probe_variants,
             peak_law_bytes: stats.peak_law_bytes,
         };
     }

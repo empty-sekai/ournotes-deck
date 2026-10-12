@@ -327,23 +327,37 @@ impl LotteryKinds<'_> {
                             Some(law.clone())
                         }
                         None => {
-                            let key = composition.key.clone();
-                            match self.transcript(composition) {
-                                None => None,
-                                Some(transcript) => {
-                                    self.stats.composed += 1;
-                                    let law = curves
-                                        .propagated(&transcript, &mut || false)?
-                                        .expect("an uncancelled propagation");
-                                    self.stats.composed_transitions += law.transitions;
-                                    self.stats.composed_peak_states =
-                                        self.stats.composed_peak_states.max(law.peak_states);
-                                    if !self.laws.insert(key, law.clone(), &mut self.stats) {
-                                        laws.push(law);
-                                        continue;
-                                    }
-                                    Some(law)
+                            let (key, unprobed) = (composition.key.clone(), composition.unprobed_key());
+                            let law = match self.laws.entries.get(&unprobed[..]) {
+                                Some(propagated) => {
+                                    self.stats.probe_variants += 1;
+                                    let probes = composition.probes;
+                                    Some(std::sync::Arc::new(LuckDpCertifiedResult {
+                                        probes,
+                                        ..(**propagated).clone()
+                                    }))
                                 }
+                                None => match self.transcript(composition) {
+                                    None => None,
+                                    Some(transcript) => {
+                                        self.stats.composed += 1;
+                                        let law = curves
+                                            .propagated(&transcript, &mut || false)?
+                                            .expect("an uncancelled propagation");
+                                        self.stats.composed_transitions += law.transitions;
+                                        self.stats.composed_peak_states =
+                                            self.stats.composed_peak_states.max(law.peak_states);
+                                        self.laws.insert(unprobed, law.clone(), &mut self.stats);
+                                        Some(law)
+                                    }
+                                },
+                            };
+                            match law {
+                                Some(law) if !self.laws.insert(key, law.clone(), &mut self.stats) => {
+                                    laws.push(law);
+                                    continue;
+                                }
+                                law => law,
                             }
                         }
                     };
@@ -414,6 +428,19 @@ pub(super) struct Composition {
     actions: Vec<Action<ProbabilityMass>>,
     probes: Vec<bool>,
     key: Vec<u64>,
+}
+
+impl Composition {
+    /// The words of the parts and actions alone, marked apart from every [`Self::key`]. The propagation of a
+    /// composed transcript reads its score probes only to label its result ([`LuckDpCertifiedResult::probes`]):
+    /// the certified class masses read the direct-probe class of each state, which follows the Rush at the gated
+    /// frames whoever holds a probe. Compositions with the same parts and actions have one propagation, up to that
+    /// label.
+    fn unprobed_key(&self) -> Vec<u64> {
+        let mut key = self.key[..self.key.len() - self.probes.len()].to_vec();
+        key.push(u64::MAX);
+        key
+    }
 }
 
 /// Whether the range-start and Miss gauge actions `actions` commute in every state of the Luck ranges of `base`: in

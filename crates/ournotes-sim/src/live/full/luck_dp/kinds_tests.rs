@@ -368,3 +368,33 @@ fn conversions_between_perfect_and_just_compose_the_native_laws() {
     assert!(kinds.order_laws(&live, &deck, &[[0, 1, 2, 3, 4]], &mut curves).unwrap().is_none());
     assert_eq!(kinds.stats().relabel_conflicts, 1);
 }
+
+#[test]
+fn formations_that_differ_only_in_their_score_probes_share_one_propagation() {
+    let (master, notes, params, setup, play, delta) = kinds_fixture();
+    let skills = luck_skills(&master).unwrap();
+    let live = lottery_live(&master, &skills, (&notes, params, &setup, &play, &delta));
+    let mut kinds = LotteryKinds::new(&master, usize::MAX);
+    let mut curves = LuckDpCache::new(usize::MAX);
+    // The support skill 31 is a direct Rush score probe and nothing else.
+    let probing = [
+        holding(Some(2), &[31, 96]),
+        holding(Some(3), &[66, 96]),
+        holding(Some(1), &[66]),
+        holding(None, &[66]),
+        holding(None, &[]),
+    ];
+    let plain = probing.clone().map(|performer| Performer {
+        gekisou_support_skills: performer.gekisou_support_skills.iter().copied().filter(|&(id, _)| id != 31).collect(),
+        ..performer
+    });
+    let order = [[0, 1, 2, 3, 4]];
+    let with = kinds.order_laws(&live, &probing, &order, &mut curves).unwrap().unwrap();
+    let without = kinds.order_laws(&live, &plain, &order, &mut curves).unwrap().unwrap();
+    assert_eq!((kinds.stats().composed, kinds.stats().probe_variants), (1, 1));
+    assert_ne!(with[0].probes, without[0].probes);
+    for (deck, law) in [(&probing, &with[0]), (&plain, &without[0])] {
+        let native = curves.law_of(&native_transcript(&live, deck), &mut || false).unwrap().unwrap();
+        assert_eq!(curve_words(law), curve_words(&native), "{deck:?}");
+    }
+}
