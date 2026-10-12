@@ -226,6 +226,7 @@ fn probe_boundary_guard_requires_every_late_transition_to_stay_off_and_all_nativ
         steps: Vec::new(),
         frame_queries: Vec::new(),
         probes: vec![true],
+        probe_starts: crate::live::certified::F64Interval::ZERO,
         peak_states: 1,
         transitions: 0,
     };

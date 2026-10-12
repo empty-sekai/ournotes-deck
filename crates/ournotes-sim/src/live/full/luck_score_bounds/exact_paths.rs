@@ -368,8 +368,15 @@ pub(super) struct ExactNote {
     key: (usize, usize),
     /// The values by (class, combo inputs); those of one key cover disjoint orders.
     pub values: Vec<NoteValue>,
-    /// How many times a query replaced `values`.
+    /// How many times a query changed `values`.
     pub revision: u32,
+}
+
+impl NoteValue {
+    /// The value with its states as binary32 bits.
+    pub(super) fn bits(&self) -> (Orders, u8, (u32, u32), Bits, Bits) {
+        (self.orders, self.class, self.combo, self.low.map(f32::to_bits), self.high.map(f32::to_bits))
+    }
 }
 
 impl ExactNote {
@@ -1007,8 +1014,12 @@ impl ExactReplay {
             if values.len() > MAX_NOTE_VALUES * self.lanes {
                 return Err(capacity());
             }
-            note.values.clone_from(&values);
-            note.revision += 1;
+            let same = values.len() == note.values.len()
+                && values.iter().zip(&note.values).all(|(new, old)| new.bits() == old.bits());
+            if !same {
+                note.values.clone_from(&values);
+                note.revision += 1;
+            }
             at = end;
         }
         scratch.values = values;

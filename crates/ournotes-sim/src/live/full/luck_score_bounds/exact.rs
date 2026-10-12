@@ -50,6 +50,8 @@ pub struct LuckExactScore {
     pub final_note_mean: RealBounds,
     pub final_rank_mean: RealBounds,
     pub final_support: IntegerBounds,
+    /// The terminal life, which is the same on every lottery path, lies within these bounds.
+    pub final_life: IntegerBounds,
     pub ranges: Vec<LuckExactRange>,
     pub scored_notes: usize,
     /// Final notes with more than one integer score in a lottery class of positive probability.
@@ -348,6 +350,17 @@ impl Totals {
         Ok(())
     }
 
+    /// Takes out a contribution [`Self::add`] put in; the sums are exact, so this restores them.
+    fn remove(&mut self, contribution: &Contribution) -> Result<(), Error> {
+        self.shared = self.shared.less(contribution.shared)?;
+        for &(orders, difference) in &contribution.own {
+            for order in each(orders) {
+                self.own[order] = self.own[order].less(difference)?;
+            }
+        }
+        Ok(())
+    }
+
     fn of(&self, order: usize) -> Result<Sum, Error> {
         self.shared.plus(self.own[order])
     }
@@ -399,6 +412,10 @@ struct MeasuredNote {
     /// expectation.
     blocks: Vec<(Orders, usize, usize, F64Interval, I32Interval)>,
     contribution: Contribution,
+    /// Whether the running note sums hold `contribution`, and whether the class probabilities last read are the
+    /// note's final ones, which no later query changes.
+    counted: bool,
+    settled: bool,
 }
 
 fn mass_bits(mass: &[ProbabilityMass; 4]) -> [u64; 8] {
@@ -411,8 +428,48 @@ fn mass_bits(mass: &[ProbabilityMass; 4]) -> [u64; 8] {
 }
 
 impl MeasuredNote {
+    /// Whether the entry is counted with the current values of `exact` and with final class probabilities.
+    fn current(&self, exact: &ExactNote) -> bool {
+        self.counted && self.settled && self.revision == Some(exact.revision)
+    }
+
     /// Brings the entry to the current values of `exact` and the class probabilities `masses` of the laws of
-    /// orders `laws`.
+    /// orders `laws`, and counts its contribution in `totals`.
+    #[allow(clippy::too_many_arguments)]
+    fn measure(
+        &mut self,
+        calc: &LiveScoreCalculator,
+        note: &NoteCommand,
+        exact: &ExactNote,
+        rush_percent: i32,
+        shared_classes: bool,
+        every: Orders,
+        laws: &[Orders],
+        masses: &[[ProbabilityMass; 4]],
+        totals: &mut Totals,
+    ) -> Result<(), Error> {
+        let previous = self.update(calc, note, exact, rush_percent, shared_classes, every, laws, masses)?;
+        if !self.counted {
+            totals.add(&self.contribution)?;
+            self.counted = true;
+        } else if let Some(previous) = previous {
+            totals.remove(&previous)?;
+            totals.add(&self.contribution)?;
+        }
+        Ok(())
+    }
+
+    /// Takes the entry's contribution out of `totals` where they hold it.
+    fn uncount(&mut self, totals: &mut Totals) -> Result<(), Error> {
+        if self.counted {
+            totals.remove(&self.contribution)?;
+            self.counted = false;
+        }
+        Ok(())
+    }
+
+    /// Brings the entry to the current values of `exact` and the class probabilities `masses` of the laws of
+    /// orders `laws`; returns the previous contribution when it recomputed it.
     #[allow(clippy::too_many_arguments)]
     fn update(
         &mut self,
@@ -424,7 +481,7 @@ impl MeasuredNote {
         every: Orders,
         laws: &[Orders],
         masses: &[[ProbabilityMass; 4]],
-    ) -> Result<(), Error> {
+    ) -> Result<Option<Contribution>, Error> {
         let fresh = self.revision != Some(exact.revision);
         if fresh {
             self.revision = Some(exact.revision);
@@ -474,9 +531,9 @@ impl MeasuredNote {
                     }
                 }
             }
-            self.contribution = Contribution::of(sums)?;
+            return Ok(Some(std::mem::replace(&mut self.contribution, Contribution::of(sums)?)));
         }
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -612,6 +669,8 @@ pub(super) struct Schedule {
     pub frame_times: Vec<i32>,
     pub music_length_ms: i32,
     pub lanes: usize,
+    /// The bounds of each order's terminal life.
+    pub final_lives: Vec<IntegerBounds>,
 }
 
 /// The expected native score of `deck` in its given order under the independent nominal lottery law, with every
@@ -662,6 +721,8 @@ pub fn luck_exact_score(
         frame_times: model.trace.iter().map(|&(time, _)| time).collect(),
         music_length_ms: model.music_length_ms,
         lanes: 1,
+        // Life is the same on every lottery path (`check_recorder`), so the recording ends at the terminal life.
+        final_lives: vec![I32Interval::point(model.current_life()).into()],
     };
     profile.record_ms = watch.lap();
     let deterministic = [model.score()];
@@ -740,6 +801,7 @@ pub(super) fn no_lottery(play: &LivePlay, skills: &LuckSkills) -> std::sync::Arc
         steps: Vec::new(),
         frame_queries: Vec::new(),
         probes: vec![false; skills.shapes.len()],
+        probe_starts: crate::live::certified::F64Interval::ZERO,
         range_moments: Vec::new(),
         peak_states: 1,
         transitions: 0,
@@ -899,6 +961,8 @@ pub(super) fn exact_schedule(
     let mut ranges = vec![Vec::new(); lanes];
     // By note index in `replay.notes`.
     let mut measured_notes = Vec::<MeasuredNote>::new();
+    // The note sums of the counted entries of `measured_notes`.
+    let mut running = Totals::new(lanes);
     let mut masses = Vec::with_capacity(distinct_laws.len());
     let (mut queries, mut last_to) = (0usize, None);
     for (event, orders) in &schedule.events {
@@ -1016,10 +1080,22 @@ pub(super) fn exact_schedule(
                 if !starts.contains(&query) && !pairs.iter().any(|&(_, end)| end == query) {
                     continue;
                 }
-                // Only the rank snapshots read a query's sums.
-                let mut totals = Totals::new(lanes);
+                // Only the rank snapshots read a query's sums. The running sums hold the notes up to the previous
+                // snapshot; only the notes whose values or class probabilities changed since are measured again.
                 let mut unsettled = i32::MAX;
-                for &(frame, ref note, at) in filed.iter().filter(|(frame, _, _)| *frame as i32 <= *to) {
+                for &(frame, ref note, at) in &filed {
+                    let entry = &mut measured_notes[at];
+                    if frame as i32 > *to {
+                        entry.uncount(&mut running)?;
+                        continue;
+                    }
+                    let settled = note.time_ms <= probability_ready;
+                    if !settled {
+                        unsettled = unsettled.min(frame as i32);
+                    }
+                    if entry.current(&replay.notes[at]) {
+                        continue;
+                    }
                     masses.clear();
                     for law in &distinct_laws {
                         masses.push(query_mass(
@@ -1031,8 +1107,7 @@ pub(super) fn exact_schedule(
                             note.time_ms,
                         )?);
                     }
-                    let entry = &mut measured_notes[at];
-                    entry.update(
+                    entry.measure(
                         calc,
                         note,
                         &replay.notes[at],
@@ -1041,12 +1116,11 @@ pub(super) fn exact_schedule(
                         every,
                         &law_orders,
                         &masses,
+                        &mut running,
                     )?;
-                    totals.add(&entry.contribution)?;
-                    if note.time_ms > probability_ready {
-                        unsettled = unsettled.min(frame as i32);
-                    }
+                    entry.settled = settled;
                 }
+                let totals = running.clone();
                 let low = replay.base().min(unsettled);
                 let mut window = if starts.contains(&query) { (low, *to) } else { (i32::MAX, i32::MIN) };
                 for &(start, end) in &pairs {
@@ -1078,29 +1152,35 @@ pub(super) fn exact_schedule(
     if deterministic.is_some_and(|scores| scores.len() != lanes) {
         return Err(Error::Input("one deterministic score per order".into()));
     }
-    let mut totals = Totals::new(lanes);
     // (wide notes, widest note) per order.
     let mut wide = vec![(0usize, 0i32); lanes];
     let mut final_notes = vec![Vec::new(); lanes];
     let mut scored_notes = 0;
-    for &(_, ref note, at) in filed.iter().filter(|(frame, _, _)| *frame as i32 <= prev) {
+    for &(frame, ref note, at) in &filed {
+        let entry = &mut measured_notes[at];
+        if frame as i32 > prev {
+            entry.uncount(&mut running)?;
+            continue;
+        }
         if note.time_ms > probability_ready {
             return Err(refuse("final note has pending lottery commands"));
         }
         masses.clear();
         masses.extend(distinct_laws.iter().map(|law| kept_mass(law, note.time_ms)));
-        let entry = &mut measured_notes[at];
-        entry.update(
-            calc,
-            note,
-            &replay.notes[at],
-            rush_percent,
-            replay.shared_classes(),
-            every,
-            &law_orders,
-            &masses,
-        )?;
-        totals.add(&entry.contribution)?;
+        if !entry.current(&replay.notes[at]) {
+            entry.measure(
+                calc,
+                note,
+                &replay.notes[at],
+                rush_percent,
+                replay.shared_classes(),
+                every,
+                &law_orders,
+                &masses,
+                &mut running,
+            )?;
+            entry.settled = true;
+        }
         scored_notes += 1;
         for &(orders, classes, law, mean, _) in &entry.blocks {
             let (buckets, mass) = (&entry.classes[classes].1, &masses[law]);
@@ -1139,7 +1219,7 @@ pub(super) fn exact_schedule(
     for (order, ((ranges, (wide_notes, widest_note)), notes)) in
         ranges.into_iter().zip(wide).zip(final_notes).enumerate()
     {
-        let note_sum = totals.of(order)?;
+        let note_sum = running.of(order)?;
         let final_note_mean = note_sum.mean()?;
         let (mut lo, mut hi) = (note_sum.min, note_sum.max);
         let mut final_rank_mean = F64Interval::ZERO;
@@ -1159,6 +1239,7 @@ pub(super) fn exact_schedule(
             final_note_mean: final_note_mean.into(),
             final_rank_mean: final_rank_mean.into(),
             final_support: final_support.into(),
+            final_life: schedule.final_lives[order],
             ranges,
             scored_notes,
             wide_notes,

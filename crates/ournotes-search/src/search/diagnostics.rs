@@ -1273,6 +1273,7 @@ mod luck_certified_tests {
             steps: vec![(123, [tenth, tenth, tenth, ProbabilityMass::from_ratio(7, 10).unwrap()])],
             frame_queries: Vec::new(),
             probes: vec![true],
+            probe_starts: ournotes_sim::live::certified::F64Interval::ZERO,
             range_moments: Vec::new(),
             peak_states: 17,
             transitions: 31,

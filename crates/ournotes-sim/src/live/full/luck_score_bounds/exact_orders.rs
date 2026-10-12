@@ -24,9 +24,9 @@
 //! - The rotations share their calculators and agree on every event that is not a member command.
 //!
 //! A member's conversions likewise depend only on the member, its position and the common events, so with none in any
-//! rotation no order converts a judgement. The lottery law of an order is recorded once for all orders when that
-//! recording shows that it does not depend on the order ([`LuckDpCache::certified_order_free`]), and per order
-//! otherwise.
+//! rotation no order converts a judgement. The lottery law of an order is recorded once for the class of orders that
+//! its recording shows to share it ([`LuckDpCache::certified_order_class`]), and per order when a recording shows
+//! no class.
 //!
 //! Orders the certificate does not cover are evaluated one by one with [`luck_exact_score`].
 
@@ -36,6 +36,7 @@ use super::exact::{
 };
 use super::exact_paths::{MAX_LANES, Orders, first_orders};
 use super::*;
+use crate::live::full::luck_dp::{OrderClass, PAIR_POSITIONS, PositionPairs};
 
 const MEMBERS: usize = 5;
 
@@ -95,14 +96,10 @@ impl Live<'_> {
         lottery_law(master, skills, notes, events, params, setup, play, delta_times, deck, ranking, curves)
     }
 
-    /// The law of `deck` when it is the law of every order of its performers.
-    fn shared_law(
-        &self,
-        deck: &[Performer],
-        curves: &mut LuckDpCache,
-    ) -> Result<Option<std::sync::Arc<LuckDpCertifiedResult>>, Error> {
+    /// The law of `deck` with the orders of its performers that share it.
+    fn order_class(&self, deck: &[Performer], curves: &mut LuckDpCache) -> Result<Option<OrderClass>, Error> {
         let Live { master, skills, notes, events, params, setup, play, delta_times, ranking } = *self;
-        curves.certified_order_free(master, skills, notes, events, params, setup, play, delta_times, deck, ranking)
+        curves.certified_order_class(master, skills, notes, events, params, setup, play, delta_times, deck, ranking)
     }
 }
 
@@ -124,6 +121,45 @@ pub fn luck_exact_orders(
     curves: Option<&mut LuckDpCache>,
     details: bool,
 ) -> Result<LuckExactOrders, Error> {
+    let live = Live { master, skills, notes, events, params, setup, play, delta_times, ranking };
+    exact_orders(&live, deck, orders, None, curves, details)
+}
+
+/// [`luck_exact_orders`] with the lottery law of each order given: `laws[i]` is the law [`luck_order_laws`] gives
+/// `orders[i]` for the same formation and live, so the evaluation records none.
+#[allow(clippy::too_many_arguments)]
+pub fn luck_exact_orders_with_laws(
+    master: &Master,
+    skills: &LuckSkills,
+    deck: &[Performer],
+    notes: &[LiveNote],
+    events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+    orders: &[[usize; MEMBERS]],
+    laws: &[std::sync::Arc<LuckDpCertifiedResult>],
+    curves: Option<&mut LuckDpCache>,
+    details: bool,
+) -> Result<LuckExactOrders, Error> {
+    if laws.len() != orders.len() {
+        return Err(Error::Input("one lottery law per order".into()));
+    }
+    let live = Live { master, skills, notes, events, params, setup, play, delta_times, ranking };
+    exact_orders(&live, deck, orders, Some(laws), curves, details)
+}
+
+fn exact_orders(
+    live: &Live,
+    deck: &[Performer],
+    orders: &[[usize; MEMBERS]],
+    laws: Option<&[std::sync::Arc<LuckDpCertifiedResult>]>,
+    curves: Option<&mut LuckDpCache>,
+    details: bool,
+) -> Result<LuckExactOrders, Error> {
+    let Live { master, skills, notes, events, params, setup, play, delta_times, ranking } = *live;
     if deck.len() != MEMBERS {
         return Err(Error::Input("an order evaluation takes five performers".into()));
     }
@@ -136,9 +172,8 @@ pub fn luck_exact_orders(
     }
     let mut local = LuckDpCache::new(usize::MAX);
     let curves = curves.unwrap_or(&mut local);
-    let live = Live { master, skills, notes, events, params, setup, play, delta_times, ranking };
     let mut profile = LuckExactOrdersProfile::default();
-    let alone = match splice(&live, deck, orders, curves, details, &mut profile) {
+    let alone = match splice(live, deck, orders, laws, curves, details, &mut profile) {
         Ok(spliced) => return Ok(spliced),
         Err(error) => error.to_string(),
     };
@@ -283,8 +318,9 @@ fn life_constant(checker: &Checker, low: i64, high: i64) -> bool {
     }
 }
 
-/// The static part of the certificate, on a model of the formation before it plays.
-fn certify(model: &LiveModel) -> Result<(), Error> {
+/// The static part of the certificate, on a model of the formation before it plays: the bounds of the life of
+/// every order while notes deal no damage.
+fn certify(model: &LiveModel) -> Result<IntegerBounds, Error> {
     for skill in &model.live {
         if skill.effects.iter().any(|effect| GEKISOU_WRITERS.contains(&model.rows[effect.row].effect_type)) {
             return Err(refuse("a live skill writes Gekisou state"));
@@ -337,14 +373,109 @@ fn certify(model: &LiveModel) -> Result<(), Error> {
     if !live || !cond {
         return Err(refuse("a life predicate may answer differently in another order"));
     }
-    Ok(())
+    let bound = |life: i64| i32::try_from(life).map_err(|_| refuse("the life range exceeds a native integer"));
+    Ok(IntegerBounds { lower: bound(low)?, upper: bound(high)? })
 }
 
-/// The scores of `orders` from the rotations' recordings, or why the certificate does not cover them.
+/// The lottery law of each order, and how many reduced recordings it took. Each order takes the law of the first
+/// class whose pairs of performers it orders as the class's order does, and an order that no class covers records its
+/// own class. Once a recording shows no class, every order not yet covered records its law alone.
+fn order_laws(
+    live: &Live,
+    deck: &[Performer],
+    orders: &[[usize; MEMBERS]],
+    curves: &mut LuckDpCache,
+) -> Result<(Vec<std::sync::Arc<LuckDpCertifiedResult>>, usize), Error> {
+    let pair = |a: usize, b: usize| -> PositionPairs { 1 << (PAIR_POSITIONS * a.min(b) + a.max(b)) };
+    type Class = ([usize; MEMBERS], PositionPairs, std::sync::Arc<LuckDpCertifiedResult>);
+    let mut classes = Vec::<Class>::new();
+    let (mut laws, mut law_recordings, mut classless) = (Vec::with_capacity(orders.len()), 0, false);
+    for order in orders {
+        let mut at = [0; MEMBERS];
+        for (position, &member) in order.iter().enumerate() {
+            at[member] = position;
+        }
+        let keeps = |(class_at, pairs, _): &&Class| {
+            (0..MEMBERS).all(|a| {
+                (a + 1..MEMBERS).all(|b| pairs & pair(a, b) == 0 || (at[a] < at[b]) == (class_at[a] < class_at[b]))
+            })
+        };
+        if let Some((_, _, law)) = classes.iter().find(keeps) {
+            laws.push(law.clone());
+            continue;
+        }
+        let deck = ordered(deck, order);
+        law_recordings += 1;
+        if !classless {
+            match live.order_class(&deck, curves)? {
+                Some(OrderClass { law, pairs: positions }) => {
+                    let mut pairs = 0;
+                    for a in 0..MEMBERS {
+                        for b in a + 1..MEMBERS {
+                            if positions & pair(a, b) != 0 {
+                                pairs |= pair(order[a], order[b]);
+                            }
+                        }
+                    }
+                    classes.push((at, pairs, law.clone()));
+                    laws.push(law);
+                    continue;
+                }
+                None => (classless, law_recordings) = (true, law_recordings + 1),
+            }
+        }
+        laws.push(live.law(&deck, curves)?);
+    }
+    Ok((laws, law_recordings))
+}
+
+/// The certified lottery law of each of `orders` of a five-performer formation (`deck` in slot order, each order the
+/// slots in performance order), as [`luck_exact_orders`] takes them.
+#[allow(clippy::too_many_arguments)]
+pub fn luck_order_laws(
+    master: &Master,
+    skills: &LuckSkills,
+    deck: &[Performer],
+    notes: &[LiveNote],
+    events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+    orders: &[[usize; MEMBERS]],
+    curves: &mut LuckDpCache,
+) -> Result<Vec<std::sync::Arc<LuckDpCertifiedResult>>, Error> {
+    if deck.len() != MEMBERS {
+        return Err(Error::Input("an order evaluation takes five performers".into()));
+    }
+    let permutation = |order: &[usize; MEMBERS]| {
+        let mut seen = [false; MEMBERS];
+        order.iter().all(|&member| member < MEMBERS && !std::mem::replace(&mut seen[member], true))
+    };
+    if !orders.iter().all(permutation) {
+        return Err(Error::Input("an order is a permutation of the five performers".into()));
+    }
+    let live = Live { master, skills, notes, events, params, setup, play, delta_times, ranking };
+    Ok(order_laws(&live, deck, orders, curves)?.0)
+}
+
+/// The probe rows in native filing order and the probe phase binding of a formation's model before it plays.
+pub(super) fn order_shape(model: &mut LiveModel, skills: &LuckSkills) -> Result<(Vec<ProbeRow>, bool), Error> {
+    check_recorder(model, skills)?;
+    let probes = probes_in_native_order(model, skills)?;
+    check_probes(&probes)?;
+    model.set_luck_weights(skills, Vec::new())?;
+    Ok((probes, bind_probe_phase(model, skills)))
+}
+
+/// The scores of `orders` from the rotations' recordings, or why the certificate does not cover them. `given` holds
+/// the law of each order when the caller has them.
 fn splice(
     live: &Live,
     deck: &[Performer],
     orders: &[[usize; MEMBERS]],
+    given: Option<&[std::sync::Arc<LuckDpCertifiedResult>]>,
     curves: &mut LuckDpCache,
     details: bool,
     profile: &mut LuckExactOrdersProfile,
@@ -353,24 +484,24 @@ fn splice(
     if !has_luck(live.setup) {
         return Err(refuse("the live has no LUCK range"));
     }
-    // The probe rows and phase binding of each order.
+    // The shape of each order, on one model of the formation whose members move to each order in turn: members that
+    // have not acted move to other positions exactly as a model built for the new order (see `OrderedLive`).
+    let mut model = live.model(deck)?;
+    let mut assign: Vec<usize> = (0..MEMBERS).collect();
     let mut shapes = Vec::with_capacity(orders.len());
     for order in orders {
-        let mut model = live.model(&ordered(deck, order))?;
-        check_recorder(&model, live.skills)?;
-        let probes = probes_in_native_order(&model, live.skills)?;
-        check_probes(&probes)?;
-        model.set_luck_weights(live.skills, Vec::new())?;
-        shapes.push((probes, bind_probe_phase(&model, live.skills)));
+        model.move_to(&mut assign, order)?;
+        shapes.push(order_shape(&mut model, live.skills)?);
     }
     profile.setup_ms += watch.lap();
     let mut rotations = Vec::with_capacity(MEMBERS);
+    let mut life = None;
     for rotation in 0..MEMBERS {
         let order: [usize; MEMBERS] = std::array::from_fn(|position| (rotation + position) % MEMBERS);
         let mut model = live.model(&ordered(deck, &order))?;
         check_recorder(&model, live.skills)?;
         if rotation == 0 {
-            certify(&model)?;
+            life = Some(certify(&model)?);
             // Good to Just keep the combo; waiting and passed notes leave it.
             let breaks = live
                 .play
@@ -410,14 +541,12 @@ fn splice(
         }
     }
     let rush_percent = rush_percent(live.master, calc)?;
+    let life = life.expect("the first rotation's certificate");
     let frame_times: Vec<_> = first.trace.iter().map(|&(time, _)| time).collect();
     profile.record_ms += watch.lap();
-    let (laws, law_recordings) = match live.shared_law(deck, curves)? {
-        Some(law) => (vec![law; orders.len()], 1),
-        None => {
-            let laws = orders.iter().map(|order| live.law(&ordered(deck, order), curves));
-            (laws.collect::<Result<Vec<_>, _>>()?, orders.len() + 1)
-        }
+    let (laws, law_recordings) = match given {
+        Some(laws) => (laws.to_vec(), 0),
+        None => order_laws(live, deck, orders, curves)?,
     };
     profile.law_ms += watch.lap();
     // Orders that share one replay: the same probe phase binding, probe rows in all or none, and the same possible
@@ -484,6 +613,7 @@ fn splice(
             frame_times: frame_times.clone(),
             music_length_ms: first.music_length_ms,
             lanes: group.len(),
+            final_lives: vec![life; group.len()],
         };
         let group_laws: Vec<_> = group.iter().map(|&index| laws[index].clone()).collect();
         let results = exact_schedule(

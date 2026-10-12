@@ -227,6 +227,8 @@ fn every_seed_scores_inside_the_exact_support() {
                 native.score(),
                 score.final_support
             );
+            let life = native.current_life();
+            assert_eq!((score.final_life.lower, score.final_life.upper), (life, life), "{name} seed={seed}");
         }
     }
 }
@@ -688,6 +690,7 @@ fn queries_read_frame_notes_on_their_side_of_the_skill_boundary() {
         steps: Vec::new(),
         frame_queries: vec![(100, [mass(1), mass(2), mass(3)])],
         probes: Vec::new(),
+        probe_starts: crate::live::certified::F64Interval::ZERO,
         range_moments: Vec::new(),
         peak_states: 1,
         transitions: 0,

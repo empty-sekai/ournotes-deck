@@ -493,6 +493,7 @@ struct CurveRecord {
     steps: Vec<(i32, [Interval; 4])>,
     frame_queries: Vec<(i32, [[Interval; 4]; 3])>,
     probes: Vec<bool>,
+    probe_starts: Interval,
     range_moments: Vec<(Interval, [Interval; 4])>,
     peak_states: usize,
     transitions: u64,
@@ -508,6 +509,7 @@ impl Record for LuckDpCertifiedResult {
             steps,
             frame_queries,
             probes,
+            probe_starts,
             range_moments,
             peak_states,
             transitions,
@@ -519,6 +521,7 @@ impl Record for LuckDpCertifiedResult {
             steps: steps.iter().map(|&(time, mass)| (time, interval(mass))).collect(),
             frame_queries: frame_queries.iter().map(|&(time, masses)| (time, masses.map(interval))).collect(),
             probes: probes.clone(),
+            probe_starts: Interval::of((*probe_starts).into()),
             range_moments: range_moments
                 .iter()
                 .map(|m| (Interval::of(m.luck_points.into()), m.lot_results.map(|v| Interval::of(v.into()))))
@@ -571,6 +574,7 @@ impl Record for LuckDpCertifiedResult {
             steps,
             frame_queries,
             probes: stored.probes,
+            probe_starts: stored.probe_starts.interval()?,
             range_moments,
             peak_states: stored.peak_states,
             transitions: stored.transitions,
@@ -638,6 +642,7 @@ mod tests {
                 [[ProbabilityMass::ONE, ProbabilityMass::ZERO, ProbabilityMass::ZERO, ProbabilityMass::ZERO]; 3],
             )],
             probes: vec![false, true],
+            probe_starts: F64Interval::new(0.5, 0.5f64.next_up()).unwrap(),
             range_moments: vec![LuckRangeMoments {
                 luck_points: F64Interval::new(1.0, 1.0f64.next_up()).unwrap(),
                 lot_results: [F64Interval::new(-0.0, f64::from_bits(1)).unwrap(); 4],
@@ -728,6 +733,7 @@ mod tests {
                 steps: Vec::new(),
                 frame_queries: Vec::new(),
                 probes: Vec::new(),
+                probe_starts: F64Interval::ZERO,
                 range_moments: Vec::new(),
                 peak_states: 1,
                 transitions: 0,

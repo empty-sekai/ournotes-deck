@@ -49,6 +49,9 @@ pub struct LuckDpCertifiedResult {
     pub frame_queries: Vec<(i32, [[ProbabilityMass; 4]; 3])>,
     /// All supported score probes use the same 7021 predicate; this identifies the shapes with a holder.
     pub probes: Vec<bool>,
+    /// The expected number of play frames whose skill boundary turns the direct-probe class on. A frame counts in
+    /// [`Self::probe_transitions`] when this happens with positive possible mass.
+    pub probe_starts: F64Interval,
     /// Optional additive indicators, one per range when requested; empty for score-only curves.
     pub range_moments: Vec<LuckRangeMoments>,
     pub peak_states: usize,
@@ -80,6 +83,7 @@ struct DpResult<W> {
     steps: Vec<(i32, W)>,
     frame_queries: Vec<(i32, [W; 3])>,
     probes: Vec<bool>,
+    probe_starts: F64Interval,
     range_moments: Vec<LuckRangeMoments>,
     peak_states: usize,
     transitions: u64,
@@ -384,15 +388,27 @@ enum Action<M> {
 struct Plan<M> {
     actions: Vec<(i64, Action<M>, Option<Checker>)>,
     probes: Vec<bool>,
-    /// Whether the actions of each phase all come from one performer or are the same for every condition skill
-    /// that holds some, so that their order does not depend on the performance order.
-    order_free: bool,
+    /// The pairs of performers whose condition skills hold different actions in one phase: the phase's actions are
+    /// listed in updater order, so their list follows the relative order of these pairs and of no other.
+    order_pairs: PositionPairs,
 }
 
 impl<M> Default for Plan<M> {
     fn default() -> Self {
-        Self { actions: Vec::new(), probes: Vec::new(), order_free: true }
+        Self { actions: Vec::new(), probes: Vec::new(), order_pairs: 0 }
     }
+}
+
+/// A set of pairs of performer positions below [`PAIR_POSITIONS`], bit `PAIR_POSITIONS * a + b` for `a < b`.
+pub(crate) type PositionPairs = u64;
+
+pub(crate) const PAIR_POSITIONS: usize = 8;
+
+/// The pairs of `position` with each other position of `positions` (a bit per position).
+fn pairs_with(position: usize, positions: u8) -> PositionPairs {
+    (0..PAIR_POSITIONS)
+        .filter(|&other| other != position && positions & (1 << other) != 0)
+        .fold(0, |pairs, other| pairs | 1 << (PAIR_POSITIONS * position.min(other) + position.max(other)))
 }
 
 fn unsupported(row: &EffectRow, why: &str) -> Error {
@@ -704,10 +720,8 @@ fn compile<M: Mass>(
     collect_moments: bool,
 ) -> Result<Plan<M>, Error> {
     let mut plan = Plan::default();
-    // Per phase: the performer and the actions of the first condition skill that holds some, and whether every
-    // later one has the same performer, and the same actions.
-    let mut phase_first: [Option<(usize, Vec<String>)>; 2] = [None, None];
-    let (mut one_member, mut same_actions) = ([true; 2], [true; 2]);
+    // Per phase: the performer and the actions of each condition skill that holds some.
+    let mut phase_actions: [Vec<(usize, Vec<String>)>; 2] = [Vec::new(), Vec::new()];
     for condition in &model.cond {
         let first = plan.actions.len();
         for (effect_index, effect) in condition.updater.effects().iter().enumerate() {
@@ -880,16 +894,20 @@ fn compile<M: Mass>(
                 .filter(|action| action.0 == phase)
                 .map(|(_, action, checker)| format!("{:?}/{checker:?}", action_words(action)))
                 .collect();
-            if actions.is_empty() {
-                continue;
+            if !actions.is_empty() {
+                phase_actions[(phase - 1) as usize].push((condition.member, actions));
             }
-            let index = (phase - 1) as usize;
-            let (member, kept) = phase_first[index].get_or_insert_with(|| (condition.member, actions.clone()));
-            one_member[index] &= *member == condition.member;
-            same_actions[index] &= *kept == actions;
         }
     }
-    plan.order_free = (0..2).all(|index| one_member[index] || same_actions[index]);
+    for held in &phase_actions {
+        for (index, (member, actions)) in held.iter().enumerate() {
+            for (other, other_actions) in &held[..index] {
+                if member != other && actions != other_actions && *member.max(other) < PAIR_POSITIONS {
+                    plan.order_pairs |= pairs_with(*member, 1 << other);
+                }
+            }
+        }
+    }
     // Stable phase ordering matches the interpreter: all updater checks, then appliers in list/row order,
     // separately for phase 1 and phase 2. Rows within one condition skill are already sorted by effect id.
     plan.actions.sort_by_key(|action| action.0);
@@ -966,10 +984,15 @@ impl<'a, M: Mass> Dp<'a, M> {
     }
 
     fn map(&mut self, mut transform: impl FnMut(State) -> Result<State, Error>) -> Result<(), Error> {
+        self.map_masses(|state, _| transform(state))
+    }
+
+    /// [`Self::map`] with the mass of each state.
+    fn map_masses(&mut self, mut transform: impl FnMut(State, M) -> Result<State, Error>) -> Result<(), Error> {
         let mut out = std::mem::take(&mut self.spare);
         let mut previous = std::mem::take(&mut self.dist);
         for (state, probability) in previous.drain() {
-            self.push(&mut out, transform(state)?, probability)?;
+            self.push(&mut out, transform(state, probability)?, probability)?;
         }
         self.spare = previous;
         self.replace(out)
@@ -1137,21 +1160,25 @@ impl<'a, M: Mass> Dp<'a, M> {
 }
 
 /// Watches a reduced recording for effects whose application order follows the performance order (see
-/// [`LuckDpCache::certified_order_free`]).
+/// [`LuckDpCache::certified_order_class`]).
 #[derive(Default)]
 struct OrderWatch {
-    /// The performer whose effects the current phase applied: every effect but the score-ups and lot and gauge factors.
-    member: Option<usize>,
-    /// The performer whose lot or gauge factors the current phase filed.
-    factors: Option<usize>,
-    /// Whether one phase filed lot or gauge factors of two performers.
-    factor_order: bool,
+    /// The performers whose effects the current phase applied: every effect but the score-ups, result guarantees and
+    /// lot and gauge factors.
+    members: u8,
+    /// The performers whose lot or gauge factors the current phase filed.
+    factor_members: u8,
+    /// The pairs of performers whose effects one phase applied, and once the recording finishes, the pairs whose lot
+    /// or gauge factors one phase filed when their sums may round.
+    pairs: PositionPairs,
+    /// The pairs of performers whose lot or gauge factors one phase filed.
+    factor_pairs: PositionPairs,
     broken: Option<&'static str>,
 }
 
 impl OrderWatch {
     fn phase(&mut self) {
-        (self.member, self.factors) = (None, None);
+        (self.members, self.factor_members) = (0, 0);
     }
 
     fn apply(&mut self, model: &LiveModel, item: Listed) {
@@ -1161,23 +1188,30 @@ impl OrderWatch {
         };
         let condition = &model.cond[updater];
         let member = condition.member;
+        if member >= PAIR_POSITIONS {
+            self.broken = Some("a performer position has no pairs");
+            return;
+        }
         match model.rows[condition.updater.effect(condition.updater.updaters[u].effect).row].effect_type {
             // Score-ups go to the reduced calculator, which the recording never reads. Result guarantees go to the
             // lottery machine's guarantee list, which only a lottery draw reads, and the recording makes none.
             2000 | 2001 | 2005 | 11005 => {}
-            11000 | 11001 => self.factor_order |= *self.factors.get_or_insert(member) != member,
-            _ if *self.member.get_or_insert(member) != member => {
-                self.broken = Some("one phase applies the effects of two performers");
+            11000 | 11001 => {
+                self.factor_pairs |= pairs_with(member, self.factor_members);
+                self.factor_members |= 1 << member;
             }
-            _ => {}
+            _ => {
+                self.pairs |= pairs_with(member, self.members);
+                self.members |= 1 << member;
+            }
         }
     }
 
     fn finish(&mut self, model: &LiveModel) {
         if model.random.draws() != 0 {
             self.broken = Some("the recording draws a random value");
-        } else if self.factor_order && !model.gk.as_ref().is_some_and(|gk| gk.ctrl.factor_sums_exact()) {
-            self.broken = Some("lot or gauge factor sums may round");
+        } else if !model.gk.as_ref().is_some_and(|gk| gk.ctrl.factor_sums_exact()) {
+            self.pairs |= self.factor_pairs;
         }
     }
 }
@@ -1438,6 +1472,7 @@ pub(crate) fn luck_rush_dp_certified_with_moments_cached(
             steps: result.steps,
             frame_queries: result.frame_queries,
             probes: result.probes,
+            probe_starts: result.probe_starts,
             range_moments: result.range_moments,
             peak_states: result.peak_states,
             transitions: result.transitions,
@@ -1480,6 +1515,7 @@ pub(super) fn certified_mode(
         steps: result.steps,
         frame_queries: result.frame_queries,
         probes: result.probes,
+        probe_starts: result.probe_starts,
         range_moments: result.range_moments,
         peak_states: result.peak_states,
         transitions: result.transitions,
@@ -1830,6 +1866,14 @@ struct PreparedRecording<M> {
 pub(super) struct RecordingCache {
     entries: FxHashMap<Vec<u8>, std::sync::Arc<LuckDpCertifiedResult>>,
     bytes: usize,
+}
+
+/// The lottery law of a formation in one order, and the pairs of performer positions whose relative order it may
+/// depend on: every order of the same performers that keeps the relative order of each pair has this law.
+#[derive(Clone, Debug)]
+pub(crate) struct OrderClass {
+    pub law: std::sync::Arc<LuckDpCertifiedResult>,
+    pub pairs: PositionPairs,
 }
 
 impl RecordingCache {
@@ -2230,6 +2274,7 @@ fn propagate_cancellable<M: Mass>(
     let mut steps: Vec<(i32, M::Weights)> = Vec::new();
     let mut frame_queries: Vec<(i32, [M::Weights; 3])> = Vec::new();
     let mut probe_transitions = Vec::new();
+    let mut probe_starts = F64Interval::ZERO;
     let mut rush_transitions = Vec::new();
     let mut identity = 1u8;
     // The Rush transitions of a frame in which no lottery runs: every state keeps its Rush.
@@ -2271,8 +2316,9 @@ fn propagate_cancellable<M: Mass>(
             let starting_chain = frame.start.map(|range| Chain::of(&dp.templates[range]));
             let mut edges = 0u8;
             let mut follows = true;
+            let mut started = M::ZERO;
             // The certified distribution retains every state with positive possible probability.
-            dp.map(|mut state| {
+            dp.map_masses(|mut state, probability| {
                 let before = state.score;
                 if let Some(chain) = starting_chain {
                     state.chain = chain;
@@ -2294,6 +2340,9 @@ fn propagate_cancellable<M: Mass>(
                     }
                 }
                 edges |= 1 << (2 * usize::from(before) + usize::from(state.score));
+                if !before && state.score {
+                    started = started.merge(probability);
+                }
                 follows &= state.score == state.rush;
                 state.rush_start = state.rush;
                 state.rush_filed = false;
@@ -2304,6 +2353,7 @@ fn propagate_cancellable<M: Mass>(
                 Ok(state)
             })?;
             probe_transitions.push(edges);
+            probe_starts = probe_starts.add(started.interval());
             // Subsequent actions and lotteries do not alter this direct-probe class.
             identity = u8::from(edges & 0b0101 != 0) | (u8::from(edges & 0b1010 != 0) << 3);
             // The frame's score queries run after the FINISH disable and the skill boundary, before any lottery.
@@ -2397,6 +2447,7 @@ fn propagate_cancellable<M: Mass>(
         steps,
         frame_queries,
         probes: t.probes.clone(),
+        probe_starts,
         range_moments: dp.range_moments,
         peak_states: dp.peak,
         transitions: dp.transitions,
@@ -2632,24 +2683,30 @@ impl LuckDpCache {
         Ok(Some(result))
     }
 
-    /// The certified lottery law of the performers of `deck` in its order when it is also their law in every other
-    /// order, or None when the recording does not show that.
+    /// The certified lottery law of the performers of `deck` in its order, with the pairs of performer positions
+    /// whose relative order the law may depend on: every other order of the same performers that keeps the relative
+    /// order of each pair has the same law. None when the recording does not show that.
     ///
     /// A model built for another order is the model of this order with its performers moved, as
     /// [`OrderedLive`] uses: their skills keep their own state, and an effect reads no performer's position. Within a
     /// phase every updater checks before any effect applies, so another order applies the same effects, in another
-    /// order only between performers. The recording is therefore the same in every order when no phase applies
-    /// effects of two performers, apart from effects whose order the recording does not observe: score-ups, which go
-    /// to the reduced calculator the recording never reads, result guarantees, which only a lottery draw reads, and
-    /// lot and gauge factors whose binary32 sums are exact and so do not depend on the order of their filings. The
-    /// recording draws no random value, so it reads no guarantee. The actions of each phase are listed in updater order, so
-    /// they must come from one performer or be the same for every condition skill that holds some.
+    /// order only between performers. Effects whose order the recording does not observe commute with every other
+    /// effect: score-ups, which go to the reduced calculator the recording never reads, result guarantees, which
+    /// only a lottery draw reads and the recording draws no random value, and lot and gauge factors when their
+    /// binary32 sums are exact and so do not depend on the order of their filings. Any two other effects of two
+    /// performers in one phase are taken not to commute, and so are the lot and gauge factors of two performers in
+    /// one phase when their sums may round. Two application orders of one phase that keep the relative order of
+    /// every two effects that do not commute leave the same state, so an order that keeps the relative order of
+    /// every pair of performers whose such effects one phase applied records the same frame, and by induction over
+    /// the frames the same recording. The actions of each phase are listed in updater order, so their list is the
+    /// same in an order that also keeps the relative order of every two performers with different actions in one
+    /// phase.
     ///
     /// The recording also reads the life recorder of the whole formation: its converted judgements, and its phase
     /// lives for actions whose conditions read the life. No action condition may read the life, and the recording
     /// must convert no judgement; the caller establishes that no other order converts one either.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn certified_order_free(
+    pub(crate) fn certified_order_class(
         &mut self,
         master: &Master,
         skills: &LuckSkills,
@@ -2661,7 +2718,7 @@ impl LuckDpCache {
         delta_times: &[f32],
         deck: &[Performer],
         ranking: Option<&[crate::replay::RankConfirmation]>,
-    ) -> Result<Option<std::sync::Arc<LuckDpCertifiedResult>>, Error> {
+    ) -> Result<Option<OrderClass>, Error> {
         let prepared = prepare_recording::<ProbabilityMass>(
             master,
             skills,
@@ -2677,16 +2734,20 @@ impl LuckDpCache {
             false,
         )?;
         let plan = &prepared.plan;
-        if !plan.order_free || plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life)) {
+        if prepared.model.cond.iter().any(|condition| condition.member >= PAIR_POSITIONS)
+            || plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life))
+        {
             return Ok(None);
         }
+        let order_pairs = plan.order_pairs;
         let mut watch = OrderWatch::default();
         let transcript = record_prepared(prepared, notes, play, delta_times, &mut || false, Some(&mut watch))?
             .expect("an uncancelled recording");
         if watch.broken.is_some() || transcript.failure.is_some() {
             return Ok(None);
         }
-        self.law_of(&transcript, &mut || false)
+        let law = self.law_of(&transcript, &mut || false)?.expect("an uncancelled propagation");
+        Ok(Some(OrderClass { law, pairs: order_pairs | watch.pairs }))
     }
 
     /// The certified law of a transcript, from the cache or propagated.
@@ -2717,6 +2778,7 @@ impl LuckDpCache {
             steps: result.steps,
             frame_queries: result.frame_queries,
             probes: result.probes,
+            probe_starts: result.probe_starts,
             range_moments: result.range_moments,
             peak_states: result.peak_states,
             transitions: result.transitions,
@@ -3937,6 +3999,7 @@ mod tests {
             native.score.begin_bounds(Vec::new(), true);
             let mut applied = 0i32;
             let mut switched = 0;
+            let mut starts = 0usize;
             for (index, (frame, &dt)) in play.frames.iter().zip(&delta).enumerate() {
                 let old = applied != 0;
                 native.frame_timed(frame.time_ms, &frame.judged, dt).unwrap();
@@ -3954,8 +4017,16 @@ mod tests {
                     );
                 }
                 switched += usize::from(old != new);
+                starts += usize::from(!old && new);
             }
             assert_eq!(switched > 0, result == 3);
+            // every lottery of the fixture has one result: the expected number of starts is the native count
+            assert_eq!(starts > 0, result == 3);
+            let possible = certified.probe_transitions.iter().filter(|&&mask| mask & 0b10 != 0).count();
+            assert_eq!(possible, starts, "result={result}");
+            assert!(certified.probe_starts.lower() <= starts as f64, "result={result}");
+            assert!(certified.probe_starts.upper() >= starts as f64, "result={result}");
+            assert!(certified.probe_starts.upper() - certified.probe_starts.lower() < 1e-9, "result={result}");
         }
     }
 

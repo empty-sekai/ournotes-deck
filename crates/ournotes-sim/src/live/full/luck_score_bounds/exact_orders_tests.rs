@@ -176,12 +176,13 @@ fn permutations() -> Vec<[usize; 5]> {
     orders
 }
 
-/// A score without its work counters.
+/// A score without its work counters and its life bounds.
 fn comparable(score: &LuckExactScore) -> Value {
     let mut value = serde_json::to_value(score).unwrap();
     let object = value.as_object_mut().unwrap();
     object.remove("profile");
     object.remove("peakPaths");
+    object.remove("finalLife");
     value
 }
 
@@ -211,7 +212,8 @@ fn joint(
     .unwrap()
 }
 
-/// Asserts that each joint score is the score of its order evaluated alone.
+/// Asserts that each joint score is the score of its order evaluated alone, whose one terminal life lies within
+/// the joint life bounds.
 fn assert_alone(
     name: &str,
     formation: &Formation,
@@ -241,6 +243,13 @@ fn assert_alone(
         )
         .unwrap();
         assert_eq!(comparable(score), comparable(&alone), "{name} {order:?}");
+        assert_eq!(alone.final_life.lower, alone.final_life.upper, "{name} {order:?}");
+        assert!(
+            score.final_life.lower <= alone.final_life.lower && alone.final_life.upper <= score.final_life.upper,
+            "{name} {order:?}: {:?} outside {:?}",
+            alone.final_life,
+            score.final_life
+        );
     }
 }
 
@@ -270,8 +279,48 @@ fn every_order_from_the_rotations_matches_the_order_evaluated_alone() {
                 joint.scores.iter().map(|score| score.final_mean.lower.to_bits()).collect();
             assert!(means.len() > 1, "{name}: the order must change the score");
             assert_alone(name, formation, &orders, ranking, &mut curves, &joint);
+            // Without a life skill every order ends at the initial life.
+            let pinned = joint.scores.iter().all(|score| score.final_life.lower == score.final_life.upper);
+            assert_eq!(pinned, *name == "score-ups", "{name}");
         }
     }
+}
+
+#[test]
+fn given_laws_replace_the_law_recordings() {
+    let formation = formation(&[], &[], &[]);
+    let (master, deck, notes, events, params, setup, play, delta) = &formation;
+    let skills = luck_skills(master).unwrap();
+    let orders = permutations();
+    let mut curves = LuckDpCache::new(usize::MAX);
+    let recorded = joint(&formation, &orders, None, &mut curves);
+    let laws =
+        luck_order_laws(master, &skills, deck, notes, events, *params, setup, play, delta, None, &orders, &mut curves)
+            .unwrap();
+    let mut given = |laws: &[std::sync::Arc<LuckDpCertifiedResult>]| {
+        luck_exact_orders_with_laws(
+            master,
+            &skills,
+            deck,
+            notes,
+            events,
+            *params,
+            setup,
+            play,
+            delta,
+            None,
+            &orders,
+            laws,
+            Some(&mut curves),
+            true,
+        )
+    };
+    let scores = given(&laws).unwrap();
+    assert_eq!((scores.alone.as_deref(), scores.laws, scores.law_recordings), (None, recorded.laws, 0));
+    for ((order, score), recorded) in orders.iter().zip(&scores.scores).zip(&recorded.scores) {
+        assert_eq!(comparable(score), comparable(recorded), "{order:?}");
+    }
+    assert!(given(&laws[1..]).is_err());
 }
 
 #[test]
@@ -295,11 +344,11 @@ fn orders_outside_the_certificate_are_evaluated_alone() {
 }
 
 #[test]
-fn one_law_serves_every_order_when_the_gauge_sums_are_exact() {
+fn a_law_serves_the_orders_that_keep_the_relative_order_of_inexact_gauge_filings() {
     // Two performers start their gauge-ups in the same phase. The gauge sums of 0.0625 and 0.125 are exact in either
-    // filing order. Those of 0.05 and 0.025 with their removals are not shown to be, so the law of each order is
-    // recorded on its own.
-    let cases = [("exact gauge sums", 625, 1250, 1), ("inexact gauge sums", 500, 250, 121)];
+    // filing order, so one law serves every order. Those of 0.05 and 0.025 with their removals are not shown to be,
+    // so the orders that place the first performer before the second share a law, and the others another.
+    let cases = [("exact gauge sums", 625, 1250, 1), ("inexact gauge sums", 500, 250, 2)];
     let orders = permutations();
     for (name, first, second, recordings) in cases {
         let formation = formation(&[], &[], &[(1, 11001, first), (2, 11001, second)]);
@@ -312,19 +361,50 @@ fn one_law_serves_every_order_when_the_gauge_sums_are_exact() {
 }
 
 #[test]
-fn one_law_serves_every_order_when_each_phase_has_the_same_actions() {
-    // Two performers guarantee a LUCK range's first result in the same phase. With the same guarantee the
-    // range-start actions are the same in every order; with different ones their order follows the performers.
-    let cases = [("the same guarantees", 3, 3, 1), ("different guarantees", 3, 4, 121)];
+fn a_law_serves_the_orders_that_keep_the_relative_order_of_different_actions() {
+    // Performers guarantee a LUCK range's first result in the same phase. With the same guarantee the range-start
+    // actions are the same in every order; with different ones their list follows the relative order of the
+    // performers that hold them, one class of orders for each.
+    let cases = [
+        ("the same guarantees", vec![(1, 11005, 3), (2, 11005, 3)], 1),
+        ("two different guarantees", vec![(1, 11005, 3), (2, 11005, 4)], 2),
+        ("three different guarantees", vec![(1, 11005, 2), (2, 11005, 3), (3, 11005, 4)], 6),
+    ];
     let orders = permutations();
-    for (name, first, second, recordings) in cases {
-        let formation = formation(&[], &[], &[(1, 11005, first), (2, 11005, second)]);
+    for (name, mechanisms, recordings) in cases {
+        let formation = formation(&[], &[], &mechanisms);
         let mut curves = LuckDpCache::new(usize::MAX);
         let joint = joint(&formation, &orders, None, &mut curves);
         assert_eq!(joint.alone, None, "{name}");
         assert_eq!(joint.law_recordings, recordings, "{name}");
         assert_alone(name, &formation, &orders, None, &mut curves, &joint);
     }
+}
+
+#[test]
+fn a_model_whose_members_move_has_the_shape_of_each_order() {
+    // Two performers hold score probes, so the probe rows of an order follow both of their positions.
+    let mut formation = formation(&[], &[], &[(1, 11001, 625)]);
+    formation.1[3].gekisou_skill = Some((1, 1));
+    let (master, deck, notes, events, params, setup, _, _) = &formation;
+    let skills = luck_skills(master).unwrap();
+    let model = |deck: &[Performer]| super::exact::exact_model(master, deck, notes, events, *params, setup, None);
+    let shape = |model: &mut LiveModel| {
+        let (probes, phase) = super::exact_orders::order_shape(model, &skills).unwrap();
+        (probes.iter().map(|row| (row.owner, row.value.to_bits())).collect::<Vec<_>>(), phase)
+    };
+    let mut moved = model(deck).unwrap();
+    let mut assign: Vec<usize> = (0..5).collect();
+    let mut rows = std::collections::BTreeSet::new();
+    for order in permutations() {
+        moved.move_to(&mut assign, &order).unwrap();
+        let ordered: Vec<_> = order.iter().map(|&member| deck[member].clone()).collect();
+        let built = shape(&mut model(&ordered).unwrap());
+        assert_eq!(shape(&mut moved), built, "{order:?}");
+        assert_eq!(built.0.len(), 2, "{order:?}");
+        rows.insert(built.0);
+    }
+    assert!(rows.len() > 1, "the probe rows must follow the positions");
 }
 
 #[test]

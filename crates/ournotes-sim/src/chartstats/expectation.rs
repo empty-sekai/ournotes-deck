@@ -275,6 +275,7 @@ impl<'a, 'm> Evaluator<'a, 'm> {
                             steps: Vec::new(),
                             frame_queries: Vec::new(),
                             probes: vec![false; self.skills.shapes.len()],
+                            probe_starts: crate::live::certified::F64Interval::ZERO,
                             range_moments: vec![LuckRangeMoments::default(); g.setup.fevers.len()],
                             peak_states: 1,
                             transitions: 0,

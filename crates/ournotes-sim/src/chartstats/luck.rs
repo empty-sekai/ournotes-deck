@@ -549,6 +549,7 @@ mod certified_tests {
             steps: vec![(100, joint)],
             frame_queries: Vec::new(),
             probes,
+            probe_starts: crate::live::certified::F64Interval::ZERO,
             range_moments: Vec::new(),
             peak_states,
             transitions,

@@ -26,7 +26,9 @@ mod probe_lifecycle_tests;
 mod profile;
 mod replay;
 pub use exact::{LuckExactNote, LuckExactProfile, LuckExactRange, LuckExactScore, luck_exact_score};
-pub use exact_orders::{LuckExactOrders, LuckExactOrdersProfile, luck_exact_orders};
+pub use exact_orders::{
+    LuckExactOrders, LuckExactOrdersProfile, luck_exact_orders, luck_exact_orders_with_laws, luck_order_laws,
+};
 #[cfg(feature = "search-diagnostics")]
 pub use profile::{LuckScoreProfile, take_luck_score_profile};
 
@@ -1158,6 +1160,7 @@ fn luck_score_bounds_internal(
             steps: Vec::new(),
             frame_queries: Vec::new(),
             probes: vec![false; skills.shapes.len()],
+            probe_starts: crate::live::certified::F64Interval::ZERO,
             range_moments: if collect_moments {
                 vec![super::luck_dp::LuckRangeMoments::default(); setup.fevers.len()]
             } else {
