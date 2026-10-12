@@ -562,7 +562,7 @@ pub fn search_best_order_diagnostic(pool: &Pool, req: &SearchRequest) -> Result<
     }
     let snap_live = match &setup {
         None => None,
-        Some(s) => Some(snaps::SnapLive::new(pool, &t, &allowed.members, s)?),
+        Some(s) => Some(snaps::SnapLive::new(pool, &t, &allowed.members, s, &[])?),
     };
     if budget.expired() {
         return Ok(preparation_timeout(t0));

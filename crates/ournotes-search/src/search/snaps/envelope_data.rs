@@ -41,6 +41,11 @@ pub(super) struct Fine {
     pub(super) score_frames: ScoreFrames,
     /// Every possible conversion preserves the LUCK input class in all LUCK ranges.
     pub(super) rush_eligible: bool,
+    /// The per-entry values are expectations under certified lottery laws: they add up unfloored and the total
+    /// rounds up (the floor of an expectation can lie below the expectation of the floored scores).
+    pub(super) expected: bool,
+    /// With certified lottery laws, the starts of the direct-probe class in a play.
+    pub(super) probe_starts: Option<ProbeStarts>,
     /// Raw judgement of each entry.
     pub(super) raw: Vec<u8>,
     /// Index of the first entry at the same chart time.

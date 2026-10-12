@@ -229,6 +229,9 @@ pub(super) fn windows(
                         cmds: 0.0,
                         cmds_per_run: 0.0,
                         max_runs: 0.0,
+                        // a fixed factor running once at a time while the LUCK gate's direct Rush trigger holds
+                        start: (r.rush_run_cap && spec.gate == MISSION_LUCK && !r.churn && r.cumulative_ramp.is_none())
+                            .then_some((0.0, 2.0 * c)),
                     });
                     rush_rows.len() as u32
                 }
@@ -289,6 +292,10 @@ pub(super) fn windows(
                     row.cmds = (row.cmds + count).next_up();
                     row.cmds_per_run = (row.cmds_per_run + 2.0 * c).next_up();
                     row.max_runs = (row.max_runs + starts).next_up();
+                    if let Some(start) = &mut row.start {
+                        // one activation runs inside one window
+                        start.0 = start.0.max(product_up(2.0 * c, e));
+                    }
                 }
                 spans.push((a, b, (note + judge.iter().copied().fold(0f64, f64::max)) * mult));
             }

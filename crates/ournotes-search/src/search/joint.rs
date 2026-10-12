@@ -350,8 +350,29 @@ impl JointBounds {
         input: Option<&EventPayoffInput>,
         simulation: &SimulationInput,
     ) -> Result<Self, Error> {
+        Self::compile_with_laws(pool, request, domain, metric, input, simulation, &[])
+    }
+
+    /// [`JointBounds::compile`] with the certified lottery laws of every team of the domain in every order: the
+    /// per-note bounds then weigh the Rush factor and the direct-Rush score ups by their certified class masses
+    /// (see `LuckLaws`). No law: every note takes its largest luck factor.
+    ///
+    /// A weighted bound caps the expected score of an order, which is the order's expected payoff only when the
+    /// payoff is the score itself, so laws compile for no other metric.
+    pub(crate) fn compile_with_laws(
+        pool: &Pool,
+        request: &SearchRequest,
+        domain: &CandidateDomain,
+        metric: &Metric,
+        input: Option<&EventPayoffInput>,
+        simulation: &SimulationInput,
+        laws: &[std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>],
+    ) -> Result<Self, Error> {
         if !domain.is_feasible() {
             return Err(unavailable("empty legal domain"));
+        }
+        if !laws.is_empty() && !matches!(metric, Metric::Score) {
+            return Err(unavailable("lottery laws weigh only a score objective"));
         }
         if !matches!(request.objective.inner(), Objective::LiveScore { .. })
             || !matches!(
@@ -403,7 +424,7 @@ impl JointBounds {
             return Err(unavailable("joint power relaxation exceeds nonwrapping domain"));
         }
         let setup = super::full_setup(pool, &request.objective)?.ok_or_else(|| unavailable("missing Live setup"))?;
-        let envelope = SnapLive::new(pool, &t, &allowed, &setup)?;
+        let envelope = SnapLive::new(pool, &t, &allowed, &setup, laws)?;
         let (a0, global, eps, order_gains) = envelope.joint_envelope();
         let levels = if setup.gk.is_some() { envelope.joint_carrier_levels() } else { None };
         let keys = levels.as_ref().and_then(|_| envelope.carrier_keys());

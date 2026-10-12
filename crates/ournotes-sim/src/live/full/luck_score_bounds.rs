@@ -11,6 +11,13 @@ use crate::live::certified::{F32Interval, F64Interval, I32Interval, ProbabilityM
 use crate::live::score::get_luck_factor_percent;
 use serde::Serialize;
 
+mod exact;
+mod exact_orders;
+#[cfg(test)]
+mod exact_orders_tests;
+mod exact_paths;
+#[cfg(test)]
+mod exact_tests;
 #[cfg(test)]
 mod owner_order_tests;
 #[cfg(test)]
@@ -18,6 +25,10 @@ mod probe_lifecycle_tests;
 #[cfg(feature = "search-diagnostics")]
 mod profile;
 mod replay;
+pub use exact::{LuckExactNote, LuckExactProfile, LuckExactRange, LuckExactScore, luck_exact_score};
+pub use exact_orders::{
+    LuckExactOrders, LuckExactOrdersProfile, luck_exact_orders, luck_exact_orders_with_laws, luck_order_laws,
+};
 #[cfg(feature = "search-diagnostics")]
 pub use profile::{LuckScoreProfile, take_luck_score_profile};
 
@@ -37,9 +48,11 @@ pub(super) enum BoundsEvent {
         frame: usize,
         command: FactorCommand,
     },
-    /// A possible Rush filing in this frame.
+    /// A possible Rush filing in this frame: at a play frame's start, where only a range FINISH disables a Rush,
+    /// or by the play frame's lotteries.
     Potential {
         frame: usize,
+        start: bool,
     },
     /// A possible probe filing at this frame time: every probe row may switch on or off here.
     Probe {
@@ -475,7 +488,28 @@ fn check_probe_music_boundary(
     phase_bound: bool,
     trace: &BoundsTrace,
 ) -> Result<(), Error> {
-    if music_length_ms <= 0 || trace.probes.is_empty() || !frame_times.iter().any(|&time| time > music_length_ms) {
+    check_probe_filings(
+        frame_times,
+        curve,
+        music_length_ms,
+        phase_bound,
+        !trace.probes.is_empty(),
+        trace.frames,
+        trace.events.iter(),
+    )
+}
+
+/// [`check_probe_music_boundary`] of a schedule with `frames` score frames and these events.
+fn check_probe_filings<'a>(
+    frame_times: &[i32],
+    curve: &LuckDpCertifiedResult,
+    music_length_ms: i32,
+    phase_bound: bool,
+    has_probes: bool,
+    frames: usize,
+    events: impl Iterator<Item = &'a BoundsEvent>,
+) -> Result<(), Error> {
+    if music_length_ms <= 0 || !has_probes || !frame_times.iter().any(|&time| time > music_length_ms) {
         return Ok(());
     }
     let unsupported = || refuse("score probe lifetimes beyond music end need a certified inactive tail");
@@ -490,8 +524,8 @@ fn check_probe_music_boundary(
     {
         return Err(unsupported());
     }
-    let last = i32::try_from(trace.frames).ok().filter(|&frames| frames > 0).ok_or_else(unsupported)? - 1;
-    let mut events = trace.events.iter().filter_map(|event| match event {
+    let last = i32::try_from(frames).ok().filter(|&frames| frames > 0).ok_or_else(unsupported)? - 1;
+    let mut events = events.filter_map(|event| match event {
         BoundsEvent::Probe { frame, time_ms } => Some((*frame, *time_ms)),
         _ => None,
     });
@@ -577,12 +611,22 @@ fn snapshot_difference(
     queries: &[QueryParts],
     fixed: &[(i32, u8, F64Interval, I32Interval)],
 ) -> Result<(F64Interval, I32Interval), Error> {
-    let (start_index, start, end_index, end) = (start, start.map(|index| &queries[index]), end, &queries[end]);
+    let executed = start
+        .filter(|&index| index <= end)
+        .map(|index| queries[index + 1..=end].iter().map(|q| q.executed_from).min().unwrap_or(i32::MAX));
+    snapshot_parts_difference(start.map(|index| &queries[index]), &queries[end], executed, fixed)
+}
+
+/// [`snapshot_difference`] of the parts of two snapshots, given the first score frame any query after `start` up to
+/// `end` executed (`i32::MAX` when none did), or None when the snapshots share no frames.
+fn snapshot_parts_difference(
+    start: Option<&QueryParts>,
+    end: &QueryParts,
+    executed: Option<i32>,
+    fixed: &[(i32, u8, F64Interval, I32Interval)],
+) -> Result<(F64Interval, I32Interval), Error> {
     // The last frame every query after `start` up to `end` left as `start` summed it.
-    let kept = start_index.zip(start).filter(|&(index, _)| index <= end_index).map(|(index, start)| {
-        let executed = queries[index + 1..=end_index].iter().map(|q| q.executed_from).min().unwrap_or(i32::MAX);
-        start.to.min(executed.saturating_sub(1))
-    });
+    let kept = start.zip(executed).map(|(start, executed)| start.to.min(executed.saturating_sub(1)));
     let later = |notes: &[(i32, I32Interval, F64Interval)], kept: i32| {
         notes.iter().filter(|&&(frame, _, _)| frame > kept).fold(
             (F64Interval::ZERO, 0i64, 0i64),
@@ -1112,8 +1156,11 @@ fn luck_score_bounds_internal(
     } else if !has_luck {
         std::sync::Arc::new(LuckDpCertifiedResult {
             probe_transitions: vec![1; play.frames.len()],
+            rush_transitions: vec![65; play.frames.len()],
             steps: Vec::new(),
+            frame_queries: Vec::new(),
             probes: vec![false; skills.shapes.len()],
+            probe_starts: crate::live::certified::F64Interval::ZERO,
             range_moments: if collect_moments {
                 vec![super::luck_dp::LuckRangeMoments::default(); setup.fevers.len()]
             } else {
@@ -1300,7 +1347,7 @@ pub(super) fn complete_bounds_recording(
                     mandatory_added = Some(mandatory_added.map_or(*frame as i32, |old| old.min(*frame as i32)));
                 }
             }
-            BoundsEvent::Potential { frame } => {
+            BoundsEvent::Potential { frame, .. } => {
                 replay.potential(*frame);
                 added = Some(added.map_or(*frame as i32, |old| old.min(*frame as i32)));
             }

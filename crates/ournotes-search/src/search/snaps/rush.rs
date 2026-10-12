@@ -27,6 +27,9 @@ pub(super) struct RushRef {
     pub(super) cmds: f64,
     pub(super) cmds_per_run: f64,
     pub(super) max_runs: f64,
+    /// For a row that activates at most once per start of the direct-probe class of the LUCK gate: the command
+    /// executions and the commands of one activation.
+    pub(super) start: Option<(f64, f64)>,
 }
 
 impl RushRef {
@@ -36,6 +39,15 @@ impl RushRef {
         };
         let runs = (masks.max_runs[(self.spec.gate - 1) as usize] as f64).next_up().min(self.max_runs);
         ((self.ops_per_run * runs).next_up().min(self.ops), (self.cmds_per_run * runs).next_up().min(self.cmds))
+    }
+
+    /// The command executions and the commands of the row split for a play whose direct-probe class starts `n`
+    /// times: `(fixed, run)` with at most `fixed + n * run` of each. A row those starts do not bound is all fixed.
+    pub(super) fn by_start(&self, masks: Option<&RushMasks>) -> ((f64, f64), (f64, f64)) {
+        match self.start {
+            Some(run) => ((0.0, 0.0), run),
+            None => (self.counts(masks), (0.0, 0.0)),
+        }
     }
 }
 
@@ -395,6 +407,7 @@ mod tests {
             cmds: 16.0,
             cmds_per_run: 2.0,
             max_runs: 8.0,
+            start: Some((5.0, 2.0)),
         };
         let masks = Rc::new(ournotes_sim::live::full::RushMasks {
             flags: std::array::from_fn(|_| vec![true; 8]),
@@ -405,5 +418,8 @@ mod tests {
         assert!((30.0..31.0).contains(&ops));
         assert!((6.0..7.0).contains(&cmds));
         assert_eq!(row.counts(None), (80.0, 16.0));
+        assert_eq!(row.by_start(None), ((0.0, 0.0), (5.0, 2.0)));
+        let frames = RushRef { start: None, ..row.clone() };
+        assert_eq!(frames.by_start(None), ((80.0, 16.0), (0.0, 0.0)));
     }
 }

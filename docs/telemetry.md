@@ -150,6 +150,8 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | `started` | 开始逐个出场顺序模拟的队伍数 |
 | `orderBoundPruned` | 部分出场顺序算完后，精确收益加上其余顺序的上界仍低于第 K 名而放弃的队伍数 |
 | `simulations` | 跑完的整局模拟次数（每次一个出场顺序） |
+| `exactTeams`、`exactDeclined` | LUCK 队伍：全部出场顺序联合评估的队伍数；联合评估不适用、改为逐个出场顺序求全路径区间的队伍数 |
+| `lawPruned`、`lawBounds` | LUCK 队伍：评估前按本队各出场顺序的抽选分布加权后，原始与精细上界之和仍低于第 K 名而放弃的队伍数；为这些分布编译的上界份数 |
 | `cutoff.tables` | 带截断表模拟的出场顺序数 |
 | `cutoff.unavailable` | 没有有限截断表的出场顺序数 |
 | `cutoff.stopped` | 中途截断的模拟次数（该队伍不可能进入 Top-K） |

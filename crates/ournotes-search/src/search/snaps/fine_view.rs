@@ -1,6 +1,19 @@
 //! Per-note candidate caps and the joint fine-bound view used by physical search.
 use super::*;
 
+/// Command counts of one candidate, each `(executions, lifetime commands)`.
+struct CandCounts {
+    /// Whatever the starts of the direct-probe class; without certified laws, all of them.
+    fixed: (f64, f64),
+    /// For each start of the direct-probe class.
+    run: (f64, f64),
+    /// The most of one play.
+    most: (f64, f64),
+    /// The largest factor sum at one command time, and intersecting one native score frame.
+    peak: f64,
+    peak_frame: f64,
+}
+
 /// Immutable per-note envelope shared by the legacy compiler and physical native-root search.
 pub(super) struct FineView<'a> {
     pub(super) coef: &'a Coef,
@@ -16,8 +29,25 @@ impl FineView<'_> {
     /// binary32 representation adds two more roundings per lifetime command
     /// (integer-to-float conversion and division, including saturated mill values). Infinite without a
     /// certificate.
+    ///
+    /// With certified lottery laws the bound is an expectation over the lottery, and the drift is the expected one
+    /// (see `ProbeStarts::expected_drift`): the drift of a play is convex in its starts of the direct-probe class.
     pub(super) fn cand_drift(&self, parts: [&Contrib; 5], rush_masks: Option<&RushMasks>) -> f64 {
-        let (e, n, peak, peak_frame) = self.cand_counts(parts, rush_masks);
+        let counts = self.cand_counts(parts, rush_masks);
+        let drift = |(e, n): (f64, f64)| self.drift_of(e, n, counts.peak, counts.peak_frame);
+        let most = drift(counts.most);
+        match &self.fine.probe_starts {
+            Some(starts) => {
+                let linear =
+                    (starts.at_most(counts.fixed.0, counts.run.0), starts.at_most(counts.fixed.1, counts.run.1));
+                starts.expected_drift(drift(counts.fixed), drift(linear)).min(most)
+            }
+            None => most,
+        }
+    }
+
+    /// The drift of `e` command executions and `n` lifetime commands.
+    fn drift_of(&self, e: f64, n: f64, peak: f64, peak_frame: f64) -> f64 {
         let representation = (2.0 * n).next_up();
         let weight = ((3.0 * e).next_up() + representation).next_up();
         let Some(amplification) = float_margin::amplification(weight, 2f64.powi(-24)) else {
@@ -39,20 +69,36 @@ impl FineView<'_> {
         float_margin::with_chain(0.0, self.chain_extra).unwrap_or(f64::INFINITY)
     }
 
-    /// The counts `cand_drift` reads: command executions, lifetime commands, the largest factor sum at one command
-    /// time and intersecting one native score frame.
-    fn cand_counts(&self, parts: [&Contrib; 5], rush_masks: Option<&RushMasks>) -> (f64, f64, f64, f64) {
+    /// The counts `cand_drift` reads.
+    fn cand_counts(&self, parts: [&Contrib; 5], rush_masks: Option<&RushMasks>) -> CandCounts {
         let mut peak = 0f64;
         let mut peak_frame = 0f64;
-        let (mut e, mut n) = (0f64, 0f64);
+        let add = |sum: &mut (f64, f64), x: (f64, f64)| *sum = ((sum.0 + x.0).next_up(), (sum.1 + x.1).next_up());
+        let (mut fixed, mut run, mut most) = ((0f64, 0f64), (0f64, 0f64), (0f64, 0f64));
         let rush_masks = rush_masks.filter(|_| self.fine.rush_eligible);
         for p in parts {
-            e = (e + p.ops_plain).next_up();
-            n = (n + p.cmds_plain).next_up();
+            add(&mut fixed, (p.ops_plain, p.cmds_plain));
+            add(&mut most, (p.ops_plain, p.cmds_plain));
             for row in &p.rush {
-                let (ops, cmds) = row.counts(rush_masks);
-                e = (e + ops).next_up();
-                n = (n + cmds).next_up();
+                let counted = row.counts(rush_masks);
+                match &self.fine.probe_starts {
+                    Some(starts) => {
+                        let (row_fixed, row_run) = row.by_start(rush_masks);
+                        add(&mut fixed, row_fixed);
+                        add(&mut run, row_run);
+                        add(
+                            &mut most,
+                            (
+                                starts.at_most(row_fixed.0, row_run.0).min(counted.0),
+                                starts.at_most(row_fixed.1, row_run.1).min(counted.1),
+                            ),
+                        );
+                    }
+                    None => {
+                        add(&mut fixed, counted);
+                        add(&mut most, counted);
+                    }
+                }
             }
             for &(a, _, _) in &p.spans {
                 let frame = self.fine.score_frames.at(a);
@@ -71,7 +117,7 @@ impl FineView<'_> {
                 peak_frame = peak_frame.max(near);
             }
         }
-        (e, n, peak, peak_frame)
+        CandCounts { fixed, run, most, peak, peak_frame }
     }
 
     /// Per-note bound of one candidate (conversion source `src[k]` at position `k`): the sum over the stream of each
@@ -309,6 +355,9 @@ impl FineView<'_> {
                     }
                 }
                 let x = p * k * v * (1.0 + chain);
+                if f.expected {
+                    return if ze == 1.0 { x } else { ze * x * (1.0 + 2f64.powi(-20)) };
+                }
                 let y = x.floor();
                 if ze == 1.0 { y } else { (ze * y * (1.0 + 2f64.powi(-20))).floor() }
             };
@@ -322,7 +371,9 @@ impl FineView<'_> {
             if let Some(terms) = scratch.terms.as_mut() {
                 terms.entries.push((c.times[e], z, rk));
             }
-            if f.rank.is_empty() {
+            if f.expected && f.rank.is_empty() {
+                ranked += z;
+            } else if f.rank.is_empty() {
                 total = total.saturating_add(z as i64);
             } else {
                 // a rank bonus adds its percent of the range score, the sum of these entries' scores
@@ -358,7 +409,7 @@ impl FineView<'_> {
             terms.network_ranking = f.network_ranking;
             terms.ranges = f.rank_ranges.clone();
         }
-        if !f.rank.is_empty() {
+        if f.expected || !f.rank.is_empty() {
             let v = ((ranked + conv) * (1.0 + 1e-12)).ceil();
             total = if v >= i64::MAX as f64 { i64::MAX } else { v as i64 };
         } else if conv > 0.0 {
@@ -434,12 +485,15 @@ impl JointFineBounds {
                 })
             })
             .collect();
-        let (executions, commands, peak, peak_frame) = view.cand_counts(parts, rush_masks);
+        let CandCounts { fixed, run, most: (executions, commands), peak, peak_frame } =
+            view.cand_counts(parts, rush_masks);
         let exec = &self.fine.exec_profile;
         let per_second: Vec<u32> = exec.chunks(25).map(|c| c.iter().copied().max().unwrap_or(0)).collect();
         serde_json::json!({
             "executionsMaxPerSecond": per_second,
             "countedExecutions": executions, "countedCommands": commands, "peakFactor": peak,
+            "fixedCounts": fixed, "countsPerProbeStart": run,
+            "probeStarts": self.fine.probe_starts.map(|s| [s.most, s.expected, s.luck]),
             "peakFactorNearFrame": peak_frame,
             "candidateDrift": view.cand_drift(parts, rush_masks), "chainMargin": view.chain(),
             "fineScoreUpper": fine_upper.to_string(),

@@ -107,6 +107,16 @@ impl LifeController {
         self.internal_max_life
     }
 
+    /// The life at the start of the live.
+    pub(crate) fn initial_life(&self) -> i32 {
+        self.initial_life
+    }
+
+    /// Whether a note judgement has dealt damage.
+    pub(crate) fn has_note_damage(&self) -> bool {
+        self.commands.iter().flatten().any(|command| command.kind == NOTE_DAMAGE)
+    }
+
     fn frame_of(&self, ms: i32) -> i32 {
         let f = get_frame(ms);
         if self.max_frame <= f { self.max_frame.wrapping_sub(1) } else { f }

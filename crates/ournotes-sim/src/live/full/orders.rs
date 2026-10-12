@@ -639,7 +639,7 @@ fn position_mask(n: usize) -> u32 {
 
 impl LiveModel {
     /// Rearranges the members from `assign` (position -> member) to `order`, updating `assign`.
-    fn move_to(&mut self, assign: &mut [usize], order: &[usize]) -> Result<(), Error> {
+    pub(crate) fn move_to(&mut self, assign: &mut [usize], order: &[usize]) -> Result<(), Error> {
         let mut map = Vec::with_capacity(assign.len());
         for member in assign.iter() {
             map.push(

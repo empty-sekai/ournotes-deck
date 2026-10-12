@@ -529,6 +529,109 @@ pub fn evaluate_orders(
     aggregate_orders(orders, map).map(Some)
 }
 
+/// The certified lottery law of one performance order.
+pub type LuckLaw = std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>;
+
+/// The certified lottery law of every performance order of the formation, in [`uniform::all_orders`] order and in
+/// the declared context as [`evaluate_luck_exact`] reads it.
+pub fn luck_order_laws(
+    master: &ournotes_sim::master::Master,
+    skills: &ournotes_sim::live::full::LuckSkills,
+    input: &super::expectation::FiniteSeedContext,
+    curves: &mut ournotes_sim::live::full::LuckDpCache,
+) -> Result<Vec<LuckLaw>, Error> {
+    let setup = input.gekisou.as_ref().ok_or_else(|| invalid("LUCK requires Gekisou context"))?;
+    ournotes_sim::live::full::luck_order_laws(
+        master,
+        skills,
+        &input.performers,
+        &input.notes,
+        &input.events,
+        input.params,
+        setup,
+        &input.play,
+        &input.delta_times,
+        input.rank_confirmations.as_deref(),
+        &uniform::all_orders(),
+        curves,
+    )
+}
+
+/// The expected native score of every performance order from one joint evaluation of the formation
+/// ([`ournotes_sim::live::full::luck_exact_orders`]), in the declared context as [`evaluate_luck_context`] reads it.
+/// `laws` holds the formation's [`luck_order_laws`] when the caller has them. None when cancelled before the
+/// evaluation starts.
+pub fn evaluate_luck_exact(
+    master: &ournotes_sim::master::Master,
+    skills: &ournotes_sim::live::full::LuckSkills,
+    input: &super::expectation::FiniteSeedContext,
+    map: &PayoffMap,
+    laws: Option<&[LuckLaw]>,
+    curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<Option<CertifiedEvaluation>, Error> {
+    let setup = input.gekisou.as_ref().ok_or_else(|| invalid("LUCK requires Gekisou context"))?;
+    if cancelled() {
+        return Ok(None);
+    }
+    let orders = uniform::all_orders();
+    let (deck, notes, events, play) = (&input.performers, &input.notes, &input.events, &input.play);
+    let (delta, ranking) = (&input.delta_times, input.rank_confirmations.as_deref());
+    let joint = match laws {
+        Some(laws) => ournotes_sim::live::full::luck_exact_orders_with_laws(
+            master,
+            skills,
+            deck,
+            notes,
+            events,
+            input.params,
+            setup,
+            play,
+            delta,
+            ranking,
+            &orders,
+            laws,
+            curves,
+            false,
+        ),
+        None => ournotes_sim::live::full::luck_exact_orders(
+            master,
+            skills,
+            deck,
+            notes,
+            events,
+            input.params,
+            setup,
+            play,
+            delta,
+            ranking,
+            &orders,
+            curves,
+            false,
+        ),
+    }?;
+    let orders = orders
+        .into_iter()
+        .zip(joint.scores)
+        .map(|(order, score)| {
+            let support = (score.final_support.lower, score.final_support.upper);
+            let mean = F64Interval::new(score.final_mean.lower, score.final_mean.upper)?
+                .intersect(F64Interval::new(support.0 as f64, support.1 as f64)?)
+                .ok_or_else(|| invalid("LUCK mean and support disagree"))?;
+            Ok(OrderScoreInterval {
+                order,
+                mean,
+                support,
+                exact_mean: (support.0 == support.1).then(|| fraction(support.0 as i128)),
+                final_life: Some((score.final_life.lower, score.final_life.upper)),
+                tails: BTreeMap::new(),
+                refined_payoff: None,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    aggregate_orders(orders, map).map(Some)
+}
+
 /// The actual all-path LUCK scorer in a normal native or WASM build. Performers are permuted before constructing
 /// the model; external rank arrivals, clock data and every other live parameter remain the declared context.
 /// `curves` shares lottery curves across the orders and with other calls.

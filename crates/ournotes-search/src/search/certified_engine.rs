@@ -110,6 +110,8 @@ pub(super) struct CertifiedState {
     luck_skills: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
     /// Certified lottery curves of this request, shared by every performance order and team.
     pub(super) luck_curves: ournotes_sim::live::full::LuckDpCache,
+    /// Joint bounds under the lottery laws of single teams.
+    pub(super) law_bounds: super::leaf::LawBounds,
 }
 
 /// Key bytes the request's lottery-curve cache may hold.
@@ -126,6 +128,7 @@ impl CertifiedState {
             retain_refinement: None,
             luck_skills: None,
             luck_curves: ournotes_sim::live::full::LuckDpCache::new(curve_bytes),
+            law_bounds: super::leaf::LawBounds::default(),
         })
     }
     pub(super) fn contains(&self, p: &PhysicalDeck) -> bool {
