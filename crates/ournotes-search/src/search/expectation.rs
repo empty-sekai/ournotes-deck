@@ -203,33 +203,58 @@ pub(crate) fn normalized_objective(objective: &Objective) -> Objective {
 
 /// Adapt a whole-live objective. Its legacy Gekisou seed list is NOT the root law here;
 /// the explicit root/law argument is authoritative.
-pub fn context(pool: &Pool, physical: &PhysicalDeck, objective: &Objective) -> Result<FiniteSeedContext, Error> {
+/// The live of an objective apart from any deck: what [`context`] plays a deck's performers in, at the deck's power.
+#[derive(Clone, Debug)]
+pub(crate) struct LiveSetting {
+    pub notes: Vec<LiveNote>,
+    pub events: Vec<(i32, i32)>,
+    pub play: LivePlay,
+    /// The parameters with a total power of 0.
+    pub params: LiveParams,
+    pub gekisou: Option<GekisouSetup>,
+    pub rank_confirmations: Option<Vec<ournotes_sim::replay::RankConfirmation>>,
+    pub delta_times: Vec<f32>,
+}
+
+pub(crate) fn live_setting(pool: &Pool, objective: &Objective) -> Result<LiveSetting, Error> {
     let objective = normalized_objective(objective);
-    let objective = &objective;
-    let deck = physical.as_deck();
-    pool.check_deck(&deck)?;
-    let (song, event, _) = objective_song(pool, objective)?;
-    let setup = full_setup(pool, objective)?.ok_or_else(|| {
+    let setup = full_setup(pool, &objective)?.ok_or_else(|| {
         Error::Input("native expectation requires a whole-live Stream objective with snap skills enabled".into())
     })?;
-    let power = pool.deck_power(&deck, song.as_ref(), event)?.power();
-    let performers = super::snaps::deck_performers(pool, &deck)?
-        .try_into()
-        .map_err(|_| Error::Input("exactly five physical performers required".into()))?;
     let (gekisou, delta_times, rank_confirmations) = match setup.gk {
         Some(g) => (Some(g.setup), g.dt, g.confirmations),
         None => (None, vec![0.0; setup.play.frames.len()], None),
     };
-    Ok(FiniteSeedContext {
-        physical: *physical,
-        performers,
+    Ok(LiveSetting {
         notes: setup.notes,
         events: setup.events,
         play: setup.play,
-        params: LiveParams { total_power: power, ..setup.params },
+        params: LiveParams { total_power: 0, ..setup.params },
         gekisou,
         rank_confirmations,
         delta_times,
+    })
+}
+
+pub fn context(pool: &Pool, physical: &PhysicalDeck, objective: &Objective) -> Result<FiniteSeedContext, Error> {
+    let deck = physical.as_deck();
+    pool.check_deck(&deck)?;
+    let live = live_setting(pool, objective)?;
+    let (song, event, _) = objective_song(pool, objective)?;
+    let power = pool.deck_power(&deck, song.as_ref(), event)?.power();
+    let performers = super::snaps::deck_performers(pool, &deck)?
+        .try_into()
+        .map_err(|_| Error::Input("exactly five physical performers required".into()))?;
+    Ok(FiniteSeedContext {
+        physical: *physical,
+        performers,
+        notes: live.notes,
+        events: live.events,
+        play: live.play,
+        params: LiveParams { total_power: power, ..live.params },
+        gekisou: live.gekisou,
+        rank_confirmations: live.rank_confirmations,
+        delta_times: live.delta_times,
         lottery_free: None,
     })
 }

@@ -259,6 +259,7 @@ impl JointBounds {
             choices,
             carrier_levels: None,
             carrier_split: None,
+            laws: laws.to_vec(),
         };
         compiled.compile_tables(pool, domain);
         if !compiled.gekisou {
@@ -324,6 +325,7 @@ impl JointBounds {
             choices: self.choices.clone(),
             carrier_levels: None,
             carrier_split: None,
+            laws: Vec::new(),
         };
         b.compile_tables(pool, domain);
         b

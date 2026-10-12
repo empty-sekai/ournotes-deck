@@ -63,6 +63,9 @@ pub(super) fn node_upper(
 ///
 /// The parts are disjoint and cover the domain. They share one Top-K and its canonical order. A failed part compile
 /// falls back to one pool-wide search.
+///
+/// Certified LUCK score: the Snaps with which a member takes no lottery kind are selected as well, and the bounds of
+/// the part without selected Snaps weigh the lottery laws of its teams (see `domain_laws`).
 pub(super) fn joint_regimes(
     p: &mut PhysicalDeck,
     plan: &crate::handler::ExecutionPlan,
@@ -71,9 +74,23 @@ pub(super) fn joint_regimes(
     e: &mut Engine<'_, '_>,
 ) -> Result<(), Error> {
     use crate::search::joint::{JointBounds, SLOTS, SlotRules};
-    let converting = bounds.conversion_snaps(&plan.domain);
+    let census = e.lottery_census(&plan.domain);
+    let mut converting = bounds.conversion_snaps(&plan.domain);
+    let conversion = converting.len();
+    for s in census.as_ref().map_or_else(Vec::new, |census| census.roles.breaking_snaps()) {
+        if !converting.contains(&s) {
+            converting.push(s);
+        }
+    }
     (e.rec.tracked, e.rec.bounded) = (true, true);
     if converting.is_empty() {
+        let weighed = census.as_ref().and_then(|census| e.weighed_bounds(census, &plan.domain));
+        let bounds = weighed.as_ref().unwrap_or(bounds);
+        if weighed.is_some() {
+            e.correlated = bounds.correlation_worthwhile(e.pool, &plan.domain, orders)?;
+            e.resource = !bounds.prefers_compositions()
+                && bounds.resource_worthwhile(e.pool, &plan.domain, orders, e.correlated)?;
+        }
         e.rec.begin(&mut e.tel, "search", None);
         ordered_root(p, &plan.domain, bounds, orders, e)?;
         e.rec.end(&mut e.tel);
@@ -123,7 +140,7 @@ pub(super) fn joint_regimes(
     }
     let total = parts.iter().map(|(_, rules)| rules.len() as u64).sum();
     e.tel.environment.bounds.conversion =
-        Some(telemetry::Conversion { snaps: converting.len(), parts: total as usize, ..Default::default() });
+        Some(telemetry::Conversion { snaps: conversion, parts: total as usize, ..Default::default() });
     e.rec.parts = total;
     let global_flags = (e.correlated, e.resource);
     // Parts are grouped by their shared envelope. Within a group each slot rule is visited once;
@@ -154,7 +171,12 @@ pub(super) fn joint_regimes(
         }
         e.rec.begin(&mut e.tel, "conversionCompile", None);
         let prepare = Instant::now();
-        let result = JointBounds::compile(e.pool, e.request, &domain, e.metric, e.event_input, e.simulation);
+        // The first part holds no selected Snap.
+        let weighed = census.as_ref().filter(|_| i == 0).and_then(|census| e.weighed_bounds(census, &domain));
+        let result = match weighed {
+            Some(weighed) => Ok(weighed),
+            None => JointBounds::compile(e.pool, e.request, &domain, e.metric, e.event_input, e.simulation),
+        };
         e.tel.environment.bounds.conversion.as_mut().expect("conversion context").compile_ms +=
             prepare.elapsed().as_secs_f64() * 1000.0;
         e.rec.end(&mut e.tel);

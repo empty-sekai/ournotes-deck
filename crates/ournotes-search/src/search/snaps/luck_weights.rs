@@ -61,6 +61,18 @@ impl<'l> LuckLaws<'l> {
         (!laws.is_empty()).then_some(Self { laws })
     }
 
+    /// Whether bounds under these laws cover a team whose performance orders have the laws `own`: each of them is
+    /// one of these laws, or equal to one in everything the bounds read.
+    pub(crate) fn cover(&self, own: &[Arc<LuckDpCertifiedResult>]) -> bool {
+        let same = |a: &LuckDpCertifiedResult, b: &LuckDpCertifiedResult| {
+            (a.steps == b.steps && a.frame_queries == b.frame_queries && a.probes == b.probes)
+                && (a.probe_transitions == b.probe_transitions && a.probe_starts == b.probe_starts)
+        };
+        own.iter().all(|law| {
+            self.laws.iter().any(|known| Arc::ptr_eq(known, law)) || self.laws.iter().any(|known| same(known, law))
+        })
+    }
+
     /// The starts of the direct-probe class over the laws with a probe holder, with a unit luck ratio: a team
     /// whose law has none runs no direct-Rush score up.
     pub(crate) fn probe_starts(&self) -> ProbeStarts {
@@ -221,6 +233,23 @@ mod tests {
             peak_states: 0,
             transitions: 0,
         })
+    }
+
+    #[test]
+    fn laws_cover_a_team_whose_laws_they_hold_or_read_alike() {
+        let (a, b) = (law([5, 1, 1, 3], true, vec![0b10], 1.0), law([6, 1, 1, 2], false, vec![0b00], 0.0));
+        let laws = [a.clone(), b];
+        let laws = LuckLaws::new(&laws).unwrap();
+        assert!(laws.cover(&[a.clone(), a.clone()]));
+        // Another law that reads as one of them in everything the bounds read.
+        let mut alike = (*a).clone();
+        (alike.peak_states, alike.transitions, alike.rush_transitions) = (7, 9, vec![1]);
+        assert!(laws.cover(&[Arc::new(alike), a.clone()]));
+        // A law with other masses, probes, probe frames or starts.
+        assert!(!laws.cover(&[a, law([5, 2, 1, 2], true, vec![0b10], 1.0)]));
+        assert!(!laws.cover(&[law([5, 1, 1, 3], false, vec![0b10], 1.0)]));
+        assert!(!laws.cover(&[law([5, 1, 1, 3], true, vec![0b11], 1.0)]));
+        assert!(!laws.cover(&[law([5, 1, 1, 3], true, vec![0b10], 0.5)]));
     }
 
     #[test]

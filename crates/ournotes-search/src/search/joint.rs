@@ -131,6 +131,8 @@ pub(crate) struct JointBounds {
     carrier_levels: Option<CarrierLevels>,
     /// With carrier keys: the node bounds split by the carriers of the slots to fill (see `carrier_split`).
     carrier_split: Option<carrier_split::CarrierSplit>,
+    /// The lottery laws the bounds weigh (see [`JointBounds::compile_with_laws`]).
+    laws: Vec<std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>>,
 }
 
 /// The cheap bounds of decks with at most `n < 5` Gekisou combo carriers (a slot whose member and Snap bring combo
@@ -192,6 +194,17 @@ impl JointBounds {
             Some(levels) => levels.at.iter().skip(n).flatten().next().map_or(self, |b| b),
             None => self,
         }
+    }
+
+    /// The lottery laws the bounds weigh; empty when every note takes its largest luck factor.
+    pub(crate) fn laws(&self) -> &[std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>] {
+        &self.laws
+    }
+
+    /// Whether the bounds cover a team whose performance orders have the lottery laws `own`: they weigh no law, or
+    /// each of `own` is among their laws.
+    pub(crate) fn cover_laws(&self, own: &[std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>]) -> bool {
+        crate::search::snaps::LuckLaws::new(&self.laws).is_none_or(|laws| laws.cover(own))
     }
 
     /// Whether a member and choice of the domain is a Gekisou combo carrier (false without carrier levels).

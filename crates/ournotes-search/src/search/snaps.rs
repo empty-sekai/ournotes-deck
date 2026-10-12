@@ -134,12 +134,13 @@ use gk_schedule::*;
 pub(crate) use gk_schedule::{CarrierKeys, KeyedEnvelope};
 use gk_windows::*;
 use leaf_search::*;
+pub(crate) use luck_weights::LuckLaws;
 use luck_weights::*;
 use rows::*;
 pub(crate) use rush::RushMasks;
 use score_windows::*;
 use setup::*;
-pub(crate) use setup::{FullSetup, deck_performers};
+pub(crate) use setup::{FullSetup, deck_performers, performer};
 pub(crate) use snap_live::SnapLive;
 use snap_live::*;
 

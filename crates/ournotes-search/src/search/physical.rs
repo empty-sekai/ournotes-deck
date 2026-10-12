@@ -27,6 +27,8 @@ mod certified_engine;
 use certified_engine::CertifiedState;
 #[path = "deck_payoff_search.rs"]
 mod deck_payoff_search;
+#[path = "domain_laws.rs"]
+mod domain_laws;
 mod engine;
 mod entry;
 mod enumeration;

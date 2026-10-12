@@ -189,9 +189,12 @@ impl Engine<'_, '_> {
                 let skills = self.certified_luck_skills()?;
                 let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
                 // The laws of the team's own orders: caps under them can prove the team below the K-th, and the
-                // evaluation takes them as they are.
+                // evaluation takes them as they are. Bounds that weigh the laws of the team's domain must cover them.
                 let mut laws = None;
-                if let (Some((_, domain)), Some(cutoff), Metric::Score) = (cut, self.safe_cutoff(), self.metric) {
+                let cutoff = self.safe_cutoff();
+                if let (Some((bounds, domain)), Metric::Score) = (cut, self.metric)
+                    && (cutoff.is_some() || !bounds.laws().is_empty())
+                {
                     let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
                     let state = self.certified.as_mut().expect("certified request");
                     let class_bytes = state.class_bytes;
@@ -199,18 +202,33 @@ impl Engine<'_, '_> {
                         .luck_classes
                         .take()
                         .unwrap_or_else(|| ournotes_sim::live::full::LuckOrderClasses::new(master, class_bytes));
-                    laws = crate::search::certified_search::luck_order_laws(
+                    let found = crate::search::certified_search::luck_order_laws(
                         master,
                         &skills,
                         &input,
                         &mut curves,
                         Some(&mut classes),
-                    )
-                    .ok();
+                    );
                     self.tel.caches.luck_classes.record(classes.stats());
                     self.certified.as_mut().expect("certified request").luck_classes = Some(classes);
                     self.rec.clock.lap(resume);
-                    if let Some(laws) = &laws
+                    if !bounds.laws().is_empty() {
+                        match &found {
+                            Ok(own) if bounds.cover_laws(own) => self.tel.leaves.law_audits += 1,
+                            Ok(_) => {
+                                return Err(Error::Domain(
+                                    "a team's lottery laws are not among the laws its domain's bounds weigh".into(),
+                                ));
+                            }
+                            Err(error) => {
+                                return Err(Error::Domain(format!(
+                                    "a team under the lottery laws of its domain has no laws of its own: {error}"
+                                )));
+                            }
+                        }
+                    }
+                    laws = found.ok();
+                    if let (Some(laws), Some(cutoff)) = (&laws, cutoff)
                         && self.below_under_laws(domain, physical, power, laws, cutoff)
                     {
                         self.tel.caches.luck_curves.record(curves.stats());

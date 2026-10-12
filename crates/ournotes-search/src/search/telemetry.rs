@@ -218,6 +218,8 @@ pub struct BoundSetup {
     pub class_search: bool,
     pub pt_regime: Option<PtRegime>,
     pub conversion: Option<Conversion>,
+    /// The census of the lottery laws of the domain's teams (certified score searches of a Gekisou live).
+    pub domain_laws: Option<DomainLaws>,
     /// The deck payoff ranking (`deckPayoff` search) of the plan, or why a played Live has none.
     pub deck_payoff: Option<DeckPayoffSetup>,
 }
@@ -256,6 +258,29 @@ pub struct Conversion {
     pub prepared_domains: usize,
     pub fallback: Option<String>,
     pub compile_ms: f64,
+}
+
+/// The lottery laws of every team of a domain, read from one formation per multiset of lottery kinds.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainLaws {
+    /// Lottery kinds of the plan domain's members with each Snap choice.
+    pub kinds: usize,
+    /// Snaps searched in parts of their own because a member takes no lottery kind with them.
+    pub separated_snaps: usize,
+    /// Domains whose census ran, and those whose bounds weigh the laws read.
+    pub censuses: usize,
+    pub weighed: usize,
+    /// Of the last census: member profiles, Snap types, multisets of kinds and their distinct laws.
+    pub profiles: usize,
+    pub snap_types: usize,
+    pub classes: usize,
+    pub laws: usize,
+    pub roles_ms: f64,
+    pub laws_ms: f64,
+    pub compile_ms: f64,
+    /// Why the last census read no laws, or its bounds did not compile.
+    pub unavailable: Option<String>,
 }
 
 /// Proof status. `upperBound` is a true upper bound of the payoff numerator of every deck the search has not
@@ -402,6 +427,8 @@ pub struct Leaves {
     /// own orders stay below the K-th, and the bounds compiled for such laws.
     pub law_pruned: u64,
     pub law_bounds: u64,
+    /// LUCK teams under bounds that weigh the laws of their domain whose own laws were found among those.
+    pub law_audits: u64,
     pub cutoff: Cutoff,
     pub order_tree: OrderTree,
     pub peak_retained: usize,
