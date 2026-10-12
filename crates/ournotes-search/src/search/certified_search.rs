@@ -559,8 +559,8 @@ pub fn luck_order_laws(
 
 /// The expected native score of every performance order from one joint evaluation of the formation
 /// ([`ournotes_sim::live::full::luck_exact_orders`]), in the declared context as [`evaluate_luck_context`] reads it.
-/// `laws` holds the formation's [`luck_order_laws`] when the caller has them. None when cancelled before the
-/// evaluation starts.
+/// `laws` holds the formation's [`luck_order_laws`] when the caller has them. With the evaluation, how it went
+/// ([`LuckExactReport`]). None when cancelled before the evaluation starts.
 pub fn evaluate_luck_exact(
     master: &ournotes_sim::master::Master,
     skills: &ournotes_sim::live::full::LuckSkills,
@@ -569,7 +569,7 @@ pub fn evaluate_luck_exact(
     laws: Option<&[LuckLaw]>,
     curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
     mut cancelled: impl FnMut() -> bool,
-) -> Result<Option<CertifiedEvaluation>, Error> {
+) -> Result<Option<(CertifiedEvaluation, LuckExactReport)>, Error> {
     let setup = input.gekisou.as_ref().ok_or_else(|| invalid("LUCK requires Gekisou context"))?;
     if cancelled() {
         return Ok(None);
@@ -629,7 +629,16 @@ pub fn evaluate_luck_exact(
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    aggregate_orders(orders, map).map(Some)
+    let report = LuckExactReport { alone: joint.alone, replays: joint.replays, profile: joint.profile };
+    Ok(Some((aggregate_orders(orders, map)?, report)))
+}
+
+/// How a joint evaluation of the orders of a formation went: why its orders were not spliced from the recordings of
+/// the rotations (None when they were), the replays it ran, and its work.
+pub struct LuckExactReport {
+    pub alone: Option<String>,
+    pub replays: usize,
+    pub profile: ournotes_sim::live::full::LuckExactOrdersProfile,
 }
 
 /// The actual all-path LUCK scorer in a normal native or WASM build. Performers are permuted before constructing

@@ -278,8 +278,13 @@ pub struct DomainLaws {
     pub snap_types: usize,
     pub classes: usize,
     pub laws: usize,
+    /// Formations read over every census, and the time the censuses took to enumerate them and to build their
+    /// performers, within `laws_ms`.
+    pub formations: usize,
     pub roles_ms: f64,
     pub laws_ms: f64,
+    pub classes_ms: f64,
+    pub performers_ms: f64,
     pub compile_ms: f64,
     /// Why the last census read no laws, or its bounds did not compile.
     pub unavailable: Option<String>,
@@ -440,6 +445,13 @@ pub struct Leaves {
     /// whose orders the all-path bounds evaluated instead.
     pub exact_teams: u64,
     pub exact_declined: u64,
+    /// LUCK teams evaluated jointly whose orders were spliced from the recordings of their rotations, and the others
+    /// by why the splice does not cover them (their orders then evaluated one by one under their laws).
+    pub spliced: u64,
+    pub unspliced: BTreeMap<String, u64>,
+    /// The joint evaluations: replays run, and the time their models, lottery laws, rotation recordings and
+    /// evaluations took (diagnostic builds).
+    pub exact: ExactWork,
     /// LUCK teams dropped before their evaluation because their raw and fine caps under the lottery laws of their
     /// own orders stay below the K-th, and the bounds compiled for such laws.
     pub law_pruned: u64,
@@ -452,6 +464,33 @@ pub struct Leaves {
     /// Diagnostics only: the census of the teams the caps leave open at a fixed threshold (`set_census`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub census: Option<Census>,
+}
+
+/// The work of the joint evaluations of LUCK teams.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExactWork {
+    pub replays: u64,
+    pub setup_ms: f64,
+    pub law_ms: f64,
+    pub record_ms: f64,
+    pub evaluate_ms: f64,
+}
+
+impl Leaves {
+    /// Count a joint evaluation of a LUCK team.
+    pub(crate) fn record_exact(&mut self, report: crate::search::certified_search::LuckExactReport) {
+        match report.alone {
+            None => self.spliced += 1,
+            Some(why) => *self.unspliced.entry(why).or_default() += 1,
+        }
+        let ExactWork { replays, setup_ms, law_ms, record_ms, evaluate_ms } = &mut self.exact;
+        *replays += report.replays as u64;
+        *setup_ms += report.profile.setup_ms;
+        *law_ms += report.profile.law_ms;
+        *record_ms += report.profile.record_ms;
+        *evaluate_ms += report.profile.evaluate_ms;
+    }
 }
 
 /// The teams whose per-order caps reach a census threshold, counted instead of simulated.

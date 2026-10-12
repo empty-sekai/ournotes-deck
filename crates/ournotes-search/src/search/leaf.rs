@@ -245,7 +245,10 @@ impl Engine<'_, '_> {
                 ) {
                     Ok(result) => {
                         self.tel.leaves.exact_teams += u64::from(result.is_some());
-                        Ok(result)
+                        Ok(result.map(|(evaluation, report)| {
+                            self.tel.leaves.record_exact(report);
+                            evaluation
+                        }))
                     }
                     Err(_) => {
                         self.tel.leaves.exact_declined += 1;

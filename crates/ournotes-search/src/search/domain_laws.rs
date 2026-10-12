@@ -300,14 +300,18 @@ fn domain_laws(
         kinds.push(row);
     }
     let characters: Vec<i64> = domain.members().iter().map(|&m| pool.members[m].character_id).collect();
+    let started = Instant::now();
     let found = kind_classes(&characters, &kinds, &mut cancelled).ok_or("the search stopped")?;
+    stats.classes_ms += started.elapsed().as_secs_f64() * 1000.0;
     (stats.profiles, stats.snap_types, stats.classes) = (found.profiles, found.snap_types, found.formations.len());
+    stats.formations += found.formations.len();
     let orders = crate::search::uniform::all_orders();
     let mut laws: Vec<LuckLaw> = Vec::new();
     for formation in &found.formations {
         if cancelled() {
             return Err("the search stopped".into());
         }
+        let started = Instant::now();
         let deck = formation
             .iter()
             .map(|&(i, j)| {
@@ -316,6 +320,7 @@ fn domain_laws(
             })
             .collect::<Result<Vec<_>, Error>>()
             .map_err(|error| error.to_string())?;
+        stats.performers_ms += started.elapsed().as_secs_f64() * 1000.0;
         let found =
             luck_order_laws(&live, &deck, &orders, curves, Some(&mut *lottery)).map_err(|error| error.to_string())?;
         for law in found {
