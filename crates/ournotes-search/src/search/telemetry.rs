@@ -708,6 +708,8 @@ pub struct LuckClasses {
     /// Teams whose lottery conditions take no key, and lives that replaced the held one.
     pub unkeyed: u64,
     pub lives: u64,
+    /// Native recordings of key misses, shared by teams with the same lot and gauge factor skills.
+    pub skeletons: CacheUse,
 }
 
 impl LuckClasses {
@@ -722,6 +724,12 @@ impl LuckClasses {
             peak_key_bytes: stats.peak_key_bytes,
             unkeyed: stats.unkeyed,
             lives: stats.lives,
+            skeletons: CacheUse {
+                lookups: stats.skeleton_lookups,
+                hits: stats.skeleton_hits,
+                evictions: stats.skeleton_evictions,
+                peak_entries: stats.skeleton_peak_entries,
+            },
         };
     }
 }

@@ -402,7 +402,7 @@ fn order_classes_serve_formations_with_the_same_lottery_conditions() {
     // Live skills and the total power are no lottery condition: a formation that changes them takes the classes of
     // the first, and they hold the laws its own recordings give. Moving a guarantee to another performer changes the
     // conditions, a live skill that may convert a judgement of the play takes no key, and another play drops the
-    // classes.
+    // classes. The recordings of formations with the same lot and gauge factor skills share their native run.
     let first = formation(&[(16, 12006, 4, 0)], &[], &[(1, 11005, 3), (2, 11005, 4)]);
     let (master, deck, notes, events, params, setup, play, delta) = &first;
     let skills = luck_skills(master).unwrap();
@@ -431,9 +431,14 @@ fn order_classes_serve_formations_with_the_same_lottery_conditions() {
         let stats = classes.stats();
         (stats.lookups, stats.hits, stats.unkeyed, stats.lives)
     };
+    let skeletons = |classes: &LuckOrderClasses<'_>| {
+        let stats = classes.stats();
+        (stats.skeleton_lookups, stats.skeleton_hits)
+    };
     let recorded = laws(deck, *params, play, Some(&mut classes)).unwrap();
     assert_eq!(recorded, laws(deck, *params, play, None).unwrap());
     assert_eq!(counts(&classes), (2, 0, 0, 1));
+    assert_eq!(skeletons(&classes), (2, 1));
 
     let mut other = deck.clone();
     other.swap(0, 4);
@@ -443,12 +448,14 @@ fn order_classes_serve_formations_with_the_same_lottery_conditions() {
     let fresh = laws(&other, other_params, play, None).unwrap();
     assert_eq!(laws(&other, other_params, play, Some(&mut classes)).unwrap(), fresh);
     assert_eq!(counts(&classes), (4, 2, 0, 1));
+    assert_eq!(skeletons(&classes), (2, 1));
 
     let mut moved = deck.clone();
     (moved[2].gekisou_skill, moved[3].gekisou_skill) = (None, moved[2].gekisou_skill);
     let fresh = laws(&moved, *params, play, None).unwrap();
     assert_eq!(laws(&moved, *params, play, Some(&mut classes)).unwrap(), fresh);
     assert_eq!(counts(&classes), (6, 2, 0, 1));
+    assert_eq!(skeletons(&classes), (4, 3));
 
     let mut converting = deck.clone();
     converting[4].live_skill = Some((16, 1));
@@ -461,6 +468,7 @@ fn order_classes_serve_formations_with_the_same_lottery_conditions() {
     let fresh = laws(deck, *params, &other_play, None).unwrap();
     assert_eq!(laws(deck, *params, &other_play, Some(&mut classes)).unwrap(), fresh);
     assert_eq!(counts(&classes), (8, 2, unkeyed, 2));
+    assert_eq!(skeletons(&classes), (6, 4));
 }
 
 #[test]

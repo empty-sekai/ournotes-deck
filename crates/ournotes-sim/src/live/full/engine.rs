@@ -405,6 +405,14 @@ impl ConditionSkillUpdater {
         &self.effects
     }
 
+    /// Renumber the effect rows, for a model whose row list is renumbered the same way. The rows are read only
+    /// through these numbers.
+    pub(super) fn renumber_rows(&mut self, mut number: impl FnMut(usize) -> usize) {
+        for effect in &mut self.effects {
+            effect.row = number(effect.row);
+        }
+    }
+
     /// Relabel identities on a private cache-key snapshot, never on an executing model. Keep the
     /// already compiled order and all aliases: native wrapping may make that order differ from row
     /// order, and distinct updater pools can share the same actual state key.

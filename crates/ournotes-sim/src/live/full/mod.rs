@@ -844,14 +844,14 @@ fn effect_phases(master: &Master) -> FxHashMap<i64, i64> {
 }
 
 /// The condition skills that hold an effect and the effect rows of a live with Gekisou built for `deck` with the
-/// lottery-related rows of `lottery` ([`LiveModel::build`]), as text: `deck` holds no live or support skill, so these
-/// are everything the build reads of its performers. A condition skill without an effect only reads the Gekisou gate.
-pub(super) fn lottery_conditions_text(
+/// lottery-related rows of `lottery` ([`LiveModel::build`]): `deck` holds no live or support skill, so these are
+/// everything the build reads of its performers. A condition skill without an effect only reads the Gekisou gate.
+fn lottery_conditions(
     master: &Master,
     deck: &[Performer],
     skill_target_music_type: i64,
     lottery: &LuckSkills,
-) -> Result<String, Error> {
+) -> Result<(Vec<CondSkill>, Vec<EffectRow>), Error> {
     if deck.iter().any(|p| p.live_skill.is_some() || !p.support_skills.is_empty()) {
         return Err(Error::Input(
             "the lottery conditions are those of performers without live or support skills".into(),
@@ -864,7 +864,46 @@ pub(super) fn lottery_conditions_text(
     let (mut cond, mut rows) = (Vec::new(), Vec::new());
     gekisou_conditions(&factory, &phase, None, Some(lottery), &mut cond, &mut rows)?;
     cond.retain(|skill| !skill.updater.effects().is_empty());
+    Ok((cond, rows))
+}
+
+/// [`lottery_conditions`] as text.
+pub(super) fn lottery_conditions_text(
+    master: &Master,
+    deck: &[Performer],
+    skill_target_music_type: i64,
+    lottery: &LuckSkills,
+) -> Result<String, Error> {
+    let (cond, rows) = lottery_conditions(master, deck, skill_target_music_type, lottery)?;
     Ok(format!("{rows:?}/{cond:?}"))
+}
+
+/// The lottery-dependent note score-ups of the Gekisou (support) condition skills `cond` with effect rows `rows`
+/// ([`luck_skills`]).
+fn luck_score_rows(cond: &[CondSkill], rows: &[EffectRow], skills: &LuckSkills) -> Vec<LuckScoreRow> {
+    let mut out = Vec::new();
+    for c in cond {
+        let (source, owner_type) = match c.skill_type {
+            SKILL_TYPE_GEKISOU => (LuckSource::Gekisou, OWNER_MEMBER),
+            SKILL_TYPE_GEKISOU_SUPPORT => (LuckSource::GekisouSupport, OWNER_SNAP),
+            _ => continue,
+        };
+        for e in c.updater.effects() {
+            let row = &rows[e.row];
+            let Some(&shape) = skills.rows.get(&(source, row.id)) else { continue };
+            let divisor = if row.effect_type == 2005 { -10000f32 } else { 10000f32 };
+            let m = note_factor_mill(row.effect_value as f32 / divisor);
+            out.push(LuckScoreRow {
+                row: e.row,
+                member: c.member,
+                owner: (c.member as i32).wrapping_mul(100).wrapping_add(owner_type),
+                shape,
+                value: if m != 0 { m as f32 / 100000f32 } else { 0f32 },
+                may_hold: [&e.trigger, &e.condition].into_iter().flatten().all(Checker::may_hold),
+            });
+        }
+    }
+    out
 }
 
 impl LiveModel {
@@ -1392,29 +1431,7 @@ impl LiveModel {
 
     /// The lottery-dependent note score-ups of this live's Gekisou (support) skills ([`luck_skills`]).
     pub(crate) fn luck_score_rows(&self, skills: &LuckSkills) -> Vec<LuckScoreRow> {
-        let mut out = Vec::new();
-        for c in &self.cond {
-            let (source, owner_type) = match c.skill_type {
-                SKILL_TYPE_GEKISOU => (LuckSource::Gekisou, OWNER_MEMBER),
-                SKILL_TYPE_GEKISOU_SUPPORT => (LuckSource::GekisouSupport, OWNER_SNAP),
-                _ => continue,
-            };
-            for e in c.updater.effects() {
-                let row = &self.rows[e.row];
-                let Some(&shape) = skills.rows.get(&(source, row.id)) else { continue };
-                let divisor = if row.effect_type == 2005 { -10000f32 } else { 10000f32 };
-                let m = note_factor_mill(row.effect_value as f32 / divisor);
-                out.push(LuckScoreRow {
-                    row: e.row,
-                    member: c.member,
-                    owner: (c.member as i32).wrapping_mul(100).wrapping_add(owner_type),
-                    shape,
-                    value: if m != 0 { m as f32 / 100000f32 } else { 0f32 },
-                    may_hold: [&e.trigger, &e.condition].into_iter().flatten().all(Checker::may_hold),
-                });
-            }
-        }
-        out
+        luck_score_rows(&self.cond, &self.rows, skills)
     }
 
     /// Whether a trigger, condition, reset or release of the deck's effects reads the lottery or a probability.

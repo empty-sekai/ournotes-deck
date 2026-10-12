@@ -765,9 +765,12 @@ fn consume_bound(frames: usize, mut judgements: impl Iterator<Item = usize>) -> 
     Ok(())
 }
 
+/// The plan of the lottery condition skills `cond` with effect rows `rows` ([`lottery_conditions`]): their actions,
+/// the score probes and the pairs of performers whose actions in one phase differ.
 fn compile<M: Mass>(
     master: &Master,
-    model: &mut LiveModel,
+    cond: &[CondSkill],
+    rows: &[EffectRow],
     skills: &LuckSkills,
     probes: Option<&[Option<usize>]>,
     collect_moments: bool,
@@ -775,10 +778,10 @@ fn compile<M: Mass>(
     let mut plan = Plan::default();
     // Per phase: the performer and the actions of each condition skill that holds some.
     let mut phase_actions: [Vec<(usize, Vec<String>)>; 2] = [Vec::new(), Vec::new()];
-    for condition in &model.cond {
+    for condition in cond {
         let first = plan.actions.len();
         for (effect_index, effect) in condition.updater.effects().iter().enumerate() {
-            let row = &model.rows[effect.row];
+            let row = &rows[effect.row];
             let fail = |why| unsupported(row, why);
             if !matches!(effect.phase, 1 | 2) {
                 return Err(fail("effect phase is outside the native two phases"));
@@ -964,7 +967,7 @@ fn compile<M: Mass>(
     // Stable phase ordering matches the interpreter: all updater checks, then appliers in list/row order,
     // separately for phase 1 and phase 2. Rows within one condition skill are already sorted by effect id.
     plan.actions.sort_by_key(|action| action.0);
-    let rows = model.luck_score_rows(skills);
+    let rows = luck_score_rows(cond, rows, skills);
     for shape in 0..skills.shapes.len() {
         let member = match probes {
             Some(probes) => probes[shape],
@@ -1606,9 +1609,9 @@ fn run<M: Mass>(
     )?)
 }
 
-/// Everything the lottery-state propagation reads, recorded from the reduced native interpreter and the optional
-/// deterministic life recorder. [`propagate`] is a function of this value alone: equal transcripts give the same
-/// curve, bit for bit.
+/// Everything the lottery-state propagation reads: the native frames of a recording ([`Skeleton`]) with the actions
+/// of its plan ([`file`]). [`propagate`] is a function of this value alone: equal transcripts give the same curve,
+/// bit for bit.
 struct Transcript<M> {
     collect_moments: bool,
     templates: Vec<LuckScore>,
@@ -1704,8 +1707,8 @@ fn same_actions<M: Mass>(a: &[Action<M>], b: &[Action<M>]) -> bool {
 }
 
 impl<M: Mass> Transcript<M> {
-    /// Append a recorded frame, merged into the previous frame when both are quiet with equal records. The merged
-    /// frame's later times are never read: a quiet frame files no weights.
+    /// Append a recorded frame (`repeat` frames with equal records), merged into the previous frame when both are
+    /// quiet with equal records. The merged frame's later times are never read: a quiet frame files no weights.
     fn push_frame(&mut self, frame: Frame) {
         let n = self.frames.len();
         let notes_from = self.frames.last().map_or(0, |f| f.notes);
@@ -1720,7 +1723,7 @@ impl<M: Mass> Transcript<M> {
             let previous = self.frames[n - 1];
             let (previous_notes, previous_actions, previous_pending) = from(n - 1);
             if previous.quiet(previous_notes)
-                && previous.repeat < u32::MAX
+                && previous.repeat.checked_add(frame.repeat).is_some()
                 && (previous.gate, previous.current_luck, previous.target)
                     == (frame.gate, frame.current_luck, frame.target)
                 && same_actions(
@@ -1731,7 +1734,7 @@ impl<M: Mass> Transcript<M> {
             {
                 self.actions.truncate(previous.actions);
                 self.pending.truncate(previous.pending);
-                self.frames[n - 1].repeat += 1;
+                self.frames[n - 1].repeat += frame.repeat;
                 return;
             }
         }
@@ -1813,7 +1816,7 @@ impl<M: Mass> Transcript<M> {
 #[serde(rename_all = "camelCase")]
 pub struct LuckRecordProfile {
     pub calls: u64,
-    /// Recordings whose reduced model kept no condition skill, and recordings that ran the life recorder.
+    /// Recordings without a lottery condition skill, and recordings that ran the life recorder.
     pub without_skills: u64,
     pub with_life: u64,
     pub total_ms: f64,
@@ -1903,11 +1906,14 @@ fn record<M: Mass>(
     )
 }
 
+/// What a recording takes besides the live: the reduced performers, their lottery condition skills with the effect
+/// rows ([`lottery_conditions`]) and plan, and the complete formation when the recording reads its life.
 struct PreparedRecording<M> {
-    model: LiveModel,
-    life: Option<LiveModel>,
-    life_deck: Option<Vec<Performer>>,
+    reduced: Vec<Performer>,
+    cond: Vec<CondSkill>,
+    rows: Vec<EffectRow>,
     plan: Plan<M>,
+    life_deck: Option<Vec<Performer>>,
     collect_moments: bool,
 }
 
@@ -1943,6 +1949,9 @@ pub(crate) struct OrderClass {
 /// convert a judgement of the play ([`luck_play_converts`]) records the life of the complete formation and takes no
 /// key, and so does a class whose actions read the life. The checks of the complete formation that precede a
 /// recording run on every lookup, and a formation they refuse takes no key.
+///
+/// A recording without a life recorder takes its native part from the skeleton of its lot and gauge factor skills
+/// ([`record_skeleton`]), which the classes hold for the formations of the live that share those skills.
 pub struct LuckOrderClasses<'m> {
     master: &'m Master,
     live: Option<ClassLive>,
@@ -1950,8 +1959,14 @@ pub struct LuckOrderClasses<'m> {
     order: std::collections::VecDeque<std::sync::Arc<[u8]>>,
     bytes: usize,
     capacity_bytes: usize,
+    /// The skeletons of recordings without a life recorder, keyed by [`skeleton_key`], at most [`SKELETONS`].
+    skeletons: FxHashMap<Vec<u8>, std::sync::Arc<Skeleton>>,
+    skeleton_order: std::collections::VecDeque<Vec<u8>>,
     stats: LuckOrderClassStats,
 }
+
+/// The skeletons a [`LuckOrderClasses`] holds.
+const SKELETONS: usize = 32;
 
 /// Use of a [`LuckOrderClasses`].
 #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
@@ -1966,6 +1981,12 @@ pub struct LuckOrderClassStats {
     pub evictions: u64,
     pub peak_entries: usize,
     pub peak_key_bytes: usize,
+    /// Recordings of a formation without a key hit that looked up their skeleton, the lookups that found it, the
+    /// skeletons dropped, and the most held at once.
+    pub skeleton_lookups: u64,
+    pub skeleton_hits: u64,
+    pub skeleton_evictions: u64,
+    pub skeleton_peak_entries: usize,
 }
 
 /// The live of a [`LuckOrderClasses`]: the total power cleared, binary32 values by bit pattern.
@@ -2037,6 +2058,8 @@ impl<'m> LuckOrderClasses<'m> {
             order: std::collections::VecDeque::new(),
             bytes: 0,
             capacity_bytes,
+            skeletons: FxHashMap::default(),
+            skeleton_order: std::collections::VecDeque::new(),
             stats: LuckOrderClassStats::default(),
         }
     }
@@ -2073,6 +2096,8 @@ impl<'m> LuckOrderClasses<'m> {
             self.entries.clear();
             self.order.clear();
             self.bytes = 0;
+            self.skeletons.clear();
+            self.skeleton_order.clear();
             self.live = Some(ClassLive {
                 skills: skills.clone(),
                 notes: notes.to_vec(),
@@ -2095,6 +2120,29 @@ impl<'m> LuckOrderClasses<'m> {
         key.map(|key| key.into_bytes().into())
     }
 
+    /// The skeleton under `key` in the held live, recorded by `record` when not held.
+    fn skeleton(
+        &mut self,
+        key: Vec<u8>,
+        record: impl FnOnce() -> Result<Skeleton, Error>,
+    ) -> Result<std::sync::Arc<Skeleton>, Error> {
+        self.stats.skeleton_lookups += 1;
+        if let Some(found) = self.skeletons.get(&key) {
+            self.stats.skeleton_hits += 1;
+            return Ok(found.clone());
+        }
+        let skeleton = std::sync::Arc::new(record()?);
+        if self.skeleton_order.len() == SKELETONS {
+            let oldest = self.skeleton_order.pop_front().expect("held skeletons");
+            self.skeletons.remove(&oldest);
+            self.stats.skeleton_evictions += 1;
+        }
+        self.skeleton_order.push_back(key.clone());
+        self.skeletons.insert(key, skeleton.clone());
+        self.stats.skeleton_peak_entries = self.stats.skeleton_peak_entries.max(self.skeletons.len());
+        Ok(skeleton)
+    }
+
     fn insert(&mut self, key: std::sync::Arc<[u8]>, class: Option<OrderClass>) {
         if key.len() > self.capacity_bytes {
             return;
@@ -2115,8 +2163,7 @@ impl<'m> LuckOrderClasses<'m> {
 
 impl RecordingCache {
     fn key(prepared: &PreparedRecording<ProbabilityMass>) -> Vec<u8> {
-        let conditions: Vec<_> =
-            prepared.model.cond.iter().filter(|skill| !skill.updater.effects().is_empty()).collect();
+        let conditions = &prepared.cond;
         let activation_bits: Vec<_> = conditions
             .iter()
             .map(|skill| skill.updater.effects().iter().map(|effect| effect.act.to_bits()).collect::<Vec<_>>())
@@ -2137,15 +2184,8 @@ impl RecordingCache {
             })
             .collect();
         let mut key = format!(
-            "{:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}",
-            prepared.model.rows,
-            conditions,
-            prepared.model.gk_appliers,
-            prepared.model.gk,
-            prepared.life_deck,
-            prepared.plan.probes,
-            actions,
-            activation_bits,
+            "{:?}/{:?}/{:?}/{:?}/{:?}/{:?}",
+            prepared.rows, conditions, prepared.life_deck, prepared.plan.probes, actions, activation_bits,
         )
         .into_bytes();
         if prepared.collect_moments {
@@ -2215,49 +2255,35 @@ fn reduced_deck(deck: &[Performer]) -> Vec<Performer> {
         .collect()
 }
 
-/// The reduced model of `deck`, its plan, and the life recorder of the complete formation when the recording reads
-/// it: when an action reads the life, or a held conversion can change a judgement of the play. Otherwise every
-/// judgement reaches the controller as declared and no action reads a phase life.
+/// The lottery condition skills of the reduced performers of `deck` with their plan, and whether the recording reads
+/// the life of the complete formation: when an action reads the life, or a held conversion can change a judgement of
+/// the play. Otherwise every judgement reaches the controller as declared and no action reads a phase life.
 #[allow(clippy::too_many_arguments)]
 fn prepare_recording<M: Mass>(
     master: &Master,
     skills: &LuckSkills,
     notes: &[LiveNote],
-    skill_events: &[(i32, i32)],
     params: LiveParams,
-    setup: &GekisouSetup,
     play: &LivePlay,
     delta_times: &[f32],
     deck: &[Performer],
     probes: Option<&[Option<usize>]>,
-    ranking: Option<&[crate::replay::RankConfirmation]>,
     collect_moments: bool,
 ) -> Result<PreparedRecording<M>, Error> {
     check_recording(master, skills, play, delta_times, probes, deck)?;
     let reduced = reduced_deck(deck);
-    let mut model =
-        LiveModel::build(master, &reduced, notes, &[], params, Some(setup), ranking.is_some(), None, Some(skills))?;
-    if let Some(ranking) = ranking {
-        model.set_rank_confirmation_timeline(ranking)?;
-    }
-    let plan = compile::<M>(master, &mut model, skills, probes, collect_moments)?;
+    let (cond, rows) = lottery_conditions(master, &reduced, params.skill_target_music_type, skills)?;
+    let plan = compile::<M>(master, &cond, &rows, skills, probes, collect_moments)?;
     count(|p| &mut p.calls);
-    if model.cond.is_empty() {
+    if cond.is_empty() {
         count(|p| &mut p.without_skills);
     }
-    let life = if plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life))
-        || luck_play_converts(master, deck, notes, play)
-    {
+    let life = plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life))
+        || luck_play_converts(master, deck, notes, play);
+    if life {
         count(|p| &mut p.with_life);
-        Some(timed(
-            |p| &mut p.life_setup_ms,
-            || life_recorder(master, deck, notes, skill_events, params, setup, ranking),
-        )?)
-    } else {
-        None
-    };
-    let life_deck = life.as_ref().map(|_| deck.to_vec());
-    Ok(PreparedRecording { model, life, life_deck, plan, collect_moments })
+    }
+    Ok(PreparedRecording { reduced, cond, rows, plan, life_deck: life.then(|| deck.to_vec()), collect_moments })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2275,7 +2301,9 @@ fn record_frames<M: Mass>(
     ranking: Option<&[crate::replay::RankConfirmation]>,
     collect_moments: bool,
 ) -> Result<Transcript<M>, Error> {
-    let prepared = prepare_recording(
+    let prepared =
+        prepare_recording::<M>(master, skills, notes, params, play, delta_times, deck, probes, collect_moments)?;
+    let skeleton = record_skeleton(
         master,
         skills,
         notes,
@@ -2284,44 +2312,115 @@ fn record_frames<M: Mass>(
         setup,
         play,
         delta_times,
-        deck,
-        probes,
+        &prepared.reduced,
+        prepared.life_deck.as_deref(),
         ranking,
-        collect_moments,
-    )?;
-    Ok(record_prepared(prepared, notes, play, delta_times, &mut || false, None)?.expect("complete recording"))
+        &mut || false,
+    )?
+    .expect("an uncancelled recording");
+    Ok(file(&skeleton, &prepared.plan, collect_moments))
 }
 
-fn record_prepared<M: Mass>(
-    prepared: PreparedRecording<M>,
+/// Keep the condition skills that hold a lot or gauge factor (11000, 11001), with the effect rows they read
+/// renumbered in the order they are first read.
+fn factor_skills(cond: &mut Vec<CondSkill>, rows: &mut Vec<EffectRow>) {
+    cond.retain(|skill| {
+        skill.updater.effects().iter().any(|effect| matches!(rows[effect.row].effect_type, 11000 | 11001))
+    });
+    let mut number = vec![usize::MAX; rows.len()];
+    let mut kept = Vec::new();
+    for skill in cond.iter_mut() {
+        skill.updater.renumber_rows(|row| {
+            if number[row] == usize::MAX {
+                number[row] = kept.len();
+                kept.push(rows[row].clone());
+            }
+            number[row]
+        });
+    }
+    *rows = kept;
+}
+
+/// The identity of the skeleton of a prepared recording without a life recorder: its factor skills with their rows
+/// ([`factor_skills`]). The live and the reduced model's other inputs are those of the classes that hold it.
+fn skeleton_key<M>(prepared: &PreparedRecording<M>) -> Vec<u8> {
+    let (mut cond, mut rows) = (prepared.cond.clone(), prepared.rows.clone());
+    factor_skills(&mut cond, &mut rows);
+    format!("{rows:?}/{cond:?}").into_bytes()
+}
+
+/// The skeleton of a recording of the reduced performers `reduced`: the native run of their model with only the
+/// condition skills that hold a lot or gauge factor ([`factor_skills`]), and of the life recorder of the complete
+/// formation `life_deck` when the recording reads it. None when cancelled.
+///
+/// The recording reads the controller's range states, which follow the fevers and the frame times, its lot and
+/// gauge factor commands, which only the factor effects file, the judgements the life recorder converts and the
+/// phase lives the actions read. The other effects of the lottery condition skills write the luck gauge and lot
+/// count of a range, its bonus points, the lottery machine's result guarantees and the reduced score calculator:
+/// a weighted controller draws no lot, so no reader of the gauge or the lot count runs, the machine is copied before
+/// the first frame, and no condition reads the bonus points or the score. Their actions are filed from the plan
+/// ([`file`]). Only the range-start gauge can fail natively, on a Luck gauge maximum below 1, which is refused here.
+#[allow(clippy::too_many_arguments)]
+fn record_skeleton(
+    master: &Master,
+    skills: &LuckSkills,
+    notes: &[LiveNote],
+    skill_events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    reduced: &[Performer],
+    life_deck: Option<&[Performer]>,
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<Skeleton>, Error> {
+    let mut model =
+        LiveModel::build(master, reduced, notes, &[], params, Some(setup), ranking.is_some(), None, Some(skills))?;
+    if let Some(ranking) = ranking {
+        model.set_rank_confirmation_timeline(ranking)?;
+    }
+    let LiveModel { cond, rows, .. } = &mut model;
+    factor_skills(cond, rows);
+    let life = life_deck
+        .map(|deck| {
+            timed(|p| &mut p.life_setup_ms, || life_recorder(master, deck, notes, skill_events, params, setup, ranking))
+        })
+        .transpose()?;
+    record_native(model, life, notes, play, delta_times, cancelled)
+}
+
+/// Run `model` (and the life recorder `life`) through the frames of the play and record what the transcript reads
+/// of them. Failures before the first frame return at once; a failure inside the frame loop ends the skeleton.
+fn record_native(
+    mut model: LiveModel,
+    mut life: Option<LiveModel>,
     notes: &[LiveNote],
     play: &LivePlay,
     delta_times: &[f32],
     cancelled: &mut impl FnMut() -> bool,
-    mut watch: Option<&mut OrderWatch>,
-) -> Result<Option<Transcript<M>>, Error> {
-    let PreparedRecording { mut model, mut life, plan, collect_moments, .. } = prepared;
+) -> Result<Option<Skeleton>, Error> {
     let gk = model.gk.as_mut().expect("Gekisou setup supplied");
     let ranges: Vec<_> = gk.ctrl.ranges.iter().map(|range| (range.start_ms, range.end_ms, range.mission)).collect();
+    if gk.ctrl.states.iter().zip(&ranges).any(|(state, range)| range.2 == M_LUCK && state.luck.gauge_max < 1) {
+        return Err(Error::Unsupported("LUCK DP: a Luck gauge maximum below 1".into()));
+    }
     let templates = gk.ctrl.states.iter().map(|state| state.luck.clone()).collect();
     let machine = gk.ctrl.machine.clone();
     gk.ctrl.luck_weighted = true;
     let note_map: FxHashMap<_, _> = notes.iter().map(|note| (note.note_id, note)).collect();
-    let Plan { actions, probes: probe_flags, .. } = plan;
-    let mut transcript = Transcript {
-        collect_moments,
+    let mut skeleton = Skeleton {
         templates,
         machine,
         luck: ranges.iter().map(|range| range.2 == M_LUCK).collect(),
-        probes: probe_flags,
-        miss_rows: actions.iter().any(|(_, action, _)| matches!(action, Action::MissGauge { .. })),
         frames: Vec::new(),
         notes: Vec::new(),
         hits: Vec::new(),
-        actions: Vec::new(),
         pending: Vec::new(),
         failure: None,
+        pairs: None,
     };
+    let mut watch = OrderWatch::default();
     let mut previous_frame = i32::MIN;
     for (index, (frame, &delta)) in play.frames.iter().zip(delta_times).enumerate() {
         if index.is_multiple_of(64) && cancelled() {
@@ -2330,41 +2429,38 @@ fn record_prepared<M: Mass>(
         let recorded = record_frame(
             &mut model,
             life.as_mut(),
-            &actions,
             &ranges,
             &note_map,
             frame,
             delta,
             previous_frame,
-            &mut transcript,
-            watch.as_deref_mut(),
+            &mut skeleton,
+            &mut watch,
         );
         if let Err(error) = recorded {
-            transcript.failure = Some(error);
+            skeleton.failure = Some(error);
             break;
         }
         previous_frame = frame.time_ms;
     }
-    if let Some(watch) = watch {
-        watch.finish(&model);
-    }
-    Ok(Some(transcript))
+    watch.finish(&model);
+    skeleton.pairs = watch.broken.is_none().then_some(watch.pairs);
+    Ok(Some(skeleton))
 }
 
-/// Record one frame. Every check that precedes the frame's propagation fails before the frame is appended; the
-/// native AFTER phase runs once it is appended, as in the interleaved computation.
+/// Record one native frame. Every check that precedes the frame's propagation fails before the frame is appended;
+/// the native AFTER phase runs once it is appended, as in the interleaved computation.
 #[allow(clippy::too_many_arguments)]
-fn record_frame<M: Mass>(
+fn record_frame(
     model: &mut LiveModel,
     life: Option<&mut LiveModel>,
-    actions: &[(i64, Action<M>, Option<Checker>)],
     ranges: &[(i32, i32, i64)],
     note_map: &FxHashMap<i32, &LiveNote>,
     frame: &PlayFrame,
     delta: f32,
     previous_frame: i32,
-    out: &mut Transcript<M>,
-    mut watch: Option<&mut OrderWatch>,
+    out: &mut Skeleton,
+    watch: &mut OrderWatch,
 ) -> Result<(), Error> {
     if frame.time_ms <= previous_frame || !delta.is_finite() || delta < 0.0 {
         return Err(Error::Input("LUCK DP needs increasing frames and finite nonnegative deltas".into()));
@@ -2396,9 +2492,7 @@ fn record_frame<M: Mass>(
             return Err(Error::Unsupported("LUCK life recorder consumed a random value".into()));
         }
         for (judged, &(_, converted, _)) in judged.iter_mut().zip(life.frame_judgements()) {
-            if converted != judged.3
-                && let Some(watch) = watch.as_deref_mut()
-            {
+            if converted != judged.3 {
                 watch.broken = Some("a judgement is converted");
             }
             judged.3 = converted;
@@ -2407,7 +2501,7 @@ fn record_frame<M: Mass>(
     } else {
         [model.life.current_life; 2]
     };
-    timed(|p| &mut p.before_ms, || record_before(model, frame.time_ms, delta, watch))?;
+    timed(|p| &mut p.before_ms, || record_before(model, frame.time_ms, delta, Some(watch)))?;
     let controller = &model.gk.as_ref().expect("Gekisou checked").ctrl;
     let states = |range: usize| controller.states[range].state;
     let updates = &controller.state_updates;
@@ -2443,36 +2537,12 @@ fn record_frame<M: Mass>(
         }
         out.notes.push(Judged { time_ms: note_time, note_type, judgement, hits: out.hits.len() });
     }
-    if gate && target >= 0 {
-        for (phase, action, condition) in actions {
-            let mass = condition
-                .as_ref()
-                .map_or(Some(M::ONE), |checker| chance::<M>(checker, phase_life[(*phase - 1) as usize]))
-                .expect("compiled start condition");
-            match *action {
-                Action::StartGauge { value, .. } if start.is_some() => {
-                    out.actions.push(Action::StartGauge { value, chance: mass })
-                }
-                Action::StartMinimum { result, .. } if start.is_some() => {
-                    out.actions.push(Action::StartMinimum { result, chance: mass })
-                }
-                Action::MissGauge { value } => out.actions.push(Action::MissGauge { value }),
-                Action::CriticalPoints { value, .. } => {
-                    out.actions.push(Action::CriticalPoints { value, chance: mass })
-                }
-                Action::StartPoints { value, .. } if start.is_some() => {
-                    out.actions.push(Action::StartPoints { value, chance: mass })
-                }
-                _ => {}
-            }
-        }
-    }
     for (range, state) in controller.states.iter().enumerate() {
         if ranges[range].2 == M_LUCK && state.state == S_PLAYING {
             out.pending.push((range, controller.dp_factors_at(frame.time_ms).0));
         }
     }
-    let recorded = Frame {
+    let recorded = NativeFrame {
         time_ms: frame.time_ms,
         repeat: 1,
         start,
@@ -2481,12 +2551,140 @@ fn record_frame<M: Mass>(
         gate,
         current_luck,
         target,
+        phase_life,
         notes: out.notes.len(),
-        actions: out.actions.len(),
         pending: out.pending.len(),
     };
     out.push_frame(recorded);
     timed(|p| &mut p.after_ms, || record_after(model, frame.time_ms, &judged))
+}
+
+/// The transcript of a recording: the native frames of `skeleton`, with the actions of `plan` filed in every gated
+/// frame with a playing range. A range-start action is filed only in the frame where a Luck range starts.
+fn file<M: Mass>(skeleton: &Skeleton, plan: &Plan<M>, collect_moments: bool) -> Transcript<M> {
+    let mut out = Transcript {
+        collect_moments,
+        templates: skeleton.templates.clone(),
+        machine: skeleton.machine.clone(),
+        luck: skeleton.luck.clone(),
+        probes: plan.probes.clone(),
+        miss_rows: plan.actions.iter().any(|(_, action, _)| matches!(action, Action::MissGauge { .. })),
+        frames: Vec::with_capacity(skeleton.frames.len()),
+        notes: skeleton.notes.clone(),
+        hits: skeleton.hits.clone(),
+        actions: Vec::new(),
+        pending: Vec::new(),
+        failure: skeleton.failure.clone(),
+    };
+    let mut pending_from = 0;
+    for frame in &skeleton.frames {
+        if frame.gate && frame.target >= 0 {
+            for (phase, action, condition) in &plan.actions {
+                let chance = condition
+                    .as_ref()
+                    .map_or(Some(M::ONE), |checker| chance::<M>(checker, frame.phase_life[(*phase - 1) as usize]))
+                    .expect("compiled start condition");
+                match *action {
+                    Action::StartGauge { value, .. } if frame.start.is_some() => {
+                        out.actions.push(Action::StartGauge { value, chance })
+                    }
+                    Action::StartMinimum { result, .. } if frame.start.is_some() => {
+                        out.actions.push(Action::StartMinimum { result, chance })
+                    }
+                    Action::MissGauge { value } => out.actions.push(Action::MissGauge { value }),
+                    Action::CriticalPoints { value, .. } => out.actions.push(Action::CriticalPoints { value, chance }),
+                    Action::StartPoints { value, .. } if frame.start.is_some() => {
+                        out.actions.push(Action::StartPoints { value, chance })
+                    }
+                    _ => {}
+                }
+            }
+        }
+        out.pending.extend_from_slice(&skeleton.pending[pending_from..frame.pending]);
+        pending_from = frame.pending;
+        out.push_frame(Frame {
+            time_ms: frame.time_ms,
+            repeat: frame.repeat,
+            start: frame.start,
+            complete: frame.complete,
+            finish: frame.finish,
+            gate: frame.gate,
+            current_luck: frame.current_luck,
+            target: frame.target,
+            notes: frame.notes,
+            actions: out.actions.len(),
+            pending: out.pending.len(),
+        });
+    }
+    out
+}
+
+/// The native part of a recording ([`record_native`]): everything its transcript reads except the actions.
+struct Skeleton {
+    templates: Vec<LuckScore>,
+    machine: LotteryMachine,
+    /// One flag per range: whether it is a Luck range.
+    luck: Vec<bool>,
+    frames: Vec<NativeFrame>,
+    notes: Vec<Judged>,
+    hits: Vec<Hit>,
+    /// `(range, lot buff at the frame time)` of every playing Luck range, in range order.
+    pending: Vec<(usize, i32)>,
+    /// A recording failure after the last recorded frame.
+    failure: Option<Error>,
+    /// The pairs of performers whose effects one phase applied and may not commute ([`OrderWatch`]); None when the
+    /// recording shows no order class.
+    pairs: Option<PositionPairs>,
+}
+
+/// One native frame, or `repeat` consecutive quiet frames (no note, no Luck range transition) with equal records.
+#[derive(Clone, Copy, Debug)]
+struct NativeFrame {
+    time_ms: i32,
+    repeat: u32,
+    /// The Luck range that starts in this frame.
+    start: Option<usize>,
+    complete: bool,
+    finish: bool,
+    gate: bool,
+    /// Whether the current playing range is a Luck range.
+    current_luck: bool,
+    target: i32,
+    /// The life each phase's actions read.
+    phase_life: [i32; 2],
+    /// Exclusive ends of the frame's entries in the note and pending lists.
+    notes: usize,
+    pending: usize,
+}
+
+impl NativeFrame {
+    fn quiet(&self, notes_from: usize) -> bool {
+        self.notes == notes_from && self.start.is_none() && !self.complete && !self.finish
+    }
+}
+
+impl Skeleton {
+    /// Append a native frame, merged into the previous frame when both are quiet with equal records: the merged
+    /// frames file the same actions.
+    fn push_frame(&mut self, frame: NativeFrame) {
+        let n = self.frames.len();
+        if let Some(&previous) = self.frames.last() {
+            let (previous_notes, previous_pending) =
+                if n == 1 { (0, 0) } else { (self.frames[n - 2].notes, self.frames[n - 2].pending) };
+            if previous.quiet(previous_notes)
+                && frame.quiet(previous.notes)
+                && previous.repeat < u32::MAX
+                && (previous.gate, previous.current_luck, previous.target, previous.phase_life)
+                    == (frame.gate, frame.current_luck, frame.target, frame.phase_life)
+                && self.pending[previous_pending..previous.pending] == self.pending[previous.pending..frame.pending]
+            {
+                self.pending.truncate(previous.pending);
+                self.frames[n - 1].repeat += 1;
+                return;
+            }
+        }
+        self.frames.push(frame);
+    }
 }
 
 /// Propagate the lottery-state distribution through a transcript.
@@ -2899,14 +3097,11 @@ impl LuckDpCache {
             master,
             skills,
             notes,
-            skill_events,
             params,
-            setup,
             play,
             delta_times,
             deck,
             probes,
-            ranking,
             collect_moments,
         )?;
         let recording_key =
@@ -2922,8 +3117,26 @@ impl LuckDpCache {
                 return Ok(Some(found.clone()));
             }
         }
-        let transcript =
-            timed(|p| &mut p.total_ms, || record_prepared(prepared, notes, play, delta_times, cancelled, None));
+        let transcript = timed(
+            |p| &mut p.total_ms,
+            || {
+                let skeleton = record_skeleton(
+                    master,
+                    skills,
+                    notes,
+                    skill_events,
+                    params,
+                    setup,
+                    play,
+                    delta_times,
+                    &prepared.reduced,
+                    prepared.life_deck.as_deref(),
+                    ranking,
+                    cancelled,
+                )?;
+                Ok::<_, Error>(skeleton.map(|skeleton| file(&skeleton, &prepared.plan, collect_moments)))
+            },
+        );
         #[cfg(feature = "search-diagnostics")]
         {
             self.stats.record_ms += started.elapsed().as_secs_f64() * 1e3;
@@ -2943,20 +3156,21 @@ impl LuckDpCache {
     /// whose relative order the law may depend on: every other order of the same performers that keeps the relative
     /// order of each pair has the same law. None when the recording does not show that.
     ///
-    /// A model built for another order is the model of this order with its performers moved, as
-    /// [`OrderedLive`] uses: their skills keep their own state, and an effect reads no performer's position. Within a
-    /// phase every updater checks before any effect applies, so another order applies the same effects, in another
-    /// order only between performers. Effects whose order the recording does not observe commute with every other
-    /// effect: score-ups, which go to the reduced calculator the recording never reads, result guarantees, which
-    /// only a lottery draw reads and the recording draws no random value, and lot and gauge factors when their
-    /// binary32 sums are exact and so do not depend on the order of their filings. Any two other effects of two
-    /// performers in one phase are taken not to commute, and so are the lot and gauge factors of two performers in
-    /// one phase when their sums may round. Two application orders of one phase that keep the relative order of
-    /// every two effects that do not commute leave the same state, so an order that keeps the relative order of
-    /// every pair of performers whose such effects one phase applied records the same frame, and by induction over
-    /// the frames the same recording. The actions of each phase are listed in updater order, so their list is the
-    /// same in an order that also keeps the relative order of every two performers with different actions in one
-    /// phase.
+    /// The recording is the native run of the condition skills that hold a lot or gauge factor, with the actions of
+    /// every lottery condition skill filed from the plan ([`record_skeleton`], [`file`]). A model built for another
+    /// order is the model of this order with its performers moved, as [`OrderedLive`] uses: their skills keep their own
+    /// state, and an effect reads no performer's position. Within a phase every updater checks before any effect
+    /// applies, so another order applies the same effects, in another order only between performers. Effects whose
+    /// order the recording does not observe commute with every other effect: score-ups, which go to the reduced
+    /// calculator the recording never reads, result guarantees, which only a lottery draw reads and the recording draws
+    /// no random value, and lot and gauge factors when their binary32 sums are exact and so do not depend on the order
+    /// of their filings. Any two other effects of two performers in one phase are taken not to commute, and so are the
+    /// lot and gauge factors of two performers in one phase when their sums may round. Two application orders of one
+    /// phase that keep the relative order of every two effects that do not commute leave the same state, so an order
+    /// that keeps the relative order of every pair of performers whose such effects one phase applied records the same
+    /// frame, and by induction over the frames the same recording. The actions of each phase are listed in updater
+    /// order, so their list is the same in an order that also keeps the relative order of every two performers with
+    /// different actions in one phase.
     ///
     /// The recording also reads the life recorder of the whole formation: its converted judgements, and its phase
     /// lives for actions whose conditions read the life. No action condition may read the life, and the recording
@@ -3001,6 +3215,7 @@ impl LuckDpCache {
             delta_times,
             deck,
             ranking,
+            keyed.as_mut().map(|(classes, _)| &mut **classes),
         )?
         else {
             return Ok(None);
@@ -3014,7 +3229,7 @@ impl LuckDpCache {
     }
 
     /// The class [`LuckDpCache::certified_order_class`] records, and whether the recording read a life recorder;
-    /// None when the actions read the life.
+    /// None when the actions read the life. `classes` holds the skeletons of recordings without a life recorder.
     #[allow(clippy::too_many_arguments)]
     fn record_order_class(
         &mut self,
@@ -3028,38 +3243,45 @@ impl LuckDpCache {
         delta_times: &[f32],
         deck: &[Performer],
         ranking: Option<&[crate::replay::RankConfirmation]>,
+        classes: Option<&mut LuckOrderClasses<'_>>,
     ) -> Result<Option<(Option<OrderClass>, bool)>, Error> {
-        let prepared = prepare_recording::<ProbabilityMass>(
-            master,
-            skills,
-            notes,
-            skill_events,
-            params,
-            setup,
-            play,
-            delta_times,
-            deck,
-            None,
-            ranking,
-            false,
-        )?;
+        let prepared =
+            prepare_recording::<ProbabilityMass>(master, skills, notes, params, play, delta_times, deck, None, false)?;
         let plan = &prepared.plan;
         if plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life)) {
             return Ok(None);
         }
-        let life = prepared.life.is_some();
-        if prepared.model.cond.iter().any(|condition| condition.member >= PAIR_POSITIONS) {
+        let life = prepared.life_deck.is_some();
+        if prepared.cond.iter().any(|condition| condition.member >= PAIR_POSITIONS) {
             return Ok(Some((None, life)));
         }
-        let order_pairs = plan.order_pairs;
-        let mut watch = OrderWatch::default();
-        let transcript = record_prepared(prepared, notes, play, delta_times, &mut || false, Some(&mut watch))?
-            .expect("an uncancelled recording");
-        if watch.broken.is_some() || transcript.failure.is_some() {
+        let record = || -> Result<Skeleton, Error> {
+            Ok(record_skeleton(
+                master,
+                skills,
+                notes,
+                skill_events,
+                params,
+                setup,
+                play,
+                delta_times,
+                &prepared.reduced,
+                prepared.life_deck.as_deref(),
+                ranking,
+                &mut || false,
+            )?
+            .expect("an uncancelled recording"))
+        };
+        let skeleton = match classes.filter(|_| !life) {
+            Some(classes) => classes.skeleton(skeleton_key(&prepared), record)?,
+            None => std::sync::Arc::new(record()?),
+        };
+        let Some(pairs) = skeleton.pairs.filter(|_| skeleton.failure.is_none()) else {
             return Ok(Some((None, life)));
-        }
+        };
+        let transcript = file(&skeleton, plan, false);
         let law = self.law_of(&transcript, &mut || false)?.expect("an uncancelled propagation");
-        Ok(Some((Some(OrderClass { law, pairs: order_pairs | watch.pairs }), life)))
+        Ok(Some((Some(OrderClass { law, pairs: plan.order_pairs | pairs }), life)))
     }
 
     /// The certified law of a transcript, from the cache or propagated.
@@ -3951,6 +4173,81 @@ mod tests {
             });
         }
         (master, notes, params, setup, play, delta)
+    }
+
+    #[test]
+    fn factor_skeletons_record_the_transcripts_of_the_complete_reduced_model() {
+        // The reduced model with every lottery condition skill and its skeleton with only the lot and gauge factor
+        // skills file the same transcript, with a range-start gauge that the reduced model applies natively or only
+        // by chance.
+        for unconditional in [false, true] {
+            let (mut master, notes, params, setup, play, delta) = random_fixture();
+            if unconditional {
+                master.gekisou_skill_effects.iter_mut().find(|row| row.id == 2).unwrap().skill_condition_group = 0;
+                master.reindex().unwrap();
+            }
+            let skills = luck_skills(&master).unwrap();
+            let performer = |skill, supports: &[i64]| Performer {
+                gekisou_skill: Some((skill, 1)),
+                gekisou_support_skills: supports.iter().map(|&support| (support, 1)).collect(),
+                ..Default::default()
+            };
+            let (speed, gauge, sustained) = (performer(1, &[66]), performer(2, &[31, 96]), performer(3, &[66, 96]));
+            let decks = [
+                vec![gauge.clone(), Performer::default()],
+                vec![speed.clone(), gauge.clone()],
+                vec![gauge.clone(), sustained.clone(), speed],
+                vec![sustained, gauge],
+            ];
+            for deck in &decks {
+                for collect_moments in [false, true] {
+                    let prepared = prepare_recording::<ProbabilityMass>(
+                        &master,
+                        &skills,
+                        &notes,
+                        params,
+                        &play,
+                        &delta,
+                        deck,
+                        None,
+                        collect_moments,
+                    )
+                    .unwrap();
+                    let model = LiveModel::build(
+                        &master,
+                        &prepared.reduced,
+                        &notes,
+                        &[],
+                        params,
+                        Some(&setup),
+                        false,
+                        None,
+                        Some(&skills),
+                    )
+                    .unwrap();
+                    let complete = record_native(model, None, &notes, &play, &delta, &mut || false).unwrap().unwrap();
+                    let skeleton = record_skeleton(
+                        &master,
+                        &skills,
+                        &notes,
+                        &[],
+                        params,
+                        &setup,
+                        &play,
+                        &delta,
+                        &prepared.reduced,
+                        None,
+                        None,
+                        &mut || false,
+                    )
+                    .unwrap()
+                    .unwrap();
+                    assert!(skeleton.failure.is_none() && complete.failure.is_none());
+                    let words = |skeleton: &Skeleton| file(skeleton, &prepared.plan, collect_moments).key().unwrap();
+                    assert_eq!(words(&skeleton), words(&complete), "unconditional={unconditional} deck={deck:?}");
+                }
+            }
+        }
     }
 
     fn summary_words(summary: &LuckScoreSummary) -> Vec<u64> {
