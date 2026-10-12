@@ -193,7 +193,22 @@ impl Engine<'_, '_> {
                 let mut laws = None;
                 if let (Some((_, domain)), Some(cutoff), Metric::Score) = (cut, self.safe_cutoff(), self.metric) {
                     let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
-                    laws = crate::search::certified_search::luck_order_laws(master, &skills, &input, &mut curves).ok();
+                    let state = self.certified.as_mut().expect("certified request");
+                    let class_bytes = state.class_bytes;
+                    let mut classes = state
+                        .luck_classes
+                        .take()
+                        .unwrap_or_else(|| ournotes_sim::live::full::LuckOrderClasses::new(master, class_bytes));
+                    laws = crate::search::certified_search::luck_order_laws(
+                        master,
+                        &skills,
+                        &input,
+                        &mut curves,
+                        Some(&mut classes),
+                    )
+                    .ok();
+                    self.tel.caches.luck_classes.record(classes.stats());
+                    self.certified.as_mut().expect("certified request").luck_classes = Some(classes);
                     self.rec.clock.lap(resume);
                     if let Some(laws) = &laws
                         && self.below_under_laws(domain, physical, power, laws, cutoff)

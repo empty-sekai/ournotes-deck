@@ -7,7 +7,8 @@ type Formation = (Master, Vec<Performer>, Vec<LiveNote>, Vec<(i32, i32)>, LivePa
 
 /// Five performers whose live skills raise the note score by different amounts at their own chart events, and a
 /// Gekisou score-up of the first performer that holds while Rush runs; two LUCK ranges. `effects` adds live skill
-/// effect rows `(live skill, effect type, value, condition group)`, `conditions` condition rows `(id, type, value)`
+/// effect rows `(live skill, effect type, value, condition group)` (a judgement conversion converts Perfect),
+/// `conditions` condition rows `(id, type, value)`
 /// with a group of the same id, and `mechanisms` Gekisou LUCK skills `(performer, effect type, value)` of other
 /// performers: gauge-ups (11001) that hold while a LUCK range plays, or result guarantees (11005) at a LUCK range
 /// start.
@@ -23,8 +24,9 @@ fn formation(
         })
         .collect();
     let live = |id: i64, skill: i64, effect: i64, value: i64, condition: i64| {
+        let targets: &[i64] = if effect == 12006 { &[57] } else { &[] };
         json!({"_id":id,"_liveSkillID":skill,"_level":1,"_skillEffectType":effect,"_effectValue":value,
-            "_activationTimeSecond":0.3,"_skillConditionGroup":condition})
+            "_activationTimeSecond":0.3,"_skillConditionGroup":condition,"_skillTargetIDs":targets})
     };
     let mut live_effects: Vec<Value> = [1500, 2500, 4000, 6000, 9000]
         .iter()
@@ -83,7 +85,7 @@ fn formation(
         "MasterLiveJudgementTiming":[{"_id":1,"_noteJudgementType":1,"_noteSimulateJudgement":5,"_afterMs":0}],
         "MasterLiveGekisouLuckBasePoint":[{"_id":1,"_noteCategory":0,"_noteSimulateJudgement":5,"_weight":1,"_basePoint":60}],
         "MasterLiveGekisouLuckBonusLot":lots,
-        "MasterSkillTarget":[{"_id":56,"_skillTargetType":5,"_gekisouMissionType":2}],
+        "MasterSkillTarget":[{"_id":56,"_skillTargetType":5,"_gekisouMissionType":2},{"_id":57,"_skillTargetType":2,"_judgement":5}],
         "MasterSkillCondition":condition_rows,
         "MasterSkillConditionSet":sets,
         "MasterSkillEffectSetting":[
@@ -294,9 +296,22 @@ fn given_laws_replace_the_law_recordings() {
     let orders = permutations();
     let mut curves = LuckDpCache::new(usize::MAX);
     let recorded = joint(&formation, &orders, None, &mut curves);
-    let laws =
-        luck_order_laws(master, &skills, deck, notes, events, *params, setup, play, delta, None, &orders, &mut curves)
-            .unwrap();
+    let laws = luck_order_laws(
+        master,
+        &skills,
+        deck,
+        notes,
+        events,
+        *params,
+        setup,
+        play,
+        delta,
+        None,
+        &orders,
+        &mut curves,
+        None,
+    )
+    .unwrap();
     let mut given = |laws: &[std::sync::Arc<LuckDpCertifiedResult>]| {
         luck_exact_orders_with_laws(
             master,
@@ -379,6 +394,73 @@ fn a_law_serves_the_orders_that_keep_the_relative_order_of_different_actions() {
         assert_eq!(joint.law_recordings, recordings, "{name}");
         assert_alone(name, &formation, &orders, None, &mut curves, &joint);
     }
+}
+
+#[test]
+fn order_classes_serve_formations_with_the_same_lottery_conditions() {
+    // Two performers guarantee a LUCK range's first result with different guarantees, so the orders form two classes.
+    // Live skills and the total power are no lottery condition: a formation that changes them takes the classes of
+    // the first, and they hold the laws its own recordings give. Moving a guarantee to another performer changes the
+    // conditions, a live skill that may convert a judgement of the play takes no key, and another play drops the
+    // classes.
+    let first = formation(&[(16, 12006, 4, 0)], &[], &[(1, 11005, 3), (2, 11005, 4)]);
+    let (master, deck, notes, events, params, setup, play, delta) = &first;
+    let skills = luck_skills(master).unwrap();
+    let orders = permutations();
+    let mut classes = LuckOrderClasses::new(master, usize::MAX);
+    let laws = |deck: &[Performer], params: LiveParams, play: &LivePlay, classes: Option<&mut LuckOrderClasses<'_>>| {
+        let mut curves = LuckDpCache::new(usize::MAX);
+        let laws = luck_order_laws(
+            master,
+            &skills,
+            deck,
+            notes,
+            events,
+            params,
+            setup,
+            play,
+            delta,
+            None,
+            &orders,
+            &mut curves,
+            classes,
+        );
+        laws.map(|laws| laws.iter().map(|law| format!("{law:?}")).collect::<Vec<_>>())
+    };
+    let counts = |classes: &LuckOrderClasses<'_>| {
+        let stats = classes.stats();
+        (stats.lookups, stats.hits, stats.unkeyed, stats.lives)
+    };
+    let recorded = laws(deck, *params, play, Some(&mut classes)).unwrap();
+    assert_eq!(recorded, laws(deck, *params, play, None).unwrap());
+    assert_eq!(counts(&classes), (2, 0, 0, 1));
+
+    let mut other = deck.clone();
+    other.swap(0, 4);
+    (other[0].gekisou_skill, other[4].gekisou_skill) = (other[4].gekisou_skill, other[0].gekisou_skill);
+    other[3].live_skill = None;
+    let other_params = LiveParams { total_power: 5000, ..*params };
+    let fresh = laws(&other, other_params, play, None).unwrap();
+    assert_eq!(laws(&other, other_params, play, Some(&mut classes)).unwrap(), fresh);
+    assert_eq!(counts(&classes), (4, 2, 0, 1));
+
+    let mut moved = deck.clone();
+    (moved[2].gekisou_skill, moved[3].gekisou_skill) = (None, moved[2].gekisou_skill);
+    let fresh = laws(&moved, *params, play, None).unwrap();
+    assert_eq!(laws(&moved, *params, play, Some(&mut classes)).unwrap(), fresh);
+    assert_eq!(counts(&classes), (6, 2, 0, 1));
+
+    let mut converting = deck.clone();
+    converting[4].live_skill = Some((16, 1));
+    let _ = laws(&converting, *params, play, Some(&mut classes));
+    let (lookups, hits, unkeyed, lives) = counts(&classes);
+    assert_eq!((lookups, hits, lives), (6, 2, 1));
+    assert!(unkeyed > 0);
+
+    let other_play = LivePlay { base_seed: 1, ..play.clone() };
+    let fresh = laws(deck, *params, &other_play, None).unwrap();
+    assert_eq!(laws(deck, *params, &other_play, Some(&mut classes)).unwrap(), fresh);
+    assert_eq!(counts(&classes), (8, 2, unkeyed, 2));
 }
 
 #[test]

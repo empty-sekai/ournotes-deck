@@ -661,6 +661,8 @@ pub struct Caches {
     pub rush_windows: CacheUse,
     /// Certified lottery curves of LUCK lives, shared across performance orders and teams.
     pub luck_curves: LuckCurves,
+    /// Lottery-law order classes of teams by their lottery conditions.
+    pub luck_classes: LuckClasses,
 }
 
 /// Use of the certified lottery-curve cache.
@@ -692,6 +694,34 @@ impl LuckCurves {
             recording_hits: stats.recording_hits,
             record_ms: stats.record_ms,
             propagate_ms: stats.propagate_ms,
+        };
+    }
+}
+
+/// Use of the order-class cache of lottery laws.
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LuckClasses {
+    pub usage: CacheUse,
+    /// The largest total key size held.
+    pub peak_key_bytes: usize,
+    /// Teams whose lottery conditions take no key, and lives that replaced the held one.
+    pub unkeyed: u64,
+    pub lives: u64,
+}
+
+impl LuckClasses {
+    pub(crate) fn record(&mut self, stats: ournotes_sim::live::full::LuckOrderClassStats) {
+        *self = Self {
+            usage: CacheUse {
+                lookups: stats.lookups,
+                hits: stats.hits,
+                evictions: stats.evictions,
+                peak_entries: stats.peak_entries,
+            },
+            peak_key_bytes: stats.peak_key_bytes,
+            unkeyed: stats.unkeyed,
+            lives: stats.lives,
         };
     }
 }

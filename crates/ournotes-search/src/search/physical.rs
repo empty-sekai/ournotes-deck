@@ -166,7 +166,7 @@ struct Engine<'a, 'm> {
     /// Per depth of the joint traversal, the order-step bound parts of the node there (see `joint::OrderSteps`).
     order_steps: [super::joint::OrderSteps; 6],
     top: Vec<Entry>,
-    certified: Option<CertifiedState>,
+    certified: Option<CertifiedState<'m>>,
     /// The master's lottery-related skills when the decks play lottery-free ([`certified_engine::LotteryMode::Free`]).
     lottery_free: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
     seen: HashSet<PhysicalDeck>,

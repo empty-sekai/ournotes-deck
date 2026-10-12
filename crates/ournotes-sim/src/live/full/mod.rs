@@ -61,10 +61,10 @@ mod luck_dp;
 pub(crate) use luck_dp::luck_rush_dp_certified_with_moments_cached;
 mod luck_exact;
 pub use luck_dp::{
-    LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckRangeMoments, LuckRecordProfile,
-    luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified, luck_rush_dp_certified_with_events,
-    luck_rush_dp_certified_with_moments, luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events,
-    luck_rush_dp_with_ranking, take_luck_record_profile,
+    LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckOrderClassStats, LuckOrderClasses,
+    LuckRangeMoments, LuckRecordProfile, luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified,
+    luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_moments, luck_rush_dp_certified_with_ranking,
+    luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
 };
 pub use luck_exact::{
     LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactSession,
@@ -778,6 +778,95 @@ fn condition_skill(
     Ok(CondSkill { member: k, skill_type, group: list_group, updater })
 }
 
+/// Appends the condition skills of the members' Gekisou skills and Gekisou support skills of a live with Gekisou, in
+/// updater order: the Gekisou skills by mission list then member, then each member's Gekisou support skills in their
+/// order. A member without a Gekisou skill holds no Gekisou support skill. `luck` keeps the rows the LUCK-only replay
+/// runs and `lottery` the lottery-related rows; the effect rows are appended to `rows`.
+fn gekisou_conditions(
+    factory: &Factory,
+    phase: &dyn Fn(i64) -> i64,
+    luck: Option<&luck::SharedScript>,
+    lottery: Option<&LuckSkills>,
+    cond: &mut Vec<CondSkill>,
+    rows: &mut Vec<EffectRow>,
+) -> Result<(), Error> {
+    let (master, deck) = (factory.master, factory.deck);
+    let mut mission = vec![None; deck.len()];
+    for (k, p) in deck.iter().enumerate() {
+        let Some((sid, _)) = p.gekisou_skill else { continue };
+        let row = master.gekisou_skill(sid).ok_or_else(|| Error::Master(format!("unknown Gekisou skill {sid}")))?;
+        gekisou_mission_group(row.gekisou_mission_type)?;
+        mission[k] = Some(row.gekisou_mission_type);
+    }
+    for m in 1..=3 {
+        for (k, p) in deck.iter().enumerate() {
+            let (Some((sid, lv)), Some(mk)) = (p.gekisou_skill, mission[k]) else { continue };
+            if gekisou_mission_group(mk)? != m {
+                continue;
+            }
+            let rs = master
+                .gekisou_skill_effects
+                .iter()
+                .filter(|r| r.skill_id == sid && r.level == lv)
+                .filter(|r| luck.is_none() || luck::retained(r.skill_effect_type))
+                .filter(|r| lottery.is_none_or(|l| l.related(LuckSource::Gekisou, r)))
+                .map(CondRow::from)
+                .collect();
+            cond.push(condition_skill(master, factory, phase, rs, k, SKILL_TYPE_GEKISOU, Some(mk), rows, luck)?);
+        }
+    }
+    for (k, p) in deck.iter().enumerate() {
+        if mission[k].is_none() {
+            continue;
+        }
+        for &(sid, lv) in &p.gekisou_support_skills {
+            let row = master
+                .gekisou_support_skill(sid)
+                .ok_or_else(|| Error::Master(format!("unknown Gekisou support skill {sid}")))?;
+            let rs = master
+                .gekisou_support_skill_effects
+                .iter()
+                .filter(|r| r.skill_id == sid && r.level == lv)
+                .filter(|r| luck.is_none() || luck::retained(r.skill_effect_type))
+                .filter(|r| lottery.is_none_or(|l| l.related(LuckSource::GekisouSupport, r)))
+                .map(CondRow::from)
+                .collect();
+            let gate = Some(row.gekisou_mission_type);
+            cond.push(condition_skill(master, factory, phase, rs, k, SKILL_TYPE_GEKISOU_SUPPORT, gate, rows, luck)?);
+        }
+    }
+    Ok(())
+}
+
+/// The effect phase of each skill effect type (1 when the master does not set it).
+fn effect_phases(master: &Master) -> FxHashMap<i64, i64> {
+    master.skill_effect_settings.iter().map(|r| (r.skill_effect_type, r.phase)).collect()
+}
+
+/// The condition skills that hold an effect and the effect rows of a live with Gekisou built for `deck` with the
+/// lottery-related rows of `lottery` ([`LiveModel::build`]), as text: `deck` holds no live or support skill, so these
+/// are everything the build reads of its performers. A condition skill without an effect only reads the Gekisou gate.
+pub(super) fn lottery_conditions_text(
+    master: &Master,
+    deck: &[Performer],
+    skill_target_music_type: i64,
+    lottery: &LuckSkills,
+) -> Result<String, Error> {
+    if deck.iter().any(|p| p.live_skill.is_some() || !p.support_skills.is_empty()) {
+        return Err(Error::Input(
+            "the lottery conditions are those of performers without live or support skills".into(),
+        ));
+    }
+    let (initial_life, _) = life::life_settings(master)?;
+    let factory = Factory { master, deck, initial_life, initial_time_ms: 0, skill_target_music_type };
+    let phase_of = effect_phases(master);
+    let phase = |t: i64| phase_of.get(&t).copied().unwrap_or(1);
+    let (mut cond, mut rows) = (Vec::new(), Vec::new());
+    gekisou_conditions(&factory, &phase, None, Some(lottery), &mut cond, &mut rows)?;
+    cond.retain(|skill| !skill.updater.effects().is_empty());
+    Ok(format!("{rows:?}/{cond:?}"))
+}
+
 impl LiveModel {
     /// Supply the previous frame's confirmed rank for condition 7012.
     /// The event is cleared after the next frame consumes it. This does not calculate or award ranking bonuses.
@@ -947,8 +1036,7 @@ impl LiveModel {
             .map(|r| r.note_judgement_type)
             .filter(|t| !have_just.contains(t))
             .collect();
-        let phase_of: FxHashMap<i64, i64> =
-            master.skill_effect_settings.iter().map(|r| (r.skill_effect_type, r.phase)).collect();
+        let phase_of = effect_phases(master);
         let phase = |t: i64| phase_of.get(&t).copied().unwrap_or(1);
         let factory = Factory {
             master,
@@ -1049,71 +1137,7 @@ impl LiveModel {
             }
         }
         if gk.is_some() {
-            let mut mission = vec![None; deck.len()];
-            for (k, p) in deck.iter().enumerate() {
-                let Some((sid, _)) = p.gekisou_skill else { continue };
-                let row =
-                    master.gekisou_skill(sid).ok_or_else(|| Error::Master(format!("unknown Gekisou skill {sid}")))?;
-                gekisou_mission_group(row.gekisou_mission_type)?;
-                mission[k] = Some(row.gekisou_mission_type);
-            }
-            for m in 1..=3 {
-                for (k, p) in deck.iter().enumerate() {
-                    let (Some((sid, lv)), Some(mk)) = (p.gekisou_skill, mission[k]) else { continue };
-                    if gekisou_mission_group(mk)? != m {
-                        continue;
-                    }
-                    let rs = master
-                        .gekisou_skill_effects
-                        .iter()
-                        .filter(|r| r.skill_id == sid && r.level == lv)
-                        .filter(|r| luck.is_none() || luck::retained(r.skill_effect_type))
-                        .filter(|r| lottery.is_none_or(|l| l.related(LuckSource::Gekisou, r)))
-                        .map(CondRow::from)
-                        .collect();
-                    cond.push(condition_skill(
-                        master,
-                        &factory,
-                        &phase,
-                        rs,
-                        k,
-                        SKILL_TYPE_GEKISOU,
-                        Some(mk),
-                        &mut rows,
-                        luck.as_ref(),
-                    )?);
-                }
-            }
-            for (k, p) in deck.iter().enumerate() {
-                if mission[k].is_none() {
-                    continue;
-                }
-                for &(sid, lv) in &p.gekisou_support_skills {
-                    let row = master
-                        .gekisou_support_skill(sid)
-                        .ok_or_else(|| Error::Master(format!("unknown Gekisou support skill {sid}")))?;
-                    let rs = master
-                        .gekisou_support_skill_effects
-                        .iter()
-                        .filter(|r| r.skill_id == sid && r.level == lv)
-                        .filter(|r| luck.is_none() || luck::retained(r.skill_effect_type))
-                        .filter(|r| lottery.is_none_or(|l| l.related(LuckSource::GekisouSupport, r)))
-                        .map(CondRow::from)
-                        .collect();
-                    let gate = Some(row.gekisou_mission_type);
-                    cond.push(condition_skill(
-                        master,
-                        &factory,
-                        &phase,
-                        rs,
-                        k,
-                        SKILL_TYPE_GEKISOU_SUPPORT,
-                        gate,
-                        &mut rows,
-                        luck.as_ref(),
-                    )?);
-                }
-            }
+            gekisou_conditions(&factory, &phase, luck.as_ref(), lottery, &mut cond, &mut rows)?;
         }
 
         Ok(LiveModel {

@@ -611,30 +611,83 @@ pub(super) fn check_model_state_identities(model: &LiveModel) -> Result<(), Erro
 /// Even ordinary live/Snap conversions make a Rush curve dependent on the deck and skill-event timeline.
 #[doc(hidden)]
 pub fn luck_has_judgement_conversion(master: &Master, deck: &[Performer]) -> bool {
+    !held_conversions(master, deck).is_empty()
+}
+
+/// The effect type and targets of each judgement conversion effect (12006, 13005) the performers hold.
+fn held_conversions<'m>(master: &'m Master, deck: &[Performer]) -> Vec<(i64, &'m [i64])> {
     let converts = |effect| matches!(effect, 12006 | 13005);
-    deck.iter().any(|p| {
-        p.live_skill.is_some_and(|(id, lv)| {
-            master
-                .live_skill_effects
-                .iter()
-                .any(|r| r.live_skill_id == id && r.level == lv && converts(r.skill_effect_type))
-        }) || p.support_skills.iter().any(|&(id, lv)| {
-            master
-                .support_skill_effects
-                .iter()
-                .any(|r| r.support_skill_id == id && r.level == lv && converts(r.skill_effect_type))
-        }) || p.gekisou_skill.is_some_and(|(id, lv)| {
-            master
-                .gekisou_skill_effects
-                .iter()
-                .any(|r| r.skill_id == id && r.level == lv && converts(r.skill_effect_type))
-        }) || (p.gekisou_skill.is_some()
-            && p.gekisou_support_skills.iter().any(|&(id, lv)| {
+    let mut held = Vec::new();
+    for p in deck {
+        if let Some((id, lv)) = p.live_skill {
+            held.extend(
                 master
-                    .gekisou_support_skill_effects
+                    .live_skill_effects
                     .iter()
-                    .any(|r| r.skill_id == id && r.level == lv && converts(r.skill_effect_type))
-            }))
+                    .filter(|r| r.live_skill_id == id && r.level == lv && converts(r.skill_effect_type))
+                    .map(|r| (r.skill_effect_type, r.skill_target_ids.as_slice())),
+            );
+        }
+        for &(id, lv) in &p.support_skills {
+            held.extend(
+                master
+                    .support_skill_effects
+                    .iter()
+                    .filter(|r| r.support_skill_id == id && r.level == lv && converts(r.skill_effect_type))
+                    .map(|r| (r.skill_effect_type, r.skill_target_ids.as_slice())),
+            );
+        }
+        if let Some((id, lv)) = p.gekisou_skill {
+            held.extend(
+                master
+                    .gekisou_skill_effects
+                    .iter()
+                    .filter(|r| r.skill_id == id && r.level == lv && converts(r.skill_effect_type))
+                    .map(|r| (r.skill_effect_type, r.skill_target_ids.as_slice())),
+            );
+            for &(id, lv) in &p.gekisou_support_skills {
+                held.extend(
+                    master
+                        .gekisou_support_skill_effects
+                        .iter()
+                        .filter(|r| r.skill_id == id && r.level == lv && converts(r.skill_effect_type))
+                        .map(|r| (r.skill_effect_type, r.skill_target_ids.as_slice())),
+                );
+            }
+        }
+    }
+    held
+}
+
+/// Whether a conversion effect the performers hold can change a judgement of `play`. The converter changes a
+/// judgement only when the effect's target judgements hold it; a conversion to Just (13005) also leaves Just alone, and
+/// the notes of a judgement type that has judgement timings but no Just timing. Another conversion is taken to change
+/// every judgement its targets hold, and a target missing from the master any judgement.
+pub(crate) fn luck_play_converts(master: &Master, deck: &[Performer], notes: &[LiveNote], play: &LivePlay) -> bool {
+    const JUST: i64 = 6;
+    let held = held_conversions(master, deck);
+    if held.is_empty() {
+        return false;
+    }
+    let timings = &master.live_judgement_timings;
+    let just: FxHashSet<i64> =
+        timings.iter().filter(|r| r.note_simulate_judgement == JUST).map(|r| r.note_judgement_type).collect();
+    let no_just = |kind: i64| timings.iter().any(|r| r.note_judgement_type == kind) && !just.contains(&kind);
+    let kinds: FxHashMap<i32, i64> = notes.iter().map(|note| (note.note_id, i64::from(note.judgement_type))).collect();
+    let mut judged = FxHashSet::default();
+    for note in play.frames.iter().flat_map(|frame| &frame.judged) {
+        let Some(&kind) = kinds.get(&note.note_id) else { return true };
+        judged.insert((i64::from(note.judgement), kind));
+    }
+    held.iter().any(|&(effect, target_ids)| {
+        let Some(targets) =
+            target_ids.iter().map(|&t| master.skill_target(t).map(|row| row.judgement)).collect::<Option<Vec<_>>>()
+        else {
+            return true;
+        };
+        judged.iter().any(|&(judgement, kind)| {
+            targets.contains(&judgement) && (effect != 13005 || (judgement != JUST && !no_just(kind)))
+        })
     })
 }
 
@@ -1876,6 +1929,190 @@ pub(crate) struct OrderClass {
     pub pairs: PositionPairs,
 }
 
+/// The order classes ([`LuckDpCache::certified_order_class`]) of formations in one live, keyed by the lottery
+/// conditions of the formation in its order, so a formation whose key was seen takes its class without a recording.
+///
+/// The class is a function of the reduced recording, and the recording of the reduced model and the live: the master,
+/// the lottery skills, the chart, the frame schedule and its delta times, the live parameters and the rank arrivals.
+/// The reduced performers hold no live or support skill, so the build of the reduced model reads them only to make
+/// their lottery-related Gekisou condition skills, and the key holds those skills with their effect rows
+/// ([`lottery_conditions_text`]). It leaves out the condition skills without an effect: such a skill only reads the
+/// Gekisou gate when it updates, and changes nothing. The live is held whole except for the total power: it sets the
+/// reduced score calculator alone, which the recording never reads (the controller is given a zero current score, no
+/// condition reads the score, and the appliers only file score commands into it). A formation whose performers may
+/// convert a judgement of the play ([`luck_play_converts`]) records the life of the complete formation and takes no
+/// key, and so does a class whose actions read the life. The checks of the complete formation that precede a
+/// recording run on every lookup, and a formation they refuse takes no key.
+pub struct LuckOrderClasses<'m> {
+    master: &'m Master,
+    live: Option<ClassLive>,
+    entries: FxHashMap<std::sync::Arc<[u8]>, Option<OrderClass>>,
+    order: std::collections::VecDeque<std::sync::Arc<[u8]>>,
+    bytes: usize,
+    capacity_bytes: usize,
+    stats: LuckOrderClassStats,
+}
+
+/// Use of a [`LuckOrderClasses`].
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LuckOrderClassStats {
+    pub lookups: u64,
+    pub hits: u64,
+    /// Formations that took no key.
+    pub unkeyed: u64,
+    /// Lives that replaced the held one.
+    pub lives: u64,
+    pub evictions: u64,
+    pub peak_entries: usize,
+    pub peak_key_bytes: usize,
+}
+
+/// The live of a [`LuckOrderClasses`]: the total power cleared, binary32 values by bit pattern.
+#[derive(PartialEq)]
+struct ClassLive {
+    skills: LuckSkills,
+    notes: Vec<LiveNote>,
+    events: Vec<(i32, i32)>,
+    params: (i64, i32, i32, i32, Option<i32>, u32),
+    setup: GekisouSetup,
+    play: LivePlay,
+    delta_times: Vec<u32>,
+    ranking: Option<Vec<crate::replay::RankConfirmation>>,
+}
+
+impl ClassLive {
+    fn params(params: LiveParams) -> (i64, i32, i32, i32, Option<i32>, u32) {
+        let LiveParams {
+            skill_target_music_type,
+            total_power: _,
+            music_level,
+            converted_note_count,
+            music_length_ms,
+            score_music_length_ms,
+            assist_factor,
+        } = params;
+        (
+            skill_target_music_type,
+            music_level,
+            converted_note_count,
+            music_length_ms,
+            score_music_length_ms,
+            assist_factor.to_bits(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn is(
+        &self,
+        skills: &LuckSkills,
+        notes: &[LiveNote],
+        events: &[(i32, i32)],
+        params: LiveParams,
+        setup: &GekisouSetup,
+        play: &LivePlay,
+        delta_times: &[f32],
+        ranking: Option<&[crate::replay::RankConfirmation]>,
+    ) -> bool {
+        self.params == Self::params(params)
+            && self.notes == notes
+            && self.events == events
+            && self.setup == *setup
+            && self.ranking.as_deref() == ranking
+            && self.delta_times.len() == delta_times.len()
+            && self.delta_times.iter().zip(delta_times).all(|(&bits, delta)| bits == delta.to_bits())
+            && self.play == *play
+            && self.skills == *skills
+    }
+}
+
+impl<'m> LuckOrderClasses<'m> {
+    /// Classes of formations played with `master`, holding keys of at most `capacity_bytes` in total; zero stores
+    /// nothing.
+    pub fn new(master: &'m Master, capacity_bytes: usize) -> Self {
+        Self {
+            master,
+            live: None,
+            entries: FxHashMap::default(),
+            order: std::collections::VecDeque::new(),
+            bytes: 0,
+            capacity_bytes,
+            stats: LuckOrderClassStats::default(),
+        }
+    }
+
+    pub fn stats(&self) -> LuckOrderClassStats {
+        self.stats
+    }
+
+    /// The key of `deck` in the live, or None when it takes none. Classes of another live are dropped first.
+    #[allow(clippy::too_many_arguments)]
+    fn key(
+        &mut self,
+        master: &Master,
+        skills: &LuckSkills,
+        notes: &[LiveNote],
+        events: &[(i32, i32)],
+        params: LiveParams,
+        setup: &GekisouSetup,
+        play: &LivePlay,
+        delta_times: &[f32],
+        ranking: Option<&[crate::replay::RankConfirmation]>,
+        deck: &[Performer],
+    ) -> Option<std::sync::Arc<[u8]>> {
+        // The held master stays borrowed, so no other master can be at its address.
+        if self.capacity_bytes == 0 || !std::ptr::eq(master, self.master) {
+            return None;
+        }
+        if !self
+            .live
+            .as_ref()
+            .is_some_and(|live| live.is(skills, notes, events, params, setup, play, delta_times, ranking))
+        {
+            self.stats.lives += 1;
+            self.entries.clear();
+            self.order.clear();
+            self.bytes = 0;
+            self.live = Some(ClassLive {
+                skills: skills.clone(),
+                notes: notes.to_vec(),
+                events: events.to_vec(),
+                params: ClassLive::params(params),
+                setup: setup.clone(),
+                play: play.clone(),
+                delta_times: delta_times.iter().map(|delta| delta.to_bits()).collect(),
+                ranking: ranking.map(<[_]>::to_vec),
+            });
+        }
+        let keyed = check_recording(master, skills, play, delta_times, None, deck).is_ok()
+            && !luck_play_converts(master, deck, notes, play);
+        let key = keyed
+            .then(|| lottery_conditions_text(master, &reduced_deck(deck), params.skill_target_music_type, skills).ok())
+            .flatten();
+        if key.is_none() {
+            self.stats.unkeyed += 1;
+        }
+        key.map(|key| key.into_bytes().into())
+    }
+
+    fn insert(&mut self, key: std::sync::Arc<[u8]>, class: Option<OrderClass>) {
+        if key.len() > self.capacity_bytes {
+            return;
+        }
+        while self.bytes + key.len() > self.capacity_bytes {
+            let oldest = self.order.pop_front().expect("held keys account for the held bytes");
+            self.bytes -= oldest.len();
+            self.entries.remove(&oldest);
+            self.stats.evictions += 1;
+        }
+        self.bytes += key.len();
+        self.order.push_back(key.clone());
+        self.entries.insert(key, class);
+        self.stats.peak_entries = self.stats.peak_entries.max(self.entries.len());
+        self.stats.peak_key_bytes = self.stats.peak_key_bytes.max(self.bytes);
+    }
+}
+
 impl RecordingCache {
     fn key(prepared: &PreparedRecording<ProbabilityMass>) -> Vec<u8> {
         let conditions: Vec<_> =
@@ -1937,21 +2174,15 @@ impl RecordingCache {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn prepare_recording<M: Mass>(
+/// The checks of a recording that precede its reduced model.
+fn check_recording(
     master: &Master,
     skills: &LuckSkills,
-    notes: &[LiveNote],
-    skill_events: &[(i32, i32)],
-    params: LiveParams,
-    setup: &GekisouSetup,
     play: &LivePlay,
     delta_times: &[f32],
-    deck: &[Performer],
     probes: Option<&[Option<usize>]>,
-    ranking: Option<&[crate::replay::RankConfirmation]>,
-    collect_moments: bool,
-) -> Result<PreparedRecording<M>, Error> {
+    deck: &[Performer],
+) -> Result<(), Error> {
     // Initial/precomputed draws choose `next` without adding score. Each consumed result calls add_score
     // once; non-overlapping Luck ranges consume at most once per note plus one pending result per frame.
     // Thus saturation at four Criticals cannot hide a later native i32 wrap back to zero.
@@ -1969,16 +2200,41 @@ fn prepare_recording<M: Mass>(
             ));
         }
     }
-    check_held_state_identities(master, deck)?;
-    let reduced: Vec<_> = deck
-        .iter()
+    check_held_state_identities(master, deck)
+}
+
+/// The performers of a reduced recording: without their live and support skills.
+fn reduced_deck(deck: &[Performer]) -> Vec<Performer> {
+    deck.iter()
         .cloned()
         .map(|mut performer| {
             performer.live_skill = None;
             performer.support_skills.clear();
             performer
         })
-        .collect();
+        .collect()
+}
+
+/// The reduced model of `deck`, its plan, and the life recorder of the complete formation when the recording reads
+/// it: when an action reads the life, or a held conversion can change a judgement of the play. Otherwise every
+/// judgement reaches the controller as declared and no action reads a phase life.
+#[allow(clippy::too_many_arguments)]
+fn prepare_recording<M: Mass>(
+    master: &Master,
+    skills: &LuckSkills,
+    notes: &[LiveNote],
+    skill_events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    deck: &[Performer],
+    probes: Option<&[Option<usize>]>,
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+    collect_moments: bool,
+) -> Result<PreparedRecording<M>, Error> {
+    check_recording(master, skills, play, delta_times, probes, deck)?;
+    let reduced = reduced_deck(deck);
     let mut model =
         LiveModel::build(master, &reduced, notes, &[], params, Some(setup), ranking.is_some(), None, Some(skills))?;
     if let Some(ranking) = ranking {
@@ -1990,7 +2246,7 @@ fn prepare_recording<M: Mass>(
         count(|p| &mut p.without_skills);
     }
     let life = if plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life))
-        || luck_has_judgement_conversion(master, deck)
+        || luck_play_converts(master, deck, notes, play)
     {
         count(|p| &mut p.with_life);
         Some(timed(
@@ -2705,6 +2961,8 @@ impl LuckDpCache {
     /// The recording also reads the life recorder of the whole formation: its converted judgements, and its phase
     /// lives for actions whose conditions read the life. No action condition may read the life, and the recording
     /// must convert no judgement; the caller establishes that no other order converts one either.
+    ///
+    /// `classes` gives the class of a formation whose key it holds, and keeps the classes recorded here.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn certified_order_class(
         &mut self,
@@ -2718,7 +2976,59 @@ impl LuckDpCache {
         delta_times: &[f32],
         deck: &[Performer],
         ranking: Option<&[crate::replay::RankConfirmation]>,
+        classes: Option<&mut LuckOrderClasses<'_>>,
     ) -> Result<Option<OrderClass>, Error> {
+        let mut keyed = classes.and_then(|classes| {
+            let key =
+                classes.key(master, skills, notes, skill_events, params, setup, play, delta_times, ranking, deck)?;
+            Some((classes, key))
+        });
+        if let Some((classes, key)) = keyed.as_mut() {
+            classes.stats.lookups += 1;
+            if let Some(class) = classes.entries.get(&key[..]) {
+                classes.stats.hits += 1;
+                return Ok(class.clone());
+            }
+        }
+        let Some((class, life)) = self.record_order_class(
+            master,
+            skills,
+            notes,
+            skill_events,
+            params,
+            setup,
+            play,
+            delta_times,
+            deck,
+            ranking,
+        )?
+        else {
+            return Ok(None);
+        };
+        if let Some((classes, key)) = keyed
+            && !life
+        {
+            classes.insert(key, class.clone());
+        }
+        Ok(class)
+    }
+
+    /// The class [`LuckDpCache::certified_order_class`] records, and whether the recording read a life recorder;
+    /// None when the actions read the life.
+    #[allow(clippy::too_many_arguments)]
+    fn record_order_class(
+        &mut self,
+        master: &Master,
+        skills: &LuckSkills,
+        notes: &[LiveNote],
+        skill_events: &[(i32, i32)],
+        params: LiveParams,
+        setup: &GekisouSetup,
+        play: &LivePlay,
+        delta_times: &[f32],
+        deck: &[Performer],
+        ranking: Option<&[crate::replay::RankConfirmation]>,
+    ) -> Result<Option<(Option<OrderClass>, bool)>, Error> {
         let prepared = prepare_recording::<ProbabilityMass>(
             master,
             skills,
@@ -2734,20 +3044,22 @@ impl LuckDpCache {
             false,
         )?;
         let plan = &prepared.plan;
-        if prepared.model.cond.iter().any(|condition| condition.member >= PAIR_POSITIONS)
-            || plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life))
-        {
+        if plan.actions.iter().any(|(_, _, checker)| checker.as_ref().is_some_and(reads_life)) {
             return Ok(None);
+        }
+        let life = prepared.life.is_some();
+        if prepared.model.cond.iter().any(|condition| condition.member >= PAIR_POSITIONS) {
+            return Ok(Some((None, life)));
         }
         let order_pairs = plan.order_pairs;
         let mut watch = OrderWatch::default();
         let transcript = record_prepared(prepared, notes, play, delta_times, &mut || false, Some(&mut watch))?
             .expect("an uncancelled recording");
         if watch.broken.is_some() || transcript.failure.is_some() {
-            return Ok(None);
+            return Ok(Some((None, life)));
         }
         let law = self.law_of(&transcript, &mut || false)?.expect("an uncancelled propagation");
-        Ok(Some(OrderClass { law, pairs: order_pairs | watch.pairs }))
+        Ok(Some((Some(OrderClass { law, pairs: order_pairs | watch.pairs }), life)))
     }
 
     /// The certified law of a transcript, from the cache or propagated.
@@ -2895,6 +3207,65 @@ mod tests {
             &master,
             &[Performer { gekisou_support_skills: vec![(44, 1)], ..Default::default() }]
         ));
+    }
+
+    #[test]
+    fn only_conversions_that_can_change_a_judgement_of_the_play_count() {
+        let mut great = row(1, "_supportSkillID", 42, 12006, 5, 0, 0, 0);
+        great["_skillTargetIDs"] = json!([1]);
+        let mut perfect = row(2, "_supportSkillID", 43, 13005, 0, 0, 0, 0);
+        perfect["_skillTargetIDs"] = json!([2]);
+        let mut missing = row(3, "_supportSkillID", 44, 12006, 5, 0, 0, 0);
+        missing["_skillTargetIDs"] = json!([99]);
+        let tables = json!({
+            "MasterSupportSkillEffect":[great, perfect, missing],
+            "MasterSkillTarget":[{"_id":1,"_skillTargetType":2,"_judgement":4},{"_id":2,"_skillTargetType":2,"_judgement":5}],
+            "MasterLiveJudgementTiming":[
+                {"_id":1,"_noteJudgementType":1,"_noteSimulateJudgement":6},
+                {"_id":2,"_noteJudgementType":1,"_noteSimulateJudgement":5},
+                {"_id":3,"_noteJudgementType":2,"_noteSimulateJudgement":5}]
+        });
+        let texts: Vec<_> = tables
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(name, rows)| (name.clone(), json!({"_allData":rows}).to_string()))
+            .collect();
+        let master =
+            Master::from_json_tables(|name| texts.iter().find(|(key, _)| key == name).map(|(_, text)| text.as_str()))
+                .unwrap();
+        // Note 1 has a Just timing, note 2 does not.
+        let notes = [1, 2].map(|note_id| LiveNote {
+            note_id,
+            time_ms: 100 * note_id,
+            note_operate_type: 1,
+            judgement_type: note_id,
+        });
+        let play = |judgements: [i32; 2]| LivePlay {
+            frames: vec![PlayFrame {
+                time_ms: 300,
+                judged: notes
+                    .iter()
+                    .zip(judgements)
+                    .map(|(note, judgement)| JudgedNote {
+                        note_id: note.note_id,
+                        judgement,
+                        judgement_time_ms: note.time_ms,
+                    })
+                    .collect(),
+            }],
+            base_seed: 0,
+        };
+        let holding = |skill: i64| [Performer { support_skills: vec![(skill, 1)], ..Default::default() }];
+        // To Perfect from Great: only a Great changes.
+        assert!(!luck_play_converts(&master, &holding(42), &notes, &play([6, 5])));
+        assert!(luck_play_converts(&master, &holding(42), &notes, &play([4, 5])));
+        // To Just from Perfect: not a note without a Just timing.
+        assert!(!luck_play_converts(&master, &holding(43), &notes, &play([6, 5])));
+        assert!(luck_play_converts(&master, &holding(43), &notes, &play([5, 5])));
+        // A target missing from the master may be any judgement.
+        assert!(luck_play_converts(&master, &holding(44), &notes, &play([6, 6])));
+        assert!(!luck_play_converts(&master, &[Performer::default()], &notes, &play([4, 4])));
     }
 
     fn fixture(result: i64, base: i64) -> (Master, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {

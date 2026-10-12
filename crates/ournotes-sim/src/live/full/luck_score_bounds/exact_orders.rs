@@ -36,7 +36,7 @@ use super::exact::{
 };
 use super::exact_paths::{MAX_LANES, Orders, first_orders};
 use super::*;
-use crate::live::full::luck_dp::{OrderClass, PAIR_POSITIONS, PositionPairs};
+use crate::live::full::luck_dp::{LuckOrderClasses, OrderClass, PAIR_POSITIONS, PositionPairs};
 
 const MEMBERS: usize = 5;
 
@@ -97,9 +97,26 @@ impl Live<'_> {
     }
 
     /// The law of `deck` with the orders of its performers that share it.
-    fn order_class(&self, deck: &[Performer], curves: &mut LuckDpCache) -> Result<Option<OrderClass>, Error> {
+    fn order_class(
+        &self,
+        deck: &[Performer],
+        curves: &mut LuckDpCache,
+        classes: Option<&mut LuckOrderClasses<'_>>,
+    ) -> Result<Option<OrderClass>, Error> {
         let Live { master, skills, notes, events, params, setup, play, delta_times, ranking } = *self;
-        curves.certified_order_class(master, skills, notes, events, params, setup, play, delta_times, deck, ranking)
+        curves.certified_order_class(
+            master,
+            skills,
+            notes,
+            events,
+            params,
+            setup,
+            play,
+            delta_times,
+            deck,
+            ranking,
+            classes,
+        )
     }
 }
 
@@ -379,12 +396,14 @@ fn certify(model: &LiveModel) -> Result<IntegerBounds, Error> {
 
 /// The lottery law of each order, and how many reduced recordings it took. Each order takes the law of the first
 /// class whose pairs of performers it orders as the class's order does, and an order that no class covers records its
-/// own class. Once a recording shows no class, every order not yet covered records its law alone.
+/// own class, or takes it from `known` when that holds it. Once a recording shows no class, every order not yet
+/// covered records its law alone.
 fn order_laws(
     live: &Live,
     deck: &[Performer],
     orders: &[[usize; MEMBERS]],
     curves: &mut LuckDpCache,
+    mut known: Option<&mut LuckOrderClasses<'_>>,
 ) -> Result<(Vec<std::sync::Arc<LuckDpCertifiedResult>>, usize), Error> {
     let pair = |a: usize, b: usize| -> PositionPairs { 1 << (PAIR_POSITIONS * a.min(b) + a.max(b)) };
     type Class = ([usize; MEMBERS], PositionPairs, std::sync::Arc<LuckDpCertifiedResult>);
@@ -407,7 +426,7 @@ fn order_laws(
         let deck = ordered(deck, order);
         law_recordings += 1;
         if !classless {
-            match live.order_class(&deck, curves)? {
+            match live.order_class(&deck, curves, known.as_deref_mut())? {
                 Some(OrderClass { law, pairs: positions }) => {
                     let mut pairs = 0;
                     for a in 0..MEMBERS {
@@ -430,7 +449,8 @@ fn order_laws(
 }
 
 /// The certified lottery law of each of `orders` of a five-performer formation (`deck` in slot order, each order the
-/// slots in performance order), as [`luck_exact_orders`] takes them.
+/// slots in performance order), as [`luck_exact_orders`] takes them. `classes` gives the order classes of formations
+/// whose lottery conditions it has seen in this live, and keeps the classes recorded here.
 #[allow(clippy::too_many_arguments)]
 pub fn luck_order_laws(
     master: &Master,
@@ -445,6 +465,7 @@ pub fn luck_order_laws(
     ranking: Option<&[crate::replay::RankConfirmation]>,
     orders: &[[usize; MEMBERS]],
     curves: &mut LuckDpCache,
+    classes: Option<&mut LuckOrderClasses<'_>>,
 ) -> Result<Vec<std::sync::Arc<LuckDpCertifiedResult>>, Error> {
     if deck.len() != MEMBERS {
         return Err(Error::Input("an order evaluation takes five performers".into()));
@@ -457,7 +478,7 @@ pub fn luck_order_laws(
         return Err(Error::Input("an order is a permutation of the five performers".into()));
     }
     let live = Live { master, skills, notes, events, params, setup, play, delta_times, ranking };
-    Ok(order_laws(&live, deck, orders, curves)?.0)
+    Ok(order_laws(&live, deck, orders, curves, classes)?.0)
 }
 
 /// The probe rows in native filing order and the probe phase binding of a formation's model before it plays.
@@ -546,7 +567,7 @@ fn splice(
     profile.record_ms += watch.lap();
     let (laws, law_recordings) = match given {
         Some(laws) => (laws.to_vec(), 0),
-        None => order_laws(live, deck, orders, curves)?,
+        None => order_laws(live, deck, orders, curves, None)?,
     };
     profile.law_ms += watch.lap();
     // Orders that share one replay: the same probe phase binding, probe rows in all or none, and the same possible

@@ -97,7 +97,7 @@ impl RetainedRefinement {
     }
 }
 
-pub(super) struct CertifiedState {
+pub(super) struct CertifiedState<'m> {
     frontier: IntervalTopK,
     entries: BTreeMap<u64, CertifiedEntry>,
     cutoff: Option<(i128, i32)>,
@@ -110,6 +110,9 @@ pub(super) struct CertifiedState {
     luck_skills: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
     /// Certified lottery curves of this request, shared by every performance order and team.
     pub(super) luck_curves: ournotes_sim::live::full::LuckDpCache,
+    /// Order classes of this request's teams by their lottery conditions, made at the first law recording.
+    pub(super) luck_classes: Option<ournotes_sim::live::full::LuckOrderClasses<'m>>,
+    pub(super) class_bytes: usize,
     /// Joint bounds under the lottery laws of single teams.
     pub(super) law_bounds: super::leaf::LawBounds,
 }
@@ -117,8 +120,9 @@ pub(super) struct CertifiedState {
 /// Key bytes the request's lottery-curve cache may hold.
 pub(super) const LUCK_CURVE_CACHE_BYTES: usize = 32 * 1024 * 1024;
 
-impl CertifiedState {
-    pub(super) fn new(k: usize, curve_bytes: usize) -> Result<Self, Error> {
+impl CertifiedState<'_> {
+    /// `cache_bytes` bounds the keys of the lottery curves and of the order classes, each.
+    pub(super) fn new(k: usize, cache_bytes: usize) -> Result<Self, Error> {
         Ok(Self {
             frontier: IntervalTopK::new(k)?,
             entries: BTreeMap::new(),
@@ -127,7 +131,9 @@ impl CertifiedState {
             domain_exhausted: false,
             retain_refinement: None,
             luck_skills: None,
-            luck_curves: ournotes_sim::live::full::LuckDpCache::new(curve_bytes),
+            luck_curves: ournotes_sim::live::full::LuckDpCache::new(cache_bytes),
+            luck_classes: None,
+            class_bytes: cache_bytes,
             law_bounds: super::leaf::LawBounds::default(),
         })
     }
@@ -560,7 +566,7 @@ impl Engine<'_, '_> {
 mod refinement_tests {
     use super::*;
 
-    fn frontier(k: usize) -> CertifiedState {
+    fn frontier(k: usize) -> CertifiedState<'static> {
         let mut state = CertifiedState::new(k, 0).unwrap();
         for (id, lo, hi) in [(1, 10.0, 11.0), (2, 3.0, 5.0), (3, 4.0, 6.0)] {
             let bounds = F64Interval::new(lo, hi).unwrap();
