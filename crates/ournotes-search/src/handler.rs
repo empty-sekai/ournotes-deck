@@ -74,6 +74,8 @@ pub(crate) struct ExecutionPlan {
     pub(crate) joint: Option<crate::search::joint::JointBounds>,
     pub(crate) deck_payoff: Option<crate::search::deck_payoff::DeckPayoffBounds>,
     pub(crate) team_power: Option<crate::search::team_power::TeamPowerBounds>,
+    /// A combined metric with its levels folded into one payoff (`search::levels`); the search ranks by it.
+    pub(crate) metric: Option<Metric>,
     /// When the bound compile began, and its duration (zero without branch-and-bound).
     pub(crate) bound_compile_started: crate::clock::Instant,
     pub(crate) bound_compile_ms: f64,
@@ -109,7 +111,10 @@ pub(crate) fn compile_execution(
         return Err(Error::Input("simulation/network inputs apply only to played live".into()));
     }
     let domain = CandidateDomain::build(pool, &request.constraints)?;
-    let primary_metric = metric.primary_bound_metric();
+    let folded = crate::search::levels::fold(metric, |term| {
+        crate::search::joint::term_cap(pool, request, &domain, term, event_input)
+    })?;
+    let metric = folded.as_ref().unwrap_or(metric);
     let started = crate::clock::Instant::now();
     let mut deck_payoff = None;
     let mut deck_payoff_refusal = None;
@@ -124,8 +129,23 @@ pub(crate) fn compile_execution(
             }
             Err(reason) => (None, Some(reason.to_string())),
         }
-    } else if metric.secondary_priority().is_some() && matches!(request.objective.inner(), Objective::SkipScore { .. })
+    } else if matches!(metric, Metric::Combined { .. })
+        && matches!(request.objective.inner(), Objective::SkipScore { .. })
     {
+        // Terms the deck alone determines are ranked by deck; any other term leaves the request without a bound.
+        if matches!(strategy, Strategy::BranchAndBound) {
+            match crate::search::deck_payoff::DeckPayoffBounds::compile(
+                pool,
+                request,
+                &domain,
+                metric,
+                event_input,
+                None,
+            ) {
+                Ok(bound) => deck_payoff = Some(bound),
+                Err(reason) => deck_payoff_refusal = Some(reason.to_string()),
+            }
+        }
         (None, None)
     } else if matches!(strategy, Strategy::BranchAndBound)
         && matches!(request.objective.inner(), Objective::SkipScore { .. })
@@ -142,30 +162,30 @@ pub(crate) fn compile_execution(
             Err(reason) => (None, Some(reason.to_string())),
         }
     } else if matches!(strategy, Strategy::BranchAndBound) {
-        match crate::search::joint::JointBounds::compile(
-            pool,
-            request,
-            &domain,
-            &primary_metric,
-            event_input,
-            simulation,
-        ) {
+        match crate::search::joint::JointBounds::compile(pool, request, &domain, metric, event_input, simulation) {
             Ok(bound) => {
-                // A played Live whose payoff steps with the local score is first ranked by deck under its score cap.
-                if metric.secondary_priority().is_none()
-                    && let Some(steps) = bound.score_steps()
-                {
-                    match crate::search::deck_payoff::DeckPayoffBounds::compile(
-                        pool,
-                        request,
-                        &domain,
-                        metric,
-                        event_input,
-                        Some(steps),
-                    ) {
-                        Ok(b) => deck_payoff = Some(b),
-                        Err(reason) => deck_payoff_refusal = Some(reason.to_string()),
-                    }
+                // A played Live whose payoff steps with the local score is first ranked by deck under its score cap:
+                // a combined metric when every term does.
+                let ranked = if matches!(metric, Metric::Combined { .. }) {
+                    bound.term_steps().map(|terms| {
+                        crate::search::deck_payoff::DeckPayoffBounds::stepped(pool, request, &domain, terms)
+                    })
+                } else {
+                    bound.score_steps().map(|steps| {
+                        crate::search::deck_payoff::DeckPayoffBounds::compile(
+                            pool,
+                            request,
+                            &domain,
+                            metric,
+                            event_input,
+                            Some(steps),
+                        )
+                    })
+                };
+                match ranked {
+                    Some(Ok(b)) => deck_payoff = Some(b),
+                    Some(Err(reason)) => deck_payoff_refusal = Some(reason.to_string()),
+                    None => {}
                 }
                 (Some(bound), None)
             }
@@ -180,6 +200,7 @@ pub(crate) fn compile_execution(
         joint,
         deck_payoff,
         team_power,
+        metric: folded,
         bound_compile_started: started,
         bound_compile_ms,
         bound_fallback,

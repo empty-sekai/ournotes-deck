@@ -2,6 +2,17 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.6](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.5...v0.0.6) - 2026-10-11
+
+### Features
+
+- **search:** Rank teams by a weighted sum of metrics ([c74c959](https://github.com/empty-sekai/ournotes-deck/commit/c74c959656029da037ab971be0a0c1fc5edaa915))
+- **search:** Rank teams by ordered levels of weighted metric sums ([90acf1b](https://github.com/empty-sekai/ournotes-deck/commit/90acf1bba0095cb15db34b382bb0f316dee20aa2))
+
+### Performance
+
+- **search:** Rank combined metrics by deck payoff ([9cbc446](https://github.com/empty-sekai/ournotes-deck/commit/9cbc44662583ef6b96af7d6886354c84e7c8ded3))
+
 ## [0.0.5](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.4...v0.0.5) - 2026-10-10
 
 ### Features

@@ -822,6 +822,16 @@ Thus each order's payoff, and its lottery expectation when applicable, is at mos
 bounds the uniform-order payoff numerator. This conversion requires an orderwise score cap; a bound on mean score
 alone would not justify applying a discontinuous target or reward step in this way.
 
+A [combined metric](#combined-metrics) compiles one curve per term and the payoff
+`F = sum_i w_i * F_i(B_i,P)` with the folded weights `w_i` of its terms. Term `i` reads its own additive bonus
+`B_i`: event-point effects, event-item effects, or none for Challenge points. Terms whose bonus is equal for every
+member and every Snap share one bonus, and a payoff reads at most eight distinct bonuses. Every `F_i` is nondecreasing
+in its bonus and in power and every weight is positive, so `F` is nondecreasing in each bonus and in power. The
+checks above apply to each bonus, and the weighted sum is evaluated in checked 128-bit integers. At a member prefix
+each `B_i` is bounded on its own, by the same rule as a single bonus; `F` at these maxima and `P_upper` bounds every
+completion, again without requiring that one team attains them together. On a played Live every term is a
+score-step function at the shared cap `C(P)`, so the weighted sum bounds each order's combined payoff.
+
 ### Snap frontiers with both bonus and power
 
 The payoff frontier scans Snaps with a state `(occupied mask, bonus sum, power increment, binding)`. Common
@@ -835,6 +845,13 @@ power/key pair. Each is therefore a valid dominance witness with sufficient bonu
 gives `K` distinct teams ahead of the discarded state's completion. Induction preserves the first `K` full bindings
 under `(F(B,P), P, canonical IDs)`, and final sorting produces that order exactly. For a score-step curve, this is
 the exact order of the *bounds*, not a claim that the actual played payoffs equal them.
+
+With several bonuses, `x` dominates `y` when every bonus of `x` is at least the same bonus of `y` and the power and
+key condition holds; monotonicity in each bonus gives the same conclusion for every common extension. States are
+then processed by descending power and ascending Snap key, so every state that beats another on power and key
+precedes it, and a state is discarded once `K` retained earlier states have at least its bonus of every kind. A
+discarded state's witnesses are retained states, and the relation is transitive, so the induction above carries
+over.
 
 This frontier can keep many mutually undominated bonus/power tradeoffs in one mask. Its width is not bounded by
 `K`, unlike the power-only assignment DP. The compilation checks on `K * max(1, number_of_Snaps)` and table sizes
@@ -922,7 +939,7 @@ without a LUCK range the controller consumes no lottery, the probability gates o
 lottery-dependent score-ups, and each order still has one exact score.
 
 `Complete` certifies the first `min(K, number of legal teams)` teams under this scalar order.
-[Challenge-point priorities](#lexicographic-challenge-point-priorities) select their Top-K within the maximum-CP layer. `TimedOut` preserves
+[Combined metrics](#combined-metrics) order teams by their levels. `TimedOut` preserves
 complete deterministic evaluations, or certified enclosures on the LUCK route; the reason can be a time limit,
 candidate limit or another incomplete-search exit and is recorded separately. `telemetry.proof` reports the
 available bounds on unexplored work; an absent cap means that the unexplored value is unknown.
@@ -1294,27 +1311,81 @@ explicit. Limits on states, convolution work and retained cells disable this opt
 DP states. All numeric equality cases retain the original canonical ranking rules. This layer supplements the
 unique-resource and suffix bounds; it does not replace the exact leaf evaluator.
 
-## Lexicographic Challenge-point priorities
+## Combined metrics
 
-`ClientChallengePointsWithBonuses` ranks exact expected CP first, followed by the selected order of
-expected PT and exact-grade items, then power and the canonical member/Snap key. Its result set is the
-Top-K within the maximum-CP layer. The search maintains a single best primary numerator, clears the
-incumbents when this value increases, and admits only equal-primary candidates to the secondary ranking.
-Every evaluated terminal score is settled independently for PT and items with its full probability mass.
-All candidates share the declared expectation denominator.
+Each level of `Combined` is the exact expectation of `sum_i w_i * payoff_i(S)` over the 120 performance orders,
+where every term is a single metric settled on the same terminal score `S` and every weight `w_i` is a positive
+integer. Each terminal outcome is settled once per term with its full probability mass, the weighted values
+are added in exact integers, and all teams share the declared expectation denominator. Two teams compare by the
+first level, then by each later level in turn, then by power and the canonical member/Snap key. A team's
+per-term expectations are computed from the same score distribution when it enters the Top-K.
 
-The scalar CP bound is admissible for the primary coordinate. A node with `upper < bestCP` is inferior.
-Equality retains all possible secondary values and canonical ties. The cutoff uses the no-power-tie
-marker, and the composition path uses complete Snap binding traversal for this objective. Played search
-uses the primary CP joint envelope; deterministic Skip uses complete legal team enumeration. A completed
-traversal therefore proves both the best CP layer and its lexicographic Top-K. Time-limited traversals
-retain observed incumbents and primary-coordinate bounds; secondary optimality remains unproven.
+### One level
 
-Reproduce the synthetic complete-domain oracle, cache equivalence, deterministic-domain checks and
-fractional priority tests with:
+The upper bound is the weighted sum of the terms' own bounds. For a node, every term bound `U_i` covers the
+term's expected payoff over the node's completions, the weights are nonnegative and the term rewards are
+nonnegative, so `sum_i w_i * U_i` covers the expected combined payoff. One term keeps its member and Snap event
+bonuses in the bound's additive tables. Every other term's payoff is nondecreasing in its event bonus and is
+evaluated at the largest bonus of a legal team, which no team exceeds. Where the single-metric bound reads the
+payoff of one order from a score cap, the combined bound adds the terms' order payoffs at that cap; where it
+reads a mean from a mean score cap, it adds the terms' mean bounds. When every term is a step function of the
+score, the union of the terms' step scores partitions the score axis for the per-interval order bound.
+A term without a bound of its own pays its score, which the score cap covers.
+
+### Several levels
+
+The search ranks one integer per terminal result, the folded payoff `F(S) = sum_l M_l * P_l(S)`, where `P_l` is
+the weighted sum of level `l` and `M_l` its multiplier. Let `C_l` be at least the folded payoff of the levels
+after `l` in one terminal result. The last level has `M = 1` and `C = 0`, and every other level has
+`M_l = 120 * C_l + 1`. Over the 120 performance orders the levels after `l` then sum to at most
+`120 * C_l < M_l`, less than one unit of level `l`'s own sum. For payoffs within the caps, the sums of `F` over
+the orders therefore compare exactly as the vectors of the levels' sums do, and equal sums are equal on every
+level, so power and the canonical key decide exactly the ties of the levels.
+
+`C_l` is built from a cap of each term's payoff in one terminal result: 1 for a score target, the threshold of a
+capped score, the largest row of the event reward table on the request's result route at that route's rate and
+the largest event bonus of a legal team, and the largest Int32 for a raw score. A metric whose folded cap, with
+room for the sums over orders and for the bounds' weighted sums, leaves the 128-bit integer range is an input
+error.
+
+Every evaluated terminal result is checked against the caps: a level after the first that pays a negative amount
+or more than its cap ends the request as `Unsupported`. A team the search closes without evaluating it has a
+folded upper bound below the folded sum of the K-th team. Its later levels are nonnegative, so its first level
+does not exceed the K-th team's; where the first levels are equal the same holds for the second level, and so on.
+The closed team therefore does not precede the K-th team in the order of the levels, whatever its later levels
+pay.
+
+The upper bound of `F` is the one-level bound with the weights `w_i * M_l`. A node whose first-level bound equals
+the K-th team's first level is closed by the bounds of its later levels, without a separate traversal of the tied
+layer. Results are unfolded at the output boundary: the numerator of level `l` is the quotient by `M_l` of the
+remainder left by the levels before it. Proof telemetry reports its values, upper bounds and gaps in units of the
+first level.
+
+A Challenge-point reward priority is the combined metric of three one-term levels: Challenge points, then event
+points and exact-grade items in the requested order.
+
+### Ranking by deck
+
+A combined metric whose terms all have a [deck payoff curve](#deck-payoff-curves-and-bounds) is first ranked by
+the weighted sum of those curves with the folded weights. On a Skip the event-point, Challenge-point and item
+terms are determined by the deck, the sum is the exact folded payoff, and the ranking is the result. On a played
+Live a term has a curve when its payoff steps with the local score (a score target, event points or items by
+score tier, Challenge points); the sum is an upper bound of every order's folded payoff, and
+[evaluation and reranking](#evaluation-and-reranking-of-payoff-bounds) settles it, handing over to the traversal
+with the bound of the sections above under the same conditions as a single metric. A played Live with a term
+without score steps, such as a raw score, uses that traversal from the start. A Skip with a term the deck does
+not determine uses complete legal team enumeration.
+
+A request with an active LUCK range is reported as unsupported.
+
+Reproduce the folding arithmetic, the synthetic complete-domain comparison between exhaustive enumeration and
+branch-and-bound on one and several levels, the independent per-term settlement, validation and the account
+contracts with:
 
 ```sh
-cargo test --release --locked -p ournotes-search --lib reward_priority_tests
+cargo test --release --locked -p ournotes-search --lib levels
+cargo test --release --locked -p ournotes-search --lib deck_payoff
+cargo test --release --locked -p ournotes-search --test adapter_fixture_export combined
 cargo test --release --locked -p ournotes-search --test adapter_fixture_export cp_priorities
 ```
 

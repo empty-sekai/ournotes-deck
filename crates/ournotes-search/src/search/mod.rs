@@ -26,6 +26,7 @@ pub(crate) mod deck_payoff;
 #[cfg(feature = "search-diagnostics")]
 pub mod diagnostics;
 pub(crate) mod joint;
+pub(crate) mod levels;
 mod live;
 mod matching;
 mod power;

@@ -142,6 +142,21 @@ impl Curve {
             Self::Steps(steps) => steps.value(bonus, power),
         }
     }
+
+    /// The largest payoff gain of 10000 units of bonus; it only orders the members a search visits.
+    fn slope(&self) -> f64 {
+        match self {
+            Self::Points { reward, rate } => *reward as f64 * *rate as f64 / 10000.0,
+            Self::Items { count, rate, counted } => {
+                f64::from(u8::from(*counted)) * *count as f64 * *rate as f64 / 10000.0
+            }
+            Self::Constant(_) => 0.0,
+            Self::Steps(steps) => steps.steps.iter().fold(0.0, |best, &(_, step)| match step {
+                Step::Points(multiplier) => best.max(multiplier as f64),
+                Step::Target(_) => best,
+            }),
+        }
+    }
 }
 
 /// The bonus type, effect event and payoff curve of a request's deck-determined payoff, or of the per-order payoff
@@ -240,22 +255,44 @@ fn curve(
     }
 }
 
-/// Owned arrays only. The payoff unit is one deck payoff; the engine scales it to its order mass.
-pub(crate) struct DeckPayoffBounds {
-    pub(crate) power: TeamPowerBounds,
-    /// Visit order of members: event bonus, then the power order.
-    pub(crate) members: Vec<usize>,
-    member_bonus: Vec<i64>,
+/// The most distinct event bonuses the terms of one payoff read.
+const KINDS: usize = 8;
+
+/// An event bonus one or more terms read.
+struct Kind {
+    member: Vec<i64>,
     /// Per Snap column (`domain.snaps()` order).
-    snap_bonus: Vec<i64>,
+    snap: Vec<i64>,
     /// The sum of the five largest Snap bonuses.
     snap_best: i64,
-    maximum_bonus: i64,
+    /// The largest bonus of a legal team.
+    maximum: i64,
+}
+
+/// One weighted term of the payoff: the curve of the bonus `kinds[kind]` and the power.
+struct Term {
+    weight: i128,
+    kind: usize,
     curve: Curve,
 }
 
+/// A term's weight, its event bonus per member and per Snap column, and its steps with the score.
+pub(crate) type TermSteps<'a> = (i128, &'a [i64], &'a [i64], ScoreSteps);
+
+/// Owned arrays only. The payoff unit is one deck payoff; the engine scales it to its order mass. The payoff is the
+/// weighted sum of its terms (one term of weight one for a single metric), each nondecreasing in its own event bonus
+/// and in the power.
+pub(crate) struct DeckPayoffBounds {
+    pub(crate) power: TeamPowerBounds,
+    /// Visit order of members: the bonus the payoff gains most from, then the power order.
+    pub(crate) members: Vec<usize>,
+    kinds: Vec<Kind>,
+    terms: Vec<Term>,
+}
+
 impl DeckPayoffBounds {
-    /// With score `steps` (a played Live), the payoff is only bounded: an evaluated deck may fall below it.
+    /// With score `steps` (a played Live's single metric), the payoff is only bounded: an evaluated deck may fall
+    /// below it. A combined metric of deck-determined payoffs sums the curves of its terms with their folded weights.
     pub(crate) fn compile(
         pool: &Pool,
         request: &SearchRequest,
@@ -264,42 +301,116 @@ impl DeckPayoffBounds {
         input: Option<&EventPayoffInput>,
         steps: Option<ScoreSteps>,
     ) -> Result<Self, Error> {
-        let (bonus_type, effect_event, curve) = curve(pool, request, metric, input, steps)?;
+        let terms: Vec<(i128, &Metric)> = match metric.folded_terms() {
+            Some(_) if steps.is_some() => return Err(unavailable("score steps of one metric given for several terms")),
+            Some(terms) => terms.collect(),
+            None => vec![(1, metric)],
+        };
+        let mut steps = steps;
+        let mut parts = Vec::with_capacity(terms.len());
+        for (weight, term) in terms {
+            let (bonus_type, effect_event, curve) = curve(pool, request, term, input, steps.take())?;
+            let effects = effect_event.map(|id| event::event_effects(pool.master, id)).unwrap_or_default();
+            let mut member = vec![0; pool.members.len()];
+            for &m in domain.members() {
+                let card = ournotes_sim::bonus::event_member(pool.master, &pool.members[m]);
+                member[m] = card_bonus(&effects, EventCard::Member(&card), bonus_type)?;
+            }
+            let snap = domain
+                .snaps()
+                .iter()
+                .map(|&s| {
+                    card_bonus(&effects, EventCard::Snap(&ournotes_sim::bonus::event_snap(&pool.snaps[s])), bonus_type)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            parts.push((weight, member, snap, curve));
+        }
+        Self::assemble(pool, request, domain, parts)
+    }
+
+    /// The bound of a played Live's combined metric from the score steps of every term.
+    pub(crate) fn stepped(
+        pool: &Pool,
+        request: &SearchRequest,
+        domain: &CandidateDomain,
+        terms: Vec<TermSteps<'_>>,
+    ) -> Result<Self, Error> {
+        let parts = terms
+            .into_iter()
+            .map(|(weight, member, snap, steps)| (weight, member.to_vec(), snap.to_vec(), Curve::Steps(steps)))
+            .collect();
+        Self::assemble(pool, request, domain, parts)
+    }
+
+    /// Terms as (weight, bonus per member, bonus per Snap column, curve). Terms with equal bonuses share one kind.
+    fn assemble(
+        pool: &Pool,
+        request: &SearchRequest,
+        domain: &CandidateDomain,
+        parts: Vec<(i128, Vec<i64>, Vec<i64>, Curve)>,
+    ) -> Result<Self, Error> {
         // The power tables certify nonnegative, nonwrapping powers (and a monotone Skip score) for every legal
         // deck. They protect native evaluation; without score steps power only breaks payoff ties.
         let power = TeamPowerBounds::tables(pool, request, domain)?;
-        let effects = effect_event.map(|id| event::event_effects(pool.master, id)).unwrap_or_default();
-        let mut member_bonus = vec![0; pool.members.len()];
-        for &m in domain.members() {
-            let card = ournotes_sim::bonus::event_member(pool.master, &pool.members[m]);
-            member_bonus[m] = card_bonus(&effects, EventCard::Member(&card), bonus_type)?;
+        let mut kinds = Vec::<Kind>::new();
+        let mut terms = Vec::with_capacity(parts.len());
+        // How much the payoff gains from each kind's bonus, at least.
+        let mut gains = Vec::<f64>::new();
+        for (weight, member, snap, curve) in parts {
+            let kind = match kinds.iter().position(|kind| kind.member == member && kind.snap == snap) {
+                Some(kind) => kind,
+                None => {
+                    let maximum = nonnegative_i32(largest_team_bonus(
+                        domain.members().iter().map(|&m| (pool.members[m].character_id, member[m])),
+                        &snap,
+                    ))?;
+                    // Prove bonus + 10000 and every product safe up to the largest bonus, independently of a zero
+                    // factor.
+                    point_product(0, maximum, 0)?;
+                    let mut best = snap.clone();
+                    best.sort_unstable_by(|a, b| b.cmp(a));
+                    let snap_best = best.iter().take(5).sum();
+                    kinds.push(Kind { member, snap, snap_best, maximum });
+                    gains.push(0.0);
+                    kinds.len() - 1
+                }
+            };
+            gains[kind] += weight as f64 * curve.slope();
+            terms.push(Term { weight, kind, curve });
         }
-        let snap_bonus = domain
-            .snaps()
-            .iter()
-            .map(|&s| {
-                card_bonus(&effects, EventCard::Snap(&ournotes_sim::bonus::event_snap(&pool.snaps[s])), bonus_type)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let maximum_bonus = nonnegative_i32(largest_team_bonus(
-            domain.members().iter().map(|&m| (pool.members[m].character_id, member_bonus[m])),
-            &snap_bonus,
-        ))?;
-        // Prove bonus + 10000 and every product safe up to the largest bonus, independently of a zero factor.
-        point_product(0, maximum_bonus, 0)?;
-        let root = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
-        curve.value(maximum_bonus, power.upper(pool, domain, &root, 0).ok_or_else(|| unavailable("no legal team"))?)?;
-        let mut best = snap_bonus.clone();
-        best.sort_unstable_by(|a, b| b.cmp(a));
-        let snap_best = best.iter().take(5).sum();
+        if kinds.len() > KINDS {
+            return Err(unavailable("too many distinct event bonuses"));
+        }
         let mut members = power.members.clone();
+        let bound = Self { power, members: Vec::new(), kinds, terms };
+        let root = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
+        let maxima: Vec<i64> = bound.kinds.iter().map(|kind| kind.maximum).collect();
+        bound
+            .payoff(&maxima, bound.power.upper(pool, domain, &root, 0).ok_or_else(|| unavailable("no legal team"))?)?;
+        let rank = |m: usize| {
+            bound.kinds.iter().zip(&gains).map(|(kind, gain)| gain.max(1.0) * kind.member[m] as f64).sum::<f64>()
+        };
         // Stable: equal bonuses keep the power order.
-        members.sort_by(|&a, &b| member_bonus[b].cmp(&member_bonus[a]));
-        Ok(Self { power, members, member_bonus, snap_bonus, snap_best, maximum_bonus, curve })
+        members.sort_by(|&a, &b| rank(b).total_cmp(&rank(a)));
+        Ok(Self { members, ..bound })
+    }
+
+    /// The payoff of a deck with these event bonuses (one per kind) and this power.
+    fn payoff(&self, bonus: &[i64], power: i64) -> Result<i128, Error> {
+        let mut sum = 0i128;
+        for term in &self.terms {
+            sum = term
+                .curve
+                .value(bonus[term.kind], power)?
+                .checked_mul(term.weight)
+                .and_then(|value| sum.checked_add(value))
+                .ok_or_else(|| unavailable("weighted payoff overflow"))?;
+        }
+        Ok(sum)
     }
 
     /// Bound every completion of the members in `SLOTS[..depth]` (no Snap is placed yet): (payoff, power), or None
-    /// when the prefix has no legal completion.
+    /// when the prefix has no legal completion. Each kind's bonus is bounded on its own.
     pub(crate) fn upper(
         &self,
         pool: &Pool,
@@ -312,30 +423,37 @@ impl DeckPayoffBounds {
         else {
             return Ok(None);
         };
+        let mut bonus = [0i64; KINDS];
         let mut rows = HashMap::<i64, i64>::new();
-        for &m in &available {
-            rows.entry(pool.members[m].character_id)
-                .and_modify(|v| *v = (*v).max(self.member_bonus[m]))
-                .or_insert(self.member_bonus[m]);
+        for (kind, bonus) in self.kinds.iter().zip(&mut bonus) {
+            rows.clear();
+            for &m in &available {
+                rows.entry(pool.members[m].character_id)
+                    .and_modify(|v| *v = (*v).max(kind.member[m]))
+                    .or_insert(kind.member[m]);
+            }
+            *bonus = SLOTS[..depth].iter().map(|&s| kind.member[p.members[s]]).sum::<i64>()
+                + sum_rows(&rows, &required, 5 - depth)
+                + kind.snap_best;
+            if *bonus > kind.maximum {
+                return Err(unavailable("prefix escaped the compiled proof domain"));
+            }
         }
-        let bonus = SLOTS[..depth].iter().map(|&s| self.member_bonus[p.members[s]]).sum::<i64>()
-            + sum_rows(&rows, &required, 5 - depth)
-            + self.snap_best;
-        if bonus > self.maximum_bonus {
-            return Err(unavailable("prefix escaped the compiled proof domain"));
-        }
-        Ok(Some((self.curve.value(bonus, power)?, power)))
+        Ok(Some((self.payoff(&bonus, power)?, power)))
     }
 
     /// Whether an evaluated deck may pay less than its bound (a played Live bounded by score steps).
     pub(crate) fn bounded_only(&self) -> bool {
-        matches!(self.curve, Curve::Steps(_))
+        self.terms.iter().any(|term| matches!(term.curve, Curve::Steps(_)))
     }
 
-    /// With score steps, the score cap of every order of a deck with power at most `power`.
+    /// With score steps, the score cap of every order of a deck with power at most `power`. The terms of one payoff
+    /// share the cap.
     pub(crate) fn score_cap(&self, power: i64) -> Option<i128> {
-        let Curve::Steps(steps) = &self.curve else { return None };
-        Some(steps.score_cap(power))
+        self.terms.iter().find_map(|term| match &term.curve {
+            Curve::Steps(steps) => Some(steps.score_cap(power)),
+            _ => None,
+        })
     }
 
     /// An upper bound of the power of every legal team.
@@ -347,9 +465,9 @@ impl DeckPayoffBounds {
     /// first), with their exact payoff and power. `base` is the layout's power without Snaps.
     ///
     /// Snaps are scanned once in public-ID order, so partial bindings of one slot mask extend identically. A binding
-    /// is dropped once `k` bindings of its mask with at least its bonus beat its power and Snap IDs: every common
-    /// extension keeps them ahead (the payoff is nondecreasing in bonus and power), so no dropped binding is among the
-    /// layout's first `k`.
+    /// is dropped once `k` bindings of its mask with at least its bonus of every kind beat its power and Snap IDs:
+    /// every common extension keeps them ahead (the payoff is nondecreasing in each bonus and in the power), so no
+    /// dropped binding is among the layout's first `k`.
     pub(crate) fn frontier(
         &self,
         domain: &CandidateDomain,
@@ -357,45 +475,80 @@ impl DeckPayoffBounds {
         base: i64,
         k: usize,
     ) -> Result<Vec<(i128, i64, PhysicalDeck)>, Error> {
-        type Partial = (i64, i64, [Option<usize>; 5]);
+        match self.kinds.len() {
+            1 => self.frontier_of::<1>(domain, p, base, k),
+            2 => self.frontier_of::<2>(domain, p, base, k),
+            _ => self.frontier_of::<KINDS>(domain, p, base, k),
+        }
+    }
+
+    /// [`DeckPayoffBounds::frontier`] with the bonuses of at most `N` kinds.
+    fn frontier_of<const N: usize>(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        base: i64,
+        k: usize,
+    ) -> Result<Vec<(i128, i64, PhysicalDeck)>, Error> {
+        type Partial<const N: usize> = ([i64; N], i64, [Option<usize>; 5]);
+        let per_kind = |read: &dyn Fn(&Kind) -> i64| -> [i64; N] {
+            std::array::from_fn(|kind| self.kinds.get(kind).map_or(0, read))
+        };
         let w = p.members.map(|m| self.power.w[m].as_slice());
-        let members: i64 = p.members.iter().map(|&m| self.member_bonus[m]).sum();
-        let mut states: Vec<Vec<Partial>> = vec![Vec::new(); 32];
-        states[0].push((0, 0, [None; 5]));
-        for (snap, &bonus) in self.snap_bonus.iter().enumerate() {
+        let members = per_kind(&|kind| p.members.iter().map(|&m| kind.member[m]).sum());
+        let mut states: Vec<Vec<Partial<N>>> = vec![Vec::new(); 32];
+        states[0].push(([0; N], 0, [None; 5]));
+        for snap in 0..domain.snaps().len() {
+            let bonus = per_kind(&|kind| kind.snap[snap]);
             let mut next = states.clone();
             for (mask, rows) in states.iter().enumerate() {
                 for slot in (0..5).filter(|slot| mask & (1 << slot) == 0) {
                     for &(sum, power, binding) in rows {
                         let mut binding = binding;
                         binding[slot] = Some(snap);
-                        next[mask | (1 << slot)].push((sum + bonus, power + w[slot][snap], binding));
+                        let sum = std::array::from_fn(|kind| sum[kind] + bonus[kind]);
+                        next[mask | (1 << slot)].push((sum, power + w[slot][snap], binding));
                     }
                 }
             }
             for rows in &mut next {
-                rows.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
-                let mut ahead: Vec<(i64, [Option<usize>; 5])> = Vec::with_capacity(k + 1);
-                rows.retain(|&(_, power, binding)| {
-                    let before = |&(p, b): &(i64, [Option<usize>; 5])| p > power || (p == power && b < binding);
-                    let at = ahead.partition_point(before);
-                    if at >= k {
-                        return false;
+                if N == 1 {
+                    // One bonus orders the rows: only the `k` best powers among the rows before one can beat it.
+                    rows.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
+                    let mut ahead: Vec<(i64, [Option<usize>; 5])> = Vec::with_capacity(k + 1);
+                    rows.retain(|&(_, power, binding)| {
+                        let before = |&(p, b): &(i64, [Option<usize>; 5])| p > power || (p == power && b < binding);
+                        let at = ahead.partition_point(before);
+                        if at >= k {
+                            return false;
+                        }
+                        ahead.insert(at, (power, binding));
+                        ahead.truncate(k);
+                        true
+                    });
+                } else {
+                    // By power and Snap IDs, every row that beats a row comes before it; a dropped row's `k` kept
+                    // rows also beat whatever it beats.
+                    rows.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)));
+                    let mut kept: Vec<Partial<N>> = Vec::with_capacity(rows.len());
+                    for &row in rows.iter() {
+                        let covers = |other: &&Partial<N>| (0..N).all(|kind| other.0[kind] >= row.0[kind]);
+                        if kept.iter().filter(covers).take(k).count() < k {
+                            kept.push(row);
+                        }
                     }
-                    ahead.insert(at, (power, binding));
-                    ahead.truncate(k);
-                    true
-                });
+                    *rows = kept;
+                }
             }
             states = next;
         }
         let mut out = Vec::new();
         for (sum, power, binding) in states.into_iter().flatten() {
-            let bonus = members + sum;
-            if bonus > self.maximum_bonus {
+            let bonus: [i64; N] = std::array::from_fn(|kind| members[kind] + sum[kind]);
+            if self.kinds.iter().zip(&bonus).any(|(kind, &bonus)| bonus > kind.maximum) {
                 return Err(unavailable("binding escaped the compiled proof domain"));
             }
-            out.push((self.curve.value(bonus, base + power)?, base + power, binding));
+            out.push((self.payoff(&bonus, base + power)?, base + power, binding));
         }
         out.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
         out.truncate(k);
@@ -522,7 +675,8 @@ mod tests {
     }
 
     /// Every canonical team of a fixed-leader Skip domain: each member prefix bounds it, and its layout's frontier
-    /// holds its exact native payoff and power, in the canonical rank order.
+    /// holds its exact native payoff and power, in the canonical rank order. A combined metric pays the folded
+    /// weighted sum of its terms' native payoffs.
     fn check_exact(scenario: Scenario, metric: Metric) {
         let data = fixture();
         let master = data.master();
@@ -545,7 +699,18 @@ mod tests {
         };
         let domain = CandidateDomain::build(&pool, &request.constraints).unwrap();
         let payoff = input.event_payoff.as_ref().unwrap();
+        let folded = crate::search::levels::fold(&metric, |term| {
+            crate::search::joint::term_cap(&pool, &request, &domain, term, Some(payoff))
+        })
+        .unwrap();
+        let metric = folded.unwrap_or(metric);
         let bound = DeckPayoffBounds::compile(&pool, &request, &domain, &metric, Some(payoff), None).unwrap();
+        // Point effects, item effects and no effect (challenge points) are three different bonuses of the fixture.
+        let read = |test: fn(&Metric) -> bool| usize::from(metric.any(test));
+        let kinds = read(|term| matches!(term, Metric::ClientEventPoints { .. }))
+            + read(|term| matches!(term, Metric::RankedEventItems { .. }))
+            + read(|term| matches!(term, Metric::ClientChallengePoints { .. }));
+        assert_eq!(bound.kinds.len(), kinds);
         let mut layouts = HashMap::new();
         let mut teams = 0;
         let mut payoffs = HashSet::new();
@@ -556,20 +721,28 @@ mod tests {
             teams += 1;
             let (power, score) = crate::search::evaluate(&pool, &deck.as_deck(), &request.objective)?;
             let score = score.expect("Skip score");
-            let exact = match metric {
-                Metric::ClientEventPoints { event_id } => i128::from(
-                    context.preview_event_points(&pool, &deck.as_deck(), payoff, event_id, score)?.points_for(event_id),
-                ),
-                Metric::ClientChallengePoints { event_id } => i128::from(
-                    context
-                        .preview_event_points(&pool, &deck.as_deck(), payoff, event_id, score)?
-                        .challenge_points_for(event_id),
-                ),
-                Metric::RankedEventItems { event_id, resource_type, resource_id } => {
-                    let items = context.preview_event_items(&pool, &deck.as_deck(), payoff, event_id, score)?;
-                    ournotes_sim::scenario::item_payoff(&items, event_id, resource_type, resource_id)?
-                }
-                _ => unreachable!(),
+            let native = |term: &Metric| -> Result<i128, Error> {
+                Ok(match *term {
+                    Metric::ClientEventPoints { event_id } => i128::from(
+                        context
+                            .preview_event_points(&pool, &deck.as_deck(), payoff, event_id, score)?
+                            .points_for(event_id),
+                    ),
+                    Metric::ClientChallengePoints { event_id } => i128::from(
+                        context
+                            .preview_event_points(&pool, &deck.as_deck(), payoff, event_id, score)?
+                            .challenge_points_for(event_id),
+                    ),
+                    Metric::RankedEventItems { event_id, resource_type, resource_id } => {
+                        let items = context.preview_event_items(&pool, &deck.as_deck(), payoff, event_id, score)?;
+                        ournotes_sim::scenario::item_payoff(&items, event_id, resource_type, resource_id)?
+                    }
+                    _ => unreachable!(),
+                })
+            };
+            let exact = match metric.folded_terms() {
+                Some(terms) => terms.map(|(weight, term)| Ok(weight * native(term)?)).sum::<Result<i128, Error>>()?,
+                None => native(&metric)?,
             };
             payoffs.insert(exact);
             for depth in 0..=5 {
@@ -604,6 +777,20 @@ mod tests {
         }
     }
 
+    fn combined(levels: &[&[(&Metric, u32)]]) -> Metric {
+        use crate::types::{MetricLevel, MetricTerm};
+        Metric::Combined {
+            levels: levels
+                .iter()
+                .map(|terms| {
+                    MetricLevel::new(
+                        terms.iter().map(|&(metric, weight)| MetricTerm { metric: metric.clone(), weight }).collect(),
+                    )
+                })
+                .collect(),
+        }
+    }
+
     #[test]
     fn every_canonical_skip_team_is_bounded_and_ranked_exactly() {
         let items = Metric::RankedEventItems { event_id: 7, resource_type: 4, resource_id: 88 };
@@ -612,5 +799,21 @@ mod tests {
             check_exact(scenario, items.clone());
         }
         check_exact(Scenario::Free(10), Metric::ClientChallengePoints { event_id: 7 });
+    }
+
+    #[test]
+    fn combined_skip_payoffs_are_ranked_exactly_over_the_bonus_of_each_term() {
+        let points = Metric::ClientEventPoints { event_id: 7 };
+        let challenge = Metric::ClientChallengePoints { event_id: 7 };
+        let items = Metric::RankedEventItems { event_id: 7, resource_type: 4, resource_id: 88 };
+        for scenario in [Scenario::Free(10), Scenario::Challenge(70)] {
+            check_exact(scenario, combined(&[&[(&points, 3), (&items, 40)]]));
+            check_exact(scenario, combined(&[&[(&items, 1), (&points, 1_000_000_000)]]));
+            check_exact(scenario, combined(&[&[(&items, 1)], &[(&points, 1)]]));
+            check_exact(scenario, combined(&[&[(&points, 1)], &[(&items, 1)]]));
+        }
+        check_exact(Scenario::Free(10), combined(&[&[(&points, 2), (&challenge, 35), (&items, 7)]]));
+        check_exact(Scenario::Free(10), combined(&[&[(&challenge, 1)], &[(&items, 5), (&points, 1)]]));
+        check_exact(Scenario::Free(10), combined(&[&[(&items, 9)]]));
     }
 }

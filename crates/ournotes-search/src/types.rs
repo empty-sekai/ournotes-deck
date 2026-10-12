@@ -288,12 +288,41 @@ impl Scene {
     }
 }
 
-/// Secondary expectations compared after maximizing earned Challenge points.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum EventRewardPriority {
-    EventPointsFirst,
-    EventItemsFirst,
+/// Most levels of a combined metric.
+pub const MAX_METRIC_LEVELS: usize = 4;
+/// Most terms of a combined metric, over all its levels.
+pub const MAX_METRIC_TERMS: usize = 8;
+/// Largest weight of a combined metric's term.
+pub const MAX_TERM_WEIGHT: u32 = 1_000_000_000;
+
+/// One term of a combined metric: a metric and the positive integer weight of its terminal payoff.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MetricTerm {
+    pub metric: Metric,
+    pub weight: u32,
+}
+/// The weighted sum of its terms' terminal payoffs under one shared terminal-result distribution.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MetricLevel {
+    pub terms: Vec<MetricTerm>,
+    /// The level's place in the folded payoff of the search (`search::levels`); a request leaves it unset.
+    #[serde(skip)]
+    pub(crate) scale: LevelScale,
+}
+impl MetricLevel {
+    pub fn new(terms: Vec<MetricTerm>) -> Self {
+        Self { terms, scale: LevelScale::default() }
+    }
+}
+/// How a level of a combined metric enters the one integer payoff the search ranks by.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LevelScale {
+    /// The folded payoff counts the level's weighted sum this many times (zero: not folded, counted once).
+    pub(crate) multiplier: i128,
+    /// The largest folded payoff of this level and the levels after it in one terminal result.
+    pub(crate) cap: i128,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -323,16 +352,6 @@ pub enum Metric {
         #[serde(rename = "eventId")]
         event_id: i64,
     },
-    /// Lexicographic expectations within the maximum Challenge-point layer.
-    ClientChallengePointsWithBonuses {
-        #[serde(rename = "eventId")]
-        event_id: i64,
-        priority: EventRewardPriority,
-        #[serde(rename = "resourceType")]
-        resource_type: i64,
-        #[serde(rename = "resourceId")]
-        resource_id: i64,
-    },
     /// Resource quantity from the unique reward row of each terminal result grade.
     RankedEventItems {
         #[serde(rename = "eventId")]
@@ -342,26 +361,54 @@ pub enum Metric {
         #[serde(rename = "resourceId")]
         resource_id: i64,
     },
+    /// Expectations of weighted sums of other metrics' terminal payoffs, compared level by level: a later level
+    /// orders the teams every earlier level leaves tied.
+    Combined {
+        levels: Vec<MetricLevel>,
+    },
 }
 impl Metric {
-    /// Scalar objective whose upper bounds cover the primary reward dimension.
-    pub(crate) fn primary_bound_metric(&self) -> Self {
-        match *self {
-            Self::ClientChallengePointsWithBonuses { event_id, .. } => Self::ClientChallengePoints { event_id },
-            _ => self.clone(),
+    /// The levels of a combined metric.
+    pub(crate) fn levels(&self) -> Option<&[MetricLevel]> {
+        match self {
+            Self::Combined { levels } => Some(levels),
+            _ => None,
         }
     }
-    pub(crate) fn secondary_priority(&self) -> Option<EventRewardPriority> {
-        match *self {
-            Self::ClientChallengePointsWithBonuses { priority, .. } => Some(priority),
-            _ => None,
+    /// The terms of a combined metric, level by level.
+    pub(crate) fn terms(&self) -> Option<impl Iterator<Item = &MetricTerm>> {
+        self.levels().map(|levels| levels.iter().flat_map(|level| &level.terms))
+    }
+    /// Every term of a combined metric with its weight in the folded payoff.
+    pub(crate) fn folded_terms(&self) -> Option<impl Iterator<Item = (i128, &Metric)>> {
+        self.levels().map(|levels| {
+            levels.iter().flat_map(|level| {
+                level.terms.iter().map(|term| (level.scale.multiplier.max(1) * i128::from(term.weight), &term.metric))
+            })
+        })
+    }
+    /// The folded payoff of a combined metric counts its first level this many times (one for any other metric).
+    pub(crate) fn primary_unit(&self) -> i128 {
+        self.levels().and_then(|levels| levels.first()).map_or(1, |level| level.scale.multiplier.max(1))
+    }
+    /// Whether the metric, or a term of a combined metric, satisfies `test`.
+    pub(crate) fn any(&self, test: impl Fn(&Metric) -> bool) -> bool {
+        match self {
+            Self::Combined { levels } => levels.iter().flat_map(|level| &level.terms).any(|term| test(&term.metric)),
+            _ => test(self),
+        }
+    }
+    /// Whether the metric, or every term of a combined metric, satisfies `test`.
+    pub(crate) fn all(&self, test: impl Fn(&Metric) -> bool) -> bool {
+        match self {
+            Self::Combined { levels } => levels.iter().flat_map(|level| &level.terms).all(|term| test(&term.metric)),
+            _ => test(self),
         }
     }
     pub(crate) fn event(&self) -> Option<i64> {
         match *self {
             Self::ClientEventPoints { event_id }
             | Self::ClientChallengePoints { event_id }
-            | Self::ClientChallengePointsWithBonuses { event_id, .. }
             | Self::RankedEventItems { event_id, .. } => Some(event_id),
             _ => None,
         }
@@ -371,11 +418,19 @@ impl Metric {
             Self::Score
             | Self::ClientEventPoints { .. }
             | Self::ClientChallengePoints { .. }
-            | Self::ClientChallengePointsWithBonuses { .. }
             | Self::RankedEventItems { .. } => Some(i32::MAX as i128),
             Self::ScoreAtLeast { .. } | Self::ScoreAndLifeAtLeast { .. } => Some(1),
             Self::CappedScore { threshold } => Some(*threshold as i128),
-            _ => None,
+            Self::Combined { levels } => {
+                let first = levels.first()?;
+                let own = first.terms.iter().try_fold(0i128, |sum, term| {
+                    sum.checked_add(term.metric.upper()?.checked_mul(i128::from(term.weight))?)
+                })?;
+                // The levels after the first stay within the cap the search enforces on every terminal result.
+                own.checked_mul(first.scale.multiplier.max(1))?
+                    .checked_add(levels.get(1).map_or(0, |next| next.scale.cap))
+            }
+            Self::Power => None,
         }
     }
     pub(crate) fn target(&self) -> Option<i32> {
@@ -590,15 +645,6 @@ pub struct ScoreSummary {
     pub probability_at_least: Option<Fraction>,
     pub expected_shortfall: Option<Fraction>,
 }
-/// Exact expected rewards under one shared terminal-result distribution.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EventRewardExpectation {
-    pub challenge_points: Fraction,
-    pub event_points: Fraction,
-    pub event_items: Fraction,
-}
-
 /// One result. For a played live it is a team in its canonical layout (the leader in slot 2, the other members in
 /// ascending card ID order, each with its Snap), valued by its mean over the 120 performance orders.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -608,9 +654,16 @@ pub struct RecommendedDeck {
     pub snaps: [Option<i64>; 5],
     pub power: i32,
     pub expected_score: Option<Fraction>,
+    /// The exact expectation of the payoff; of a combined metric's first level.
     pub expected_payoff: Option<Fraction>,
+    /// A combined metric: the exact expectation of each term's payoff, unweighted, in the order of the terms. Null
+    /// for a term that reads terminal life.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub event_rewards: Option<EventRewardExpectation>,
+    pub term_payoffs: Option<Vec<Option<Fraction>>>,
+    /// A combined metric: the exact expectation of each level's weighted sum, in the order of the levels. The
+    /// payoffs of the performance orders are those of the first level.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level_payoffs: Option<Vec<Fraction>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score_interval: Option<FractionInterval>,
     #[serde(skip_serializing_if = "Option::is_none")]
