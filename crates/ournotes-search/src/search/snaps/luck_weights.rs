@@ -12,9 +12,6 @@ use ournotes_sim::live::full::LuckDpCertifiedResult;
 
 use super::Window;
 
-/// The most pieces one direct-Rush window splits into, each at its largest weight.
-const PIECES: usize = 16;
-
 /// The classes of [`LuckDpCertifiedResult::steps`]: neither, probe only, Rush only, Rush and probe.
 const PROBE: [bool; 4] = [false, true, false, true];
 const RUSH: [bool; 4] = [false, false, true, true];
@@ -162,28 +159,29 @@ impl LawHulls {
 }
 
 /// Direct-Rush windows (zero `ramp`) with their factors weighted per entry by `weight` (each at most 1): a window
-/// splits into at most [`PIECES`] runs of entries, each at the largest weight of its entries. Other windows stay.
+/// splits into the runs of its entries that have one weight, each at that weight, and entries of no weight leave it.
+/// Other windows stay.
 pub(super) fn weigh_rush_windows(windows: Vec<Window>, weight: &[f64]) -> Vec<Window> {
     if windows.iter().all(|w| w.rush == 0 || w.ramp != 0) {
         return windows;
     }
+    let scale = |factor: f64, r: f64| if factor == 0.0 { 0.0 } else { (factor * r).next_up() };
     let mut out = Vec::with_capacity(windows.len());
     for w in windows {
         if w.rush == 0 || w.ramp != 0 {
             out.push(w);
             continue;
         }
-        let step = ((w.hi - w.lo) as usize).div_ceil(PIECES).max(1);
-        let mut lo = w.lo as usize;
-        while lo < w.hi as usize {
-            let hi = (lo + step).min(w.hi as usize);
-            let r = weight[lo..hi].iter().copied().fold(0f64, f64::max);
+        let (mut lo, end) = (w.lo as usize, w.hi as usize);
+        while lo < end {
+            let r = weight[lo];
+            let hi = lo + weight[lo..end].iter().take_while(|x| x.to_bits() == r.to_bits()).count();
             if r > 0.0 {
                 out.push(Window {
                     lo: lo as u32,
                     hi: hi as u32,
-                    note: (w.note * r).next_up(),
-                    judge: w.judge.map(|j| (j * r).next_up()),
+                    note: scale(w.note, r),
+                    judge: w.judge.map(|j| scale(j, r)),
                     ramp: 0,
                     rush: w.rush,
                 });
@@ -298,6 +296,24 @@ mod tests {
         // before the first step the lottery has not run
         let (luck, probe_luck) = LuckLaws::new(&[held]).unwrap().hulls(&[-1, 10]).entry(-1, 2.0);
         assert!((1.0..1.0 + 1e-9).contains(&luck) && (0.0..1e-9).contains(&probe_luck), "{luck} {probe_luck}");
+    }
+
+    #[test]
+    fn direct_rush_windows_take_the_weight_of_each_entry() {
+        let window = |rush| Window { lo: 1, hi: 7, note: 0.5, judge: [0.0, 0.25, 0.0, 0.0], ramp: 0, rush };
+        let weight = [0.9, 0.0, 0.0, 0.3, 0.3, 0.6, 0.3, 1.0];
+        let out = weigh_rush_windows(vec![window(1), window(0)], &weight);
+        // Entries 1 and 2 weigh nothing, 3 and 4 share a weight, and 5 and 6 each have their own.
+        let rush: Vec<_> = out.iter().filter(|w| w.rush != 0).collect();
+        assert_eq!(rush.iter().map(|w| (w.lo, w.hi)).collect::<Vec<_>>(), [(3, 5), (5, 6), (6, 7)]);
+        for w in rush {
+            let r = weight[w.lo as usize];
+            assert!(w.note >= 0.5 * r && w.note - 0.5 * r < 1e-15, "{w:?}");
+            assert!(w.judge[1] >= 0.25 * r && w.judge[1] - 0.25 * r < 1e-15, "{w:?}");
+            assert_eq!([w.judge[0], w.judge[2], w.judge[3]], [0.0; 3]);
+        }
+        // An ordinary window stays as it is.
+        assert!(out.iter().any(|w| w.rush == 0 && (w.lo, w.hi, w.note) == (1, 7, 0.5)));
     }
 
     #[test]
