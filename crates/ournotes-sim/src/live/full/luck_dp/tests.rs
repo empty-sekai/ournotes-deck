@@ -9,6 +9,10 @@ mod state_identity_tests {
 mod effect_identity_tests {
     include!("effect_identity_tests.rs");
 }
+
+mod kinds_tests {
+    include!("kinds_tests.rs");
+}
 use crate::live::certified::F64Interval;
 use serde_json::{Value, json};
 

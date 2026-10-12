@@ -61,10 +61,11 @@ mod luck_dp;
 pub(crate) use luck_dp::luck_rush_dp_certified_with_moments_cached;
 mod luck_exact;
 pub use luck_dp::{
-    LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckOrderClassStats, LuckOrderClasses,
-    LuckRangeMoments, LuckRecordProfile, luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified,
-    luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_moments, luck_rush_dp_certified_with_ranking,
-    luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
+    LotteryBreak, LotteryKind, LotteryKinds, LotteryRole, LuckDpCache, LuckDpCacheStats, LuckDpCertifiedResult,
+    LuckDpResult, LuckOrderClassStats, LuckOrderClasses, LuckRangeMoments, LuckRecordProfile,
+    luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified, luck_rush_dp_certified_with_events,
+    luck_rush_dp_certified_with_moments, luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events,
+    luck_rush_dp_with_ranking, take_luck_record_profile,
 };
 pub use luck_exact::{
     LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactSession,
@@ -118,7 +119,7 @@ pub(crate) use condition_rows::LuckScoreRow;
 pub(super) use condition_rows::lottery_conditions_text;
 use condition_rows::{
     CondRow, GEKISOU_APPLIER_TYPES, condition_skill, effect_phases, gekisou_conditions, gekisou_mission_group,
-    lottery_conditions, luck_score_rows, setting,
+    lottery_conditions, lottery_conditions_read, luck_score_rows, setting,
 };
 use effects::{
     CondSkill, EffectRow, FrameScratch, GekisouLive, GkAppliers, Handle, Listed, LiveEffect, LivePool, LiveSkill,
@@ -155,7 +156,7 @@ const SKILL_TYPE_GEKISOU_SUPPORT: i64 = 5;
 const PHASES: [i64; 2] = [1, 2];
 
 /// One performance position of the deck, in skill order.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Performer {
     /// The member's live skill `(id, level)`.
     pub live_skill: Option<(i64, i64)>,

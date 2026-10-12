@@ -27,11 +27,7 @@ fn ask(checker: &mut Checker, ctrl: Option<&Controller>, rank: Option<i32>) -> (
 fn factory_intervals_read_distinct_controller_counters_and_last_times() {
     for (kind, expected, time) in [(7001, 4, 120), (7002, 3, 110), (7004, 1, 110)] {
         let m = master(kind, &[3]);
-        let mut c =
-            Factory { master: &m, deck: &[], initial_life: 1000, initial_time_ms: 0, skill_target_music_type: 0 }
-                .one(1, 0)
-                .unwrap()
-                .unwrap();
+        let mut c = Factory::new(&m, &[], 1000, 0, 0).one(1, 0).unwrap().unwrap();
         let mut ctrl = Controller::new(vec![(0, 200, 1)], std::iter::empty(), &m, 100, 100, 0, 0).unwrap();
         ctrl.current_playing_index = 0;
         ctrl.states[0].combo = 12;
@@ -49,11 +45,7 @@ fn factory_intervals_read_distinct_controller_counters_and_last_times() {
 fn factory_edges_distinguish_raw_and_inflated_and_rearm_on_gap() {
     for (kind, first) in [(7006, true), (7007, false)] {
         let m = master(kind, &[5]);
-        let mut c =
-            Factory { master: &m, deck: &[], initial_life: 1000, initial_time_ms: 0, skill_target_music_type: 0 }
-                .one(1, 0)
-                .unwrap()
-                .unwrap();
+        let mut c = Factory::new(&m, &[], 1000, 0, 0).one(1, 0).unwrap().unwrap();
         let mut ctrl = Controller::new(vec![(0, 200, 1)], std::iter::empty(), &m, 100, 100, 0, 0).unwrap();
         ctrl.current_playing_index = 0;
         ctrl.states[0].just = 10;
@@ -71,20 +63,12 @@ fn factory_edges_distinguish_raw_and_inflated_and_rearm_on_gap() {
 fn factory_start_and_rank_use_presence_and_actual_confirmed_rank() {
     let m = master(7011, &[]);
     let ctrl = Controller::new(vec![], std::iter::empty(), &m, 100, 100, 0, 0).unwrap();
-    let mut start =
-        Factory { master: &m, deck: &[], initial_life: 1000, initial_time_ms: 0, skill_target_music_type: 0 }
-            .one(1, 0)
-            .unwrap()
-            .unwrap();
+    let mut start = Factory::new(&m, &[], 1000, 0, 0).one(1, 0).unwrap().unwrap();
     assert_eq!(ask(&mut start, None, None).0, (false, 0));
     assert_eq!(ask(&mut start, Some(&ctrl), None).0, (true, 1));
     assert_eq!(ask(&mut start, Some(&ctrl), None).0, (false, 0));
     let m = master(7012, &[]); // native empty list defaults to first place
-    let mut rank =
-        Factory { master: &m, deck: &[], initial_life: 1000, initial_time_ms: 0, skill_target_music_type: 0 }
-            .one(1, 0)
-            .unwrap()
-            .unwrap();
+    let mut rank = Factory::new(&m, &[], 1000, 0, 0).one(1, 0).unwrap().unwrap();
     for r in [None, Some(0), Some(-1), Some(2)] {
         assert_eq!(ask(&mut rank, Some(&ctrl), r).0, (false, 0));
     }
@@ -95,16 +79,9 @@ fn factory_start_and_rank_use_presence_and_actual_confirmed_rank() {
 #[test]
 fn factory_requires_interval_value_and_just_level_is_not_an_edge() {
     let m = master(7001, &[]);
-    assert!(
-        Factory { master: &m, deck: &[], initial_life: 1000, initial_time_ms: 0, skill_target_music_type: 0 }
-            .one(1, 0)
-            .is_err()
-    );
+    assert!(Factory::new(&m, &[], 1000, 0, 0).one(1, 0).is_err());
     let m = master(7003, &[5]);
-    let mut c = Factory { master: &m, deck: &[], initial_life: 1000, initial_time_ms: 0, skill_target_music_type: 0 }
-        .one(1, 0)
-        .unwrap()
-        .unwrap();
+    let mut c = Factory::new(&m, &[], 1000, 0, 0).one(1, 0).unwrap().unwrap();
     let mut ctrl = Controller::new(vec![(0, 200, 1)], std::iter::empty(), &m, 100, 100, 0, 0).unwrap();
     ctrl.current_playing_index = 0;
     ctrl.states[0].just = 5;

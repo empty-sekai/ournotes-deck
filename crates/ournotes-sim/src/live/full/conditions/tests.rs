@@ -56,8 +56,7 @@ fn factory_team_music_and_snap_targets_preserve_native_quantifiers() {
     let master =
         Master::from_json_tables(|name| text.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str())).unwrap();
     let deck = [Performer { band_id: 1, ..Default::default() }, Performer { band_id: 2, ..Default::default() }];
-    let f =
-        Factory { master: &master, deck: &deck, initial_life: 1000, initial_time_ms: 0, skill_target_music_type: 1 };
+    let f = Factory::new(&master, &deck, 1000, 0, 1);
     with_life(1000, |ctx| {
         for (id, want) in [(1, true), (2, true), (3, false), (4, false), (5, true)] {
             assert_eq!(f.one(id, 0).unwrap().unwrap().check(ctx).unwrap(), (want, i64::from(want)));
@@ -65,7 +64,7 @@ fn factory_team_music_and_snap_targets_preserve_native_quantifiers() {
         ctx.events = &[(0, 10), (0, 20)];
         assert_eq!(f.one(6, 0).unwrap().unwrap().check(ctx).unwrap(), (true, 1));
         assert_eq!(f.one(6, 1).unwrap().unwrap().check(ctx).unwrap(), (false, 0));
-        let empty = Factory { deck: &[], ..f };
+        let empty = Factory::new(&master, &[], 1000, 0, 1);
         assert_eq!(empty.one(2, 0).unwrap().unwrap().check(ctx).unwrap(), (true, 1));
     });
 }
@@ -291,13 +290,7 @@ fn cumulative_factory_formation_counts_slots_and_never_divides_by_n() {
         for values in [vec![], vec![99], vec![0], vec![-1]] {
             for cap in [-1, 0, 1, 3, 99] {
                 let master = cumulative_master(kind, &values, cap);
-                let f = Factory {
-                    master: &master,
-                    deck: &deck,
-                    initial_life: 1000,
-                    initial_time_ms: 0,
-                    skill_target_music_type: 0,
-                };
+                let f = Factory::new(&master, &deck, 1000, 0, 0);
                 let mut c = f.cumulative(1, 1).unwrap().unwrap();
                 let want = if cap > 0 { expected.min(cap) } else { expected };
                 assert_eq!((c.init_count(), c.unit(), c.max()), (want, 0, 0));
@@ -309,16 +302,9 @@ fn cumulative_factory_formation_counts_slots_and_never_divides_by_n() {
     }
     for kind in 3000..=3005 {
         let master = cumulative_master(kind, &[], 0);
-        let f = Factory {
-            master: &master,
-            deck: &deck,
-            initial_life: 1000,
-            initial_time_ms: 0,
-            skill_target_music_type: 0,
-        };
+        let f = Factory::new(&master, &deck, 1000, 0, 0);
         assert_eq!(f.cumulative(1, 99).is_err(), kind == 3002 || kind == 3003);
-        let f =
-            Factory { master: &master, deck: &[], initial_life: 1000, initial_time_ms: 0, skill_target_music_type: 0 };
+        let f = Factory::new(&master, &[], 1000, 0, 0);
         assert_eq!(f.cumulative(1, 0).is_err(), kind == 3002 || kind == 3003);
     }
 }
@@ -326,8 +312,7 @@ fn cumulative_factory_formation_counts_slots_and_never_divides_by_n() {
 #[test]
 fn cumulative_factory_elapsed_backlog_reset_and_wrapping() {
     let master = cumulative_master(6000, &[1], 2);
-    let f =
-        Factory { master: &master, deck: &[], initial_life: 1000, initial_time_ms: 100, skill_target_music_type: 0 };
+    let f = Factory::new(&master, &[], 1000, 100, 0);
     let mut c = f.cumulative(1, 99).unwrap().unwrap();
     assert_eq!((c.init_count(), c.unit(), c.max()), (0, 0, 0));
     with_life(1000, |ctx| {
@@ -345,13 +330,7 @@ fn cumulative_factory_elapsed_backlog_reset_and_wrapping() {
     });
     for n in [0, -1, i32::MAX as i64] {
         let master = cumulative_master(6000, &[n], 0);
-        let f = Factory {
-            master: &master,
-            deck: &[],
-            initial_life: 0,
-            initial_time_ms: i32::MAX,
-            skill_target_music_type: 0,
-        };
+        let f = Factory::new(&master, &[], 0, i32::MAX, 0);
         let mut c = f.cumulative(1, 0).unwrap().unwrap();
         with_life(0, |ctx| {
             ctx.frame_time = i32::MIN;
@@ -364,8 +343,7 @@ fn cumulative_factory_elapsed_backlog_reset_and_wrapping() {
 fn cumulative_factory_life_initial_cap_and_signed_judgements() {
     for kind in [2000, 2001] {
         let master = cumulative_master(kind, &[100], 3);
-        let f =
-            Factory { master: &master, deck: &[], initial_life: 1000, initial_time_ms: 0, skill_target_music_type: 0 };
+        let f = Factory::new(&master, &[], 1000, 0, 0);
         let mut c = f.cumulative(1, 0).unwrap().unwrap();
         assert_eq!(c.init_count(), if kind == 2000 { 10 } else { 0 });
         assert_eq!((c.unit(), c.max()), (0, 0));
@@ -375,8 +353,7 @@ fn cumulative_factory_life_initial_cap_and_signed_judgements() {
     }
     for (kind, want) in [(1000, 1), (1001, 3), (1002, 3)] {
         let master = cumulative_master(kind, &[1], 0);
-        let f =
-            Factory { master: &master, deck: &[], initial_life: 1000, initial_time_ms: 0, skill_target_music_type: 0 };
+        let f = Factory::new(&master, &[], 1000, 0, 0);
         let mut c = f.cumulative(1, 0).unwrap().unwrap();
         with_life(1000, |ctx| {
             ctx.judged = &[(1, -1, 0), (2, 0, 0), (3, 5, 0), (4, 6, 0), (5, 7, 0)];
@@ -387,7 +364,7 @@ fn cumulative_factory_life_initial_cap_and_signed_judgements() {
         });
     }
     let master = cumulative_master(0, &[], 0);
-    let f = Factory { master: &master, deck: &[], initial_life: 0, initial_time_ms: 0, skill_target_music_type: 0 };
+    let f = Factory::new(&master, &[], 0, 0, 0);
     assert!(f.cumulative(0, 0).unwrap().is_none());
     assert!(f.cumulative(1, 0).is_err());
 }

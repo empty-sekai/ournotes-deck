@@ -115,13 +115,7 @@ impl LiveModel {
             .collect();
         let phase_of = effect_phases(master);
         let phase = |t: i64| phase_of.get(&t).copied().unwrap_or(1);
-        let factory = Factory {
-            master,
-            deck,
-            initial_life: base,
-            initial_time_ms: 0,
-            skill_target_music_type: params.skill_target_music_type,
-        };
+        let factory = Factory::new(master, deck, base, 0, params.skill_target_music_type);
 
         let mut rows = Vec::new();
         let mut live = Vec::new();

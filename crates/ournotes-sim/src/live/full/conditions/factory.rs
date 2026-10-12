@@ -22,13 +22,54 @@ pub(super) fn target_matches(tg: &SkillTargetRow, p: &Performer) -> bool {
 /// Builds checkers for the performer at `member` of `deck`.
 pub(crate) struct Factory<'a> {
     pub master: &'a Master,
-    pub deck: &'a [Performer],
+    deck: &'a [Performer],
     pub initial_life: i32,
     pub initial_time_ms: i32,
     pub skill_target_music_type: i64,
+    /// Whether a built checker read the formation beyond its holder.
+    formation_read: std::cell::Cell<bool>,
 }
 
-impl Factory<'_> {
+impl<'a> Factory<'a> {
+    pub(crate) fn new(
+        master: &'a Master,
+        deck: &'a [Performer],
+        initial_life: i32,
+        initial_time_ms: i32,
+        skill_target_music_type: i64,
+    ) -> Self {
+        Self {
+            master,
+            deck,
+            initial_life,
+            initial_time_ms,
+            skill_target_music_type,
+            formation_read: std::cell::Cell::new(false),
+        }
+    }
+
+    /// The performers whose skills the build runs through. Conditions read them through [`Factory::formation`] or
+    /// [`Factory::holder`].
+    pub(crate) fn deck(&self) -> &'a [Performer] {
+        self.deck
+    }
+
+    /// Whether a checker built so far depends on performers other than its holder: on the whole formation.
+    pub(crate) fn formation_read(&self) -> bool {
+        self.formation_read.get()
+    }
+
+    /// The formation, as a condition over the whole deck reads it.
+    fn formation(&self) -> &'a [Performer] {
+        self.formation_read.set(true);
+        self.deck
+    }
+
+    /// The performer at `k`, as a condition on its holder reads it.
+    fn holder(&self, k: usize) -> Option<&'a Performer> {
+        self.deck.get(k)
+    }
+
     pub(super) fn one(&self, cid: i64, k: usize) -> Result<Option<Checker>, Error> {
         let m = self.master;
         let c = m.skill_condition(cid).ok_or_else(|| Error::Master(format!("unknown skill condition {cid}")))?;
@@ -63,8 +104,9 @@ impl Factory<'_> {
                 previous: self.initial_life,
             },
             3000 | 3001 => {
+                let formation = self.formation();
                 let mut count = 0;
-                for member in self.deck {
+                for member in formation {
                     for i in 0..targets.len() {
                         if target_matches(target(i)?, member) {
                             count += 1;
@@ -72,7 +114,7 @@ impl Factory<'_> {
                         }
                     }
                 }
-                Checker::Fixed(if c.condition_type == 3000 { count > 0 } else { count == self.deck.len() })
+                Checker::Fixed(if c.condition_type == 3000 { count > 0 } else { count == formation.len() })
             }
             4001 => Checker::LiveComboMultiple { threshold: v0.ok_or_else(no_value)? as i32, previous: 0 },
             4002 => Checker::LiveComboAtLeast(v0.ok_or_else(no_value)? as i32),
@@ -96,7 +138,7 @@ impl Factory<'_> {
             4011 => Checker::Probability(v0.ok_or_else(no_value)? as f32 / 100f32),
             5000 => {
                 let mut fixed = false;
-                if let Some(p) = self.deck.get(k) {
+                if let Some(p) = self.holder(k) {
                     for i in 0..targets.len() {
                         if target_matches(target(i)?, p) {
                             fixed = true;
@@ -261,7 +303,7 @@ impl Factory<'_> {
                             .iter()
                             .map(|&id| m.skill_target(id).ok_or_else(|| missing_target(id)))
                             .collect::<Result<Vec<_>, _>>()?;
-                        self.deck
+                        self.formation()
                             .iter()
                             .enumerate()
                             .filter(|(index, member)| {
@@ -272,14 +314,13 @@ impl Factory<'_> {
                     }
                     3002 | 3003 => {
                         let band = self
-                            .deck
-                            .get(k)
+                            .holder(k)
                             .ok_or_else(|| Error::Game("cumulative self member index out of range".into()))?
                             .band_id;
                         if c.condition_type == 3002 {
-                            self.deck.iter().filter(|p| p.band_id == band).count()
+                            self.formation().iter().filter(|p| p.band_id == band).count()
                         } else {
-                            self.deck
+                            self.formation()
                                 .iter()
                                 .map(|p| p.band_id)
                                 .filter(|&b| b != band)
@@ -287,8 +328,8 @@ impl Factory<'_> {
                                 .len()
                         }
                     }
-                    3004 => self.deck.iter().map(|p| p.band_id).collect::<std::collections::HashSet<_>>().len(),
-                    _ => self.deck.iter().map(|p| p.card_type).collect::<std::collections::HashSet<_>>().len(),
+                    3004 => self.formation().iter().map(|p| p.band_id).collect::<std::collections::HashSet<_>>().len(),
+                    _ => self.formation().iter().map(|p| p.card_type).collect::<std::collections::HashSet<_>>().len(),
                 };
                 Ok(Some(Cumulative::Fixed((count as i64).min(max))))
             }

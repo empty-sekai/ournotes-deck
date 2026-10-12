@@ -180,7 +180,7 @@ pub(super) fn gekisou_conditions(
     cond: &mut Vec<CondSkill>,
     rows: &mut Vec<EffectRow>,
 ) -> Result<(), Error> {
-    let (master, deck) = (factory.master, factory.deck);
+    let (master, deck) = (factory.master, factory.deck());
     let mut mission = vec![None; deck.len()];
     for (k, p) in deck.iter().enumerate() {
         let Some((sid, _)) = p.gekisou_skill else { continue };
@@ -242,19 +242,31 @@ pub(super) fn lottery_conditions(
     skill_target_music_type: i64,
     lottery: &LuckSkills,
 ) -> Result<(Vec<CondSkill>, Vec<EffectRow>), Error> {
+    let (cond, rows, _) = lottery_conditions_read(master, deck, skill_target_music_type, lottery)?;
+    Ok((cond, rows))
+}
+
+/// [`lottery_conditions`] and whether one of their checkers read the formation beyond its holder
+/// ([`Factory::formation_read`]).
+pub(super) fn lottery_conditions_read(
+    master: &Master,
+    deck: &[Performer],
+    skill_target_music_type: i64,
+    lottery: &LuckSkills,
+) -> Result<(Vec<CondSkill>, Vec<EffectRow>, bool), Error> {
     if deck.iter().any(|p| p.live_skill.is_some() || !p.support_skills.is_empty()) {
         return Err(Error::Input(
             "the lottery conditions are those of performers without live or support skills".into(),
         ));
     }
     let (initial_life, _) = life::life_settings(master)?;
-    let factory = Factory { master, deck, initial_life, initial_time_ms: 0, skill_target_music_type };
+    let factory = Factory::new(master, deck, initial_life, 0, skill_target_music_type);
     let phase_of = effect_phases(master);
     let phase = |t: i64| phase_of.get(&t).copied().unwrap_or(1);
     let (mut cond, mut rows) = (Vec::new(), Vec::new());
     gekisou_conditions(&factory, &phase, None, Some(lottery), &mut cond, &mut rows)?;
     cond.retain(|skill| !skill.updater.effects().is_empty());
-    Ok((cond, rows))
+    Ok((cond, rows, factory.formation_read()))
 }
 
 /// [`lottery_conditions`] as text.

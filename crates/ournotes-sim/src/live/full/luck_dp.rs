@@ -18,6 +18,7 @@ use crate::num::{FxHashMap, floor_to_i32};
 
 mod cache;
 mod dp;
+mod kinds;
 mod life_recorder;
 mod mass;
 mod plan;
@@ -28,6 +29,7 @@ pub(crate) use cache::OrderClass;
 pub(super) use cache::RecordingCache;
 pub use cache::{LuckDpCache, LuckDpCacheStats, LuckOrderClassStats, LuckOrderClasses};
 use dp::{Distribution, DpResult, Phase, propagate, propagate_cancellable};
+pub use kinds::{LotteryBreak, LotteryKind, LotteryKinds, LotteryRole};
 use life_recorder::life_recorder;
 pub use life_recorder::luck_has_judgement_conversion;
 pub(crate) use life_recorder::luck_play_converts;
