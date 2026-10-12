@@ -240,6 +240,58 @@ impl ProbabilityMass {
     pub fn weighted_integer(self, value: i32) -> F64Interval {
         self.0.scale_integer(i128::from(value))
     }
+
+    /// The merged masses of `masses` that are possible, as [`Self::merge_disjoint`] encloses them; None without one.
+    pub fn total(masses: &[Self]) -> Option<Self> {
+        let up = |x: f64| f64::from_bits(x.to_bits() + 1);
+        let down = |x: f64| f64::from_bits(x.to_bits().saturating_sub(1));
+        let (mut lower, mut upper, mut held, mut exact) = (0f64, 0f64, 0usize, Self::ZERO);
+        for mass in masses {
+            if mass.0.upper > 0.0 {
+                held += 1;
+                exact = *mass;
+                lower = down(lower + mass.0.lower);
+                upper = up(upper + mass.0.upper);
+            }
+        }
+        match held {
+            0 => None,
+            1 => Some(exact),
+            _ => Some(Self(F64Interval { lower: lower.min(1.0), upper: upper.min(1.0) })),
+        }
+    }
+
+    /// Merge into each of `out` the mass at its place in `masses` times `factor`, as [`Self::multiply`] then
+    /// [`Self::merge_disjoint`] enclose them; a mass that is not possible adds nothing. Endpoints are nonnegative and
+    /// finite, so the next binary64 value above or below one is that of the adjacent bit pattern.
+    pub fn accumulate(out: &mut [Self], masses: &[Self], factor: Self) {
+        let up = |x: f64| f64::from_bits(x.to_bits() + 1);
+        let down = |x: f64| f64::from_bits(x.to_bits().saturating_sub(1));
+        if factor == Self::ZERO {
+            return;
+        }
+        if factor == Self::ONE {
+            for (out, &mass) in out.iter_mut().zip(masses) {
+                if mass.0.upper > 0.0 {
+                    *out = out.merge_disjoint(mass);
+                }
+            }
+            return;
+        }
+        let (lower, upper) = (factor.0.lower, factor.0.upper);
+        for (out, mass) in out.iter_mut().zip(masses) {
+            let low = down(mass.0.lower * lower);
+            let high = up(mass.0.upper * upper).min(1.0);
+            let empty = out.0.upper == 0.0;
+            let sum = F64Interval {
+                lower: if empty { low } else { down(out.0.lower + low).min(1.0) },
+                upper: if empty { high } else { up(out.0.upper + high).min(1.0) },
+            };
+            if mass.0.upper > 0.0 {
+                out.0 = sum;
+            }
+        }
+    }
 }
 
 /// An enclosure of possible native signed score integers.

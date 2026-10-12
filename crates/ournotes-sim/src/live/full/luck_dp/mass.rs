@@ -14,12 +14,17 @@ pub(super) trait Mass: Copy {
     fn merge(self, other: Self) -> Self;
     fn complement(self) -> Self;
     fn possible(self) -> bool;
+    /// Merge into each of `out` the mass at its place in `masses`, if possible, times `probability`.
+    fn accumulate(out: &mut [Self], masses: &[Self], probability: Self);
+    /// The merged masses of `masses` that are possible; None without one.
+    fn total(masses: &[Self]) -> Option<Self>;
     /// The value's bit pattern; equal patterns mean equal values.
     fn bits(self) -> [u64; 2];
     fn interval(self) -> F64Interval;
     fn bonus(machine: &LotteryMachine, kind: usize, buff: i32, minimum: i8) -> Result<Vec<(Self, i64)>, Error>;
     fn base(machine: &LotteryMachine, note_type: i32, judgement: i32) -> Result<Vec<(Self, i64)>, Error>;
-    fn weights(dist: &Distribution<Self>, probes: &[bool], phase: Phase) -> Self::Weights;
+    /// The weights of a distribution, given the states' rests with their total masses.
+    fn weights<'s>(totals: impl Iterator<Item = (&'s State, Self)>, probes: &[bool], phase: Phase) -> Self::Weights;
 }
 
 impl Mass for f64 {
@@ -47,6 +52,20 @@ impl Mass for f64 {
         self > 0.0
     }
 
+    fn accumulate(out: &mut [Self], masses: &[Self], probability: Self) {
+        for (out, &mass) in out.iter_mut().zip(masses) {
+            if mass > 0.0 {
+                *out += mass * probability;
+            }
+        }
+    }
+
+    fn total(masses: &[Self]) -> Option<Self> {
+        let mut held = masses.iter().filter(|&&mass| mass > 0.0).peekable();
+        held.peek()?;
+        Some(held.sum())
+    }
+
     fn bits(self) -> [u64; 2] {
         [self.to_bits(), 0]
     }
@@ -63,10 +82,10 @@ impl Mass for f64 {
         machine.base_point_probabilities(note_type, judgement)
     }
 
-    fn weights(dist: &Distribution<Self>, probes: &[bool], phase: Phase) -> Self::Weights {
+    fn weights<'s>(totals: impl Iterator<Item = (&'s State, Self)>, probes: &[bool], phase: Phase) -> Self::Weights {
         let mut values = [0f64; 3];
-        for &(state, probability) in dist {
-            let (rush, score) = phase.reads(&state);
+        for (state, probability) in totals {
+            let (rush, score) = phase.reads(state);
             if rush {
                 values[0] += probability;
             }
@@ -125,6 +144,14 @@ impl Mass for ProbabilityMass {
         self.interval().upper() > 0.0
     }
 
+    fn accumulate(out: &mut [Self], masses: &[Self], probability: Self) {
+        ProbabilityMass::accumulate(out, masses, probability);
+    }
+
+    fn total(masses: &[Self]) -> Option<Self> {
+        ProbabilityMass::total(masses)
+    }
+
     fn bits(self) -> [u64; 2] {
         [self.interval().lower().to_bits(), self.interval().upper().to_bits()]
     }
@@ -141,10 +168,10 @@ impl Mass for ProbabilityMass {
         certified_weights(machine.base_point_probability_weights(note_type, judgement)?)
     }
 
-    fn weights(dist: &Distribution<Self>, _probes: &[bool], phase: Phase) -> Self::Weights {
+    fn weights<'s>(totals: impl Iterator<Item = (&'s State, Self)>, _probes: &[bool], phase: Phase) -> Self::Weights {
         let mut joint = [Self::ZERO; 4];
-        for &(state, probability) in dist {
-            let (rush, score) = phase.reads(&state);
+        for (state, probability) in totals {
+            let (rush, score) = phase.reads(state);
             let index = 2 * usize::from(rush) + usize::from(score);
             joint[index] = joint[index].merge_disjoint(probability);
         }

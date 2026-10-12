@@ -133,10 +133,6 @@ impl std::hash::Hash for State {
     }
 }
 
-/// The lottery states and their masses. A state may have several entries, whose masses add up: the steps that keep
-/// one state for each state change the entries in place, and those that branch merge equal states.
-pub(super) type Distribution<M = f64> = Vec<(State, M)>;
-
 /// The lottery state a note's score reads, relative to its native frame.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Phase {
@@ -161,131 +157,114 @@ impl Phase {
     }
 }
 
-pub(super) struct Dp<'a, M: Mass> {
+/// A state with its gauge zeroed: the part of a state that the states of one block of the distribution share.
+pub(super) type RestId = u32;
+
+/// The masses of the states of one rest by gauge: `masses[k]` is that of gauge `lo + k`. A gauge whose mass is not
+/// possible holds no state.
+pub(super) struct Block<M> {
+    rest: RestId,
+    lo: i32,
+    masses: Vec<M>,
+}
+
+/// A state a step takes a state to: its rest, how much it moves the gauge, its probability, and the lottery result
+/// it draws, which the range moments count.
+#[derive(Clone, Copy)]
+struct Branch<M> {
+    rest: RestId,
+    shift: i32,
+    probability: M,
+    draw: Option<u8>,
+}
+
+impl<M: Mass> Branch<M> {
+    fn same(&self, other: &Self) -> bool {
+        (self.rest, self.shift, self.draw) == (other.rest, other.shift, other.draw)
+            && self.probability.bits() == other.probability.bits()
+    }
+}
+
+/// The gauges `from..to` of a rest whose states a step takes to the same branches, `branches` of its table.
+struct Run {
+    from: i32,
+    to: i32,
+    branches: std::ops::Range<usize>,
+}
+
+/// What a step does to the states of one rest, read at the gauges `from..to`, in runs of increasing gauges.
+struct Table<M> {
+    from: i32,
+    to: i32,
+    runs: Vec<Run>,
+    branches: Vec<Branch<M>>,
+}
+
+impl<M: Mass> Table<M> {
+    fn empty(at: i32) -> Self {
+        Self { from: at, to: at, runs: Vec::new(), branches: Vec::new() }
+    }
+
+    /// Append the branches of gauge `gauge`, the gauge after the last one read.
+    fn push(&mut self, gauge: i32, branches: &[Branch<M>]) {
+        let extends = self.runs.last().is_some_and(|run| {
+            run.to == gauge
+                && run.branches.len() == branches.len()
+                && self.branches[run.branches.clone()].iter().zip(branches).all(|(a, b)| a.same(b))
+        });
+        if extends {
+            self.runs.last_mut().expect("a run").to = gauge + 1;
+        } else {
+            let start = self.branches.len();
+            self.branches.extend_from_slice(branches);
+            self.runs.push(Run { from: gauge, to: gauge + 1, branches: start..self.branches.len() });
+        }
+        self.to = gauge + 1;
+    }
+
+    /// The runs of `self` after those of `below`, which ends where `self` starts.
+    fn after(mut self, mut below: Table<M>) -> Self {
+        let offset = below.branches.len();
+        below.branches.append(&mut self.branches);
+        below.runs.extend(
+            self.runs
+                .into_iter()
+                .map(|run| Run { branches: run.branches.start + offset..run.branches.end + offset, ..run }),
+        );
+        below.to = self.to;
+        below
+    }
+}
+
+/// What a step reads besides the state it takes: steps with the same key take each state to the same branches.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum StepKey {
+    FrameStart { start: Option<usize>, finish: bool, gate: bool, current_luck: bool, complete: bool },
+    Action { target: usize, words: [u64; 4] },
+    MissUsed,
+    Note { range: usize, note_type: i32, judgement: i32, buff: i32, speed: u32, consumes: bool },
+    Pending { range: usize, buff: i32 },
+    FrameEnd { finish: bool },
+}
+
+/// The branches a step files for one state: each state with its probability and the lottery result it draws.
+type Filed<M> = Vec<(State, M, Option<u8>)>;
+
+/// What reads each run of states a step takes: the rest taken, the rest reached and the run's total mass.
+type Observe<'o, M> = &'o mut dyn FnMut(&State, &State, M);
+
+/// What the branches of a step read besides the state: the range templates, the lottery machine and the lotteries
+/// met so far.
+pub(super) struct Lotteries<'a, M: Mass> {
     pub(super) templates: Vec<LuckScore>,
-    active_range: Option<usize>,
     pub(super) machine: &'a LotteryMachine,
     /// The index of each lottery drawn, by its lot table, buff and guarantee, and the outcomes of each.
     lotteries: FxHashMap<(usize, i32, i8), u16>,
     outcomes: Vec<Draws<M>>,
-    pub(super) dist: Distribution<M>,
-    /// The states a branching step files, merged.
-    table: FxHashMap<State, M>,
-    peak: usize,
-    pub(super) transitions: u64,
-    pub(super) range_moments: Vec<LuckRangeMoments>,
     track_critical: bool,
 }
 
-impl<'a, M: Mass> Dp<'a, M> {
-    pub(super) fn new(templates: Vec<LuckScore>, machine: &'a LotteryMachine, collect_moments: bool) -> Self {
-        Self {
-            range_moments: if collect_moments {
-                vec![LuckRangeMoments::default(); templates.len()]
-            } else {
-                Vec::new()
-            },
-            track_critical: false,
-            templates,
-            active_range: None,
-            machine,
-            lotteries: FxHashMap::default(),
-            outcomes: Vec::new(),
-            dist: vec![(State::default(), M::ONE)],
-            table: FxHashMap::default(),
-            peak: 1,
-            transitions: 0,
-        }
-    }
-
-    pub(super) fn push(&mut self, out: &mut FxHashMap<State, M>, state: State, probability: M) -> Result<(), Error> {
-        if probability.possible() {
-            let existing = out.entry(state).or_insert(M::ZERO);
-            *existing = existing.merge(probability);
-            self.transitions = self
-                .transitions
-                .checked_add(1)
-                .ok_or_else(|| Error::Capacity("LUCK DP transitions overflow".into()))?;
-        }
-        Ok(())
-    }
-
-    /// Make the states a branching step filed in `out` the distribution, in the entries of the one it replaces.
-    fn settle(&mut self, mut out: FxHashMap<State, M>, mut entries: Distribution<M>) -> Result<(), Error> {
-        entries.clear();
-        entries.extend(out.drain());
-        self.table = out;
-        self.peak = self.peak.max(entries.len());
-        if entries.len() > 2_000_000 {
-            return Err(Error::Capacity("LUCK DP exceeds two million states".into()));
-        }
-        self.dist = entries;
-        Ok(())
-    }
-
-    pub(super) fn map(&mut self, mut transform: impl FnMut(State) -> Result<State, Error>) -> Result<(), Error> {
-        self.map_masses(|state, _| transform(state))
-    }
-
-    /// [`Self::map`] with the mass of each state. The entries change in place; states the transform makes equal merge
-    /// at the next branching step.
-    fn map_masses(&mut self, mut transform: impl FnMut(State, M) -> Result<State, Error>) -> Result<(), Error> {
-        for entry in &mut self.dist {
-            entry.0 = transform(entry.0, entry.1)?;
-        }
-        self.transitions = self
-            .transitions
-            .checked_add(self.dist.len() as u64)
-            .ok_or_else(|| Error::Capacity("LUCK DP transitions overflow".into()))?;
-        Ok(())
-    }
-
-    pub(super) fn action(&mut self, action: Action<M>, target: usize) -> Result<(), Error> {
-        debug_assert_eq!(self.active_range, Some(target));
-        if let Action::CriticalPoints { value, chance } | Action::StartPoints { value, chance } = action {
-            let mass = self
-                .dist
-                .iter()
-                .filter(|(state, _)| matches!(action, Action::StartPoints { .. }) || state.previous_critical)
-                .fold(M::ZERO, |sum, (_, probability)| sum.merge(*probability));
-            let points = mass.multiply(chance).interval().multiply(F64Interval::integer(i128::from(value)));
-            self.range_moments[target].luck_points = self.range_moments[target].luck_points.add(points);
-            return Ok(());
-        }
-        let mut out = std::mem::take(&mut self.table);
-        let mut previous = std::mem::take(&mut self.dist);
-        for (state, probability) in previous.drain(..) {
-            // All accepted Miss rows share the same once/reset trigger. Leave their used flag untouched
-            // until every row has run so that multiple eligible rows each apply once in native order.
-            if matches!(action, Action::MissGauge { .. }) && (!state.previous_miss || state.miss_used) {
-                let existing = out.entry(state).or_insert(M::ZERO);
-                *existing = existing.merge(probability);
-                continue;
-            }
-            let mut next = state;
-            let chance = match action {
-                Action::StartMinimum { result, chance } => {
-                    next.minimum = next.minimum.max(result);
-                    chance
-                }
-                Action::StartGauge { value, .. } | Action::MissGauge { value } => {
-                    let mut score = state.chain.score(&self.templates[target]);
-                    let gauge = (score.gauge_max as i128 * value as i128) as i32;
-                    score.add_gauge(floor_to_i32(gauge as f32 / 10000f32))?;
-                    next.chain = state.chain.with(&score);
-                    if let Action::StartGauge { chance, .. } = action { chance } else { M::ONE }
-                }
-                Action::CriticalPoints { .. } | Action::StartPoints { .. } => unreachable!(),
-            };
-            self.push(&mut out, next, probability.multiply(chance))?;
-            let complement = chance.complement();
-            if complement.possible() {
-                self.push(&mut out, state, probability.multiply(complement))?;
-            }
-        }
-        self.settle(out, previous)
-    }
-
+impl<M: Mass> Lotteries<'_, M> {
     /// The index of the lottery of lot table `kind` with `buff` and the guarantee `minimum`.
     fn lottery(&mut self, kind: usize, buff: i32, minimum: i8) -> Result<u16, Error> {
         let key = (kind, buff, minimum);
@@ -299,14 +278,7 @@ impl<'a, M: Mass> Dp<'a, M> {
         Ok(index)
     }
 
-    pub(super) fn consume(
-        &mut self,
-        mut state: State,
-        range: usize,
-        buff: i32,
-        p: M,
-        out: &mut FxHashMap<State, M>,
-    ) -> Result<(), Error> {
+    fn consume(&mut self, mut state: State, range: usize, buff: i32, p: M, out: &mut Filed<M>) -> Result<(), Error> {
         state.chain.lots -= 1;
         let first = match state.chain.next {
             Next::Known(-1) => {
@@ -327,22 +299,300 @@ impl<'a, M: Mass> Dp<'a, M> {
             // Native files a Rush command exactly when a lottery adds or disables the Rush handle.
             next.rush_filed |= next.rush != state.rush;
             score.add_score(result)?;
-            if let Some(moments) = self.range_moments.get_mut(range) {
-                let mass = p.multiply(pn).interval();
-
-                moments.lot_results[result as usize] = moments.lot_results[result as usize].add(mass);
-                let points = if result == 0 { 0 } else { super::gekisou::BONUS_POINT_BY_RESULT[result as usize - 1] };
-                moments.luck_points = moments.luck_points.add(mass.multiply(F64Interval::integer(i128::from(points))));
-            }
             next.frame_lot = true;
             next.frame_miss |= result == 0;
             next.frame_critical |= self.track_critical && result == 3;
             let lottery = self.lottery(score.current_lot_type(), buff, next.minimum)?;
             next.chain = Chain { next: Next::Drawn(lottery), ..Chain::of(&score) };
             next.minimum = 0;
-            self.push(out, next, p.multiply(pn))?;
+            let draw = u8::try_from(result).map_err(|_| Error::Game("lottery result out of range".into()))?;
+            out.push((next, p.multiply(pn), Some(draw)));
         }
         Ok(())
+    }
+}
+
+/// The lottery-state distribution in blocks of states with one rest, and the tables of the steps it took.
+///
+/// A step takes each state to branches that depend on the state and the step's key alone. The states of one rest at
+/// consecutive gauges whose branches reach the same rests with the same gauge moves and probabilities form a run, and
+/// the step adds each run's masses times each branch's probability to the masses of the branch's rest at the moved
+/// gauges. A table holds the runs of one rest under one step key, read from the step's branches at each gauge once.
+pub(super) struct Dp<'a, M: Mass> {
+    lotteries: Lotteries<'a, M>,
+    active_range: Option<usize>,
+    rests: Vec<State>,
+    rest_ids: FxHashMap<State, RestId>,
+    dist: Vec<Block<M>>,
+    out: Vec<Block<M>>,
+    /// The index in `out` of the block of each rest, or `u32::MAX`.
+    slots: Vec<u32>,
+    spare: Vec<Vec<M>>,
+    steps: FxHashMap<StepKey, u32>,
+    tables: FxHashMap<(RestId, u32), Table<M>>,
+    peak: usize,
+    pub(super) transitions: u64,
+    pub(super) range_moments: Vec<LuckRangeMoments>,
+}
+
+impl<'a, M: Mass> Dp<'a, M> {
+    pub(super) fn new(templates: Vec<LuckScore>, machine: &'a LotteryMachine, collect_moments: bool) -> Self {
+        let mut dp = Self {
+            range_moments: if collect_moments {
+                vec![LuckRangeMoments::default(); templates.len()]
+            } else {
+                Vec::new()
+            },
+            lotteries: Lotteries {
+                templates,
+                machine,
+                lotteries: FxHashMap::default(),
+                outcomes: Vec::new(),
+                track_critical: false,
+            },
+            active_range: None,
+            rests: Vec::new(),
+            rest_ids: FxHashMap::default(),
+            dist: Vec::new(),
+            out: Vec::new(),
+            slots: Vec::new(),
+            spare: Vec::new(),
+            steps: FxHashMap::default(),
+            tables: FxHashMap::default(),
+            peak: 1,
+            transitions: 0,
+        };
+        let rest = dp.rest(State::default());
+        dp.dist.push(Block { rest, lo: State::default().chain.gauge, masses: vec![M::ONE] });
+        dp
+    }
+
+    /// The distribution of `states`, whose masses add up per state.
+    #[cfg(test)]
+    pub(super) fn set_states(&mut self, states: Vec<(State, M)>) {
+        let old = std::mem::take(&mut self.dist);
+        self.spare.extend(old.into_iter().map(|block| block.masses));
+        for (state, mass) in states {
+            let rest = self.rest(state);
+            let gauge = state.chain.gauge;
+            let block = block_at(&mut self.out, &mut self.slots, &mut self.spare, rest, gauge, gauge + 1);
+            let at = (gauge - block.lo) as usize;
+            block.masses[at] = block.masses[at].merge(mass);
+        }
+        self.settle().expect("a small distribution");
+    }
+
+    /// The id of the rest of `state`.
+    fn rest(&mut self, mut state: State) -> RestId {
+        state.chain.gauge = 0;
+        if let Some(&id) = self.rest_ids.get(&state) {
+            return id;
+        }
+        let id = self.rests.len() as RestId;
+        self.rests.push(state);
+        self.rest_ids.insert(state, id);
+        self.slots.push(u32::MAX);
+        id
+    }
+
+    /// The rests of the distribution's states, each with its total mass.
+    fn totals(&self) -> impl Iterator<Item = (&State, M)> + '_ {
+        self.dist
+            .iter()
+            .filter_map(|block| M::total(&block.masses).map(|total| (&self.rests[block.rest as usize], total)))
+    }
+
+    /// The rests of the distribution's states.
+    pub(super) fn held(&self) -> impl Iterator<Item = &State> + '_ {
+        self.dist
+            .iter()
+            .filter(|block| block.masses.iter().any(|mass| mass.possible()))
+            .map(|block| &self.rests[block.rest as usize])
+    }
+
+    /// Take every state to the branches `filed` files for it, reading each rest's gauges at most once under `key`.
+    /// `observe` takes, for each run of states and each branch, the rest taken, the rest reached and the run's
+    /// total mass; the range moments of `moments` count the lottery results drawn.
+    fn step(
+        &mut self,
+        key: StepKey,
+        moments: Option<usize>,
+        mut filed: impl FnMut(&mut Lotteries<'a, M>, State, &mut Filed<M>) -> Result<(), Error>,
+        mut observe: Option<Observe<'_, M>>,
+    ) -> Result<(), Error> {
+        let next = self.steps.len() as u32;
+        let step = *self.steps.entry(key).or_insert(next);
+        let dist = std::mem::take(&mut self.dist);
+        let mut scratch = Filed::new();
+        let mut branches = Vec::new();
+        for block in &dist {
+            let (lo, hi) = (block.lo, block.lo + block.masses.len() as i32);
+            let held = self.tables.get(&(block.rest, step)).map(|table| (table.from, table.to));
+            if held.is_none_or(|(from, to)| lo < from || hi > to) {
+                let mut table = self.tables.remove(&(block.rest, step)).unwrap_or_else(|| Table::empty(lo));
+                let mut read = |from: i32, to: i32, table: &mut Table<M>| -> Result<(), Error> {
+                    for gauge in from..to {
+                        let mut state = self.rests[block.rest as usize];
+                        state.chain.gauge = gauge;
+                        scratch.clear();
+                        filed(&mut self.lotteries, state, &mut scratch)?;
+                        branches.clear();
+                        for &(state, probability, draw) in &scratch {
+                            if probability.possible() {
+                                let rest = self.rest(state);
+                                branches.push(Branch {
+                                    rest,
+                                    shift: state.chain.gauge.wrapping_sub(gauge),
+                                    probability,
+                                    draw,
+                                });
+                            }
+                        }
+                        table.push(gauge, &branches);
+                    }
+                    Ok(())
+                };
+                if lo < table.from {
+                    let mut below = Table::empty(lo);
+                    read(lo, table.from, &mut below)?;
+                    table = table.after(below);
+                }
+                if hi > table.to {
+                    read(table.to, hi, &mut table)?;
+                }
+                self.tables.insert((block.rest, step), table);
+            }
+            let table = &self.tables[&(block.rest, step)];
+            for run in &table.runs {
+                let (from, to) = (run.from.max(lo), run.to.min(hi));
+                if from >= to {
+                    continue;
+                }
+                let masses = &block.masses[(from - lo) as usize..(to - lo) as usize];
+                let (mut first, mut last, mut possible) = (usize::MAX, 0, 0u64);
+                for (k, mass) in masses.iter().enumerate() {
+                    if mass.possible() {
+                        first = first.min(k);
+                        last = k;
+                        possible += 1;
+                    }
+                }
+                if possible == 0 {
+                    continue;
+                }
+                let (masses, from) = (&masses[first..=last], from + first as i32);
+                let counted = moments.is_some_and(|range| range < self.range_moments.len());
+                let total = (counted || observe.is_some()).then(|| M::total(masses).expect("a possible mass"));
+                for branch in &table.branches[run.branches.clone()] {
+                    let at = from.wrapping_add(branch.shift);
+                    let target = block_at(
+                        &mut self.out,
+                        &mut self.slots,
+                        &mut self.spare,
+                        branch.rest,
+                        at,
+                        at + masses.len() as i32,
+                    );
+                    let offset = (at - target.lo) as usize;
+                    M::accumulate(&mut target.masses[offset..offset + masses.len()], masses, branch.probability);
+                    self.transitions = self
+                        .transitions
+                        .checked_add(possible)
+                        .ok_or_else(|| Error::Capacity("LUCK DP transitions overflow".into()))?;
+                    if let (Some(total), Some(draw)) = (total, branch.draw)
+                        && let Some(moments) = moments.and_then(|range| self.range_moments.get_mut(range))
+                    {
+                        let mass = total.multiply(branch.probability).interval();
+                        let result = usize::from(draw);
+                        moments.lot_results[result] = moments.lot_results[result].add(mass);
+                        let points = if result == 0 { 0 } else { super::gekisou::BONUS_POINT_BY_RESULT[result - 1] };
+                        moments.luck_points =
+                            moments.luck_points.add(mass.multiply(F64Interval::integer(i128::from(points))));
+                    }
+                    if let (Some(total), Some(observe)) = (total, observe.as_mut()) {
+                        observe(&self.rests[block.rest as usize], &self.rests[branch.rest as usize], total);
+                    }
+                }
+            }
+        }
+        self.spare.extend(dist.into_iter().map(|block| block.masses));
+        self.settle()
+    }
+
+    /// Make the blocks a step filed the distribution.
+    fn settle(&mut self) -> Result<(), Error> {
+        let mut states = 0;
+        for block in &self.out {
+            self.slots[block.rest as usize] = u32::MAX;
+            states += block.masses.iter().filter(|mass| mass.possible()).count();
+        }
+        self.peak = self.peak.max(states);
+        if states > 2_000_000 {
+            return Err(Error::Capacity("LUCK DP exceeds two million states".into()));
+        }
+        self.dist = std::mem::take(&mut self.out);
+        Ok(())
+    }
+
+    /// Take every state to `transform` of it.
+    fn map(&mut self, key: StepKey, mut transform: impl FnMut(State) -> Result<State, Error>) -> Result<(), Error> {
+        self.step(
+            key,
+            None,
+            |_, state, out| {
+                out.push((transform(state)?, M::ONE, None));
+                Ok(())
+            },
+            None,
+        )
+    }
+
+    pub(super) fn action(&mut self, action: Action<M>, target: usize) -> Result<(), Error> {
+        debug_assert_eq!(self.active_range, Some(target));
+        if let Action::CriticalPoints { value, chance } | Action::StartPoints { value, chance } = action {
+            let mass = self
+                .totals()
+                .filter(|(state, _)| matches!(action, Action::StartPoints { .. }) || state.previous_critical)
+                .fold(M::ZERO, |sum, (_, probability)| sum.merge(probability));
+            let points = mass.multiply(chance).interval().multiply(F64Interval::integer(i128::from(value)));
+            self.range_moments[target].luck_points = self.range_moments[target].luck_points.add(points);
+            return Ok(());
+        }
+        let key = StepKey::Action { target, words: action_words(&action) };
+        self.step(
+            key,
+            None,
+            |lotteries, state, out| {
+                // All accepted Miss rows share the same once/reset trigger. Leave their used flag untouched
+                // until every row has run so that multiple eligible rows each apply once in native order.
+                if matches!(action, Action::MissGauge { .. }) && (!state.previous_miss || state.miss_used) {
+                    out.push((state, M::ONE, None));
+                    return Ok(());
+                }
+                let mut next = state;
+                let chance = match action {
+                    Action::StartMinimum { result, chance } => {
+                        next.minimum = next.minimum.max(result);
+                        chance
+                    }
+                    Action::StartGauge { value, .. } | Action::MissGauge { value } => {
+                        let mut score = state.chain.score(&lotteries.templates[target]);
+                        let gauge = (score.gauge_max as i128 * value as i128) as i32;
+                        score.add_gauge(floor_to_i32(gauge as f32 / 10000f32))?;
+                        next.chain = state.chain.with(&score);
+                        if let Action::StartGauge { chance, .. } = action { chance } else { M::ONE }
+                    }
+                    Action::CriticalPoints { .. } | Action::StartPoints { .. } => unreachable!(),
+                };
+                out.push((next, chance, None));
+                let complement = chance.complement();
+                if complement.possible() {
+                    out.push((state, complement, None));
+                }
+                Ok(())
+            },
+            None,
+        )
     }
 
     pub(super) fn note(
@@ -358,45 +608,87 @@ impl<'a, M: Mass> Dp<'a, M> {
             return Ok(());
         }
         debug_assert_eq!(self.active_range, Some(range));
-        let base: Vec<_> = M::base(self.machine, note_type, judgement)?
-            .into_iter()
-            .map(|(probability, point)| (probability, floor_to_i32((speed + 1f32) * point as f32)))
-            .collect();
-        let mut out = std::mem::take(&mut self.table);
-        let mut previous = std::mem::take(&mut self.dist);
-        for (state, probability) in previous.drain(..) {
-            for &(pb, gauge) in &base {
-                let mut next = state;
-                let mut score = next.chain.score(&self.templates[range]);
-                score.add_gauge(gauge)?;
-                next.chain = next.chain.with(&score);
-                if consumes && score.lot_count > 0 {
-                    self.consume(next, range, buff, probability.multiply(pb), &mut out)?;
-                } else {
-                    self.push(&mut out, next, probability.multiply(pb))?;
+        let key = StepKey::Note { range, note_type, judgement, buff, speed: speed.to_bits(), consumes };
+        let mut base: Option<Vec<(M, i32)>> = None;
+        self.step(
+            key,
+            Some(range),
+            |lotteries, state, out| {
+                if base.is_none() {
+                    base = Some(
+                        M::base(lotteries.machine, note_type, judgement)?
+                            .into_iter()
+                            .map(|(probability, point)| (probability, floor_to_i32((speed + 1f32) * point as f32)))
+                            .collect(),
+                    );
                 }
-            }
-        }
-        self.settle(out, previous)
+                for &(pb, gauge) in base.as_deref().expect("base points") {
+                    let mut next = state;
+                    let mut score = next.chain.score(&lotteries.templates[range]);
+                    score.add_gauge(gauge)?;
+                    next.chain = next.chain.with(&score);
+                    if consumes && score.lot_count > 0 {
+                        lotteries.consume(next, range, buff, pb, out)?;
+                    } else {
+                        out.push((next, pb, None));
+                    }
+                }
+                Ok(())
+            },
+            None,
+        )
     }
 
     pub(super) fn pending(&mut self, range: usize, buff: i32) -> Result<(), Error> {
         debug_assert_eq!(self.active_range, Some(range));
-        let mut out = std::mem::take(&mut self.table);
-        let mut previous = std::mem::take(&mut self.dist);
-        for (state, probability) in previous.drain(..) {
-            if state.chain.lots > 0 && !state.frame_lot {
-                self.consume(state, range, buff, probability, &mut out)?;
-            } else {
-                self.push(&mut out, state, probability)?;
-            }
-        }
-        self.settle(out, previous)
+        self.step(
+            StepKey::Pending { range, buff },
+            Some(range),
+            |lotteries, state, out| {
+                if state.chain.lots > 0 && !state.frame_lot {
+                    lotteries.consume(state, range, buff, M::ONE, out)
+                } else {
+                    out.push((state, M::ONE, None));
+                    Ok(())
+                }
+            },
+            None,
+        )
     }
 
     pub(super) fn weights(&self, probes: &[bool], phase: Phase) -> M::Weights {
-        M::weights(&self.dist, probes, phase)
+        M::weights(self.totals(), probes, phase)
     }
+}
+
+/// The block of `rest` in `out`, holding the gauges `from..to`.
+fn block_at<'b, M: Mass>(
+    out: &'b mut Vec<Block<M>>,
+    slots: &mut [u32],
+    spare: &mut Vec<Vec<M>>,
+    rest: RestId,
+    from: i32,
+    to: i32,
+) -> &'b mut Block<M> {
+    let slot = &mut slots[rest as usize];
+    if *slot == u32::MAX {
+        *slot = out.len() as u32;
+        let mut masses = spare.pop().unwrap_or_default();
+        masses.clear();
+        masses.resize((to - from) as usize, M::ZERO);
+        out.push(Block { rest, lo: from, masses });
+    }
+    let block = &mut out[*slot as usize];
+    if from < block.lo {
+        let grow = (block.lo - from) as usize;
+        block.masses.splice(0..0, std::iter::repeat_n(M::ZERO, grow));
+        block.lo = from;
+    }
+    let end = (to - block.lo) as usize;
+    if end > block.masses.len() {
+        block.masses.resize(end, M::ZERO);
+    }
+    block
 }
 
 /// Propagate the lottery-state distribution through a transcript.
@@ -410,7 +702,7 @@ pub(super) fn propagate_cancellable<M: Mass>(
 ) -> Result<Option<DpResult<M::Weights>>, Error> {
     let t = transcript;
     let mut dp = Dp::<M>::new(t.templates.clone(), &t.machine, t.collect_moments);
-    dp.track_critical = t.actions.iter().any(|a| matches!(a, Action::CriticalPoints { .. }));
+    dp.lotteries.track_critical = t.actions.iter().any(|a| matches!(a, Action::CriticalPoints { .. }));
     // Each note hit and each pending frame consumes at most one result. Critical point commands fire at
     // most once per recorded action. These bounds prove that additive indicators cannot wrap native i32.
     if t.collect_moments {
@@ -479,45 +771,52 @@ pub(super) fn propagate_cancellable<M: Mass>(
                 debug_assert!(dp.active_range.is_none());
                 dp.active_range = Some(range);
             }
-            let starting_chain = frame.start.map(|range| Chain::of(&dp.templates[range]));
+            let starting_chain = frame.start.map(|range| Chain::of(&dp.lotteries.templates[range]));
             let mut edges = 0u8;
             let mut follows = true;
             let mut started = M::ZERO;
+            let key = StepKey::FrameStart { start: frame.start, finish, gate, current_luck, complete };
             // The certified distribution retains every state with positive possible probability.
-            dp.map_masses(|mut state, probability| {
-                let before = state.score;
-                if let Some(chain) = starting_chain {
-                    state.chain = chain;
-                }
-                state.query_rush = state.rush;
-                state.score_before = state.score;
-                state.frame_lot = false;
-                state.frame_miss = false;
-                state.frame_critical = false;
-                if finish {
-                    state.rush = false;
-                }
-                if gate {
-                    if current_luck {
-                        state.score = state.chain.rush != 0;
+            dp.step(
+                key,
+                None,
+                |_, mut state, out| {
+                    if let Some(chain) = starting_chain {
+                        state.chain = chain;
                     }
-                    if complete || finish {
-                        state.score = false;
+                    state.query_rush = state.rush;
+                    state.score_before = state.score;
+                    state.frame_lot = false;
+                    state.frame_miss = false;
+                    state.frame_critical = false;
+                    if finish {
+                        state.rush = false;
                     }
-                }
-                edges |= 1 << (2 * usize::from(before) + usize::from(state.score));
-                if !before && state.score {
-                    started = started.merge(probability);
-                }
-                follows &= state.score == state.rush;
-                state.rush_start = state.rush;
-                state.rush_filed = false;
-                if complete {
-                    state.minimum = 0;
-                    state.miss_used = false;
-                }
-                Ok(state)
-            })?;
+                    if gate {
+                        if current_luck {
+                            state.score = state.chain.rush != 0;
+                        }
+                        if complete || finish {
+                            state.score = false;
+                        }
+                    }
+                    state.rush_start = state.rush;
+                    state.rush_filed = false;
+                    if complete {
+                        state.minimum = 0;
+                        state.miss_used = false;
+                    }
+                    out.push((state, M::ONE, None));
+                    Ok(())
+                },
+                Some(&mut |before: &State, after: &State, probability: M| {
+                    edges |= 1 << (2 * usize::from(before.score) + usize::from(after.score));
+                    if !before.score && after.score {
+                        started = started.merge(probability);
+                    }
+                    follows &= after.score == after.rush;
+                }),
+            )?;
             probe_transitions.push(edges);
             probe_starts = probe_starts.add(started.interval());
             // Subsequent actions and lotteries do not alter this direct-probe class.
@@ -534,7 +833,7 @@ pub(super) fn propagate_cancellable<M: Mass>(
                     dp.action(action, frame.target as usize)?;
                 }
                 if t.miss_rows {
-                    dp.map(|mut state| {
+                    dp.map(StepKey::MissUsed, |mut state| {
                         state.miss_used |= state.previous_miss;
                         Ok(state)
                     })?;
@@ -566,7 +865,7 @@ pub(super) fn propagate_cancellable<M: Mass>(
                 dp.pending(range, buff)?;
             }
             let mut lottery = 0u16;
-            for (state, _) in &dp.dist {
+            for state in dp.held() {
                 lottery |=
                     1 << (4 * u16::from(state.rush_start) + 2 * u16::from(state.rush) + u16::from(state.rush_filed));
             }
@@ -579,8 +878,8 @@ pub(super) fn propagate_cancellable<M: Mass>(
                     steps.push((frame.time_ms, values));
                 }
             }
-            previous_lot = dp.dist.iter().any(|(state, _)| state.frame_lot);
-            dp.map(|mut state| {
+            previous_lot = dp.held().any(|state| state.frame_lot);
+            dp.map(StepKey::FrameEnd { finish }, |mut state| {
                 state.previous_miss = state.frame_miss;
                 state.previous_critical = state.frame_critical;
                 state.query_rush = state.rush;
@@ -600,7 +899,7 @@ pub(super) fn propagate_cancellable<M: Mass>(
             }
             queued.fill(false);
             if let Some(range) = dp.active_range {
-                queued[range] = dp.dist.iter().any(|(state, _)| state.chain.lots > 0);
+                queued[range] = dp.held().any(|state| state.chain.lots > 0);
             }
         }
     }

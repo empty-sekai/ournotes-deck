@@ -31,7 +31,7 @@ pub(super) use cache::RecordingCache;
 pub use cache::{LuckDpCache, LuckDpCacheStats};
 pub use compose::LotteryLive;
 use compose::{ComposedLaws, HeldLive};
-use dp::{Distribution, DpResult, Phase, propagate, propagate_cancellable};
+use dp::{DpResult, Phase, State, propagate, propagate_cancellable};
 use kinds::{Conversions, POSITIONS};
 pub use kinds::{LotteryBreak, LotteryKind, LotteryKindStats, LotteryKinds, LotteryRole};
 use life_recorder::life_recorder;
