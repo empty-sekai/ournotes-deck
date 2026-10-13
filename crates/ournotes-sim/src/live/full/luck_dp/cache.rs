@@ -88,6 +88,8 @@ pub struct LuckDpCache {
     pub(super) words: usize,
     capacity_words: usize,
     pub(super) stats: LuckDpCacheStats,
+    /// The step tables of the propagations ([`propagate_sharing`]).
+    tables: StepTables<ProbabilityMass>,
 }
 
 /// Use of a [`LuckDpCache`]. Timings are filled only in diagnostic builds.
@@ -414,7 +416,7 @@ impl LuckDpCache {
     ) -> Result<Option<std::sync::Arc<LuckDpCertifiedResult>>, Error> {
         #[cfg(feature = "search-diagnostics")]
         let started = std::time::Instant::now();
-        let result = propagate_cancellable(transcript, cancelled);
+        let result = propagate_sharing(transcript, &mut self.tables, cancelled);
         #[cfg(feature = "search-diagnostics")]
         {
             self.stats.propagate_ms += started.elapsed().as_secs_f64() * 1e3;

@@ -1,4 +1,4 @@
-use super::dp::{Chain, Dp, State};
+use super::dp::{Chain, Dp, State, StepTables};
 use super::record::{consume_bound, record_native};
 use super::*;
 
@@ -829,12 +829,82 @@ fn rush_saturation_preserves_table_and_maximum_changes() {
     }
 }
 
+/// The states after each note of `script`, each with its gauge and its mass's bit pattern, and the transitions: for
+/// each note, the gauges of the states of no lot and of one lot it starts from and its gauge speed.
+#[allow(clippy::type_complexity)]
+fn shared_script(
+    tables: &mut StepTables<ProbabilityMass>,
+    script: &[(std::ops::Range<i32>, std::ops::Range<i32>, f32)],
+) -> (Vec<(State, i32, [u64; 2])>, u64) {
+    let mut dp = Dp::new(tables, false);
+    dp.set_active_range(0);
+    let mut out = Vec::new();
+    for (none, one, speed) in script {
+        let states = [(none, 0), (one, 1)].into_iter().flat_map(|(gauges, lots)| {
+            gauges.clone().map(move |gauge| {
+                let chain = Chain { gauge, lots, maximum: 100, ..Chain::default() };
+                let mass = ProbabilityMass::from_ratio(1 + (gauge as u64 * 7) % 11, 97).unwrap();
+                (State { chain, ..State::default() }, mass)
+            })
+        });
+        dp.set_states(states.collect());
+        dp.note(0, 1, 5, 0, *speed, false).unwrap();
+        out.extend(dp.states());
+    }
+    (out, dp.transitions)
+}
+
+#[test]
+fn propagations_on_shared_step_tables_file_the_masses_of_their_own_tables() {
+    // A Perfect adds 60, 30 or 45 gauge points with weights 1, 1 and 2: a note takes each state to three gauges of one
+    // rest below the maximum of 100, so masses of several gauges meet at one gauge, in the order of their runs.
+    let (mut master, notes, params, setup, _, _) = fixture(3, 60);
+    for (id, weight, base_point) in [(2, 1, 30), (3, 2, 45)] {
+        let row =
+            crate::master::LuckBasePointRow { id, note_category: 0, note_simulate_judgement: 5, weight, base_point };
+        master.gekisou_luck_base_points.push(row);
+    }
+    master.reindex().unwrap();
+    let model = LiveModel::new_gekisou(&master, &[], &notes, &[], params, &setup).unwrap();
+    let machine = &model.gk.as_ref().unwrap().ctrl.machine;
+    let templates = [LuckScore::default(), LuckScore::default(), LuckScore::default()];
+    let entered = || {
+        let mut tables = StepTables::default();
+        tables.enter(&templates, machine, false);
+        tables
+    };
+    // Blocks that grow below and above the gauges the note's tables were first read at, and another gauge speed.
+    let script = [
+        (40..50, 60..62, 0.0),
+        (10..60, 50..70, 0.0),
+        (0..30, 30..95, 0.0),
+        (5..99, 0..10, 0.25),
+        (20..80, 0..99, 0.0),
+    ];
+    let alone = shared_script(&mut entered(), &script);
+    // Tables another propagation read at every gauge first.
+    let mut shared = entered();
+    shared_script(&mut shared, &[(0..100, 0..100, 0.0), (0..100, 0..100, 0.25)]);
+    assert_eq!(shared_script(&mut shared, &script), alone);
+    // Tables read under a machine with other weights of the same gauge points are read anew.
+    let mut weighed = master.clone();
+    weighed.gekisou_luck_base_points.iter_mut().for_each(|row| row.weight += 1);
+    weighed.reindex().unwrap();
+    let other = LiveModel::new_gekisou(&weighed, &[], &notes, &[], params, &setup).unwrap();
+    shared.enter(&templates, &other.gk.as_ref().unwrap().ctrl.machine, false);
+    assert_ne!(shared_script(&mut shared, &script), alone);
+    shared.enter(&templates, machine, false);
+    assert_eq!(shared_script(&mut shared, &script), alone);
+}
+
 #[test]
 fn before_frame_probe_is_distinct_from_new_rush() {
     let (master, notes, params, setup, _, _) = fixture(3, 60);
     let model = LiveModel::new_gekisou(&master, &[], &notes, &[], params, &setup).unwrap();
     let machine = &model.gk.as_ref().unwrap().ctrl.machine;
-    let mut dp = Dp::<f64>::new(vec![LuckScore::default(); 3], machine, false);
+    let mut tables = StepTables::default();
+    tables.enter(&[LuckScore::default(), LuckScore::default(), LuckScore::default()], machine, false);
+    let mut dp = Dp::<f64>::new(&mut tables, false);
     dp.set_states(vec![(
         State { rush: true, query_rush: true, score: true, score_before: false, ..State::default() },
         1.0,

@@ -161,11 +161,22 @@ impl Phase {
 pub(super) type RestId = u32;
 
 /// The masses of the states of one rest by gauge: `masses[k]` is that of gauge `lo + k`. A gauge whose mass is not
-/// possible holds no state.
+/// possible holds no state, and its mass is zero.
 pub(super) struct Block<M> {
     rest: RestId,
     lo: i32,
     masses: Vec<M>,
+    /// The number of states, or `usize::MAX` while a step files masses into the block.
+    held: usize,
+    /// Once read, the merged mass of the states ([`Mass::total`]).
+    total: Option<Option<M>>,
+}
+
+impl<M: Mass> Block<M> {
+    /// The merged mass of the block's states, read once.
+    fn total(&mut self) -> Option<M> {
+        *self.total.get_or_insert_with(|| M::total(&self.masses))
+    }
 }
 
 /// A state a step takes a state to: its rest, how much it moves the gauge, its probability, and the lottery result
@@ -192,7 +203,8 @@ struct Run {
     branches: std::ops::Range<usize>,
 }
 
-/// What a step does to the states of one rest, read at the gauges `from..to`, in runs of increasing gauges.
+/// What a step does to the states of one rest, read at the gauges `from..to`, in the longest runs of increasing gauges
+/// with the same branches.
 struct Table<M> {
     from: i32,
     to: i32,
@@ -222,15 +234,30 @@ impl<M: Mass> Table<M> {
         self.to = gauge + 1;
     }
 
-    /// The runs of `self` after those of `below`, which ends where `self` starts.
+    /// The runs of `self` after those of `below`, which ends where `self` starts, the two runs that meet there as one
+    /// when they have the same branches.
     fn after(mut self, mut below: Table<M>) -> Self {
         let offset = below.branches.len();
+        let meet = match (below.runs.last(), self.runs.first()) {
+            (Some(low), Some(high)) => {
+                low.to == high.from
+                    && low.branches.len() == high.branches.len()
+                    && below.branches[low.branches.clone()]
+                        .iter()
+                        .zip(&self.branches[high.branches.clone()])
+                        .all(|(a, b)| a.same(b))
+            }
+            _ => false,
+        };
         below.branches.append(&mut self.branches);
-        below.runs.extend(
-            self.runs
-                .into_iter()
-                .map(|run| Run { branches: run.branches.start + offset..run.branches.end + offset, ..run }),
-        );
+        let mut runs = self.runs.into_iter();
+        if meet {
+            let high = runs.next().expect("a run");
+            below.runs.last_mut().expect("a run").to = high.to;
+        }
+        below
+            .runs
+            .extend(runs.map(|run| Run { branches: run.branches.start + offset..run.branches.end + offset, ..run }));
         below.to = self.to;
         below
     }
@@ -247,24 +274,49 @@ enum StepKey {
     FrameEnd { finish: bool },
 }
 
+/// Everything the branches of a step read besides the state and what a [`StepTables`] holds for all its propagations
+/// (the range templates and the lottery machine): the step key, a note's gauge speed replaced by the gauge points it
+/// gives each base point, which is all a note's branches read of the speed, and whether the lotteries mark a
+/// Critical of the frame.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct TableKey {
+    step: TableStep,
+    critical: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum TableStep {
+    Step(StepKey),
+    /// A note step; `points` numbers the list of its gauge points in [`StepTables::points`].
+    Note {
+        range: usize,
+        note_type: i32,
+        judgement: i32,
+        buff: i32,
+        points: u32,
+        consumes: bool,
+    },
+}
+
 /// The branches a step files for one state: each state with its probability and the lottery result it draws.
 type Filed<M> = Vec<(State, M, Option<u8>)>;
 
-/// What reads each run of states a step takes: the rest taken, the rest reached and the run's total mass.
-type Observe<'o, M> = &'o mut dyn FnMut(&State, &State, M);
+/// What reads each run of states a step takes: the rest taken, the rest reached and the run's total mass, given on
+/// demand.
+type Observe<'o, M> = &'o mut dyn FnMut(&State, &State, &mut dyn FnMut() -> M);
 
 /// What the branches of a step read besides the state: the range templates, the lottery machine and the lotteries
 /// met so far.
-pub(super) struct Lotteries<'a, M: Mass> {
+pub(super) struct Lotteries<M: Mass> {
     pub(super) templates: Vec<LuckScore>,
-    pub(super) machine: &'a LotteryMachine,
+    pub(super) machine: LotteryMachine,
     /// The index of each lottery drawn, by its lot table, buff and guarantee, and the outcomes of each.
     lotteries: FxHashMap<(usize, i32, i8), u16>,
     outcomes: Vec<Draws<M>>,
     track_critical: bool,
 }
 
-impl<M: Mass> Lotteries<'_, M> {
+impl<M: Mass> Lotteries<M> {
     /// The index of the lottery of lot table `kind` with `buff` and the guarantee `minimum`.
     fn lottery(&mut self, kind: usize, buff: i32, minimum: i8) -> Result<u16, Error> {
         let key = (kind, buff, minimum);
@@ -273,7 +325,7 @@ impl<M: Mass> Lotteries<'_, M> {
         }
         let index = u16::try_from(self.outcomes.len())
             .map_err(|_| Error::Capacity("LUCK DP exceeds 65536 distinct lotteries".into()))?;
-        self.outcomes.push(Draws::of(&M::bonus(self.machine, kind, buff, minimum)?)?);
+        self.outcomes.push(Draws::of(&M::bonus(&self.machine, kind, buff, minimum)?)?);
         self.lotteries.insert(key, index);
         Ok(index)
     }
@@ -312,58 +364,273 @@ impl<M: Mass> Lotteries<'_, M> {
     }
 }
 
+/// The step tables of propagations under the same range templates and lottery machine, and the rests and lotteries
+/// they number.
+///
+/// A step takes each state to branches that depend on the state and the step's table key alone ([`TableKey`]), so a
+/// table read for one propagation holds, at each gauge it was read at, the branches every propagation that meets the
+/// same rest under the same key reads there. A propagation reads such a table at the gauges it would have read its own
+/// table at ([`Reads`]), and the tables grow to the gauges their propagations ask for. Numbering the rests and the
+/// lotteries for all of them gives each state of each propagation one number, which no step reads.
+pub(super) struct StepTables<M: Mass> {
+    /// The words of the range templates and the lottery machine the tables read.
+    identity: Vec<u64>,
+    lotteries: Option<Lotteries<M>>,
+    rests: Vec<State>,
+    rest_ids: FxHashMap<State, RestId>,
+    keys: FxHashMap<TableKey, u32>,
+    /// The lists of gauge points of note steps, and the number of the list of each note type, judgement and binary32
+    /// gauge speed.
+    points: FxHashMap<Vec<i32>, u32>,
+    note_points: FxHashMap<(i32, i32, u32), u32>,
+    /// The index in `tables` of each rest's table under each table key, by their numbers.
+    ids: FxHashMap<(RestId, u32), u32>,
+    tables: Vec<Table<M>>,
+    /// The branches the tables hold.
+    branches: usize,
+}
+
+impl<M: Mass> Default for StepTables<M> {
+    fn default() -> Self {
+        Self {
+            identity: Vec::new(),
+            lotteries: None,
+            rests: Vec::new(),
+            rest_ids: FxHashMap::default(),
+            keys: FxHashMap::default(),
+            points: FxHashMap::default(),
+            note_points: FxHashMap::default(),
+            ids: FxHashMap::default(),
+            tables: Vec::new(),
+            branches: 0,
+        }
+    }
+}
+
+/// The sizes from which [`StepTables::enter`] reads its tables anew.
+const TABLE_BRANCHES: usize = 1 << 22;
+const TABLE_RESTS: usize = 1 << 16;
+const TABLE_LOTTERIES: usize = 1 << 15;
+
+impl<M: Mass> StepTables<M> {
+    /// Make the tables those of propagations under `templates` and `machine` whose lotteries mark a Critical of the
+    /// frame when `track_critical`: tables read under other templates or another machine are dropped, and so are
+    /// tables that grew past their size.
+    pub(super) fn enter(&mut self, templates: &[LuckScore], machine: &LotteryMachine, track_critical: bool) {
+        let mut identity = Vec::with_capacity(self.identity.len());
+        identity.push(templates.len() as u64);
+        templates.iter().for_each(|template| template.push_words(&mut identity));
+        machine.push_words(&mut identity);
+        let full = self.branches > TABLE_BRANCHES
+            || self.rests.len() > TABLE_RESTS
+            || self.lotteries.as_ref().is_some_and(|lotteries| lotteries.outcomes.len() > TABLE_LOTTERIES);
+        if self.lotteries.is_none() || identity != self.identity || full {
+            *self = Self {
+                identity,
+                lotteries: Some(Lotteries {
+                    templates: templates.to_vec(),
+                    machine: machine.clone(),
+                    lotteries: FxHashMap::default(),
+                    outcomes: Vec::new(),
+                    track_critical,
+                }),
+                ..Self::default()
+            };
+        }
+        self.lotteries_mut().track_critical = track_critical;
+    }
+
+    /// [`Self::enter`] for the propagation of `transcript`.
+    fn enter_transcript(&mut self, transcript: &Transcript<M>) {
+        let critical = transcript.actions.iter().any(|a| matches!(a, Action::CriticalPoints { .. }));
+        self.enter(&transcript.templates, &transcript.machine, critical);
+    }
+
+    fn lotteries(&self) -> &Lotteries<M> {
+        self.lotteries.as_ref().expect("entered step tables")
+    }
+
+    fn lotteries_mut(&mut self) -> &mut Lotteries<M> {
+        self.lotteries.as_mut().expect("entered step tables")
+    }
+
+    /// The id of the rest of `state`.
+    fn rest(&mut self, state: State) -> RestId {
+        rest_id(&mut self.rests, &mut self.rest_ids, state)
+    }
+
+    /// The number of `step` under the current Critical marking.
+    fn key(&mut self, step: TableStep) -> u32 {
+        let key = TableKey { step, critical: self.lotteries().track_critical };
+        let next = self.keys.len() as u32;
+        *self.keys.entry(key).or_insert(next)
+    }
+
+    /// The number of the gauge points a note of `note_type` judged `judgement` adds at the binary32 gauge speed
+    /// `speed` for each base point, as [`Dp::note`] adds them.
+    fn note_points(&mut self, note_type: i32, judgement: i32, speed: f32) -> Result<u32, Error> {
+        let at = (note_type, judgement, speed.to_bits());
+        if let Some(&points) = self.note_points.get(&at) {
+            return Ok(points);
+        }
+        let base = M::base(&self.lotteries().machine, note_type, judgement)?;
+        let gauges: Vec<i32> = base.iter().map(|&(_, point)| floor_to_i32((speed + 1f32) * point as f32)).collect();
+        let next = self.points.len() as u32;
+        let points = *self.points.entry(gauges).or_insert(next);
+        self.note_points.insert(at, points);
+        Ok(points)
+    }
+
+    /// The index of the table of `rest` under the table key numbered `key`.
+    fn table(&mut self, rest: RestId, key: u32) -> u32 {
+        let next = self.tables.len() as u32;
+        let index = *self.ids.entry((rest, key)).or_insert(next);
+        if index == next {
+            self.tables.push(Table::empty(0));
+        }
+        index
+    }
+
+    /// Read the table `index` of `rest` at the gauges `lo..hi` it does not hold, with the branches `filed` files.
+    #[allow(clippy::too_many_arguments)]
+    fn cover(
+        &mut self,
+        index: u32,
+        rest: RestId,
+        lo: i32,
+        hi: i32,
+        filed: &mut impl FnMut(&mut Lotteries<M>, State, &mut Filed<M>) -> Result<(), Error>,
+        scratch: &mut Filed<M>,
+        branches: &mut Vec<Branch<M>>,
+    ) -> Result<(), Error> {
+        let held = &self.tables[index as usize];
+        if !held.runs.is_empty() && held.from <= lo && hi <= held.to {
+            return Ok(());
+        }
+        let mut table = std::mem::replace(&mut self.tables[index as usize], Table::empty(0));
+        if table.runs.is_empty() {
+            table = Table::empty(lo);
+        }
+        let before = table.branches.len();
+        if lo < table.from {
+            let mut below = Table::empty(lo);
+            self.read(rest, lo, table.from, &mut below, filed, scratch, branches)?;
+            table = table.after(below);
+        }
+        if hi > table.to {
+            let to = table.to;
+            self.read(rest, to, hi, &mut table, filed, scratch, branches)?;
+        }
+        self.branches += table.branches.len() - before;
+        self.tables[index as usize] = table;
+        Ok(())
+    }
+
+    /// Append to `table` the branches `filed` files for the states of `rest` at the gauges `from..to`.
+    #[allow(clippy::too_many_arguments)]
+    fn read(
+        &mut self,
+        rest: RestId,
+        from: i32,
+        to: i32,
+        table: &mut Table<M>,
+        filed: &mut impl FnMut(&mut Lotteries<M>, State, &mut Filed<M>) -> Result<(), Error>,
+        scratch: &mut Filed<M>,
+        branches: &mut Vec<Branch<M>>,
+    ) -> Result<(), Error> {
+        let lotteries = self.lotteries.as_mut().expect("entered step tables");
+        for gauge in from..to {
+            let mut state = self.rests[rest as usize];
+            state.chain.gauge = gauge;
+            scratch.clear();
+            filed(lotteries, state, scratch)?;
+            branches.clear();
+            for &(state, probability, draw) in scratch.iter() {
+                if probability.possible() {
+                    let rest = rest_id(&mut self.rests, &mut self.rest_ids, state);
+                    branches.push(Branch { rest, shift: state.chain.gauge.wrapping_sub(gauge), probability, draw });
+                }
+            }
+            table.push(gauge, branches);
+        }
+        Ok(())
+    }
+}
+
+/// The id of the rest of `state` among `rests`.
+fn rest_id(rests: &mut Vec<State>, ids: &mut FxHashMap<State, RestId>, mut state: State) -> RestId {
+    state.chain.gauge = 0;
+    if let Some(&id) = ids.get(&state) {
+        return id;
+    }
+    let id = rests.len() as RestId;
+    rests.push(state);
+    ids.insert(state, id);
+    id
+}
+
+/// The gauges at which a propagation reads the table of one rest under one step key: `from..to`, the gauges its own
+/// table of them would hold, and `breaks`, the gauges where that table would end a run whatever its branches, in
+/// decreasing order.
+///
+/// A propagation's own table is read at the gauges of the first block it takes, and grows to those of the later
+/// blocks: at higher gauges it appends their branches, extending its last run when they are the same, and at lower
+/// gauges it puts a table of them before its runs, a run of which ends where the old table starts. So its runs are
+/// the longest runs of the branches at its gauges, ended at its breaks as well; a step adds the masses of a run to the
+/// masses of each of its branches in turn, and the order in which one mass meets several branches follows its runs.
+struct Reads {
+    from: i32,
+    to: i32,
+    table: u32,
+    breaks: Vec<i32>,
+}
+
 /// The lottery-state distribution in blocks of states with one rest, and the tables of the steps it took.
 ///
 /// A step takes each state to branches that depend on the state and the step's key alone. The states of one rest at
 /// consecutive gauges whose branches reach the same rests with the same gauge moves and probabilities form a run, and
 /// the step adds each run's masses times each branch's probability to the masses of the branch's rest at the moved
 /// gauges. A table holds the runs of one rest under one step key, read from the step's branches at each gauge once.
-pub(super) struct Dp<'a, M: Mass> {
-    lotteries: Lotteries<'a, M>,
+pub(super) struct Dp<'t, M: Mass> {
+    tables: &'t mut StepTables<M>,
     active_range: Option<usize>,
-    rests: Vec<State>,
-    rest_ids: FxHashMap<State, RestId>,
     dist: Vec<Block<M>>,
     out: Vec<Block<M>>,
     /// The index in `out` of the block of each rest, or `u32::MAX`.
     slots: Vec<u32>,
     spare: Vec<Vec<M>>,
+    /// The number of each step key met, and by that number the number of its table key and the index in `reads` of
+    /// the reads of each rest's table (`u32::MAX` before any).
     steps: FxHashMap<StepKey, u32>,
-    tables: FxHashMap<(RestId, u32), Table<M>>,
+    step_reads: Vec<(u32, Vec<u32>)>,
+    reads: Vec<Reads>,
     peak: usize,
     pub(super) transitions: u64,
     pub(super) range_moments: Vec<LuckRangeMoments>,
 }
 
-impl<'a, M: Mass> Dp<'a, M> {
-    pub(super) fn new(templates: Vec<LuckScore>, machine: &'a LotteryMachine, collect_moments: bool) -> Self {
+impl<'t, M: Mass> Dp<'t, M> {
+    /// The distribution before the first frame, under entered step tables ([`StepTables::enter`]).
+    pub(super) fn new(tables: &'t mut StepTables<M>, collect_moments: bool) -> Self {
+        let ranges = tables.lotteries().templates.len();
+        let rest = tables.rest(State::default());
         let mut dp = Self {
-            range_moments: if collect_moments {
-                vec![LuckRangeMoments::default(); templates.len()]
-            } else {
-                Vec::new()
-            },
-            lotteries: Lotteries {
-                templates,
-                machine,
-                lotteries: FxHashMap::default(),
-                outcomes: Vec::new(),
-                track_critical: false,
-            },
+            range_moments: if collect_moments { vec![LuckRangeMoments::default(); ranges] } else { Vec::new() },
+            tables,
             active_range: None,
-            rests: Vec::new(),
-            rest_ids: FxHashMap::default(),
             dist: Vec::new(),
             out: Vec::new(),
             slots: Vec::new(),
             spare: Vec::new(),
             steps: FxHashMap::default(),
-            tables: FxHashMap::default(),
+            step_reads: Vec::new(),
+            reads: Vec::new(),
             peak: 1,
             transitions: 0,
         };
-        let rest = dp.rest(State::default());
-        dp.dist.push(Block { rest, lo: State::default().chain.gauge, masses: vec![M::ONE] });
+        let block = Block { rest, lo: State::default().chain.gauge, masses: vec![M::ONE], held: 1, total: None };
+        dp.dist.push(block);
+        dp.fit_slots();
         dp
     }
 
@@ -373,7 +640,8 @@ impl<'a, M: Mass> Dp<'a, M> {
         let old = std::mem::take(&mut self.dist);
         self.spare.extend(old.into_iter().map(|block| block.masses));
         for (state, mass) in states {
-            let rest = self.rest(state);
+            let rest = self.tables.rest(state);
+            self.fit_slots();
             let gauge = state.chain.gauge;
             let block = block_at(&mut self.out, &mut self.slots, &mut self.spare, rest, gauge, gauge + 1);
             let at = (gauge - block.lo) as usize;
@@ -382,24 +650,35 @@ impl<'a, M: Mass> Dp<'a, M> {
         self.settle().expect("a small distribution");
     }
 
-    /// The id of the rest of `state`.
-    fn rest(&mut self, mut state: State) -> RestId {
-        state.chain.gauge = 0;
-        if let Some(&id) = self.rest_ids.get(&state) {
-            return id;
+    /// The states of the distribution, each with its mass's bit pattern.
+    #[cfg(test)]
+    pub(super) fn states(&self) -> Vec<(State, i32, [u64; 2])> {
+        let mut states = Vec::new();
+        for block in &self.dist {
+            for (k, mass) in block.masses.iter().enumerate() {
+                states.push((self.tables.rests[block.rest as usize], block.lo + k as i32, mass.bits()));
+            }
         }
-        let id = self.rests.len() as RestId;
-        self.rests.push(state);
-        self.rest_ids.insert(state, id);
-        self.slots.push(u32::MAX);
-        id
+        states
+    }
+
+    /// Steps of the range `range` from now on.
+    #[cfg(test)]
+    pub(super) fn set_active_range(&mut self, range: usize) {
+        self.active_range = Some(range);
+    }
+
+    /// A slot for every rest the tables number.
+    fn fit_slots(&mut self) {
+        if self.slots.len() < self.tables.rests.len() {
+            self.slots.resize(self.tables.rests.len(), u32::MAX);
+        }
     }
 
     /// The rests of the distribution's states, each with its total mass.
-    fn totals(&self) -> impl Iterator<Item = (&State, M)> + '_ {
-        self.dist
-            .iter()
-            .filter_map(|block| M::total(&block.masses).map(|total| (&self.rests[block.rest as usize], total)))
+    fn totals(&mut self) -> impl Iterator<Item = (&State, M)> + '_ {
+        let rests = &self.tables.rests;
+        self.dist.iter_mut().filter_map(|block| block.total().map(|total| (&rests[block.rest as usize], total)))
     }
 
     /// The rests of the distribution's states.
@@ -407,124 +686,170 @@ impl<'a, M: Mass> Dp<'a, M> {
         self.dist
             .iter()
             .filter(|block| block.masses.iter().any(|mass| mass.possible()))
-            .map(|block| &self.rests[block.rest as usize])
+            .map(|block| &self.tables.rests[block.rest as usize])
     }
 
-    /// Take every state to the branches `filed` files for it, reading each rest's gauges at most once under `key`.
-    /// `observe` takes, for each run of states and each branch, the rest taken, the rest reached and the run's
-    /// total mass; the range moments of `moments` count the lottery results drawn.
+    /// The index in `reads` of the reads of the table of `rest` under the step numbered `step`, whose table key is
+    /// numbered `key`, once they hold the gauges `lo..hi`.
+    fn reads(&mut self, step: usize, key: u32, rest: RestId, lo: i32, hi: i32) -> usize {
+        let held = &mut self.step_reads[step].1;
+        if held.len() <= rest as usize {
+            held.resize(rest as usize + 1, u32::MAX);
+        }
+        match held[rest as usize] {
+            u32::MAX => {
+                held[rest as usize] = self.reads.len() as u32;
+                let table = self.tables.table(rest, key);
+                self.reads.push(Reads { from: lo, to: hi, table, breaks: Vec::new() });
+                self.reads.len() - 1
+            }
+            index => {
+                let reads = &mut self.reads[index as usize];
+                if lo < reads.from {
+                    reads.breaks.push(reads.from);
+                    reads.from = lo;
+                }
+                reads.to = reads.to.max(hi);
+                index as usize
+            }
+        }
+    }
+
+    /// Take every state to the branches `filed` files for it, reading each rest's gauges at most once under `key`
+    /// (`table` once the shared tables are read). `observe` takes, for each run of states and each branch, the rest
+    /// taken, the rest reached and the run's total mass; the range moments of `moments` count the lottery results
+    /// drawn.
+    ///
+    /// A run that takes every state of a block to the same state of another rest, with the same gauge and certainty,
+    /// adds each mass of the block to a mass of that rest, or makes it that mass when the rest holds no state yet: the
+    /// block becomes the rest's.
     fn step(
         &mut self,
         key: StepKey,
+        table: TableStep,
         moments: Option<usize>,
-        mut filed: impl FnMut(&mut Lotteries<'a, M>, State, &mut Filed<M>) -> Result<(), Error>,
+        mut filed: impl FnMut(&mut Lotteries<M>, State, &mut Filed<M>) -> Result<(), Error>,
         mut observe: Option<Observe<'_, M>>,
     ) -> Result<(), Error> {
         let next = self.steps.len() as u32;
-        let step = *self.steps.entry(key).or_insert(next);
+        let step = *self.steps.entry(key).or_insert(next) as usize;
+        if step == self.step_reads.len() {
+            let number = self.tables.key(table);
+            self.step_reads.push((number, Vec::new()));
+        }
+        let number = self.step_reads[step].0;
         let dist = std::mem::take(&mut self.dist);
         let mut scratch = Filed::new();
         let mut branches = Vec::new();
-        for block in &dist {
+        for mut block in dist {
             let (lo, hi) = (block.lo, block.lo + block.masses.len() as i32);
-            let held = self.tables.get(&(block.rest, step)).map(|table| (table.from, table.to));
-            if held.is_none_or(|(from, to)| lo < from || hi > to) {
-                let mut table = self.tables.remove(&(block.rest, step)).unwrap_or_else(|| Table::empty(lo));
-                let mut read = |from: i32, to: i32, table: &mut Table<M>| -> Result<(), Error> {
-                    for gauge in from..to {
-                        let mut state = self.rests[block.rest as usize];
-                        state.chain.gauge = gauge;
-                        scratch.clear();
-                        filed(&mut self.lotteries, state, &mut scratch)?;
-                        branches.clear();
-                        for &(state, probability, draw) in &scratch {
-                            if probability.possible() {
-                                let rest = self.rest(state);
-                                branches.push(Branch {
-                                    rest,
-                                    shift: state.chain.gauge.wrapping_sub(gauge),
-                                    probability,
-                                    draw,
-                                });
-                            }
+            let reads = self.reads(step, number, block.rest, lo, hi);
+            let index = self.reads[reads].table;
+            self.tables.cover(index, block.rest, lo, hi, &mut filed, &mut scratch, &mut branches)?;
+            self.fit_slots();
+            let Self { tables, out, slots, spare, reads: all_reads, transitions, range_moments, .. } = self;
+            let (table, breaks) = (&tables.tables[index as usize], &all_reads[reads].breaks);
+            let rests = &tables.rests;
+            let first = table.runs.partition_point(|run| run.to <= lo);
+            let whole = table.runs.get(first).filter(|run| run.from <= lo && hi <= run.to);
+            if let Some(&[branch]) = whole.map(|run| &table.branches[run.branches.clone()])
+                && branch.shift == 0
+                && branch.draw.is_none()
+                && branch.probability.bits() == M::ONE.bits()
+                && block.masses.first().is_some_and(|mass| mass.possible())
+                && block.masses.last().is_some_and(|mass| mass.possible())
+            {
+                if block.held == usize::MAX {
+                    block.held = block.masses.iter().filter(|mass| mass.possible()).count();
+                }
+                *transitions = transitions
+                    .checked_add(block.held as u64)
+                    .ok_or_else(|| Error::Capacity("LUCK DP transitions overflow".into()))?;
+                if let Some(observe) = observe.as_mut() {
+                    let (taken, reached) = (&rests[block.rest as usize], &rests[branch.rest as usize]);
+                    let mut from = lo;
+                    for to in pieces(lo, hi, breaks) {
+                        let masses = &block.masses[(from - lo) as usize..(to - lo) as usize];
+                        if masses.iter().any(|mass| mass.possible()) {
+                            observe(taken, reached, &mut || M::total(masses).expect("a possible mass"));
                         }
-                        table.push(gauge, &branches);
+                        from = to;
                     }
-                    Ok(())
-                };
-                if lo < table.from {
-                    let mut below = Table::empty(lo);
-                    read(lo, table.from, &mut below)?;
-                    table = table.after(below);
                 }
-                if hi > table.to {
-                    read(table.to, hi, &mut table)?;
+                if slots[branch.rest as usize] == u32::MAX {
+                    slots[branch.rest as usize] = out.len() as u32;
+                    out.push(Block { rest: branch.rest, ..block });
+                } else {
+                    let target = block_at(out, slots, spare, branch.rest, lo, hi);
+                    let offset = (lo - target.lo) as usize;
+                    M::accumulate(&mut target.masses[offset..offset + block.masses.len()], &block.masses, M::ONE);
+                    spare.push(block.masses);
                 }
-                self.tables.insert((block.rest, step), table);
+                continue;
             }
-            let table = &self.tables[&(block.rest, step)];
-            for run in &table.runs {
-                let (from, to) = (run.from.max(lo), run.to.min(hi));
-                if from >= to {
-                    continue;
+            for run in &table.runs[first..] {
+                if run.from >= hi {
+                    break;
                 }
-                let masses = &block.masses[(from - lo) as usize..(to - lo) as usize];
-                let (mut first, mut last, mut possible) = (usize::MAX, 0, 0u64);
-                for (k, mass) in masses.iter().enumerate() {
-                    if mass.possible() {
-                        first = first.min(k);
-                        last = k;
-                        possible += 1;
+                let (start, end) = (run.from.max(lo), run.to.min(hi));
+                let mut from = start;
+                for to in pieces(start, end, breaks) {
+                    let piece = from;
+                    from = to;
+                    let masses = &block.masses[(piece - lo) as usize..(to - lo) as usize];
+                    let (mut first, mut last, mut possible) = (usize::MAX, 0, 0u64);
+                    for (k, mass) in masses.iter().enumerate() {
+                        if mass.possible() {
+                            first = first.min(k);
+                            last = k;
+                            possible += 1;
+                        }
                     }
-                }
-                if possible == 0 {
-                    continue;
-                }
-                let (masses, from) = (&masses[first..=last], from + first as i32);
-                let counted = moments.is_some_and(|range| range < self.range_moments.len());
-                let total = (counted || observe.is_some()).then(|| M::total(masses).expect("a possible mass"));
-                for branch in &table.branches[run.branches.clone()] {
-                    let at = from.wrapping_add(branch.shift);
-                    let target = block_at(
-                        &mut self.out,
-                        &mut self.slots,
-                        &mut self.spare,
-                        branch.rest,
-                        at,
-                        at + masses.len() as i32,
-                    );
-                    let offset = (at - target.lo) as usize;
-                    M::accumulate(&mut target.masses[offset..offset + masses.len()], masses, branch.probability);
-                    self.transitions = self
-                        .transitions
-                        .checked_add(possible)
-                        .ok_or_else(|| Error::Capacity("LUCK DP transitions overflow".into()))?;
-                    if let (Some(total), Some(draw)) = (total, branch.draw)
-                        && let Some(moments) = moments.and_then(|range| self.range_moments.get_mut(range))
-                    {
-                        let mass = total.multiply(branch.probability).interval();
-                        let result = usize::from(draw);
-                        moments.lot_results[result] = moments.lot_results[result].add(mass);
-                        let points = if result == 0 { 0 } else { super::gekisou::BONUS_POINT_BY_RESULT[result - 1] };
-                        moments.luck_points =
-                            moments.luck_points.add(mass.multiply(F64Interval::integer(i128::from(points))));
+                    if possible == 0 {
+                        continue;
                     }
-                    if let (Some(total), Some(observe)) = (total, observe.as_mut()) {
-                        observe(&self.rests[block.rest as usize], &self.rests[branch.rest as usize], total);
+                    let (masses, piece) = (&masses[first..=last], piece + first as i32);
+                    let counted = moments.is_some_and(|range| range < range_moments.len());
+                    let total = (counted || observe.is_some()).then(|| M::total(masses).expect("a possible mass"));
+                    for branch in &table.branches[run.branches.clone()] {
+                        let at = piece.wrapping_add(branch.shift);
+                        let target = block_at(out, slots, spare, branch.rest, at, at + masses.len() as i32);
+                        let offset = (at - target.lo) as usize;
+                        M::accumulate(&mut target.masses[offset..offset + masses.len()], masses, branch.probability);
+                        *transitions = transitions
+                            .checked_add(possible)
+                            .ok_or_else(|| Error::Capacity("LUCK DP transitions overflow".into()))?;
+                        if let (Some(total), Some(draw)) = (total, branch.draw)
+                            && let Some(moments) = moments.and_then(|range| range_moments.get_mut(range))
+                        {
+                            let mass = total.multiply(branch.probability).interval();
+                            let result = usize::from(draw);
+                            moments.lot_results[result] = moments.lot_results[result].add(mass);
+                            let points =
+                                if result == 0 { 0 } else { super::gekisou::BONUS_POINT_BY_RESULT[result - 1] };
+                            moments.luck_points =
+                                moments.luck_points.add(mass.multiply(F64Interval::integer(i128::from(points))));
+                        }
+                        if let (Some(total), Some(observe)) = (total, observe.as_mut()) {
+                            observe(&rests[block.rest as usize], &rests[branch.rest as usize], &mut || total);
+                        }
                     }
                 }
             }
+            spare.push(block.masses);
         }
-        self.spare.extend(dist.into_iter().map(|block| block.masses));
         self.settle()
     }
 
     /// Make the blocks a step filed the distribution.
     fn settle(&mut self) -> Result<(), Error> {
         let mut states = 0;
-        for block in &self.out {
+        for block in &mut self.out {
             self.slots[block.rest as usize] = u32::MAX;
-            states += block.masses.iter().filter(|mass| mass.possible()).count();
+            if block.held == usize::MAX {
+                block.held = block.masses.iter().filter(|mass| mass.possible()).count();
+            }
+            states += block.held;
         }
         self.peak = self.peak.max(states);
         if states > 2_000_000 {
@@ -538,6 +863,7 @@ impl<'a, M: Mass> Dp<'a, M> {
     fn map(&mut self, key: StepKey, mut transform: impl FnMut(State) -> Result<State, Error>) -> Result<(), Error> {
         self.step(
             key,
+            TableStep::Step(key),
             None,
             |_, state, out| {
                 out.push((transform(state)?, M::ONE, None));
@@ -561,6 +887,7 @@ impl<'a, M: Mass> Dp<'a, M> {
         let key = StepKey::Action { target, words: action_words(&action) };
         self.step(
             key,
+            TableStep::Step(key),
             None,
             |lotteries, state, out| {
                 // All accepted Miss rows share the same once/reset trigger. Leave their used flag untouched
@@ -609,14 +936,17 @@ impl<'a, M: Mass> Dp<'a, M> {
         }
         debug_assert_eq!(self.active_range, Some(range));
         let key = StepKey::Note { range, note_type, judgement, buff, speed: speed.to_bits(), consumes };
+        let points = self.tables.note_points(note_type, judgement, speed)?;
+        let table = TableStep::Note { range, note_type, judgement, buff, points, consumes };
         let mut base: Option<Vec<(M, i32)>> = None;
         self.step(
             key,
+            table,
             Some(range),
             |lotteries, state, out| {
                 if base.is_none() {
                     base = Some(
-                        M::base(lotteries.machine, note_type, judgement)?
+                        M::base(&lotteries.machine, note_type, judgement)?
                             .into_iter()
                             .map(|(probability, point)| (probability, floor_to_i32((speed + 1f32) * point as f32)))
                             .collect(),
@@ -641,8 +971,10 @@ impl<'a, M: Mass> Dp<'a, M> {
 
     pub(super) fn pending(&mut self, range: usize, buff: i32) -> Result<(), Error> {
         debug_assert_eq!(self.active_range, Some(range));
+        let key = StepKey::Pending { range, buff };
         self.step(
-            StepKey::Pending { range, buff },
+            key,
+            TableStep::Step(key),
             Some(range),
             |lotteries, state, out| {
                 if state.chain.lots > 0 && !state.frame_lot {
@@ -656,12 +988,17 @@ impl<'a, M: Mass> Dp<'a, M> {
         )
     }
 
-    pub(super) fn weights(&self, probes: &[bool], phase: Phase) -> M::Weights {
+    pub(super) fn weights(&mut self, probes: &[bool], phase: Phase) -> M::Weights {
         M::weights(self.totals(), probes, phase)
     }
 }
 
-/// The block of `rest` in `out`, holding the gauges `from..to`.
+/// The ends of the pieces of `from..to` that `breaks` (in decreasing order) cut, in increasing order.
+fn pieces(from: i32, to: i32, breaks: &[i32]) -> impl Iterator<Item = i32> + '_ {
+    breaks.iter().rev().copied().filter(move |&at| from < at && at < to).chain(std::iter::once(to))
+}
+
+/// The block of `rest` in `out`, holding the gauges `from..to`, to file masses into.
 fn block_at<'b, M: Mass>(
     out: &'b mut Vec<Block<M>>,
     slots: &mut [u32],
@@ -676,9 +1013,10 @@ fn block_at<'b, M: Mass>(
         let mut masses = spare.pop().unwrap_or_default();
         masses.clear();
         masses.resize((to - from) as usize, M::ZERO);
-        out.push(Block { rest, lo: from, masses });
+        out.push(Block { rest, lo: from, masses, held: usize::MAX, total: None });
     }
     let block = &mut out[*slot as usize];
+    (block.held, block.total) = (usize::MAX, None);
     if from < block.lo {
         let grow = (block.lo - from) as usize;
         block.masses.splice(0..0, std::iter::repeat_n(M::ZERO, grow));
@@ -700,9 +1038,50 @@ pub(super) fn propagate_cancellable<M: Mass>(
     transcript: &Transcript<M>,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<DpResult<M::Weights>>, Error> {
+    let mut tables = StepTables::default();
+    tables.enter_transcript(transcript);
+    let result = propagate_frames(transcript, &mut tables, cancelled)?;
+    finish(transcript, result)
+}
+
+/// [`propagate_cancellable`] reading the step tables of `tables`, which keeps the tables it reads for later
+/// propagations under the same range templates and lottery machine.
+///
+/// Each step reads, at each gauge, the branches the propagation would read on its own, and in the runs its own tables
+/// would hold ([`Reads`]), so it files every mass as the propagation alone files it, in the same order: the result is
+/// the same. A propagation that fails on shared tables, which number the lotteries of other propagations as well, is
+/// propagated on its own tables, which report its own failure.
+pub(super) fn propagate_sharing<M: Mass>(
+    transcript: &Transcript<M>,
+    tables: &mut StepTables<M>,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<DpResult<M::Weights>>, Error> {
+    tables.enter_transcript(transcript);
+    match propagate_frames(transcript, tables, cancelled) {
+        Ok(result) => finish(transcript, result),
+        Err(_) => {
+            *tables = StepTables::default();
+            propagate_cancellable(transcript, cancelled)
+        }
+    }
+}
+
+/// The result of a complete propagation of `transcript`, or the failure its recording met after its last frame.
+fn finish<W>(transcript: &Transcript<impl Mass>, result: Option<DpResult<W>>) -> Result<Option<DpResult<W>>, Error> {
+    match (&transcript.failure, result) {
+        (_, None) => Ok(None),
+        (Some(failure), Some(_)) => Err(failure.clone()),
+        (None, Some(result)) => Ok(Some(result)),
+    }
+}
+
+fn propagate_frames<M: Mass>(
+    transcript: &Transcript<M>,
+    tables: &mut StepTables<M>,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<DpResult<M::Weights>>, Error> {
     let t = transcript;
-    let mut dp = Dp::<M>::new(t.templates.clone(), &t.machine, t.collect_moments);
-    dp.lotteries.track_critical = t.actions.iter().any(|a| matches!(a, Action::CriticalPoints { .. }));
+    let mut dp = Dp::<M>::new(tables, t.collect_moments);
     // Each note hit and each pending frame consumes at most one result. Critical point commands fire at
     // most once per recorded action. These bounds prove that additive indicators cannot wrap native i32.
     if t.collect_moments {
@@ -771,7 +1150,7 @@ pub(super) fn propagate_cancellable<M: Mass>(
                 debug_assert!(dp.active_range.is_none());
                 dp.active_range = Some(range);
             }
-            let starting_chain = frame.start.map(|range| Chain::of(&dp.lotteries.templates[range]));
+            let starting_chain = frame.start.map(|range| Chain::of(&dp.tables.lotteries().templates[range]));
             let mut edges = 0u8;
             let mut follows = true;
             let mut started = M::ZERO;
@@ -779,6 +1158,7 @@ pub(super) fn propagate_cancellable<M: Mass>(
             // The certified distribution retains every state with positive possible probability.
             dp.step(
                 key,
+                TableStep::Step(key),
                 None,
                 |_, mut state, out| {
                     if let Some(chain) = starting_chain {
@@ -809,10 +1189,10 @@ pub(super) fn propagate_cancellable<M: Mass>(
                     out.push((state, M::ONE, None));
                     Ok(())
                 },
-                Some(&mut |before: &State, after: &State, probability: M| {
+                Some(&mut |before: &State, after: &State, probability: &mut dyn FnMut() -> M| {
                     edges |= 1 << (2 * usize::from(before.score) + usize::from(after.score));
                     if !before.score && after.score {
-                        started = started.merge(probability);
+                        started = started.merge(probability());
                     }
                     follows &= after.score == after.rush;
                 }),
@@ -903,9 +1283,6 @@ pub(super) fn propagate_cancellable<M: Mass>(
             }
         }
     }
-    if let Some(failure) = &t.failure {
-        return Err(failure.clone());
-    }
     Ok(Some(DpResult {
         probe_transitions,
         rush_transitions,
@@ -913,7 +1290,7 @@ pub(super) fn propagate_cancellable<M: Mass>(
         frame_queries,
         probes: t.probes.clone(),
         probe_starts,
-        range_moments: dp.range_moments,
+        range_moments: std::mem::take(&mut dp.range_moments),
         peak_states: dp.peak,
         transitions: dp.transitions,
     }))
