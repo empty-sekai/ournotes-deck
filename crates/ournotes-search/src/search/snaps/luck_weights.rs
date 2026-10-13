@@ -33,16 +33,16 @@ pub(crate) struct WeightsMemo {
 }
 
 /// Laws, the notes read under them and the weights read.
-type Held = (Vec<Arc<LuckDpCertifiedResult>>, Vec<(i32, f64)>, Rc<[(f64, f64)]>);
+type Held = (Vec<Arc<LuckDpCertifiedResult>>, Vec<(i32, f64, bool)>, Rc<[(f64, f64)]>);
 
 impl WeightsMemo {
     /// [`LuckLaws::weights`] of `notes`, those last read when the laws (by address, in order) and notes are the same.
-    pub(crate) fn weights(&self, laws: &LuckLaws<'_>, notes: &[(i32, f64)]) -> Rc<[(f64, f64)]> {
+    pub(crate) fn weights(&self, laws: &LuckLaws<'_>, notes: &[(i32, f64, bool)]) -> Rc<[(f64, f64)]> {
         if let Some((held, read, weights)) = &*self.held.borrow()
             && held.len() == laws.laws.len()
             && held.iter().zip(laws.laws).all(|(a, b)| Arc::ptr_eq(a, b))
             && read.len() == notes.len()
-            && read.iter().zip(notes).all(|(a, b)| a.0 == b.0 && a.1.to_bits() == b.1.to_bits())
+            && read.iter().zip(notes).all(|(a, b)| (a.0, a.1.to_bits(), a.2) == (b.0, b.1.to_bits(), b.2))
         {
             return weights.clone();
         }
@@ -121,16 +121,18 @@ impl<'l> LuckLaws<'l> {
 
     /// The luck weights `(luck, probe_luck)` of notes at the times `notes.0`, in nondecreasing order, whose luck
     /// factor in a Rush is `notes.1 >= 1`: the largest `E[L]` and `E[L probe]` over the distributions of its classes
-    /// the note reads in each law. A note at a time reads one distribution: the state its time keeps once its lotteries
-    /// are filed, or what a score query of its own judging frame (the first one at or after its time) reads before that
-    /// frame's lottery, on the side of the frame's time the note is. With Rush mass `R`, `E[L] = 1 + (l - 1) R`; with
-    /// probe masses `a` (probe only) and `b` (Rush and probe), `E[L probe] = a + l b`. A team whose law has no probe
-    /// holder runs no direct-Rush score up, so `probe_luck` reads the laws with one; without any it is `luck`.
+    /// the note reads in each law. A note's final score reads the state its time keeps once its lotteries are filed.
+    /// A score snapshot taken by a score query of the note's own judging frame (the first one at or after its time)
+    /// reads what that query reads before the frame's lottery, on the side of the frame's time the note is; `notes.2`
+    /// marks the notes such a snapshot may read, whose weights also cover that distribution. With Rush mass `R`,
+    /// `E[L] = 1 + (l - 1) R`; with probe masses `a` (probe only) and `b` (Rush and probe), `E[L probe] = a + l b`. A
+    /// team whose law has no probe holder runs no direct-Rush score up, so `probe_luck` reads the laws with one;
+    /// without any it is `luck`.
     ///
     /// Laws that share their curves read alike, so each curve is read once, in one pass over the notes, as a law with
     /// a probe holder when one of its laws has one.
-    pub(crate) fn weights(&self, notes: &[(i32, f64)]) -> Vec<(f64, f64)> {
-        assert!(notes.is_sorted_by_key(|&(time, _)| time), "notes in time order");
+    pub(crate) fn weights(&self, notes: &[(i32, f64, bool)]) -> Vec<(f64, f64)> {
+        assert!(notes.is_sorted_by_key(|&(time, _, _)| time), "notes in time order");
         let mut rush = vec![0f64; notes.len()];
         let held = |law: &LuckDpCertifiedResult| law.probes.iter().any(|&p| p);
         let mut probe = self.laws.iter().any(|law| held(law)).then(|| vec![0f64; notes.len()]);
@@ -147,14 +149,14 @@ impl<'l> LuckLaws<'l> {
         let mut reads_at: Vec<(f64, f64, f64)> = Vec::with_capacity(3);
         for (_, bare, law) in curves {
             let (mut step, mut query, mut state) = (0, 0, None);
-            for (k, &(time, l)) in notes.iter().enumerate() {
+            for (k, &(time, l, snapshot)) in notes.iter().enumerate() {
                 while law.steps.get(step).is_some_and(|(at, _)| *at <= time) {
                     step += 1;
                 }
                 while law.frame_queries.get(query).is_some_and(|(at, _)| *at < time) {
                     query += 1;
                 }
-                let read = law.frame_queries.get(query).map(|(at, reads)| (*at > time, reads));
+                let read = law.frame_queries.get(query).filter(|_| snapshot).map(|(at, reads)| (*at > time, reads));
                 let key = (step, query, read.map(|(early, _)| early));
                 if state != Some(key) {
                     state = Some(key);
@@ -182,7 +184,7 @@ impl<'l> LuckLaws<'l> {
         notes
             .iter()
             .enumerate()
-            .map(|(k, &(_, l))| {
+            .map(|(k, &(_, l, _))| {
                 let luck = (1.0 + ((l - 1.0).next_up() * rush[k]).next_up()).next_up().min(l);
                 (luck, probe.as_ref().map_or(luck, |probe| probe[k].min(luck)))
             })
@@ -314,7 +316,7 @@ mod tests {
     fn the_weights_take_the_largest_expectation_of_one_distribution() {
         // One law puts the probe on with the Rush, the other one without it; no distribution has both halves.
         let laws = [law([5, 0, 0, 5], true, Vec::new(), 0.0), law([0, 5, 5, 0], true, Vec::new(), 0.0)];
-        let (luck, probe_luck) = LuckLaws::new(&laws).unwrap().weights(&[(1, 2.0)])[0];
+        let (luck, probe_luck) = LuckLaws::new(&laws).unwrap().weights(&[(1, 2.0, true)])[0];
         // E[L] = 1 + 0.5 in both; E[L probe] is 2 * 0.5 and 0.5
         assert!((1.5..1.5 + 1e-9).contains(&luck), "{luck}");
         assert!((1.0..1.0 + 1e-9).contains(&probe_luck), "{probe_luck}");
@@ -336,7 +338,7 @@ mod tests {
             Vec::new(),
             0.0,
         )];
-        let weights = LuckLaws::new(&laws).unwrap().weights(&[(5, 2.0), (10, 2.0), (11, 2.0)]);
+        let weights = LuckLaws::new(&laws).unwrap().weights(&[(5, 2.0, true), (10, 2.0, true), (11, 2.0, true)]);
         let (luck, probe_luck) = weights[0];
         assert!((2.0..2.0 + 1e-9).contains(&luck) && probe_luck < 1e-9, "{luck} {probe_luck}");
         let (luck, probe_luck) = weights[1];
@@ -344,6 +346,12 @@ mod tests {
         // after the last judging frame: the kept state
         let (luck, probe_luck) = weights[2];
         assert!((1.0..1.0 + 1e-9).contains(&luck) && probe_luck < 1e-9, "{luck} {probe_luck}");
+        // Notes no score snapshot reads before their frame's lottery read the state they keep.
+        let weights = LuckLaws::new(&laws).unwrap().weights(&[(5, 2.0, false), (10, 2.0, false), (10, 2.0, true)]);
+        for &(luck, probe_luck) in &weights[..2] {
+            assert!((1.0..1.0 + 1e-9).contains(&luck) && probe_luck < 1e-9, "{luck} {probe_luck}");
+        }
+        assert!((1.0..1.0 + 1e-9).contains(&weights[2].1), "{:?}", weights[2]);
     }
 
     #[test]
@@ -358,14 +366,14 @@ mod tests {
         )];
         // (time, Rush luck factor), then the expected luck and probe weights
         let cases = [
-            ((1, 2.0), 2.0, 1.0),
-            ((5, 2.0), 2.0, 1.0),
-            ((5, 1.5), 1.5, 1.0),
-            ((10, 2.0), 2.0, 0.0),
-            ((11, 2.0), 1.0, 0.0),
-            ((12, 2.0), 1.0, 0.0),
+            ((1, 2.0, true), 2.0, 1.0),
+            ((5, 2.0, true), 2.0, 1.0),
+            ((5, 1.5, true), 1.5, 1.0),
+            ((10, 2.0, true), 2.0, 0.0),
+            ((11, 2.0, true), 1.0, 0.0),
+            ((12, 2.0, true), 1.0, 0.0),
         ];
-        let weights = LuckLaws::new(&laws).unwrap().weights(&cases.map(|(note, _, _)| note));
+        let weights = LuckLaws::new(&laws).unwrap().weights(&cases.map(|((time, l), _, _)| (time, l, true)));
         for (&(note, luck, probe_luck), &(l, p)) in cases.iter().zip(&weights) {
             assert!(
                 (luck..luck + 1e-9).contains(&l) && (probe_luck..probe_luck + 1e-9).contains(&p),
@@ -380,10 +388,10 @@ mod tests {
         let bare = Arc::new(LuckDpCertifiedResult { probes: vec![false], ..(*held).clone() });
         let other = law([2, 0, 8, 0], false, Vec::new(), 0.0);
         for laws in [[bare.clone(), held.clone(), other.clone()], [held.clone(), other.clone(), bare.clone()]] {
-            let (luck, probe_luck) = LuckLaws::new(&laws).unwrap().weights(&[(10, 2.0)])[0];
+            let (luck, probe_luck) = LuckLaws::new(&laws).unwrap().weights(&[(10, 2.0, true)])[0];
             assert!((luck - 1.8).abs() < 1e-9 && (probe_luck - 0.7).abs() < 1e-9, "{luck} {probe_luck}");
         }
-        let (luck, probe_luck) = LuckLaws::new(&[bare, other]).unwrap().weights(&[(10, 2.0)])[0];
+        let (luck, probe_luck) = LuckLaws::new(&[bare, other]).unwrap().weights(&[(10, 2.0, true)])[0];
         assert_eq!(luck, probe_luck);
     }
 
@@ -409,7 +417,7 @@ mod tests {
         let held = law([5, 1, 1, 3], true, vec![0b10, 0b01, 0b10], 1.25);
         let bare = law([2, 0, 8, 0], false, vec![0b10; 7], 3.0);
         let both = [held.clone(), bare.clone()];
-        let (luck, probe_luck) = LuckLaws::new(&both).unwrap().weights(&[(10, 2.0)])[0];
+        let (luck, probe_luck) = LuckLaws::new(&both).unwrap().weights(&[(10, 2.0, true)])[0];
         // the larger expected luck factor is the bare law's 0.2 + 2 * 0.8
         assert!((luck - 1.8).abs() < 1e-9, "{luck}");
         // the probe classes of the law with a holder: 0.1 + 2 * 0.3
@@ -418,12 +426,12 @@ mod tests {
         assert_eq!((starts.most, starts.expected, starts.luck), (2.0, 1.25, 1.0));
         // no law with a holder: the probe weight is the luck weight and no start counts
         let bare = [bare];
-        let (luck, probe_luck) = LuckLaws::new(&bare).unwrap().weights(&[(10, 2.0)])[0];
+        let (luck, probe_luck) = LuckLaws::new(&bare).unwrap().weights(&[(10, 2.0, true)])[0];
         assert_eq!(luck, probe_luck);
         let starts = LuckLaws::new(&bare).unwrap().probe_starts();
         assert_eq!((starts.most, starts.expected), (0.0, 0.0));
         // before the first step the lottery has not run
-        let (luck, probe_luck) = LuckLaws::new(&[held]).unwrap().weights(&[(-1, 2.0), (10, 2.0)])[0];
+        let (luck, probe_luck) = LuckLaws::new(&[held]).unwrap().weights(&[(-1, 2.0, true), (10, 2.0, true)])[0];
         assert!((1.0..1.0 + 1e-9).contains(&luck) && (0.0..1e-9).contains(&probe_luck), "{luck} {probe_luck}");
     }
 

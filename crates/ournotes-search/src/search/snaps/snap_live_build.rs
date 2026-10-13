@@ -593,7 +593,8 @@ impl<'a> SnapLive<'a> {
         // with certified laws and Gekisou on: each entry's luck weights, in chart-time order
         let weights = match (&luck, &gkf) {
             (Some(laws), Some(g)) => {
-                let notes: Vec<(i32, f64)> = times_all.iter().copied().zip(g.l.iter().copied()).collect();
+                let notes: Vec<(i32, f64, bool)> =
+                    times_all.iter().zip(&g.l).zip(&g.snapshot).map(|((&time, &l), &read)| (time, l, read)).collect();
                 Some(memo.map_or_else(|| laws.weights(&notes).into(), |memo| memo.weights(laws, &notes)))
             }
             _ => None,

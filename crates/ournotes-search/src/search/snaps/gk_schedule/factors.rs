@@ -28,6 +28,12 @@ pub(crate) struct GkFactors {
     pub(crate) confirm: Vec<(i32, i32)>,
     /// With a combo range: what a candidate's own Gekisou combo factor reads (`g` then bounds it for every deck).
     pub(crate) combo: Option<GkCombo>,
+    /// The entries a range score snapshot can read before their play frame's lottery. Network ranking snapshots a
+    /// range at the last score query before its start, the second one of the play frame before the range starts, and
+    /// at the second score query of the play frame its fever ends in, before that frame's lottery; each reads the
+    /// notes of that query's own frame (chart times after the previous play frame's, up to its own) that way. Solo
+    /// ranking snapshots after the frame's lottery and reads none.
+    pub(crate) snapshot: Vec<bool>,
 }
 
 impl GkFactors {
@@ -308,7 +314,21 @@ impl GkFactors {
             let (score_frames, floors) = rerun_floors(setup, &times, &exec_lo, &reexec, command_floors);
             rv = network_rank_factors(&judged, &score_frames, &floors, &snapshots);
         }
-        Ok(GkFactors { g: gv, carriers, sums, l: lv, r: rv, ranks, nobreak, exec_lo, confirm, combo: gcombo })
+        let mut snapshot = vec![false; ne];
+        if external.is_some() {
+            // Every range's snapshot frames, whether or not a rank bonus reads them.
+            let first = |r: usize, state: u8| sc.states.iter().position(|s| s.get(r).is_some_and(|&v| v >= state));
+            let mut read: Vec<usize> = Vec::new();
+            for r in 0..ranges.len() {
+                read.extend(first(r, RS_START).and_then(|f| f.checked_sub(1)));
+                read.extend(first(r, RS_END));
+            }
+            for (q, &i) in order.iter().enumerate() {
+                let own = frames.partition_point(|&t| t < times[q]);
+                snapshot[q] = read.contains(&own) || read.contains(&entries[i].0);
+            }
+        }
+        Ok(GkFactors { g: gv, carriers, sums, l: lv, r: rv, ranks, nobreak, exec_lo, confirm, combo: gcombo, snapshot })
     }
 }
 

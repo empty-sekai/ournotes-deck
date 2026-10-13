@@ -503,8 +503,8 @@ fn cluster_laws(multisets: &[Multiset], laws: &[LuckLaw], k: usize) -> Option<(V
         let (lo, hi) = times.fold((i32::MAX, i32::MIN), |(lo, hi), t| (lo.min(t), hi.max(t)));
         let (lo, hi) = if lo > hi { (0, 1) } else { (lo, hi.max(lo + 1)) };
         let span = hi as i64 - lo as i64;
-        let grid: Vec<(i32, f64)> =
-            (0..CURVE_POINTS).map(|i| ((lo as i64 + span * i / (CURVE_POINTS - 1)) as i32, 2.0)).collect();
+        let grid: Vec<(i32, f64, bool)> =
+            (0..CURVE_POINTS).map(|i| ((lo as i64 + span * i / (CURVE_POINTS - 1)) as i32, 2.0, true)).collect();
         let features: Vec<Vec<f64>> = curves
             .iter()
             .map(|law| {
