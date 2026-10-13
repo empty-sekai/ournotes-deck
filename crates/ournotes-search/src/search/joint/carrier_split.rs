@@ -13,11 +13,11 @@ use ournotes_sim::num::FxHashMap;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-/// The most distinct carrier lists split over; with more, the multisets to visit grow past a cheap node check.
+/// The most distinct carrier lists split over; with more, the multisets to visit grow past a cheap node check. The
+/// envelopes are keyed by multisets of at most five of these lists, so there are at most `C(MAX_LISTS + 5, 5)` keys.
 const MAX_LISTS: usize = 8;
-/// The most envelopes kept at a time.
-const ENV_CACHE: usize = 512;
-/// The most bytes of envelopes and tables kept at a time (approximately); past it every envelope is dropped.
+/// The most bytes of envelopes and tables kept at a time (approximately); past it every envelope is dropped. Below it
+/// an envelope stays kept for every later node that reads its multiset, so each is built and read once.
 const TABLE_BUDGET: usize = 192 << 20;
 /// The first suffix start after 0; each later one is about half again the previous.
 const FIRST_START: usize = 8;
@@ -52,7 +52,7 @@ pub(super) struct CarrierSplit {
     plain_power: Vec<Vec<OnceCell<Option<Plain<i64>>>>>,
     /// `[r]`: the multisets of at most `r` lists.
     sets: Vec<Vec<Vec<u16>>>,
-    /// Envelopes by sorted carrier lists (`env_key`).
+    /// Envelopes by sorted carrier lists (`env_key`), kept up to the byte budget.
     envs: RefCell<FxHashMap<u32, Rc<SplitEnv>>>,
     /// `[n]`: the envelope of every deck with at most `n` carriers (filled on first use).
     wide: Vec<OnceCell<Rc<SplitEnv>>>,
@@ -214,7 +214,7 @@ impl CarrierSplit {
         }
         let e = Rc::new(self.split_env(self.keys.build_envelope(ids, 0)));
         let mut envs = self.envs.borrow_mut();
-        if envs.len() >= ENV_CACHE || self.bytes.get() >= TABLE_BUDGET {
+        if self.bytes.get() >= TABLE_BUDGET {
             envs.clear();
             self.bytes.set(0);
         }
