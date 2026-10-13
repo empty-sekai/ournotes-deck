@@ -21,6 +21,13 @@ owned snapshot; `power`, `skip`, `live`, and `chart-stats` provide the task-spec
 interfaces. Use `ournotes-deck --help` and `ournotes-deck recommend --help`.
 Rust library consumers use the tagged Git dependencies described in the README.
 
+The same release publishes the Python package `ournotes-sim` to PyPI: one abi3
+wheel (CPython 3.11 and later) for each of Linux x64 and ARM64 (manylinux 2.28),
+Windows x64, and macOS Intel and Apple Silicon (macOS 11 or later). Its
+`info()["commit"]` is the release commit. The package is published as wheels
+only, so every installation runs the model whose `sourceSha256` the release
+reports.
+
 Both WASM packages include JavaScript, TypeScript declarations, and the matching
 `_bg.wasm` files. Keep each binding directory together. The web directory uses ES
 modules; the Node directory uses CommonJS. Serve the web package over HTTP, with
@@ -50,6 +57,11 @@ Worker. The worker checks Power and Free recommendation results against native
 references and replay output against the Node binding. These package checks do
 not establish additional native-game coverage.
 
+Each wheel is installed in a fresh environment on its own platform, where the
+package tests run against it and its reported commit is checked against the tag.
+
 Only after all builds and checks pass does the workflow upload the archives and
 `SHA256SUMS`, download the published assets again, and verify every archive hash.
+The PyPI job then checks the five wheels with `twine check` and publishes them
+through PyPI trusted publishing.
 The workflow can add artifacts to an already published source-only Release.

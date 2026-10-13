@@ -1,7 +1,7 @@
 [workspace]
 members = ["crates/ournotes-sim", "crates/ournotes-search"]
 # separate packages with their own lockfiles and release profiles
-exclude = ["wasm/replay", "wasm/recommend", "tools/search-harness"]
+exclude = ["wasm/replay", "wasm/recommend", "python", "tools/search-harness"]
 resolver = "3"
 
 [workspace.package]

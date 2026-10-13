@@ -49,6 +49,28 @@ jobs:
           toolchain: "1.88.0"
       - run: cargo check --all-targets
 
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-python@v5
+        with:
+          # the abi3 floor and the newest CPython
+          python-version: |
+            3.11
+            3.14
+      - run: cargo fmt --check --manifest-path python/Cargo.toml
+      - run: cargo clippy --locked --manifest-path python/Cargo.toml --all-targets -- -D warnings
+      - name: Build the wheel
+        run: python3.14 -m pip wheel --no-deps --wheel-dir dist ./python
+      - name: Test the installed wheel
+        run: |
+          python3.11 scripts/release/smoke-python.py dist --tests python/tests
+          python3.14 scripts/release/smoke-python.py dist --tests python/tests
+
   synthetic-correctness:
     runs-on: ubuntu-latest
     steps:
