@@ -495,6 +495,15 @@ pub(super) fn joint_rec(
     };
     // The tail bound of every kind of child, also for what a stop leaves unexplored.
     let tail_check = tail_high.as_ref().or(tail.as_ref()).map(|state| (high, state));
+    // Where the children check their correlated bounds, the node's bound of each child with its pair fixed (see
+    // `JointBounds::character_pairs`): it drops the children that check would drop before they are visited.
+    let character_pairs = if e.correlated && (1..4).contains(&depth) {
+        node_bounds.character_pairs(e.pool, domain, p, depth, orders, keyed.as_ref())
+    } else {
+        None
+    };
+    // With bounds of a cluster of laws, the kinds of the prefix its children extend.
+    let part_prefix = bounds.part_prefix(p, depth, &choices);
     // There is no tail state at the root, so its loop may run in any order.
     let children = root.as_ref().map_or(&bounds.choices[..], |r| &r.children[..]);
     let width = children.len();
@@ -618,7 +627,20 @@ pub(super) fn joint_rec(
         if snap.is_some() && SLOTS[..depth].iter().any(|&s| p.snaps[s] == snap) {
             continue;
         }
-        if !bounds.allows(slot, choice) || !bounds.part_allows(p, depth, &choices, m, choice)? {
+        if !bounds.allows(slot, choice) {
+            continue;
+        }
+        if let Some(pairs) = &character_pairs
+            && let Some((threshold, _)) = e.safe_cutoff()
+            && let Some(cap) = node_bounds.character_pair_upper(pairs, e.pool, m, choice)
+        {
+            e.tel.joint.character_pairs.check(depth);
+            if cap < threshold {
+                e.tel.joint.character_pairs.prune(depth);
+                continue;
+            }
+        }
+        if !bounds.part_allows(part_prefix.as_ref(), depth, m, choice)? {
             continue;
         }
         let (pair_bounds, pair_tail) = match &tail_high {

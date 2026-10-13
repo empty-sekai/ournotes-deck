@@ -30,6 +30,7 @@ use crate::search::joint::{JointBounds, LawClusters, LawTables, MAX_CLUSTERS, NO
 use ournotes_sim::live::full::{
     LotteryBreak, LotteryKinds, LotteryLive, LotteryRole, LuckDpCache, LuckSkills, luck_order_laws,
 };
+use ournotes_sim::num::FxHashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -578,9 +579,9 @@ fn cluster_laws(multisets: &[Multiset], laws: &[LuckLaw], k: usize) -> Option<(V
 /// The places of the multisets read among their clusters (`cluster`: the cluster of each multiset): the clusters
 /// (bits) of the multisets that contain each sorted multiset of one to four kinds, and the cluster each multiset
 /// belongs to (its first), by their packed keys. None when a kind index does not pack.
-fn multiset_places(multisets: &[Multiset], cluster: &[usize]) -> Option<(HashMap<u64, u64>, HashMap<u64, u8>)> {
-    let mut sets = HashMap::<u64, u64>::new();
-    let mut teams = HashMap::<u64, u8>::new();
+fn multiset_places(multisets: &[Multiset], cluster: &[usize]) -> Option<(FxHashMap<u64, u64>, FxHashMap<u64, u8>)> {
+    let mut sets = FxHashMap::<u64, u64>::default();
+    let mut teams = FxHashMap::<u64, u8>::default();
     let mut sub = Vec::with_capacity(5);
     for ((multiset, _), &c) in multisets.iter().zip(cluster) {
         // every nonempty subset of the five positions, the whole multiset last

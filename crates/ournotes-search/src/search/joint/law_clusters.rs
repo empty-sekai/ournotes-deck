@@ -1,6 +1,7 @@
 //! The bounds of a domain under clusters of the lottery laws of its teams.
 
 use super::*;
+use ournotes_sim::num::FxHashMap;
 use std::rc::Rc;
 
 /// The most clusters a domain's laws split into (one bit each in a cluster set).
@@ -26,9 +27,9 @@ pub(crate) struct LawTables {
     kinds: Vec<Box<[u32]>>,
     /// The clusters (bits) of the multisets that contain each sorted multiset of one to four kind indices, by its
     /// [`pack`] key.
-    prefixes: HashMap<u64, u64>,
+    prefixes: FxHashMap<u64, u64>,
     /// The cluster each multiset of five kinds belongs to, by its [`pack`] key.
-    teams: HashMap<u64, u8>,
+    teams: FxHashMap<u64, u8>,
 }
 
 /// The cluster of the laws a traversal's bounds weigh: it visits the teams whose multiset of kinds belongs to it.
@@ -45,36 +46,19 @@ pub(crate) fn pack(kinds: &[usize]) -> Option<u64> {
 impl LawTables {
     /// The kinds of each pool member by choice, the cluster sets of the sub-multisets and the cluster of each multiset
     /// of five kinds, as in the fields of the same names.
-    pub(crate) fn new(kinds: Vec<Box<[u32]>>, prefixes: HashMap<u64, u64>, teams: HashMap<u64, u8>) -> LawTables {
+    pub(crate) fn new(kinds: Vec<Box<[u32]>>, prefixes: FxHashMap<u64, u64>, teams: FxHashMap<u64, u8>) -> LawTables {
         LawTables { kinds, prefixes, teams }
     }
 
-    /// The sorted kinds of the first `depth` search slots of `p` (choice of each slot by slot), and of `extra` when
-    /// given; None when one takes no kind.
-    fn prefix(
-        &self,
-        p: &PhysicalDeck,
-        depth: usize,
-        choices: &[usize; 5],
-        extra: Option<(usize, usize)>,
-    ) -> Option<([usize; 5], usize)> {
-        let kind = |m: usize, choice: usize| {
-            self.kinds.get(m).and_then(|row| row.get(choice)).copied().filter(|&k| k != NO_KIND).map(|k| k as usize)
-        };
-        let mut kinds = [0usize; 5];
-        let mut n = 0;
-        for &slot in &SLOTS[..depth] {
-            kinds[n] = kind(p.members[slot], choices[slot])?;
-            n += 1;
-        }
-        if let Some((m, choice)) = extra {
-            kinds[n] = kind(m, choice)?;
-            n += 1;
-        }
-        kinds[..n].sort_unstable();
-        Some((kinds, n))
+    /// The kind of pool member `m` with `choice`, None when it takes none.
+    fn kind(&self, m: usize, choice: usize) -> Option<usize> {
+        self.kinds.get(m).and_then(|row| row.get(choice)).copied().filter(|&k| k != NO_KIND).map(|k| k as usize)
     }
 }
+
+/// The sorted kinds of a prefix of a traversal of the bounds of a cluster (see [`JointBounds::part_prefix`]); None
+/// when one of its slots takes no kind.
+pub(crate) struct PartPrefix(Option<([usize; 5], usize)>);
 
 impl LawClusters {
     /// The clusters of the bounds `bounds` (at most [`MAX_CLUSTERS`]) with their tables.
@@ -109,23 +93,43 @@ impl LawClusters {
 }
 
 impl JointBounds {
-    /// With bounds of a cluster of laws: whether the traversal visits the child of prefix `p` of `depth < 5` slots
-    /// (`choices` by slot) that takes `m` with `choice` in the next slot: some multiset of the cluster contains its
-    /// kinds, and a complete team's multiset belongs to the cluster. Always without a cluster; an error for a team
-    /// whose kinds the census did not read.
+    /// With bounds of a cluster of laws: the sorted kinds of the first `depth` search slots of `p` (`choices` by
+    /// slot), which [`JointBounds::part_allows`] reads for each child of the prefix; None without a cluster.
+    pub(crate) fn part_prefix(&self, p: &PhysicalDeck, depth: usize, choices: &[usize; 5]) -> Option<PartPrefix> {
+        let part = self.part.as_ref()?;
+        let mut kinds = [0usize; 5];
+        for (n, &slot) in SLOTS[..depth].iter().enumerate() {
+            let Some(kind) = part.tables.kind(p.members[slot], choices[slot]) else { return Some(PartPrefix(None)) };
+            kinds[n] = kind;
+        }
+        kinds[..depth].sort_unstable();
+        Some(PartPrefix(Some((kinds, depth))))
+    }
+
+    /// With bounds of a cluster of laws: whether the traversal visits the child of the prefix of `depth < 5` slots
+    /// whose kinds are `prefix` that takes `m` with `choice` in the next slot: some multiset of the cluster contains
+    /// its kinds, and a complete team's multiset belongs to the cluster. Always without a cluster; an error for a
+    /// team whose kinds the census did not read.
     pub(crate) fn part_allows(
         &self,
-        p: &PhysicalDeck,
+        prefix: Option<&PartPrefix>,
         depth: usize,
-        choices: &[usize; 5],
         m: usize,
         choice: usize,
     ) -> Result<bool, Error> {
-        let Some(part) = &self.part else { return Ok(true) };
+        let (Some(part), Some(prefix)) = (&self.part, prefix) else { return Ok(true) };
         let outside = || Error::Domain("a team outside the lottery census of its domain".into());
-        let Some((kinds, n)) = part.tables.prefix(p, depth, choices, Some((m, choice))) else {
+        let (Some((mut kinds, n)), Some(kind)) = (prefix.0, part.tables.kind(m, choice)) else {
             return if depth == 4 { Err(outside()) } else { Ok(true) };
         };
+        // the child's kind into the sorted prefix
+        let mut at = n;
+        while at > 0 && kinds[at - 1] > kind {
+            kinds[at] = kinds[at - 1];
+            at -= 1;
+        }
+        kinds[at] = kind;
+        let n = n + 1;
         let key = pack(&kinds[..n]);
         if n == 5 {
             let cluster = key.and_then(|key| part.tables.teams.get(&key)).ok_or_else(outside)?;

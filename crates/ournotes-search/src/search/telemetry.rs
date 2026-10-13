@@ -670,6 +670,8 @@ pub struct Joint {
     pub tail: Checks,
     pub tail_choices_skipped: [u64; DEPTHS],
     pub pair: Checks,
+    /// The correlated bounds of children, checked in their parent's choice loop.
+    pub character_pairs: Checks,
     pub root_order: RootOrder,
     pub carriers: Carriers,
     /// Node bounds (branch, bonus) and pair bounds equal to the K-th payoff, surviving on power.

@@ -160,6 +160,120 @@ impl PrefixCharacterTables {
         }
         (best < i128::MAX).then_some(best)
     }
+
+    /// What [`JointBounds::character_pair_upper`] reads of a prefix of `depth` in 1..4 slots: per correlation scale,
+    /// the quantized edges of its slots, the best edges of the characters left (the first `5 - depth`), and `r * A0`.
+    #[allow(clippy::too_many_arguments)]
+    fn pairs(
+        &self,
+        b: &JointBounds,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        positions: &[usize; 5],
+        keyed: Option<&super::Keyed>,
+    ) -> Option<[(i64, ResidualRow, f64); 3]> {
+        if !(1..4).contains(&depth) {
+            return None;
+        }
+        let profile = b.profile[p.members[2]];
+        let occupied: Vec<_> = SLOTS[..depth].iter().map(|&s| pool.members[p.members[s]].character_id).collect();
+        let mut chosen = [0usize; 5];
+        for &slot in &SLOTS[..depth] {
+            chosen[slot] =
+                p.snaps[slot].map_or(0, |s| domain.snaps().iter().position(|&v| v == s).expect("compiled Snap") + 1);
+        }
+        let mut out = [(0i64, ResidualRow::default(), 0f64); 3];
+        for (scale, &r) in b.correlation_scales.iter().enumerate() {
+            let mut fixed = 0i64;
+            for &slot in &SLOTS[..depth] {
+                let m = p.members[slot];
+                let choice = chosen[slot];
+                let power = b.a[m] + b.lead[profile][m] + if choice == 0 { 0 } else { b.w[m][choice - 1] };
+                let gain = keyed.map_or(b.gains[m][choice][positions[slot]], |k| k.placed[slot][positions[slot]]);
+                fixed += super::prefix_resource::quantized(power, gain, r)?;
+            }
+            let mut shared = ResidualRow::default();
+            let offset = (profile * 3 + scale) * self.characters.len();
+            for (character, id) in self.characters.iter().enumerate() {
+                if occupied.contains(id) {
+                    continue;
+                }
+                if let Some(q) = self.rows[offset + character].best(&chosen) {
+                    shared.insert(character, q, 5 - depth);
+                }
+            }
+            out[scale] = (fixed, shared, (r * keyed.map_or(b.a0, |k| k.a0)).next_up());
+        }
+        Some(out)
+    }
+}
+
+/// The correlated bounds of the children of one prefix (see [`JointBounds::character_pairs`]).
+pub(crate) struct CharacterPairs {
+    scales: [(i64, ResidualRow, f64); 3],
+    depth: usize,
+    profile: usize,
+    /// The total mass of the performance orders.
+    weight: i128,
+}
+
+impl JointBounds {
+    /// With the character prefix tables: what bounds each child of the prefix `p` of `depth` in 1..4 slots in the
+    /// way [`JointBounds::correlated_expected_upper_keyed`] bounds the prefix itself (see
+    /// [`JointBounds::character_pair_upper`]).
+    pub(crate) fn character_pairs(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        orders: &[([usize; 5], u128)],
+        keyed: Option<&super::Keyed>,
+    ) -> Option<CharacterPairs> {
+        let t = self.prefix_character.as_ref()?;
+        let (positions, _) = orders.first()?;
+        let weight = orders.iter().try_fold(0i128, |sum, &(_, w)| sum.checked_add(i128::try_from(w).ok()?))?;
+        let scales = t.pairs(self, pool, domain, p, depth, positions, keyed)?;
+        Some(CharacterPairs { scales, depth, profile: self.profile[p.members[2]], weight })
+    }
+
+    /// At least the correlated bound, summed over the orders, of every completion of the child of the prefix of
+    /// `pairs` that takes `m` with `choice` in the next slot: the prefix's bound with that slot fixed, whose rows
+    /// are the best edges of the characters left but the child's (the child's Snap stays available to them). The
+    /// gains of every position agree in the character tables, so one row serves every order. None when the child
+    /// cannot be completed in the tables or an edge leaves their range.
+    pub(crate) fn character_pair_upper(
+        &self,
+        pairs: &CharacterPairs,
+        pool: &Pool,
+        m: usize,
+        choice: usize,
+    ) -> Option<i128> {
+        let t = self.prefix_character.as_ref()?;
+        let column = t.characters.binary_search(&pool.members[m].character_id).ok()?;
+        let power = self.a[m] + self.lead[pairs.profile][m] + if choice == 0 { 0 } else { self.w[m][choice - 1] };
+        let left = 4 - pairs.depth;
+        let mut best = i128::MAX;
+        for ((fixed, shared, a0r), &r) in pairs.scales.iter().zip(&self.correlation_scales) {
+            let q = super::prefix_resource::quantized(power, self.gains[m][choice][0], r)?;
+            let mut extra = 0i64;
+            let mut taken = 0;
+            for edge in shared.0.iter().flatten().filter(|e| e.character != column).take(left) {
+                extra = extra.checked_add(edge.value)?;
+                taken += 1;
+            }
+            if taken < left {
+                return None;
+            }
+            let upper = add_up(fixed.checked_add(q)?.checked_add(extra)? as f64, *a0r);
+            let cap = (((upper * upper).next_up() / (4.0 * r)).next_up() * (1.0 + self.eps).next_up()).next_up().ceil()
+                as i128;
+            best = best.min(cap);
+        }
+        best.checked_mul(pairs.weight)
+    }
 }
 
 /// Both prefix tables, each None past its own storage gate, in one pass. Position-mean gains give every position
