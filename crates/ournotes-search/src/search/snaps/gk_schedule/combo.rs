@@ -246,10 +246,8 @@ pub(crate) fn keyed_factors(
                 vals.sort_by(|a, b| b.total_cmp(a));
                 placed.iter().map(|l| running(l, open)).sum::<f64>() + vals.iter().take(r).sum::<f64>()
             };
-            // every window open bounds a deck's running bonus, the rest besides a window it runs among them; a gate
-            // opened by it only adds bonus
-            let all = top(&|_| true);
-            top(&|w| gate_open(w.3, ri, acc, group, gate_step(all, w.2)))
+            // the windows a deck's gates open are among those the gates open with these larger bonuses and counts
+            gated_bonus(ri, acc, group, top)
         },
         out,
         sums,
@@ -266,31 +264,53 @@ pub(crate) fn ramp_factor(w: &Window, ramp: &ComboRamp, count: f64) -> f64 {
     ramp.table[(steps as usize).min(ramp.table.len() - 1)] * ramp.mult
 }
 
-/// The running combo bonus of a list of bonus windows at each time of a non-decreasing sequence (`windows`: `(start,
-/// end, bonus)`, closed; `ev` is scratch).
 /// Whether a combo bonus window with `gate` counts at an entry of combo range `ri`: always without a gate or when it
-/// names another range, else once the range's combo can reach the threshold by the entry's chart time: `acc` bounds
-/// the count of the earlier entries and each of the `group` entries at that time adds at most `step`.
-///
-/// Its start needs the threshold counted from judgements processed before that frame; judged in chart order, those
-/// are at chart times up to the trigger time (the last combo judgement, or the frame time), and the bonus reaches
-/// the judgements from the trigger time on. `step` is the window's `gate_step`.
-pub(crate) fn gate_open(gate: Option<(i64, u32)>, ri: usize, acc: f64, group: usize, step: f64) -> bool {
+/// names another range, else once the range's combo can reach the threshold by the entry's chart time, when the count
+/// its trigger reads there is at most `reach` (see [`gated_bonus`]).
+pub(crate) fn gate_open(gate: Option<(i64, u32)>, ri: usize, reach: f64) -> bool {
     match gate {
         None => true,
-        Some((threshold, range)) => range as usize != ri || acc + group as f64 * step >= threshold as f64,
+        Some((threshold, range)) => range as usize != ri || reach >= threshold as f64,
     }
 }
 
 /// The most one judgement at a gated window's chart time adds to the count its trigger reads, when the running
-/// bonuses there total at most `all` with the window's own `own` among them. An entry counts the bonus only once the
-/// first of the window's executions has started, at a trigger time no later than the entry's: at an earlier time the
-/// count is at most the earlier entries' bound, and at the same time it reads judgements none of those executions
-/// reached.
-pub(crate) fn gate_step(all: f64, own: f64) -> f64 {
-    (1.0 + (all - own).max(0.0)).floor()
+/// bonuses of the other windows there total at most `others`. An entry counts the bonus only once the first of the
+/// window's executions has started, at a trigger time no later than the entry's: at an earlier time the count is at
+/// most the earlier entries' bound, and at the same time it reads judgements none of those executions reached.
+pub(crate) fn gate_step(others: f64) -> f64 {
+    (1.0 + others.max(0.0)).floor()
 }
 
+/// The running combo bonus at an entry of combo range `ri`, from `total`, the running bonus of the windows an `open`
+/// predicate admits there: `acc` bounds the count of the earlier entries and `group` is the number of entries at the
+/// entry's chart time from it on.
+///
+/// A window gated on the range's count counts once its trigger can read the threshold. The trigger reads the earlier
+/// entries' count and, at the entry's chart time, judgements that each add at most `gate_step` of the bonuses of the
+/// windows started before it. The windows counted are the least fixed point from the ungated ones: those whose
+/// threshold `acc + group * gate_step(bonus)` reaches, `bonus` the running bonus of the windows counted so far. Every
+/// window running at a judgement of a play is among them: ordered by their triggers, each one's trigger reads
+/// judgements that ran with the windows started before it, which the fixed point holds by then.
+pub(crate) fn gated_bonus(
+    ri: usize,
+    acc: f64,
+    group: usize,
+    total: impl Fn(&dyn Fn(&ComboBonusRow) -> bool) -> f64,
+) -> f64 {
+    let mut reach = f64::NEG_INFINITY;
+    loop {
+        let bonus = total(&|w| gate_open(w.3, ri, reach));
+        let next = acc + group as f64 * gate_step(bonus);
+        if next <= reach {
+            return bonus;
+        }
+        reach = next;
+    }
+}
+
+/// The running combo bonus of a list of bonus windows at each time of a non-decreasing sequence (`windows`: `(start,
+/// end, bonus)`, closed; `ev` is scratch).
 pub(crate) fn bonus_at(windows: &[(i64, i64, f64)], ev: &mut Vec<(i64, f64)>) {
     ev.clear();
     for &(a, b, v) in windows {

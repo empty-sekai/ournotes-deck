@@ -157,13 +157,9 @@ impl FineView<'_> {
                 if gated.is_empty() {
                     return cur;
                 }
-                let running = || gated.iter().filter(|w| w.0 <= t && t <= w.1);
-                // the step reads every other window open; a gate opened by it only adds bonus
-                let all = cur + running().map(|w| w.2).sum::<f64>();
-                cur + running()
-                    .filter(|w| gate_open(w.3, ri, acc, group, gate_step(all, w.2)))
-                    .map(|w| w.2)
-                    .sum::<f64>()
+                gated_bonus(ri, acc, group, |open| {
+                    cur + gated.iter().filter(|w| w.0 <= t && t <= w.1 && open(w)).map(|w| w.2).sum::<f64>()
+                })
             },
             &mut scratch.gk_g,
             &mut scratch.sums,

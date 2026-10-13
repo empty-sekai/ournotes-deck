@@ -6,9 +6,7 @@ mod factors;
 mod keyed;
 use carriers::factor_sums;
 pub(super) use carriers::{CarrierLevel, RampReads, carrier_level_envelopes, is_carrier_class, window_gain};
-pub(super) use combo::{
-    GkCombo, RampStarts, bonus_at, carrier_factors, gate_open, gate_step, keyed_factors, ramp_factor,
-};
+pub(super) use combo::{GkCombo, RampStarts, bonus_at, carrier_factors, gated_bonus, keyed_factors, ramp_factor};
 pub(super) use factors::GkFactors;
 pub(super) use keyed::KeyedDrift;
 pub(crate) use keyed::{CarrierKeys, KeyedEnvelope};

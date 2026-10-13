@@ -117,18 +117,53 @@ fn gated_bonus_opens_once_the_time_group_can_reach_the_threshold() {
     let (mut out, mut sums) = (Vec::new(), Vec::new());
     gc.fill(
         &times,
-        |ri, _, acc, group| if gate_open(w.3, ri, acc, group, gate_step(w.2, w.2)) { w.2 } else { 0.0 },
+        |ri, _, acc, group| gated_bonus(ri, acc, group, |open| if open(&w) { w.2 } else { 0.0 }),
         &mut out,
         &mut sums,
     );
     // its own bonus never counts toward its threshold: closed for the first entry (0 + 1 < 3); the pair at 20 can
     // reach it (1 + 2 * 1), so both count the bonus
     assert_eq!(sums, vec![0.0, 1.0, 7.0, 13.0, 19.0]);
-    assert_eq!(gate_step(5.0, 5.0), 1.0);
-    assert_eq!(gate_step(7.5, 5.0), 3.0);
+    assert_eq!(combo::gate_step(0.0), 1.0);
+    assert_eq!(combo::gate_step(2.5), 3.0);
     // a gate naming another range never closes
-    assert!(gate_open(Some((1000, 1)), 0, 0.0, 1, 1.0));
-    assert!(gate_open(None, 0, 0.0, 1, 1.0));
+    assert!(combo::gate_open(Some((1000, 1)), 0, 0.0));
+    assert!(combo::gate_open(None, 0, 0.0));
+}
+
+#[test]
+fn gated_bonuses_open_only_from_the_bonuses_of_windows_already_open() {
+    let times = [10, 20, 30, 40, 50];
+    let gc = GkCombo {
+        range: vec![Some(0); 5],
+        upto: vec![0; 5],
+        entries: vec![vec![0, 1, 2, 3, 4]],
+        ordered: vec![true],
+        tab: Vec::new(),
+        gmax: 1.0,
+        frame: vec![0; 5],
+        read: Vec::new(),
+        run: Vec::new(),
+    };
+    let sums_of = |windows: &[ComboBonusRow]| {
+        let (mut out, mut sums) = (Vec::new(), Vec::new());
+        gc.fill(
+            &times,
+            |ri, _, acc, group| {
+                gated_bonus(ri, acc, group, |open| windows.iter().filter(|w| open(w)).map(|w| w.2).sum())
+            },
+            &mut out,
+            &mut sums,
+        );
+        sums
+    };
+    // two +5 bonuses gated at a count of 3 open together once the plain count can reach it, at the third entry
+    let pair: ComboBonusRow = (0, 100, 5.0, Some((3, 0)));
+    assert_eq!(sums_of(&[pair, pair]), vec![0.0, 1.0, 2.0, 13.0, 24.0, 35.0]);
+    // a +1 bonus gated at 2 opens at the second entry, which then adds 2: the third reaches the +5 bonus gated at 4
+    let low: ComboBonusRow = (0, 100, 1.0, Some((2, 0)));
+    let high: ComboBonusRow = (0, 100, 5.0, Some((4, 0)));
+    assert_eq!(sums_of(&[low, high]), vec![0.0, 1.0, 3.0, 10.0, 17.0, 24.0]);
 }
 
 #[test]
@@ -195,9 +230,9 @@ fn carrier_factors_and_counts_cover_every_deck_with_that_many_carriers() {
                 &times,
                 |ri, q, acc, group| {
                     let t = times[gc.entries[ri][q] as usize] as i64;
-                    let running = || windows.iter().filter(|w| w.0 <= t && t <= w.1);
-                    let all = running().map(|w| w.2).sum::<f64>();
-                    running().filter(|w| gate_open(w.3, ri, acc, group, gate_step(all, w.2))).map(|w| w.2).sum()
+                    gated_bonus(ri, acc, group, |open| {
+                        windows.iter().filter(|w| w.0 <= t && t <= w.1 && open(w)).map(|w| w.2).sum()
+                    })
                 },
                 &mut own,
                 &mut own_sums,
