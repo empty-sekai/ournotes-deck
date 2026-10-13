@@ -473,6 +473,25 @@ impl Engine<'_, '_> {
         let performance_orders = self.orders.clone();
         let missing: Vec<usize> = (0..ORDERS).filter(|&i| outcomes[i].is_none()).collect();
         let missing_orders: Vec<[usize; 5]> = missing.iter().map(|&i| performance_orders[i]).collect();
+        let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+        let spliced = self.spliced_scores(&input, &missing_orders);
+        self.rec.clock.lap(resume);
+        if let Some(scores) = spliced? {
+            for (&i, final_score) in missing.iter().zip(scores) {
+                outcomes[i] = Some(SeedOutcome {
+                    root_seed: 0,
+                    weight: 1,
+                    performance_order: performance_orders[i],
+                    final_score,
+                    terminal_payoff: payoff_of(pool, request, metric, event_input, physical, final_score, power, None)?,
+                });
+            }
+            let evaluation =
+                expectation::aggregate(outcomes.into_iter().map(|o| o.expect("every order evaluated")).collect())?;
+            // The metric reads no final life (`spliced_scores`): the lives of the spliced orders stay unknown.
+            self.team_scores.insert(physical, power, &evaluation, &final_lives, &mut self.tel.caches.team_scores);
+            return Ok(Leaf::Evaluated(evaluation));
+        }
         let orders: Vec<Vec<usize>> = missing_orders.iter().map(|o| o.to_vec()).collect();
         let capture_budget =
             self.programs.capture_budget_for(physical.members, &performers, &mut self.tel.caches.program_admissions);
@@ -605,6 +624,49 @@ impl Engine<'_, '_> {
                 self.rec.clock.lap(resume);
                 Ok(Leaf::Stopped)
             }
+        }
+    }
+
+    /// The native scores of `orders` of a Gekisou team in a live without a LUCK range, spliced from the recordings of
+    /// its five rotations ([`ournotes_sim::live::full::lottery_free_orders`]). None when the live has no Gekisou or a
+    /// LUCK range, when the metric reads the final life (the splice follows scores only), or when the splice does not
+    /// cover the orders; they are then simulated.
+    fn spliced_scores(
+        &mut self,
+        input: &expectation::FiniteSeedContext,
+        orders: &[[usize; 5]],
+    ) -> Result<Option<Vec<i32>>, Error> {
+        let Some(setup) = &input.gekisou else { return Ok(None) };
+        if self.metric.any(|m| matches!(m, Metric::ScoreAndLifeAtLeast { .. })) {
+            return Ok(None);
+        }
+        if self.lottery_free.is_none() && self.splice_skills.is_none() {
+            self.splice_skills = Some(Arc::new(ournotes_sim::live::full::luck_skills(self.pool.master)?));
+        }
+        let skills = self.lottery_free.as_ref().or(self.splice_skills.as_ref()).expect("filled above").clone();
+        let spliced = ournotes_sim::live::full::lottery_free_orders(
+            self.pool.master,
+            &skills,
+            &input.performers,
+            &input.notes,
+            &input.events,
+            input.params,
+            setup,
+            &input.play,
+            &input.delta_times,
+            input.rank_confirmations.as_deref(),
+            orders,
+        );
+        match spliced {
+            Ok(scores) => {
+                self.tel.leaves.free_spliced += 1;
+                Ok(Some(scores))
+            }
+            Err(Error::Unsupported(why) | Error::Capacity(why)) => {
+                *self.tel.leaves.free_unspliced.entry(why).or_default() += 1;
+                Ok(None)
+            }
+            Err(error) => Err(error),
         }
     }
 

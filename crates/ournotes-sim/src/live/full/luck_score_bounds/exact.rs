@@ -169,6 +169,8 @@ pub(super) fn query_mass(
 ) -> Result<[ProbabilityMass; 4], Error> {
     match class_read(frame_times, probability_ready, skills_at, query_ms, note_ms)? {
         ClassRead::Kept(time) => Ok(kept_mass(curve, time)),
+        // A law without lottery steps or query probabilities ([`no_lottery`]) keeps every note in class 00.
+        ClassRead::Query { .. } if curve.steps.is_empty() && curve.frame_queries.is_empty() => Ok(NO_LOTTERY),
         ClassRead::Query { query_ms, phase } => {
             let index = curve.frame_queries.partition_point(|(time, _)| *time < query_ms);
             match curve.frame_queries.get(index) {

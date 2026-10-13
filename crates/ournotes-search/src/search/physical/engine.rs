@@ -24,6 +24,8 @@ pub(super) struct Engine<'a, 'm> {
     pub(super) certified: Option<CertifiedState<'m>>,
     /// The master's lottery-related skills when the decks play lottery-free ([`certified_engine::LotteryMode::Free`]).
     pub(super) lottery_free: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
+    /// The same skills for the rotation splice of lottery-free orders when the decks play as they are.
+    pub(super) splice_skills: Option<std::sync::Arc<ournotes_sim::live::full::LuckSkills>>,
     pub(super) seen: HashSet<PhysicalDeck>,
     pub(super) fifo: VecDeque<PhysicalDeck>,
     pub(super) team_scores: team_scores::TeamScores,

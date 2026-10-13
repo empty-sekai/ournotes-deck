@@ -27,13 +27,14 @@
 //! rotation no order converts a judgement. The lottery law of an order is composed from the lottery kinds of its
 //! performers when the caller holds them ([`LotteryKinds::order_laws`]), and otherwise recorded once for the class of
 //! orders that its recording shows to share it ([`LuckDpCache::certified_order_class`]), and per order when a
-//! recording shows no class.
+//! recording shows no class. A live without a LUCK range draws no lottery: every note keeps class 00, and each order
+//! follows one history ([`lottery_free_orders`]).
 //!
 //! Orders the certificate does not cover are evaluated one by one with [`luck_exact_score`](super::luck_exact_score).
 
 use super::exact::{
     LuckExactProfile, LuckExactScore, Observers, PowerTwin, Schedule, Stopwatch, check_probes, exact_model,
-    exact_schedule, exact_score, has_luck, lottery_law, record_exact, rush_percent,
+    exact_schedule, exact_score, has_luck, lottery_law, no_lottery, record_exact, rush_percent,
 };
 use super::exact_paths::{MAX_LANES, Orders, first_orders};
 use super::*;
@@ -111,6 +112,51 @@ pub fn luck_exact_orders(
 ) -> Result<LuckExactOrders, Error> {
     let live = LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking };
     exact_orders(&live, deck, orders, None, curves, details, None)
+}
+
+/// The native score of each of `orders` of the five performers of `deck` (`order[q]` the index in `deck` of the
+/// performer at position `q`) in a live without a LUCK range, from the recordings of the formation's five rotations.
+/// Every play of such a live is deterministic: the replay follows one history per order, and each score is the
+/// integer it gives. [`Error::Unsupported`] or [`Error::Capacity`] says why the rotations do not give the scores: a
+/// LUCK range, orders the certificate of this module does not cover, or a score that is not one integer.
+#[allow(clippy::too_many_arguments)]
+pub fn lottery_free_orders(
+    master: &Master,
+    skills: &LuckSkills,
+    deck: &[Performer],
+    notes: &[LiveNote],
+    events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+    orders: &[[usize; MEMBERS]],
+) -> Result<Vec<i32>, Error> {
+    if deck.len() != MEMBERS {
+        return Err(Error::Input("an order evaluation takes five performers".into()));
+    }
+    if has_luck(setup) {
+        return Err(refuse("a LUCK range draws lotteries"));
+    }
+    let permutation = |order: &[usize; MEMBERS]| {
+        let mut seen = [false; MEMBERS];
+        order.iter().all(|&member| member < MEMBERS && !std::mem::replace(&mut seen[member], true))
+    };
+    if !orders.iter().all(permutation) {
+        return Err(Error::Input("an order is a permutation of the five performers".into()));
+    }
+    let live = LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking };
+    let mut curves = LuckDpCache::new(0);
+    let mut profile = LuckExactOrdersProfile::default();
+    splice(&live, deck, orders, None, &mut curves, false, &mut profile, None)?
+        .scores
+        .iter()
+        .map(|score| {
+            let support = score.final_support;
+            if support.lower == support.upper { Ok(support.lower) } else { Err(refuse("a score is not one integer")) }
+        })
+        .collect()
 }
 
 /// [`luck_exact_orders`] with the lottery law of each order given: `laws[i]` is the law [`luck_order_laws`] gives
@@ -504,9 +550,7 @@ fn splice(
     mut twin: Option<&mut PowerTwin>,
 ) -> Result<LuckExactOrders, Error> {
     let mut watch = Stopwatch::start();
-    if !has_luck(live.setup) {
-        return Err(refuse("the live has no LUCK range"));
-    }
+    let luck = has_luck(live.setup);
     // The shape of each order, on one model of the formation whose members move to each order in turn: members that
     // have not acted move to other positions exactly as a model built for the new order (see `OrderedLive`).
     let mut model = live.model(deck)?;
@@ -539,7 +583,7 @@ fn splice(
         let probes = probes_in_native_order(&model, live.skills)?;
         let calc = model.score.calc.clone();
         model.set_luck_weights(live.skills, Vec::new())?;
-        let trace = record_exact(&mut model, probes, true, live.play, live.delta_times)?;
+        let trace = record_exact(&mut model, probes, luck, live.play, live.delta_times)?;
         if model.converted_judgements() != 0 {
             return Err(refuse("a judgement is converted"));
         }
@@ -569,6 +613,8 @@ fn splice(
     profile.record_ms += watch.lap();
     let (laws, law_recordings) = match given {
         Some(laws) => (laws.to_vec(), 0),
+        // Without a LUCK range every note keeps class 00 and nothing files a Rush.
+        None if !luck => (vec![no_lottery(live.play, live.skills); orders.len()], 0),
         None => order_laws(live, deck, orders, curves, None)?,
     };
     profile.law_ms += watch.lap();

@@ -37,7 +37,7 @@ pub(super) use bounds::complete_bounds_recording;
 use bounds::{checked_support, luck_score_bounds_internal};
 pub use exact::{LuckExactNote, LuckExactProfile, LuckExactRange, LuckExactScore, luck_exact_score};
 pub use exact_orders::{
-    LuckExactOrders, LuckExactOrdersProfile, luck_exact_orders, luck_exact_orders_power_twin,
+    LuckExactOrders, LuckExactOrdersProfile, lottery_free_orders, luck_exact_orders, luck_exact_orders_power_twin,
     luck_exact_orders_with_laws, luck_order_laws,
 };
 #[cfg(feature = "search-diagnostics")]

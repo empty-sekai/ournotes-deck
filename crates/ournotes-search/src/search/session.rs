@@ -409,6 +409,7 @@ impl<'m> SearchSession<'m> {
             top: std::mem::take(&mut self.top),
             certified: None, // This incremental cursor evaluates deterministic Power/Skip only.
             lottery_free: None,
+            splice_skills: None,
             seen: std::mem::take(&mut self.seen),
             fifo: std::mem::take(&mut self.fifo),
             team_scores: super::team_scores::TeamScores::new(0),

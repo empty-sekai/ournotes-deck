@@ -170,6 +170,7 @@ pub(crate) fn solve_physical_impl(
         } else {
             None
         },
+        splice_skills: None,
         seen: HashSet::new(),
         fifo: VecDeque::new(),
         team_scores: team_scores::TeamScores::new(limits.cache_entries),

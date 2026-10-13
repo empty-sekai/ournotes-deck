@@ -289,6 +289,66 @@ fn every_order_from_the_rotations_matches_the_order_evaluated_alone() {
 }
 
 #[test]
+fn lottery_free_orders_match_the_native_play_of_each_order() {
+    let cases = [
+        ("score-ups", formation(&[], &[], &[]), true),
+        (
+            "safe damage, life at least 1",
+            formation(&[(12, 3002, 300, 0), (13, 2000, 5000, 50)], &[(50, 2001, 1)], &[]),
+            true,
+        ),
+        // A live skill that writes the Gekisou state is outside the certificate.
+        ("live-skill Gekisou bonus", formation(&[(12, 12000, 500, 0)], &[], &[]), false),
+    ];
+    let orders = permutations();
+    for (name, mut formation, covered) in cases {
+        // A LUCK range draws lotteries.
+        let (master, deck, notes, events, params, setup, play, delta) = &formation;
+        let skills = luck_skills(master).unwrap();
+        let free =
+            lottery_free_orders(master, &skills, deck, notes, events, *params, setup, play, delta, None, &orders);
+        assert!(matches!(free, Err(Error::Unsupported(_))), "{name}");
+        // Combo ranges: no range draws a lottery.
+        formation.5.missions = vec![1, 1, 1];
+        let (master, deck, notes, events, params, setup, play, delta) = &formation;
+        let skills = std::sync::Arc::new(luck_skills(master).unwrap());
+        let confirmations = confirmations(&formation);
+        for ranking in [None, Some(confirmations.as_slice())] {
+            let spliced = lottery_free_orders(
+                master, &skills, deck, notes, events, *params, setup, play, delta, ranking, &orders,
+            );
+            let spliced = match spliced {
+                Ok(spliced) => spliced,
+                Err(Error::Unsupported(why)) if !covered => {
+                    assert!(why.contains("Gekisou state"), "{name}: {why}");
+                    continue;
+                }
+                Err(error) => panic!("{name}: {error}"),
+            };
+            assert!(covered, "{name}: spliced");
+            let live = crate::live::full::OrderedLive {
+                performers: deck.clone(),
+                notes: notes.clone(),
+                events: events.clone(),
+                params: *params,
+                gekisou: Some(setup.clone()),
+                rank_confirmations: ranking.map(<[_]>::to_vec),
+                play: play.clone(),
+                delta_times: delta.clone(),
+                lottery_free: Some(skills.clone()),
+            };
+            let native: Vec<i32> = orders
+                .iter()
+                .map(|order| live.simulate(master, order, crate::live::random::LiveRandom::new(0)).unwrap().score())
+                .collect();
+            assert_eq!(spliced, native, "{name}");
+            let scores: std::collections::BTreeSet<_> = native.iter().collect();
+            assert!(scores.len() > 1, "{name}: the order must change the score");
+        }
+    }
+}
+
+#[test]
 fn given_laws_replace_the_law_recordings() {
     let formation = formation(&[], &[], &[]);
     let (master, deck, notes, events, params, setup, play, delta) = &formation;

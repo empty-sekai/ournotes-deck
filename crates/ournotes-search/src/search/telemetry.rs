@@ -494,6 +494,10 @@ pub struct Leaves {
     /// by why the splice does not cover them (their orders then evaluated one by one under their laws).
     pub spliced: u64,
     pub unspliced: BTreeMap<String, u64>,
+    /// Gekisou teams in a live without a LUCK range whose performance orders were spliced from the recordings of their
+    /// rotations, and the others by why the splice does not cover them (their orders then simulated).
+    pub free_spliced: u64,
+    pub free_unspliced: BTreeMap<String, u64>,
     /// The joint evaluations: replays run, and the time their models, lottery laws, rotation recordings and
     /// evaluations took (diagnostic builds).
     pub exact: ExactWork,
