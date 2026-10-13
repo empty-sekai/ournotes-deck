@@ -305,9 +305,14 @@ fn lottery_free_orders_match_the_native_play_of_each_order() {
         ),
         // A live skill that writes the Gekisou state is outside the certificate.
         ("live-skill Gekisou bonus", formation(&[(12, 12000, 500, 0)], &[], &[]), false),
+        // Live skill 16 converts Perfect into Just; its holder plays faster in a simulation.
+        ("converter", formation(&[(16, 13005, 0, 0)], &[], &[]), false),
     ];
     let orders = permutations();
     for (name, mut formation, covered) in cases {
+        if name == "converter" {
+            formation.1[4].live_skill = Some((16, 1));
+        }
         // A LUCK range draws lotteries.
         let (master, deck, notes, events, params, setup, play, delta) = &formation;
         let skills = luck_skills(master).unwrap();
@@ -326,7 +331,7 @@ fn lottery_free_orders_match_the_native_play_of_each_order() {
             let spliced = match spliced {
                 Ok(spliced) => spliced,
                 Err(Error::Unsupported(why)) if !covered => {
-                    assert!(why.contains("Gekisou state"), "{name}: {why}");
+                    assert!(why.contains("Gekisou state") || why.contains("converts a judgement"), "{name}: {why}");
                     continue;
                 }
                 Err(error) => panic!("{name}: {error}"),

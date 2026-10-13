@@ -21,11 +21,11 @@
 //!   combo, and the play has none when the formation protects combos.
 //! - Notes deal no damage, so life stays from 1 (the initial life without skill damage) up to twice the maximum
 //!   (the initial life without recovery), and every life predicate gives one answer over that range.
-//! - Only the performers that hold a judgement conversion convert judgements.
+//! - Only the performers held in place convert judgements.
 //! - The rotations share their calculators and agree on every event that is not a member command.
 //!
-//! A member's conversions likewise depend only on the member, its position and the common events. The performers that
-//! hold a conversion therefore stay in place: the orders that give them the same positions form a block, whose
+//! A member's conversions likewise depend only on the member, its position and the common events. The performers whose
+//! conversions can change a judgement of the play therefore stay in place: the orders that give them the same positions form a block, whose
 //! rotations move only the other performers over the other positions, and the judgements they convert are common
 //! events of the block. The lottery law of an order is composed from the lottery kinds of its
 //! performers when the caller holds them ([`LotteryKinds::order_laws`]), and otherwise recorded once for the class of
@@ -42,7 +42,7 @@ use super::exact::{
 use super::exact_paths::{MAX_LANES, Orders, first_orders};
 use super::*;
 use crate::live::full::luck_dp::{
-    LotteryKinds, LotteryLive, OrderClass, PAIR_POSITIONS, PositionPairs, luck_has_judgement_conversion,
+    LotteryKinds, LotteryLive, OrderClass, PAIR_POSITIONS, PositionPairs, luck_play_converts,
 };
 
 const MEMBERS: usize = 5;
@@ -123,7 +123,9 @@ pub fn luck_exact_orders(
 /// performer at position `q`) in a live without a LUCK range, from the recordings of the formation's five rotations.
 /// Every play of such a live is deterministic: the replay follows one history per order, and each score is the
 /// integer it gives. [`Error::Unsupported`] or [`Error::Capacity`] says why the rotations do not give the scores: a
-/// LUCK range, orders the certificate of this module does not cover, or a score that is not one integer.
+/// LUCK range, a performer that converts a judgement of the play (whose orders a simulation with cutoffs plays faster
+/// than the blocks of rotations that hold it in place), orders the certificate of this module does not cover, or a
+/// score that is not one integer.
 #[allow(clippy::too_many_arguments)]
 pub fn lottery_free_orders(
     master: &Master,
@@ -152,6 +154,9 @@ pub fn lottery_free_orders(
         return Err(Error::Input("an order is a permutation of the five performers".into()));
     }
     let live = LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking };
+    if !converters(&live, deck).is_empty() {
+        return Err(refuse("a performer converts a judgement of the play"));
+    }
     let mut curves = LuckDpCache::new(0);
     let mut profile = LuckExactOrdersProfile::default();
     splice(&live, deck, orders, None, &mut curves, false, &mut profile, None)?
@@ -544,8 +549,9 @@ pub(super) fn order_shape(model: &mut LiveModel, skills: &LuckSkills) -> Result<
 /// The scores of `orders` from the rotations' recordings, or why the certificate does not cover them. `given` holds
 /// the law of each order when the caller has them; `twin` compares the note values with their scores at its power.
 ///
-/// The performers that hold a judgement conversion stay in place: the orders that give them the same positions form a
-/// block, whose rotations move only the other performers over the other positions ([`splice_block`]).
+/// The performers whose conversions can change a judgement of the play stay in place: the orders that give them the
+/// same positions form a block, whose rotations move only the other performers over the other positions
+/// ([`splice_block`]).
 #[allow(clippy::too_many_arguments)]
 fn splice(
     live: &LotteryLive,
@@ -558,9 +564,7 @@ fn splice(
     mut twin: Option<&mut PowerTwin>,
 ) -> Result<LuckExactOrders, Error> {
     let mut watch = Stopwatch::start();
-    let pinned: Vec<usize> = (0..MEMBERS)
-        .filter(|&member| luck_has_judgement_conversion(live.master, std::slice::from_ref(&deck[member])))
-        .collect();
+    let pinned = converters(live, deck);
     if pinned.len() > MAX_PINNED {
         return Err(refuse("more performers convert judgements than the rotations hold in place"));
     }
@@ -626,6 +630,15 @@ fn splice(
 
 /// The most performers [`splice`] holds in place: a block of orders then still takes its scores from three rotations.
 const MAX_PINNED: usize = 2;
+
+/// The performers of `deck` whose judgement conversions can change a judgement of the play. A judgement reaches every
+/// converter as the play declares it, and the first converter that changes it makes the only change, so a performer
+/// whose conversions change none of the declared judgements converts none in any formation.
+fn converters(live: &LotteryLive, deck: &[Performer]) -> Vec<usize> {
+    (0..MEMBERS)
+        .filter(|&member| luck_play_converts(live.master, std::slice::from_ref(&deck[member]), live.notes, live.play))
+        .collect()
+}
 
 /// The orders of one block of [`splice`]: each places the performer `pinned[t]` at the position `at[t]`.
 struct Block<'a> {
