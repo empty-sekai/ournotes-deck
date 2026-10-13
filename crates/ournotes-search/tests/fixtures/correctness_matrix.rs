@@ -594,14 +594,15 @@ fn luck_score_bounds_under_domain_laws_keep_the_exhaustive_ranking() {
             assert_eq!(census.profiles, if kinds { 3 } else { 1 }, "{name}");
             assert!(census.classes >= census.profiles && census.laws > 0, "{name}: {census:?}");
             eprintln!(
-                "{name}: {} classes, {} laws, {} teams audited, {} order sums, {} fine orders, {} fine {} law pruned",
+                "{name}: {} classes, {} laws, {} teams audited, {} order sums, {} fine orders, {} fine {} law pruned, {} kind laws",
                 census.classes,
                 census.laws,
                 bounded.telemetry.leaves.law_audits,
                 bounded.telemetry.leaves.order_sums,
                 bounded.telemetry.leaves.fine_orders,
                 bounded.telemetry.leaves.fine_pruned,
-                bounded.telemetry.leaves.law_pruned
+                bounded.telemetry.leaves.law_pruned,
+                bounded.telemetry.leaves.kind_laws
             );
         }
     }

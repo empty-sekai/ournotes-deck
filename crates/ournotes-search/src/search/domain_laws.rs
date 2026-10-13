@@ -270,6 +270,45 @@ impl ReadLaws {
     }
 }
 
+impl LotteryCensus {
+    /// The kind index of pool member `member` with pool Snap `snap` (None: no Snap), when the census's roles hold it
+    /// and it takes a kind.
+    pub(super) fn kind_index(&self, member: usize, snap: Option<usize>) -> Option<usize> {
+        let roles = &self.roles;
+        let row = roles.members.iter().position(|&m| m == member)?;
+        let column = match snap {
+            None => 0,
+            Some(s) => 1 + roles.snaps.iter().position(|&r| r == s)?,
+        };
+        match &roles.roles[row][column] {
+            LotteryRole::Kind(kind) => Some(kind.index()),
+            LotteryRole::Breaks(_) => None,
+        }
+    }
+
+    /// The laws of the orders of team `p`, read from the multiset of its performers' kinds: two teams whose performers
+    /// hold the same multiset of kinds have the same laws over their orders, and the census holds the laws of every
+    /// order of one formation of each multiset it read. None when a performer of `p` is outside the census's roles or
+    /// takes no kind, or when the census read no laws composed from the multiset.
+    pub(super) fn team_laws(&self, p: &PhysicalDeck) -> Option<Vec<LuckLaw>> {
+        let mut multiset = [0usize; 5];
+        for (slot, kind) in multiset.iter_mut().enumerate() {
+            *kind = self.kind_index(p.members[slot], p.snaps[slot])?;
+        }
+        multiset.sort_unstable();
+        self.multiset_laws(&multiset)
+    }
+
+    /// The laws the census read for the multiset of sorted kind indices `multiset`, distinct by address. None when it
+    /// read none composed from it.
+    fn multiset_laws(&self, multiset: &[usize; 5]) -> Option<Vec<LuckLaw>> {
+        let mut ids = self.read.multisets.get(multiset)?.as_ref()?.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        Some(ids.into_iter().map(|i| self.read.laws[i as usize].clone()).collect())
+    }
+}
+
 /// The live of the lottery recordings of `live`; None without a Gekisou range.
 fn lottery_live<'a>(
     master: &'a ournotes_sim::master::Master,

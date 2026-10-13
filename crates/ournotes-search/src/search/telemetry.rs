@@ -491,6 +491,9 @@ pub struct Leaves {
     pub law_bounds: u64,
     /// LUCK teams under bounds that weigh the laws of their domain whose own laws were found among those.
     pub law_audits: u64,
+    /// LUCK teams whose own laws were read from the multiset of their performers' lottery kinds, before the caps under
+    /// the laws of their domain.
+    pub kind_laws: u64,
     pub cutoff: Cutoff,
     pub order_tree: OrderTree,
     pub peak_retained: usize,

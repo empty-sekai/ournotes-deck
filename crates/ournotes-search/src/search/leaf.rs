@@ -160,6 +160,54 @@ impl Engine<'_, '_> {
         pruned
     }
 
+    /// The laws of the orders of `physical` read from the multiset of its performers' lottery kinds, when the
+    /// traversal of a score search holds the census of its domain (see `LotteryCensus::team_laws`).
+    fn kind_laws(&self, physical: &PhysicalDeck) -> Option<Vec<LuckLaw>> {
+        if !matches!(self.metric, Metric::Score) {
+            return None;
+        }
+        self.certified.as_ref()?.census.as_ref()?.team_laws(physical)
+    }
+
+    /// Whether the caps of a team under the laws read from its multiset of lottery kinds prove it below the K-th of
+    /// `cutoff` ([`Engine::below_under_laws`]), in a traversal whose bounds `traversal` weigh the laws of its domain.
+    /// Those are the laws of its own orders, which weigh no law of another team of the domain. False without such
+    /// laws.
+    fn below_under_kind_laws(
+        &mut self,
+        domain: &crate::domain::CandidateDomain,
+        traversal: &JointBounds,
+        physical: &PhysicalDeck,
+        power: i32,
+        cutoff: (i128, i32),
+    ) -> bool {
+        if traversal.laws().is_empty() {
+            return false;
+        }
+        let Some(laws) = self.kind_laws(physical) else { return false };
+        self.tel.leaves.kind_laws += 1;
+        self.below_under_laws(domain, physical, power, &laws, cutoff)
+    }
+
+    /// The laws read from a team's multiset of lottery kinds can prune the teams that hold the same multiset in a
+    /// traversal whose bounds `traversal` weigh the laws of its domain: they must cover the laws `found` of the
+    /// team's own orders. An error when they do not.
+    fn audit_kind_laws(
+        &self,
+        traversal: &JointBounds,
+        physical: &PhysicalDeck,
+        found: &Result<Vec<LuckLaw>, Error>,
+    ) -> Result<(), Error> {
+        if traversal.laws().is_empty() {
+            return Ok(());
+        }
+        let Some(kind) = self.kind_laws(physical) else { return Ok(()) };
+        match found {
+            Ok(own) if crate::search::snaps::LuckLaws::new(&kind).is_some_and(|laws| laws.cover(own)) => Ok(()),
+            _ => Err(Error::Domain("a team's lottery laws are not those of its multiset of lottery kinds".into())),
+        }
+    }
+
     /// The payoff numerator of a team over the performance orders: each order simulated once, the sum over all of
     /// them. With a full Top-K and bounds, the team's per-order caps (cheap, then raw and fine) are summed first; the
     /// orders then run in descending cap order, each with a cutoff table when the fine bound is compiled. The team
@@ -192,6 +240,10 @@ impl Engine<'_, '_> {
                     None => {}
                 }
                 if pruned.is_some() {
+                    return Ok(Leaf::Pruned);
+                }
+                if self.below_under_kind_laws(domain, bounds, physical, power, (threshold, kth_power)) {
+                    self.tel.leaves.law_pruned += 1;
                     return Ok(Leaf::Pruned);
                 }
             }
@@ -243,6 +295,7 @@ impl Engine<'_, '_> {
                             }
                         }
                     }
+                    self.audit_kind_laws(bounds, physical, &found)?;
                     laws = found.ok();
                     if let (Some(laws), Some(cutoff)) = (&laws, cutoff)
                         && self.below_under_laws(domain, physical, power, laws, cutoff)

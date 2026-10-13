@@ -84,6 +84,13 @@ pub(super) fn joint_regimes(
         }
     }
     (e.rec.tracked, e.rec.bounded) = (true, true);
+    // The traversals hold the census, whose multisets of kinds give the laws of their teams; a domain's census is read
+    // before its traversal and handed back for the next one.
+    let lend = |e: &mut Engine<'_, '_>, census: &mut Option<super::domain_laws::LotteryCensus>| {
+        if let Some(state) = e.certified.as_mut() {
+            state.census = census.take();
+        }
+    };
     if converting.is_empty() {
         let weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &plan.domain));
         let bounds = weighed.as_ref().unwrap_or(bounds);
@@ -92,6 +99,7 @@ pub(super) fn joint_regimes(
             e.resource = !bounds.prefers_compositions()
                 && bounds.resource_worthwhile(e.pool, &plan.domain, orders, e.correlated)?;
         }
+        lend(e, &mut census);
         e.rec.begin(&mut e.tel, "search", None);
         ordered_root(p, &plan.domain, bounds, orders, e)?;
         e.rec.end(&mut e.tel);
@@ -172,6 +180,9 @@ pub(super) fn joint_regimes(
         }
         e.rec.begin(&mut e.tel, "conversionCompile", None);
         let prepare = Instant::now();
+        if census.is_none() {
+            census = e.certified.as_mut().and_then(|state| state.census.take());
+        }
         let weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &domain));
         let result = match weighed {
             Some(weighed) => Ok(weighed),
@@ -180,6 +191,7 @@ pub(super) fn joint_regimes(
         e.tel.environment.bounds.conversion.as_mut().expect("conversion context").compile_ms +=
             prepare.elapsed().as_secs_f64() * 1000.0;
         e.rec.end(&mut e.tel);
+        lend(e, &mut census);
         let mut part = match result {
             Ok(part) => {
                 e.tel.environment.bounds.conversion.as_mut().expect("conversion context").prepared_domains += 1;

@@ -154,7 +154,7 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | `exactTeams`、`exactDeclined` | LUCK 队伍：全部出场顺序联合评估的队伍数；联合评估不适用、改为逐个出场顺序求全路径区间的队伍数 |
 | `spliced`、`unspliced` | 联合评估的 LUCK 队伍中：由五个轮换的录制拼接出全部出场顺序的队伍数；其余队伍按拼接不适用的原因计数，这些队伍在各自抽选分布下逐个出场顺序评估 |
 | `exact.replays`、`exact.setupMs`、`exact.lawMs`、`exact.recordMs`、`exact.evaluateMs` | LUCK 队伍联合评估：运行的重放数，以及建模、求抽选分布、轮换录制和评估各自的耗时（诊断构建） |
-| `lawPruned`、`lawBounds` | LUCK 队伍：评估前按本队各出场顺序的抽选分布加权后，原始与精细上界之和仍低于第 K 名而放弃的队伍数；为这些分布编译的上界份数 |
+| `lawPruned`、`lawBounds`、`kindLaws` | LUCK 队伍：评估前按本队各出场顺序的抽选分布加权后，原始与精细上界之和仍低于第 K 名而放弃的队伍数；为这些分布编译的上界份数；由成员抽选种类的多重集直接读出本队抽选分布的队伍数（先于按整个域的抽选分布加权的上界检查） |
 | `cutoff.tables` | 带截断表模拟的出场顺序数 |
 | `cutoff.unavailable` | 没有有限截断表的出场顺序数 |
 | `cutoff.stopped` | 中途截断的模拟次数（该队伍不可能进入 Top-K） |

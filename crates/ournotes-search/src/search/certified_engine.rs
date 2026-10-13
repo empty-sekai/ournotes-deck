@@ -115,6 +115,9 @@ pub(super) struct CertifiedState<'m> {
     pub(super) kind_bytes: usize,
     /// Joint bounds under the lottery laws of single teams.
     pub(super) law_bounds: super::leaf::LawBounds,
+    /// The lottery census of the domain the traversal searches, whose multisets of kinds give the laws of its teams
+    /// (see [`super::domain_laws::LotteryCensus::team_laws`]).
+    pub(super) census: Option<super::domain_laws::LotteryCensus>,
 }
 
 /// Key bytes the request's lottery-curve cache may hold.
@@ -140,6 +143,7 @@ impl CertifiedState<'_> {
             luck_kinds: None,
             kind_bytes: if cache_bytes == 0 { 0 } else { LOTTERY_LAW_CACHE_BYTES },
             law_bounds: super::leaf::LawBounds::default(),
+            census: None,
         })
     }
     pub(super) fn contains(&self, p: &PhysicalDeck) -> bool {
