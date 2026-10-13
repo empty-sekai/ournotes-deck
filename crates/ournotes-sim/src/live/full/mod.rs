@@ -130,8 +130,8 @@ use std::collections::{HashMap, VecDeque};
 use conditions::{CheckCtx, Checker, Cumulative, Factory, GkView};
 use convert::{Conversion, ConvertEffect};
 use engine::{
-    CondEffect, ConditionSkillUpdater, END_FRAME, EXECUTE_FRAME, EXECUTING, EffectState, FrameInput, ONE_SHOT, STAY,
-    SUSTAINED, TriggerResult, UpdateCheckers, effect_update,
+    CondEffect, ConditionSkillUpdater, END_FRAME, EXECUTE_FRAME, EXECUTING, EffectState, FrameInput, FrameSleep,
+    ONE_SHOT, STAY, SUSTAINED, TriggerResult, UpdateCheckers, effect_update,
 };
 use gekisou::{Controller, Env, FeverUpdater, GkNote, LuckHandle, S_COMPLETE};
 use life::LifeController;

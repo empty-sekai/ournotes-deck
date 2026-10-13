@@ -397,6 +397,7 @@ impl LiveModel {
         }
         let (mut listed, mut updated) =
             (std::mem::take(&mut self.scratch.listed), std::mem::take(&mut self.scratch.updated));
+        let mut sleeping = FrameSleep::default();
         for ph in PHASES {
             listed.clear();
             if let Some(phase_life) = self.phase_life.as_mut() {
@@ -443,6 +444,9 @@ impl LiveModel {
                 }
             }
             for (ui, c) in self.cond.iter_mut().enumerate() {
+                if sleeping.skip(ph, ui, &c.updater, ctx.events, inp.is_live_finished, ctx.gk.map(|g| g.ctrl)) {
+                    continue;
+                }
                 let draws = ctx.random.draws();
                 c.updater.update_into(ph, inp, &mut ctx, &mut updated)?;
                 if !updated.is_empty() || ctx.random.draws() != draws {

@@ -88,6 +88,7 @@ fn record_before(
     // The live's per-frame buffers: no model frame is open while the recorder runs its phases.
     let mut listed = std::mem::take(&mut model.scratch.listed);
     let mut updated = std::mem::take(&mut model.scratch.updated);
+    let mut sleeping = FrameSleep::default();
     for phase in PHASES {
         let gk =
             model.gk.as_ref().map(|g| GkView { ctrl: &g.ctrl, prev_lots: &g.prev_lots, prev_lot_ms: g.prev_lot_ms });
@@ -103,6 +104,10 @@ fn record_before(
         };
         listed.clear();
         for (updater, condition) in model.cond.iter_mut().enumerate() {
+            let gk = context.gk.map(|g| g.ctrl);
+            if sleeping.skip(phase, updater, &condition.updater, context.events, input.is_live_finished, gk) {
+                continue;
+            }
             condition.updater.update_into(phase, input, &mut context, &mut updated)?;
             for &u in &updated {
                 if condition.updater.updaters[u].state.state != STAY {

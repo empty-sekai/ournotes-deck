@@ -162,3 +162,69 @@ fn idle_path_keeps_gate_errors_and_live_finished_cache_semantics() {
         same_state(&actual, &reference);
     }
 }
+
+/// The state that outlasts a frame: everything but the frame's trigger cache and flags.
+fn same_lasting_state(actual: &ConditionSkillUpdater, reference: &ConditionSkillUpdater) {
+    assert_eq!(actual.executing, reference.executing);
+    assert_eq!(actual.stacks, reference.stacks);
+    assert_eq!(actual.execute_count, reference.execute_count);
+    assert_eq!(format!("{:?}", actual.effects), format!("{:?}", reference.effects));
+    assert_eq!(format!("{:?}", actual.updaters), format!("{:?}", reference.updaters));
+    assert_eq!(format!("{:?}", actual.sustained), format!("{:?}", reference.sustained));
+}
+
+#[test]
+fn frames_skipped_while_sleeping_match_called_updaters() {
+    // An idle-plan skill, and a skill whose trigger draws (no idle plan) that sleeps once the live finished.
+    let build = || {
+        let drawing = ConditionSkillUpdater::new(
+            vec![effect(40, 1, Checker::Probability(0.5))],
+            |_| Ok(Some(Checker::Probability(0.0))),
+            None,
+        )
+        .unwrap();
+        vec![model(), drawing]
+    };
+    let (mut called, mut skipped) = (build(), build());
+    let mut life_a = LifeController::new(1000, FxHashMap::default(), 10_000).unwrap();
+    let mut life_b = LifeController::new(1000, FxHashMap::default(), 10_000).unwrap();
+    let mut random_a = LiveRandom::new(5);
+    let mut random_b = LiveRandom::new(5);
+    let mut slept = [0; 2];
+    for frame in 0..120 {
+        let t = frame * 10;
+        let events = if frame % 9 == 4 || frame % 9 == 5 { vec![(0, t - 2)] } else { vec![(1, t)] };
+        let inp = FrameInput { time_ms: t, music_length_ms: 1000, is_live_finished: frame >= 100 };
+        for u in 0..2 {
+            called[u].begin_frame();
+            skipped[u].begin_frame();
+        }
+        let mut sleeping = FrameSleep::default();
+        for phase in [1, 2] {
+            for u in 0..2 {
+                let a = called[u].update(phase, inp, &mut context(&mut life_a, &mut random_a, t, &events)).unwrap();
+                if sleeping.skip(phase, u, &skipped[u], &events, inp.is_live_finished, None) {
+                    assert!(a.is_empty() && called[u].asleep(), "frame {frame} phase {phase} skill {u}");
+                    slept[u] += usize::from(phase == 1);
+                    continue;
+                }
+                let b = skipped[u].update(phase, inp, &mut context(&mut life_b, &mut random_b, t, &events)).unwrap();
+                assert_eq!(a, b, "frame {frame} phase {phase} skill {u}");
+            }
+            assert_eq!(random_a.draws(), random_b.draws(), "frame {frame} phase {phase}");
+        }
+        for u in 0..2 {
+            same_lasting_state(&called[u], &skipped[u]);
+        }
+    }
+    // The idle-plan skill sleeps between its events; the drawing one only after the finish.
+    assert!(slept[0] > 30 && slept[0] < 120, "{slept:?}");
+    assert!(slept[1] > 0 && slept[1] <= 20, "{slept:?}");
+}
+
+#[test]
+fn a_gate_that_would_fail_is_not_skipped() {
+    let updater = ConditionSkillUpdater::new(vec![effect(1, 2, Checker::Fixed(false))], |_| Ok(None), Some(1)).unwrap();
+    assert!(!updater.sleeps(&[], false, None));
+    assert!(!updater.sleeps(&[], true, None));
+}

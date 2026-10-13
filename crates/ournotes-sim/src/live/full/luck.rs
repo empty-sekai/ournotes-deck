@@ -310,6 +310,7 @@ impl LiveModel {
         for condition in &mut self.cond {
             condition.updater.begin_frame();
         }
+        let mut sleeping = FrameSleep::default();
         for phase in PHASES {
             let gk =
                 self.gk.as_ref().map(|g| GkView { ctrl: &g.ctrl, prev_lots: &g.prev_lots, prev_lot_ms: g.prev_lot_ms });
@@ -325,6 +326,10 @@ impl LiveModel {
             };
             let mut listed = Vec::new();
             for (updater, condition) in self.cond.iter_mut().enumerate() {
+                let gk = ctx.gk.map(|g| g.ctrl);
+                if sleeping.skip(phase, updater, &condition.updater, ctx.events, input.is_live_finished, gk) {
+                    continue;
+                }
                 for u in condition.updater.update(phase, input, &mut ctx)? {
                     if condition.updater.updaters[u].state.state != STAY {
                         listed.push(Listed::Cond { updater, u });

@@ -22,6 +22,10 @@ thread_local! {
         updaters_built: 0, eligible_updaters: 0, enabled_eligible_updaters: 0,
         update_calls: 0, slept_calls: 0, slept_frames: 0,
     }) };
+    // The per-call counters stay separate words: they are counted on every updater call of a frame.
+    static UPDATE_CALLS: Cell<u64> = const { Cell::new(0) };
+    static SLEPT_CALLS: Cell<u64> = const { Cell::new(0) };
+    static SLEPT_FRAMES: Cell<u64> = const { Cell::new(0) };
 }
 
 pub(super) fn enabled() -> bool {
@@ -43,7 +47,13 @@ pub fn with_idle_plan_disabled<T>(f: impl FnOnce() -> T) -> T {
 
 /// Return and clear this thread's counters. No persistent application cache is reset.
 pub fn take_idle_plan_stats() -> IdlePlanStats {
-    STATS.with(|stats| stats.replace(IdlePlanStats::default()))
+    let take = |counter: &'static std::thread::LocalKey<Cell<u64>>| counter.with(|c| c.replace(0));
+    IdlePlanStats {
+        update_calls: take(&UPDATE_CALLS),
+        slept_calls: take(&SLEPT_CALLS),
+        slept_frames: take(&SLEPT_FRAMES),
+        ..STATS.with(|stats| stats.replace(IdlePlanStats::default()))
+    }
 }
 
 pub(super) fn built(eligible: bool, enabled: bool) {
@@ -56,14 +66,17 @@ pub(super) fn built(eligible: bool, enabled: bool) {
     });
 }
 
+#[inline]
 pub(super) fn update(slept: bool, first: bool) {
-    STATS.with(|stats| {
-        let mut value = stats.get();
-        value.update_calls += 1;
-        value.slept_calls += u64::from(slept);
-        value.slept_frames += u64::from(first);
-        stats.set(value);
-    });
+    UPDATE_CALLS.with(|c| c.set(c.get() + 1));
+    SLEPT_CALLS.with(|c| c.set(c.get() + u64::from(slept)));
+    SLEPT_FRAMES.with(|c| c.set(c.get() + u64::from(first)));
+}
+
+/// A frame the idle plan slept through without a call (`ConditionSkillUpdater::sleeps`).
+#[inline]
+pub(super) fn skipped() {
+    SLEPT_FRAMES.with(|c| c.set(c.get() + 1));
 }
 
 #[cfg(test)]
