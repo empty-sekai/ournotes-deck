@@ -66,7 +66,8 @@ pub(super) fn node_upper(
 ///
 /// Certified LUCK score: the Snaps with which a member takes no lottery kind are selected as well, and the bounds of
 /// every part whose members take a lottery kind with each of its Snap choices weigh the lottery laws of its teams (see
-/// `domain_laws`).
+/// `domain_laws`). Only the bounds of a search in one part hold clusters of those laws: the traversals of the clusters
+/// repeat the prefixes their multisets share, once in every part and slot rule.
 pub(super) fn joint_regimes(
     p: &mut PhysicalDeck,
     plan: &crate::handler::ExecutionPlan,
@@ -92,7 +93,7 @@ pub(super) fn joint_regimes(
         }
     };
     if converting.is_empty() {
-        let mut weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &plan.domain));
+        let mut weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &plan.domain, true));
         if let Some(weighed) = weighed.as_mut() {
             order_law_clusters(e, &plan.domain, weighed, orders)?;
         }
@@ -186,7 +187,7 @@ pub(super) fn joint_regimes(
         if census.is_none() {
             census = e.certified.as_mut().and_then(|state| state.census.take());
         }
-        let weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &domain));
+        let weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &domain, false));
         let result = match weighed {
             Some(weighed) => Ok(weighed),
             None => JointBounds::compile(e.pool, e.request, &domain, e.metric, e.event_input, e.simulation),
@@ -220,7 +221,6 @@ pub(super) fn joint_regimes(
         }
         e.correlated = part.correlation_worthwhile(e.pool, &domain, orders)?;
         e.resource = part.resource_worthwhile(e.pool, &domain, orders, e.correlated)?;
-        order_law_clusters(e, &domain, &mut part, orders)?;
         let mut rule_order: Vec<_> = (0..rules.len()).collect();
         rule_order.sort_by_key(|&j| std::cmp::Reverse(priority.get(&(i, j)).copied()));
         for j in rule_order {

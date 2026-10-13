@@ -644,11 +644,13 @@ impl Engine<'_, '_> {
     }
 
     /// The joint bounds of `domain` weighing the lottery laws of its teams, or None when the census reads none or
-    /// they do not compile (the reason then in the telemetry).
+    /// they do not compile (the reason then in the telemetry). With `clusters`, they also hold the bounds of clusters
+    /// of those laws (see [`Engine::law_clusters`]).
     pub(super) fn weighed_bounds(
         &mut self,
         census: &mut LotteryCensus,
         domain: &CandidateDomain,
+        clusters: bool,
     ) -> Option<JointBounds> {
         let pool = self.pool;
         let mut kinds = self.take_luck_kinds();
@@ -675,7 +677,7 @@ impl Engine<'_, '_> {
         });
         stats.compile_ms += started.elapsed().as_secs_f64() * 1000.0;
         stats.law_clusters = 0;
-        if let Ok(bounds) = &mut bounds {
+        if clusters && let Ok(bounds) = &mut bounds {
             let started = Instant::now();
             if let Some(clusters) = self.law_clusters(census, domain, &multisets) {
                 stats.law_clusters = clusters.bounds.len();
