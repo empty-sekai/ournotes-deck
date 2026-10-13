@@ -2,8 +2,8 @@
 use super::*;
 use crate::search::{
     certified_search::{
-        CertifiedEvaluation, PayoffMap, aggregate_orders, canonicalize_performers, refine_order_with_exact_law,
-        refinement_uncertainty,
+        CertifiedEvaluation, OrderScoreInterval, PayoffMap, aggregate_orders, canonicalize_performers,
+        refine_order_with_exact_law, refinement_uncertainty,
     },
     interval_topk::{CandidateInterval, CanonicalTie, IntervalTopK, RankingProof, RemainingDomain},
 };
@@ -81,6 +81,8 @@ pub(super) struct CertifiedEntry {
     members: [i64; 5],
     snaps: [Option<i64>; 5],
     power: i32,
+    /// The identity of the candidate's terminal payoff mapping.
+    payoff: Vec<u8>,
     refinement: Option<Box<RetainedRefinement>>,
 }
 
@@ -174,6 +176,19 @@ fn pending_refinement(proof: RankingProof, stopped: impl FnOnce() -> bool) -> Op
     if proof.complete || stopped() { None } else { Some(proof) }
 }
 
+/// Whether two contexts play the same live but for their band power.
+fn same_live_but_power(a: &expectation::FiniteSeedContext, b: &expectation::FiniteSeedContext) -> bool {
+    ournotes_sim::live::full::LiveParams { total_power: b.params.total_power, ..a.params } == b.params
+        && a.notes == b.notes
+        && a.events == b.events
+        && a.play == b.play
+        && a.gekisou == b.gekisou
+        && a.rank_confirmations == b.rank_confirmations
+        && a.delta_times.iter().map(|delta| delta.to_bits()).eq(b.delta_times.iter().map(|delta| delta.to_bits()))
+        && a.lottery_free.is_none()
+        && b.lottery_free.is_none()
+}
+
 impl Engine<'_, '_> {
     pub(super) fn admit_certified_refinement(&mut self, notes: usize, frames: usize) {
         self.certified
@@ -244,7 +259,7 @@ impl Engine<'_, '_> {
         }
         let id = self.tel.leaves.visited;
         let retained_program = (state.retain_refinement == Some(true)).then(|| program_identity.clone());
-        let equality = state.frontier.certify_equal_program(program_identity, power, payoff_identity);
+        let equality = state.frontier.certify_equal_program(program_identity, power, payoff_identity.clone());
         state.frontier.insert(CandidateInterval {
             id,
             tie: CanonicalTie { power, key },
@@ -264,7 +279,9 @@ impl Engine<'_, '_> {
             map,
             retained_program.unwrap_or_default(),
         );
-        state.entries.insert(id, CertifiedEntry { physical, members, snaps, power, refinement });
+        state
+            .entries
+            .insert(id, CertifiedEntry { physical, members, snaps, power, payoff: payoff_identity, refinement });
         state.entries.retain(|id, _| state.frontier.get(*id).is_some());
         state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
         self.tel.leaves.peak_retained = self.tel.leaves.peak_retained.max(state.entries.len());
@@ -274,9 +291,16 @@ impl Engine<'_, '_> {
         Ok(())
     }
 
-    /// Once the physical domain is exhausted, spend bounded work only on candidates whose ordering still
-    /// overlaps. Every installed order is a complete nominal law; declined/partial trees keep their old bounds.
+    /// Once the physical domain is exhausted, spend bounded work only on candidates whose ordering still overlaps:
+    /// first the complete nominal laws of single orders ([`Self::refine_certified_orders`]), then the equality and
+    /// rank bonus certificates of whole candidates ([`Self::refine_certified_candidates`]).
     pub(super) fn refine_certified_frontier(&mut self) -> Result<(), Error> {
+        self.refine_certified_orders()?;
+        self.refine_certified_candidates()
+    }
+
+    /// Every installed order is a complete nominal law; declined/partial trees keep their old bounds.
+    fn refine_certified_orders(&mut self) -> Result<(), Error> {
         use ournotes_sim::live::full::{LuckExactBudget, LuckExactDecline, LuckExactSession};
         let state = self.certified.as_mut().expect("certified request");
         state.domain_exhausted = true;
@@ -529,6 +553,209 @@ impl Engine<'_, '_> {
         Ok(true)
     }
 
+    /// The context of `physical` as the certified evaluation plays it, its performers in the canonical order of its
+    /// program identity, which comes with it.
+    fn certified_context(&self, physical: &PhysicalDeck) -> Result<(expectation::FiniteSeedContext, Vec<u8>), Error> {
+        let mut input = expectation::context(self.pool, physical, &self.request.objective)?;
+        if let Some(value) = self.simulation.music_length_ms {
+            input.params.music_length_ms = value;
+        }
+        if let Some(value) = self.simulation.score_music_length_ms {
+            input.params.score_music_length_ms = Some(value);
+        }
+        let program = canonicalize_performers(&mut input);
+        Ok((input, program))
+    }
+
+    /// Whole-candidate certificates for the candidates whose ordering still overlaps: equal payoffs of the same
+    /// performers at different deck powers ([`Self::join_power_twins`]), then the exact rank bonus expectations of
+    /// each candidate ([`Self::refine_rank_residues`]), first for the candidate and competitor of the proof's
+    /// refinement request.
+    fn refine_certified_candidates(&mut self) -> Result<(), Error> {
+        let state = self.certified.as_ref().expect("certified request");
+        let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
+        if pending_refinement(proof, || self.expired()).is_none() {
+            return Ok(());
+        }
+        self.join_power_twins()?;
+        let mut tried = std::collections::BTreeSet::new();
+        loop {
+            let state = self.certified.as_ref().expect("certified request");
+            let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
+            let Some(proof) = pending_refinement(proof, || self.expired()) else {
+                return Ok(());
+            };
+            let next = proof
+                .refinement
+                .iter()
+                .flat_map(|request| [Some(request.candidate), request.competitor])
+                .flatten()
+                .chain(proof.ambiguous.iter().copied())
+                .find(|id| !tried.contains(id));
+            let Some(id) = next else { return Ok(()) };
+            tried.insert(id);
+            self.refine_rank_residues(id)?;
+        }
+    }
+
+    /// Joins the equality classes of overlapping candidates that have the same performers and payoff mapping at
+    /// different deck powers when their note scores agree at both powers on every outcome of every performance
+    /// order ([`ournotes_sim::live::full::luck_exact_orders_power_twin`]). Their lives differ in the band power alone,
+    /// so their scores, and with them their payoffs, agree on every outcome.
+    fn join_power_twins(&mut self) -> Result<(), Error> {
+        let state = self.certified.as_ref().expect("certified request");
+        let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
+        let overlapping: Vec<_> = proof
+            .ambiguous
+            .iter()
+            .map(|id| {
+                let entry = &state.entries[id];
+                (*id, entry.physical, entry.power, entry.payoff.clone())
+            })
+            .collect();
+        let mut candidates = Vec::with_capacity(overlapping.len());
+        for (id, physical, power, payoff) in overlapping {
+            let (input, program) = self.certified_context(&physical)?;
+            candidates.push((id, power, payoff, program, input));
+        }
+        let skills = self.certified_luck_skills()?;
+        let orders = uniform::all_orders();
+        for (index, a) in candidates.iter().enumerate() {
+            for b in &candidates[index + 1..] {
+                if a.1 == b.1 || a.2 != b.2 || a.3 != b.3 || !same_live_but_power(&a.4, &b.4) {
+                    continue;
+                }
+                let state = self.certified.as_ref().expect("certified request");
+                if state.frontier.get(a.0).is_none() || state.frontier.get(b.0).is_none() {
+                    continue;
+                }
+                if self.expired() {
+                    return Ok(());
+                }
+                let Some(setup) = a.4.gekisou.as_ref() else { return Ok(()) };
+                self.tel.lottery_refinement.power_pairs += 1;
+                let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
+                let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+                let equal = ournotes_sim::live::full::luck_exact_orders_power_twin(
+                    self.pool.master,
+                    &skills,
+                    &a.4.performers,
+                    &a.4.notes,
+                    &a.4.events,
+                    a.4.params,
+                    setup,
+                    &a.4.play,
+                    &a.4.delta_times,
+                    a.4.rank_confirmations.as_deref(),
+                    &orders,
+                    None,
+                    Some(&mut curves),
+                    b.1,
+                );
+                self.rec.clock.lap(resume);
+                self.tel.caches.luck_curves.record(curves.stats());
+                let state = self.certified.as_mut().expect("certified request");
+                state.luck_curves = curves;
+                match equal {
+                    Ok(true) => {
+                        state.frontier.certify_equal_candidates(a.0, b.0)?;
+                        state.entries.retain(|id, _| state.frontier.get(*id).is_some());
+                        state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
+                        self.tel.lottery_refinement.power_twins += 1;
+                        self.report_progress();
+                    }
+                    Ok(false) | Err(Error::Unsupported(_)) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Refines candidate `id` with the rank bonus expectations that the residue laws of its range scores give in
+    /// every performance order ([`ournotes_sim::live::full::luck_exact_score_refined`]). A candidate with an order
+    /// whose notes may score several integers in one lottery class keeps its enclosure.
+    fn refine_rank_residues(&mut self, id: u64) -> Result<(), Error> {
+        let state = self.certified.as_ref().expect("certified request");
+        let Some(entry) = state.entries.get(&id) else { return Ok(()) };
+        let (physical, power) = (entry.physical, entry.power);
+        let (input, _) = self.certified_context(&physical)?;
+        let Some(setup) = input.gekisou.as_ref() else { return Ok(()) };
+        let skills = self.certified_luck_skills()?;
+        self.tel.lottery_refinement.residue_candidates += 1;
+        let mut orders = Vec::with_capacity(ORDERS);
+        for order in uniform::all_orders() {
+            if self.expired() {
+                return Ok(());
+            }
+            let performers = order.map(|slot| input.performers[slot].clone());
+            let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+            let score = ournotes_sim::live::full::luck_exact_score_refined(
+                self.pool.master,
+                &skills,
+                &performers,
+                &input.notes,
+                &input.events,
+                input.params,
+                setup,
+                &input.play,
+                &input.delta_times,
+                input.rank_confirmations.as_deref(),
+            );
+            self.rec.clock.lap(resume);
+            let score = match score {
+                Ok(score) if score.wide_notes == 0 => score,
+                Ok(_) | Err(Error::Unsupported(_)) => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            let support = (score.final_support.lower, score.final_support.upper);
+            let mean = F64Interval::new(score.final_mean.lower, score.final_mean.upper)?
+                .intersect(F64Interval::new(support.0 as f64, support.1 as f64)?)
+                .ok_or_else(|| Error::Domain("LUCK mean and support disagree".into()))?;
+            orders.push(OrderScoreInterval {
+                order,
+                mean,
+                support,
+                exact_mean: (support.0 == support.1)
+                    .then(|| expectation::ExactExpectation { numerator: support.0.into(), denominator: 1 }),
+                final_life: Some((score.final_life.lower, score.final_life.upper)),
+                tails: BTreeMap::new(),
+                refined_payoff: None,
+            });
+        }
+        let support = (
+            orders.iter().map(|order| order.support.0).min().expect("complete order set"),
+            orders.iter().map(|order| order.support.1).max().expect("complete order set"),
+        );
+        let map = crate::search::certified_payoff::payoff_map(
+            self.pool,
+            self.request,
+            self.metric,
+            self.event_input,
+            &physical,
+            power,
+            support,
+        )?;
+        let evaluation = aggregate_orders(orders, &map)?;
+        let state = self.certified.as_mut().expect("certified request");
+        let Some(current) = state.frontier.get(id) else { return Ok(()) };
+        // Every earlier restriction of the candidate holds as well; install the intersection.
+        let score = current
+            .score
+            .intersect(evaluation.score)
+            .ok_or_else(|| Error::Domain("conflicting refined score certificates".into()))?;
+        let payoff = current
+            .payoff
+            .intersect(evaluation.payoff)
+            .ok_or_else(|| Error::Domain("conflicting refined payoff certificates".into()))?;
+        state.frontier.refine(id, current.revision, score, payoff, evaluation.exact_score, evaluation.exact_payoff)?;
+        state.entries.retain(|id, _| state.frontier.get(*id).is_some());
+        state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
+        self.tel.lottery_refinement.residue_installed += 1;
+        self.report_progress();
+        Ok(())
+    }
+
     pub(super) fn certified_results(&self, exhausted: bool) -> Result<(Vec<RecommendedDeck>, RankingProof), Error> {
         let state = self.certified.as_ref().expect("certified request");
         let upper = if self.rec.bounded {
@@ -633,6 +860,7 @@ mod refinement_tests {
                 members: [1, 2, 3, 4, 5],
                 snaps: [None; 5],
                 power: 1,
+                payoff: Vec::new(),
                 refinement: RetainedRefinement::new(
                     retain_order_state(notes, frames),
                     evaluation,

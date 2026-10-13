@@ -247,6 +247,59 @@ impl IntervalTopK {
         EqualityCertificate { scope: self.scope.clone(), identity, power }
     }
 
+    /// The caller proves that the complete random programs of candidates `a` and `b` give the same score and the same
+    /// payoff on every outcome of their common law, whatever their deck powers. Their equality classes become one,
+    /// which the canonical tie orders, and so does every candidate that later interns either class's identity.
+    pub fn certify_equal_candidates(&mut self, a: CandidateId, b: CandidateId) -> Result<(), Error> {
+        let identity = |id| -> Result<u64, Error> {
+            let candidate = self.candidates.get(&id).ok_or_else(|| invalid("candidate no longer in frontier"))?;
+            candidate.equality.as_ref().map(|c| c.identity).ok_or_else(|| invalid("equal candidates need certificates"))
+        };
+        let (kept, merged) = (identity(a)?, identity(b)?);
+        if kept == merged {
+            return Ok(());
+        }
+        let joined =
+            |c: &&CandidateInterval| c.equality.as_ref().is_some_and(|e| e.identity == kept || e.identity == merged);
+        let mut bounds = None::<(F64Interval, F64Interval)>;
+        let mut exact = [None::<ExactExpectation>; 2];
+        for c in self.candidates.values().filter(joined) {
+            bounds = Some(match bounds {
+                None => (c.score, c.payoff),
+                Some((score, payoff)) => (
+                    score.intersect(c.score).ok_or_else(|| invalid("equal candidates have disjoint score bounds"))?,
+                    payoff
+                        .intersect(c.payoff)
+                        .ok_or_else(|| invalid("equal candidates have disjoint payoff bounds"))?,
+                ),
+            });
+            for (known, value) in exact.iter_mut().zip([c.exact_score, c.exact_payoff]) {
+                match (*known, value) {
+                    (Some(first), Some(value)) if compare_exact(first, value)? != Ordering::Equal => {
+                        return Err(invalid("equal candidates disagree on exact value"));
+                    }
+                    (None, value) => *known = value,
+                    _ => {}
+                }
+            }
+        }
+        for c in self.candidates.values_mut() {
+            if let Some(certificate) = c.equality.as_mut()
+                && certificate.identity == merged
+            {
+                certificate.identity = kept;
+            }
+        }
+        for identity in self.identities.values_mut() {
+            if *identity == merged {
+                *identity = kept;
+            }
+        }
+        self.tighten_equal_classes();
+        self.prune();
+        Ok(())
+    }
+
     fn validate(&self, candidate: &CandidateInterval) -> Result<(), Error> {
         if !finite(candidate.score) || !finite(candidate.payoff) {
             return Err(invalid("finite enclosures required"));
@@ -528,6 +581,38 @@ mod tests {
         let mut c = candidate(5, 10.0, 11.0);
         c.equality = Some(certificate);
         assert!(other.insert(c).is_err());
+    }
+    #[test]
+    fn candidates_proved_equal_join_one_class_that_the_canonical_tie_orders() {
+        let mut f = IntervalTopK::new(1).unwrap();
+        for (id, power) in [(1, 100), (2, 120)] {
+            let mut c = candidate(id, 10.0, 11.0);
+            c.tie.power = power;
+            c.equality = Some(f.certify_equal_program(vec![7], power, vec![9]));
+            f.insert(c).unwrap();
+        }
+        assert!(!f.proof(RemainingDomain::Exhausted).unwrap().complete);
+        f.certify_equal_candidates(1, 2).unwrap();
+        // Of equal payoffs the larger power ranks first, so the other candidate leaves the frontier.
+        assert!(f.get(1).is_none());
+        let proof = f.proof(RemainingDomain::Exhausted).unwrap();
+        assert!(proof.complete);
+        assert_eq!(proof.ordered_prefix, [2]);
+        // A later candidate of the smaller power's program joins the class and ranks behind it too.
+        let mut c = candidate(3, 10.5, 12.0);
+        c.equality = Some(f.certify_equal_program(vec![7], 100, vec![9]));
+        f.insert(c).unwrap();
+        assert!(f.get(3).is_none());
+        assert_eq!(f.get(2).unwrap().payoff, F64Interval::new(10.5, 11.0).unwrap());
+        // Bounds that exclude each other contradict any proof of equality.
+        let mut g = IntervalTopK::new(2).unwrap();
+        for (id, power, lo) in [(1, 100, 10.0), (2, 120, 20.0)] {
+            let mut c = candidate(id, lo, lo + 1.0);
+            c.tie.power = power;
+            c.equality = Some(g.certify_equal_program(vec![id as u8], power, vec![9]));
+            g.insert(c).unwrap();
+        }
+        assert!(g.certify_equal_candidates(1, 2).is_err());
     }
     #[test]
     fn boundary_refinement_and_stale_responses_preserve_topk() {

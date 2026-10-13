@@ -85,6 +85,14 @@ pub struct LotteryRefinement {
     pub replay_runs: u64,
     pub terminal_paths: u64,
     pub frames: u64,
+    /// Pairs of overlapping candidates with the same performers at different deck powers whose note scores were
+    /// compared, and those proved to score the same on every outcome.
+    pub power_pairs: u64,
+    pub power_twins: u64,
+    /// Candidates whose rank bonuses the residue laws of their range scores were asked to refine, and those whose
+    /// every order took them.
+    pub residue_candidates: u64,
+    pub residue_installed: u64,
 }
 
 /// Orders the exact lottery provider declined, by its reason.
