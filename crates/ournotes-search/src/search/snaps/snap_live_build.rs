@@ -574,6 +574,7 @@ impl<'a> SnapLive<'a> {
                     &order,
                     &frames,
                     &reached,
+                    &env.entry_reach,
                     overrides,
                     current,
                     &member_cb,

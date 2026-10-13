@@ -5,17 +5,19 @@ use super::*;
 /// What a Gekisou combo factor reads, entries in chart-time order. The factor of a note is `min(table(c), 1) + 1`,
 /// `c` the combo count of the first combo range containing its chart time as the range's recount left it at the last
 /// of the range's judged notes with a chart time up to the end of the score frame before the note's (the range's
-/// history is searched by chart time, which finds that note when the range's notes are judged in chart-time order).
-/// Each judgement adds at most `floor(1 + the running combo bonuses)` to the count, so `c` is at most the sum of that
-/// over the range's entries up to that time; the table lookup returns the value of some threshold at most `c`.
+/// history is searched by chart time, which finds that note when the range's notes that enter its history are judged
+/// in chart-time order). Each judgement adds at most `floor(1 + the running combo bonuses)` to the count, so `c` is at
+/// most the sum of that over the range's entries that can add to it up to that time; the table lookup returns the
+/// value of some threshold at most `c`.
 #[derive(Clone, Debug)]
 pub(crate) struct GkCombo {
-    /// Per entry: its combo range (index into the ranges) and the number of that range's entries (chart order) with
-    /// a chart time up to the end of the previous score frame.
+    /// Per entry: its combo range (index into the ranges) and the number of that range's `entries` with a chart time
+    /// up to the end of the previous score frame.
     pub(crate) range: Vec<Option<u32>>,
     pub(crate) upto: Vec<u32>,
-    /// Per range: its entries in chart order (empty for a range that is not a combo range), and whether its entries
-    /// are judged in chart-time order (else its notes take `gmax`).
+    /// Per range: its entries in chart order that can add to its count (empty for a range that is not a combo
+    /// range), and whether its entries that can enter its history are judged in chart-time order (else its notes take
+    /// `gmax`).
     pub(crate) entries: Vec<Vec<u32>>,
     pub(crate) ordered: Vec<bool>,
     /// Table thresholds in ascending order, each with the largest factor at a count from 0 up to it.

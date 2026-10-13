@@ -40,6 +40,7 @@ impl GkFactors {
         order: &[usize],
         frames: &[i32],
         reached: &[Vec<i32>],
+        entry_reach: &[u8],
         overrides: (bool, bool),
         current: &[Option<usize>],
         member_cb: &[Vec<Vec<ComboBonusRow>>],
@@ -93,6 +94,10 @@ impl GkFactors {
                 })
                 .map(|r| r.map(|r| r as u32))
                 .collect();
+            // A range's history holds the notes judged 1 to 6 (not WAIT 0 or PASS 7), and only judgements 3 to 6 add
+            // to its count: the lists hold the entries that can reach 3 to 6, and the order is checked on those that
+            // can reach 1 to 6 (an empty reach mask: any judgement).
+            let can = |i: usize, judgements: u8| entry_reach[i] == 0 || entry_reach[i] & judgements != 0;
             let mut lists: Vec<Vec<u32>> = vec![Vec::new(); nr];
             let mut ordered = vec![false; nr];
             for (r, rf) in ranges.iter().enumerate() {
@@ -100,8 +105,11 @@ impl GkFactors {
                     continue;
                 }
                 let inr = |t: i32| rf.start <= t && t <= rf.end;
-                lists[r] = (0..ne).filter(|&q| inr(times[q])).map(|q| q as u32).collect();
-                let proc: Vec<i32> = entries.iter().map(|e| e.1.time_ms).filter(|&t| inr(t)).collect();
+                lists[r] = (0..ne).filter(|&q| inr(times[q]) && can(order[q], 0x78)).map(|q| q as u32).collect();
+                let proc: Vec<i32> = (0..entries.len())
+                    .filter(|&i| inr(entries[i].1.time_ms) && can(i, 0x7e))
+                    .map(|i| entries[i].1.time_ms)
+                    .collect();
                 ordered[r] = proc.windows(2).all(|w| w[0] <= w[1]);
             }
             let upto: Vec<u32> = (0..ne)
