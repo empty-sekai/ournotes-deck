@@ -56,8 +56,8 @@ pub(crate) use orders::TeamCaps;
 pub(crate) use point_bound::term_cap;
 use point_bound::{PointBound, ScoreTarget};
 use relax::order_gain_bound;
-pub(crate) use tail::TailState;
 use tail::TailTables;
+pub(crate) use tail::{PAIR_BLOCK, TailState};
 
 /// Leader first, then the other physical slots. Performance order is never a decision.
 pub(crate) const SLOTS: [usize; 5] = [2, 0, 1, 3, 4];

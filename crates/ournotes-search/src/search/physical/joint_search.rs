@@ -501,7 +501,12 @@ pub(super) fn joint_rec(
     if root.as_ref().and_then(|r| r.best()).is_some_and(|cap| warm::inferior(cap, e)) {
         e.tel.joint.root_order.traversals_pruned += 1;
     }
+    // The children before this offset lie in a block whose bound failed.
+    let mut skip_to = 0;
     for (offset, &(m, choice)) in children.iter().enumerate().skip(start) {
+        if offset < skip_to {
+            continue;
+        }
         if let Some(r) = &root
             && seed_bonus.is_none()
         {
@@ -524,6 +529,22 @@ pub(super) fn joint_rec(
                 e.tel.joint.tail.prune(depth);
                 e.tel.joint.tail_choices_skipped[depth] += (width - offset) as u64;
                 break;
+            }
+        }
+        // The children whose pairs share a block of the choice order with this one: the block's maxima bound them
+        // all (also the ones before `start` of a first, partial block).
+        if (offset == start || offset % crate::search::joint::PAIR_BLOCK == 0)
+            && let Some((threshold, cutoff_power)) = e.safe_cutoff()
+            && let Some(state) = tail_high.as_ref().or(tail.as_ref())
+        {
+            let block = offset / crate::search::joint::PAIR_BLOCK;
+            let (upper, power) = high.block_upper(state, block)?;
+            let module = e.tel.joint.modules.entry("pairBlocks").or_default();
+            module.checks += 1;
+            if upper < threshold || (upper == threshold && power < i64::from(cutoff_power)) {
+                module.pruned += 1;
+                skip_to = (block + 1) * crate::search::joint::PAIR_BLOCK;
+                continue;
             }
         }
         // Below the leader every child and its completions take candidates from `offset` on: their order steps bound

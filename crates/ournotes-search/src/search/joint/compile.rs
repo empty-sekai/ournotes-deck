@@ -344,29 +344,15 @@ impl JointBounds {
         // Bounded storage; an unavailable optional table never truncates the search domain.
         self.tails = ((self.lead.len() + 6).saturating_mul(self.choices.len() + 1) <= 1_000_000).then(|| {
             let n = self.choices.len();
-            let mut power = vec![vec![0; n + 1]; self.lead.len()];
-            let mut gain: [Vec<f64>; 5] = std::array::from_fn(|_| vec![0.0; n + 1]);
-            let mut bonus = vec![0; n + 1];
-            let mut spread = vec![0.0f64; n + 1];
-            let mut order_gain: [Vec<f64>; 5] = std::array::from_fn(|_| vec![0.0; n + 1]);
+            let mut suffix = tail::PairMaxima::zeros(self.lead.len(), n + 1);
+            let mut blocks = tail::PairMaxima::zeros(self.lead.len(), n.div_ceil(tail::PAIR_BLOCK));
             for i in (0..n).rev() {
                 let (m, choice) = self.choices[i];
-                spread[i] = spread[i + 1].max(self.spread[m][choice]);
-                for (pos, column) in order_gain.iter_mut().enumerate() {
-                    column[i] = column[i + 1].max(self.order_gains[m][choice][pos]);
-                }
-                for (profile, row) in power.iter_mut().enumerate() {
-                    let p = self.a[m] + self.lead[profile][m] + if choice == 0 { 0 } else { self.w[m][choice - 1] };
-                    row[i] = row[i + 1].max(p);
-                }
-                for pos in 0..5 {
-                    gain[pos][i] = gain[pos][i + 1].max(self.gains[m][choice][pos]);
-                }
-                if let Some(pt) = &self.points {
-                    bonus[i] = bonus[i + 1].max(pt.member[m] + if choice == 0 { 0 } else { pt.snap[choice - 1] });
-                }
+                suffix.merge(i, i + 1);
+                suffix.add(self, i, m, choice);
+                blocks.add(self, i / tail::PAIR_BLOCK, m, choice);
             }
-            TailTables { power, gain, bonus, spread, order_gain }
+            TailTables { suffix, blocks }
         });
         self.relax_tables = relax_tables::RelaxTables::compile(self, pool, domain);
         if self.gekisou && self.points.is_none() {

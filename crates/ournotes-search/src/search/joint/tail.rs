@@ -2,13 +2,68 @@
 
 use super::*;
 
+/// The choices of the choice order a block of [`TailTables::blocks`] holds.
+pub(crate) const PAIR_BLOCK: usize = 16;
+
+/// The maxima over sets of next pairs that bound them all at once: the suffixes of the choice order from each offset
+/// on, and its blocks of [`PAIR_BLOCK`] choices.
 pub(super) struct TailTables {
+    pub(super) suffix: PairMaxima,
+    pub(super) blocks: PairMaxima,
+}
+
+/// Per set of pairs (by index), the largest of each quantity a next pair adds to its parent's residual.
+pub(super) struct PairMaxima {
+    /// Per leader profile, the added power.
     pub(super) power: Vec<Vec<i64>>,
+    /// Per position, the position-mean gain.
     pub(super) gain: [Vec<f64>; 5],
     pub(super) bonus: Vec<i64>,
     pub(super) spread: Vec<f64>,
-    /// Per position, the suffix maxima of the per-position gains (`order_gains`).
+    /// Per position, the per-position gains (`order_gains`).
     pub(super) order_gain: [Vec<f64>; 5],
+}
+
+impl PairMaxima {
+    /// The maxima of `sets` empty sets of pairs, at least 0 each.
+    pub(super) fn zeros(profiles: usize, sets: usize) -> PairMaxima {
+        PairMaxima {
+            power: vec![vec![0; sets]; profiles],
+            gain: std::array::from_fn(|_| vec![0.0; sets]),
+            bonus: vec![0; sets],
+            spread: vec![0.0; sets],
+            order_gain: std::array::from_fn(|_| vec![0.0; sets]),
+        }
+    }
+
+    /// Takes pair `(m, choice)` of `b` into set `set`.
+    pub(super) fn add(&mut self, b: &JointBounds, set: usize, m: usize, choice: usize) {
+        self.spread[set] = self.spread[set].max(b.spread[m][choice]);
+        for pos in 0..5 {
+            self.order_gain[pos][set] = self.order_gain[pos][set].max(b.order_gains[m][choice][pos]);
+            self.gain[pos][set] = self.gain[pos][set].max(b.gains[m][choice][pos]);
+        }
+        for (profile, row) in self.power.iter_mut().enumerate() {
+            let p = b.a[m] + b.lead[profile][m] + if choice == 0 { 0 } else { b.w[m][choice - 1] };
+            row[set] = row[set].max(p);
+        }
+        if let Some(pt) = &b.points {
+            self.bonus[set] = self.bonus[set].max(pt.member[m] + if choice == 0 { 0 } else { pt.snap[choice - 1] });
+        }
+    }
+
+    /// Takes set `from` into set `set`.
+    pub(super) fn merge(&mut self, set: usize, from: usize) {
+        self.spread[set] = self.spread[set].max(self.spread[from]);
+        self.bonus[set] = self.bonus[set].max(self.bonus[from]);
+        for pos in 0..5 {
+            self.order_gain[pos][set] = self.order_gain[pos][set].max(self.order_gain[pos][from]);
+            self.gain[pos][set] = self.gain[pos][set].max(self.gain[pos][from]);
+        }
+        for row in &mut self.power {
+            row[set] = row[set].max(row[from]);
+        }
+    }
 }
 
 /// One prefix's unconstrained remaining slots, excluding the next pair being enumerated.
@@ -76,14 +131,25 @@ impl JointBounds {
     /// character/resource relaxation. Overlap between those sets is deliberately allowed.
     pub(crate) fn tail_upper(&self, state: &TailState, offset: usize) -> Result<(i128, i64), Error> {
         let t = self.tails.as_ref().expect("compiled tail table");
-        let placed = (0..5).map(|pos| add_up(t.order_gain[pos][offset], state.beside[pos])).fold(f64::MIN, f64::max);
+        self.maxima_upper(state, &t.suffix, offset)
+    }
+
+    /// Bounds every legal child whose next pair lies in block `block` of the choice order (see [`PAIR_BLOCK`]), as
+    /// [`JointBounds::tail_upper`] does with the block's maxima.
+    pub(crate) fn block_upper(&self, state: &TailState, block: usize) -> Result<(i128, i64), Error> {
+        let t = self.tails.as_ref().expect("compiled tail table");
+        self.maxima_upper(state, &t.blocks, block)
+    }
+
+    fn maxima_upper(&self, state: &TailState, t: &PairMaxima, set: usize) -> Result<(i128, i64), Error> {
+        let placed = (0..5).map(|pos| add_up(t.order_gain[pos][set], state.beside[pos])).fold(f64::MIN, f64::max);
         let mut total = 0i128;
         let mut power = 0;
         for &(p, g, b, pos, weight) in &state.rows {
-            power = p + t.power[state.profile][offset];
-            let gain = add_up(g, t.gain[pos][offset]);
-            let max_gain = add_up(gain, add_up(state.spread, t.spread[offset])).min(placed);
-            let payoff = self.payoff_cap_from(state.a0, power, gain, b + t.bonus[offset], max_gain);
+            power = p + t.power[state.profile][set];
+            let gain = add_up(g, t.gain[pos][set]);
+            let max_gain = add_up(gain, add_up(state.spread, t.spread[set])).min(placed);
+            let payoff = self.payoff_cap_from(state.a0, power, gain, b + t.bonus[set], max_gain);
             total = total
                 .checked_add(
                     payoff
