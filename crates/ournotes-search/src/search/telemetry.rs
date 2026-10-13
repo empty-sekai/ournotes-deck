@@ -672,6 +672,9 @@ pub struct Joint {
     pub pair: Checks,
     /// The correlated bounds of children, checked in their parent's choice loop.
     pub character_pairs: Checks,
+    /// The same bounds of the children from an offset on (a prune ends the loop) and of a block of children.
+    pub character_tail: Checks,
+    pub character_blocks: Checks,
     pub root_order: RootOrder,
     pub carriers: Carriers,
     /// Node bounds (branch, bonus) and pair bounds equal to the K-th payoff, surviving on power.

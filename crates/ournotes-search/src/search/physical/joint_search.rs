@@ -614,6 +614,30 @@ pub(super) fn joint_rec(
             e.unexplored_choices(p, depth, offset, tail_check, root.as_ref(), domain, bounds, orders)?;
             return Ok(false);
         }
+        // The correlated bounds of the children from this offset on and of this block of children.
+        if let Some(pairs) = &character_pairs
+            && (offset == start || offset % crate::search::joint::PAIR_BLOCK == 0)
+            && let Some((threshold, _)) = e.safe_cutoff()
+        {
+            let joint = &mut e.tel.joint;
+            if let Some(cap) = node_bounds.character_set_upper(pairs, offset, false) {
+                joint.character_tail.check(depth);
+                if cap < threshold {
+                    joint.character_tail.prune(depth);
+                    joint.tail_choices_skipped[depth] += (width - offset) as u64;
+                    break;
+                }
+            }
+            let block = offset / crate::search::joint::PAIR_BLOCK;
+            if let Some(cap) = node_bounds.character_set_upper(pairs, block, true) {
+                joint.character_blocks.check(depth);
+                if cap < threshold {
+                    joint.character_blocks.prune(depth);
+                    skip_to = (block + 1) * crate::search::joint::PAIR_BLOCK;
+                    continue;
+                }
+            }
+        }
         if slot == 2 && domain.leader().is_some_and(|l| l != m) {
             continue;
         }
