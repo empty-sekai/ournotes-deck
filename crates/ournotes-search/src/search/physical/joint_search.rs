@@ -93,10 +93,7 @@ pub(super) fn joint_regimes(
         }
     };
     if converting.is_empty() {
-        let mut weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &plan.domain, true));
-        if let Some(weighed) = weighed.as_mut() {
-            order_law_clusters(e, &plan.domain, weighed, orders)?;
-        }
+        let weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &plan.domain, true));
         let bounds = weighed.as_ref().unwrap_or(bounds);
         if weighed.is_some() {
             e.correlated = bounds.correlation_worthwhile(e.pool, &plan.domain, orders)?;
@@ -247,29 +244,11 @@ pub(super) fn joint_regimes(
     Ok(())
 }
 
-/// Orders the law clusters of `bounds` by their root bounds, largest first: their traversals then meet the best teams
-/// early.
-fn order_law_clusters(
-    e: &Engine<'_, '_>,
-    domain: &crate::domain::CandidateDomain,
-    bounds: &mut crate::search::joint::JointBounds,
-    orders: &[([usize; 5], u128)],
-) -> Result<(), Error> {
-    let Some(clusters) = bounds.law_clusters_mut() else { return Ok(()) };
-    let roots = clusters
-        .bounds
-        .iter()
-        .map(|b| joint_root_upper(e.pool, domain, b, orders, 0))
-        .collect::<Result<Vec<_>, Error>>()?;
-    let mut order: Vec<usize> = (0..roots.len()).collect();
-    order.sort_by_key(|&c| std::cmp::Reverse(roots[c]));
-    clusters.reorder(&order);
-    Ok(())
-}
-
-/// One whole-domain traversal of `bounds`; with law clusters, one traversal per cluster under its bounds, each visiting
-/// the teams of the multisets of kinds that belong to it. Once one stops, the root bounds of the clusters after it
-/// cover their teams.
+/// One whole-domain traversal of `bounds`. With law clusters, every cluster's bounds bound the teams of the multisets
+/// of kinds that belong to it: the leader pairs of all clusters are visited in one order of their depth-1 bounds
+/// under their own cluster's bounds, largest first, each one's subtree under its cluster's bounds, so that the best
+/// teams of every cluster raise the cutoff as soon as the bound order meets them. Under the validation ablation
+/// `STATIC_ORDER` the clusters are traversed one after another.
 fn traverse(
     p: &mut PhysicalDeck,
     domain: &crate::domain::CandidateDomain,
@@ -277,15 +256,71 @@ fn traverse(
     orders: &[([usize; 5], u128)],
     e: &mut Engine<'_, '_>,
 ) -> Result<bool, Error> {
+    use crate::search::joint::SLOTS;
     let Some(clusters) = bounds.law_clusters() else { return ordered_root(p, domain, bounds, orders, e) };
+    if warm::static_order() {
+        for (c, cluster) in clusters.bounds.iter().enumerate() {
+            e.rec.frontier.clear();
+            *p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
+            if !ordered_root(p, domain, cluster, orders, e)? {
+                for later in &clusters.bounds[c + 1..] {
+                    let started = e.bound_start();
+                    let upper = joint_root_upper(e.pool, domain, later, orders, 0)?;
+                    e.fold_unexplored(upper, started);
+                }
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+    // Root-level bound work: each cluster's leader pairs with their depth-1 bounds, in one descending order (a stable
+    // sort keeps the clusters' order among equal bounds).
+    e.rec.clock.lap(0);
+    let mut rows = Vec::new();
     for (c, cluster) in clusters.bounds.iter().enumerate() {
-        e.rec.frontier.clear();
+        let root = warm::RootOrder::new(domain, cluster, orders, e)?;
+        let prefix = cluster.part_prefix(p, 0, &[0; 5]);
+        for (&(m, choice), &cap) in root.children.iter().zip(&root.caps) {
+            if cluster.part_allows(prefix.as_ref(), 0, m, choice)? {
+                rows.push((cap, c, (m, choice)));
+            }
+        }
+    }
+    rows.sort_by_key(|&(cap, _, _)| std::cmp::Reverse(cap));
+    if let Some(threshold) = crate::search::snaps::census() {
+        let open = rows.iter().filter(|r| r.0.0 >= threshold).count();
+        let census = e.tel.leaves.census.get_or_insert_with(|| telemetry::Census::new(threshold));
+        census.root.push([open, rows.len()]);
+    }
+    e.tel.nodes += 1;
+    e.tel.joint.nodes[0] += 1;
+    let levels = clusters.bounds.iter().map(|b| b.carrier_level_count()).max().unwrap_or(0);
+    e.tel.joint.carriers.levels = e.tel.joint.carriers.levels.max(levels);
+    if rows.first().is_some_and(|r| warm::inferior(r.0, e)) {
+        e.tel.joint.root_order.traversals_pruned += 1;
+    }
+    for (offset, &(cap, c, (m, choice))) in rows.iter().enumerate() {
+        // Each cap covers its child and every later one.
+        e.note_open(Some(cap.0));
+        if warm::inferior(cap, e) {
+            e.tel.joint.root_order.skipped += (rows.len() - offset) as u64;
+            break;
+        }
+        if e.expired() {
+            let started = e.bound_start();
+            e.fold_unexplored(Some(cap.0), started);
+            return Ok(false);
+        }
         *p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
-        if !ordered_root(p, domain, cluster, orders, e)? {
-            for later in &clusters.bounds[c + 1..] {
+        p.members[SLOTS[0]] = m;
+        p.snaps[SLOTS[0]] = if choice == 0 { None } else { Some(domain.snaps()[choice - 1]) };
+        e.rec.frontier.set(0, offset, rows.len());
+        let more = joint_rec(1, 0, p, domain, &clusters.bounds[c], orders, e, None)?;
+        e.rec.clock.lap(0);
+        if !more {
+            if let Some(&(next, _, _)) = rows.get(offset + 1) {
                 let started = e.bound_start();
-                let upper = joint_root_upper(e.pool, domain, later, orders, 0)?;
-                e.fold_unexplored(upper, started);
+                e.fold_unexplored(Some(next.0), started);
             }
             return Ok(false);
         }

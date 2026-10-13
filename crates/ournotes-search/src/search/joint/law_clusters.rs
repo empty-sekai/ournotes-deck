@@ -17,7 +17,6 @@ pub(crate) const NO_KIND: u32 = u32::MAX;
 pub(crate) struct LawClusters {
     /// The bounds of each cluster.
     pub(crate) bounds: Vec<JointBounds>,
-    tables: Rc<LawTables>,
 }
 
 /// What places a prefix of a team among the clusters.
@@ -68,27 +67,7 @@ impl LawClusters {
         for (cluster, b) in bounds.iter_mut().enumerate() {
             b.part = Some(LawPart { tables: tables.clone(), cluster });
         }
-        LawClusters { bounds, tables }
-    }
-
-    /// Renumbers the clusters: cluster `order[i]` becomes cluster `i`.
-    pub(crate) fn reorder(&mut self, order: &[usize]) {
-        let mut to = vec![0; order.len()];
-        for (i, &old) in order.iter().enumerate() {
-            to[old] = i;
-        }
-        let mut bounds: Vec<Option<JointBounds>> = self.bounds.drain(..).map(Some).collect();
-        self.bounds = order.iter().map(|&old| bounds[old].take().expect("a permutation")).collect();
-        self.bounds.iter_mut().for_each(|b| b.part = None);
-        let tables = Rc::get_mut(&mut self.tables).expect("law tables held by their clusters alone");
-        for set in tables.prefixes.values_mut() {
-            let old = *set;
-            *set = (0..to.len()).filter(|&c| old >> c & 1 != 0).fold(0, |new, c| new | 1 << to[c]);
-        }
-        tables.teams.values_mut().for_each(|c| *c = to[*c as usize] as u8);
-        for (cluster, b) in self.bounds.iter_mut().enumerate() {
-            b.part = Some(LawPart { tables: self.tables.clone(), cluster });
-        }
+        LawClusters { bounds }
     }
 }
 

@@ -215,10 +215,6 @@ impl JointBounds {
         self.law_clusters.as_deref()
     }
 
-    pub(crate) fn law_clusters_mut(&mut self) -> Option<&mut LawClusters> {
-        self.law_clusters.as_deref_mut()
-    }
-
     /// Splits the bounds by `clusters` of the laws they weigh, compiled for the same domain.
     pub(crate) fn set_law_clusters(&mut self, clusters: LawClusters) {
         self.law_clusters = Some(Box::new(clusters));
