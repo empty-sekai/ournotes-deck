@@ -17,16 +17,16 @@
 //! Snaps of a type. Bounds compiled under the laws read ([`JointBounds::compile_with_laws`]) cover every team of the
 //! domain; the leaf evaluation checks the laws of each team it evaluates under them ([`JointBounds::cover_laws`]).
 //!
-//! A domain that reads many laws also splits them into clusters of laws with similar curves, the laws of each multiset
-//! of kinds in one cluster. The bounds compiled under a cluster's laws cover the teams of its multisets, and a node is
-//! below the K-th when the bounds of every cluster holding a multiset that contains its kinds prove it below
-//! ([`LawClusters`]).
+//! A domain that reads several laws also splits them into clusters of laws with similar curves, the laws of each
+//! multiset of kinds in one cluster, and compiles bounds under each cluster's laws: they cover the teams of its
+//! multisets. The domain is then searched one cluster at a time, each traversal under the bounds of its cluster and
+//! over the teams of its multisets ([`LawClusters`]).
 
 use super::*;
 use crate::domain::CandidateDomain;
 use crate::search::certified_search::LuckLaw;
 use crate::search::expectation::LiveSetting;
-use crate::search::joint::{JointBounds, LawClusters, MAX_CLUSTERS, NO_KIND, pack};
+use crate::search::joint::{JointBounds, LawClusters, LawTables, MAX_CLUSTERS, NO_KIND, pack};
 use ournotes_sim::live::full::{
     LotteryBreak, LotteryKinds, LotteryLive, LotteryRole, LuckDpCache, LuckSkills, luck_order_laws,
 };
@@ -570,21 +570,27 @@ fn cluster_laws(multisets: &[Multiset], laws: &[LuckLaw], k: usize) -> Option<(V
     Some((kept, cluster.into_iter().map(|c| renumber[c]).collect()))
 }
 
-/// The clusters (bits) of the multisets read that contain each sorted multiset of one to four kinds, by its packed key
-/// (`cluster`: the cluster of each multiset). Empty when a kind index does not pack.
-fn prefix_sets(multisets: &[Multiset], cluster: &[usize]) -> HashMap<u64, u64> {
+/// The places of the multisets read among their clusters (`cluster`: the cluster of each multiset): the clusters
+/// (bits) of the multisets that contain each sorted multiset of one to four kinds, and the cluster each multiset
+/// belongs to (its first), by their packed keys. None when a kind index does not pack.
+fn multiset_places(multisets: &[Multiset], cluster: &[usize]) -> Option<(HashMap<u64, u64>, HashMap<u64, u8>)> {
     let mut sets = HashMap::<u64, u64>::new();
-    let mut sub = Vec::with_capacity(4);
+    let mut teams = HashMap::<u64, u8>::new();
+    let mut sub = Vec::with_capacity(5);
     for ((multiset, _), &c) in multisets.iter().zip(cluster) {
-        // every proper nonempty subset of the five positions
-        for pick in 1u32..31 {
+        // every nonempty subset of the five positions, the whole multiset last
+        for pick in 1u32..32 {
             sub.clear();
             sub.extend((0..5).filter(|&i| pick >> i & 1 != 0).map(|i| multiset[i]));
-            let Some(key) = pack(&sub) else { return HashMap::new() };
-            *sets.entry(key).or_default() |= 1 << c;
+            let key = pack(&sub)?;
+            if pick == 31 {
+                teams.entry(key).or_insert(c as u8);
+            } else {
+                *sets.entry(key).or_default() |= 1 << c;
+            }
         }
     }
-    sets
+    Some((sets, teams))
 }
 
 impl Engine<'_, '_> {
@@ -689,6 +695,7 @@ impl Engine<'_, '_> {
         if sets.len() < 2 {
             return None;
         }
+        let (prefixes, teams) = multiset_places(multisets, &cluster)?;
         let (pool, request, metric, event_input, simulation) =
             (self.pool, self.request, self.metric, self.event_input, self.simulation);
         let bounds = sets
@@ -698,12 +705,6 @@ impl Engine<'_, '_> {
             })
             .collect::<Result<Vec<_>, Error>>()
             .ok()?;
-        let mut holding = HashMap::<usize, u64>::new();
-        for (c, set) in sets.iter().enumerate() {
-            for law in set {
-                *holding.entry(Arc::as_ptr(law) as usize).or_default() |= 1 << c;
-            }
-        }
         let mut kinds = vec![Box::<[u32]>::default(); pool.members.len()];
         for &m in domain.members() {
             let choices = std::iter::once(None).chain(domain.snaps().iter().map(|&s| Some(s)));
@@ -711,7 +712,7 @@ impl Engine<'_, '_> {
                 .map(|snap| census.kind_index(m, snap).and_then(|k| u32::try_from(k).ok()).unwrap_or(NO_KIND))
                 .collect();
         }
-        Some(LawClusters::new(bounds, kinds, holding, prefix_sets(multisets, &cluster)))
+        Some(LawClusters::new(bounds, LawTables::new(kinds, prefixes, teams)))
     }
 }
 

@@ -169,37 +169,24 @@ impl Engine<'_, '_> {
         self.certified.as_ref()?.census.as_ref()?.team_laws(physical)
     }
 
-    /// Whether the caps of a team whose own orders have the lottery `laws` prove it below the K-th (`below` of its
-    /// payoff numerator) under the bounds of a cluster of the laws of the traversal's domain that holds all of them
-    /// (see `LawClusters`). False when the traversal's bounds are not split.
-    #[allow(clippy::too_many_arguments)]
-    fn below_in_law_clusters(
+    /// Whether the caps of a team under the laws read from its multiset of lottery kinds prove it below the K-th of
+    /// `cutoff` ([`Engine::below_under_laws`]), in a traversal whose bounds `traversal` weigh the laws of its domain.
+    /// Those are the laws of its own orders, which weigh no law of another team of the domain. False without such
+    /// laws.
+    fn below_under_kind_laws(
         &mut self,
-        traversal: &JointBounds,
         domain: &crate::domain::CandidateDomain,
+        traversal: &JointBounds,
         physical: &PhysicalDeck,
         power: i32,
-        laws: &[LuckLaw],
-        below: impl Fn(i128) -> bool + Copy,
+        cutoff: (i128, i32),
     ) -> bool {
-        let Some(clusters) = traversal.law_clusters() else { return false };
-        let holding = clusters.holding(laws);
-        let (_, resume) = self.rec.clock.lap(slot::FINE);
-        let pruned = clusters.bounds.iter().enumerate().filter(|&(c, _)| holding >> c & 1 != 0).any(|(_, bounds)| {
-            bounds
-                .team_below(
-                    domain,
-                    physical,
-                    i64::from(power),
-                    &self.positions,
-                    &mut self.bound_scratch,
-                    below,
-                    (&mut self.tel.leaves.order_sums, &mut self.tel.leaves.fine_orders),
-                )
-                .is_some()
-        });
-        self.rec.clock.lap(resume);
-        pruned
+        if traversal.laws().is_empty() {
+            return false;
+        }
+        let Some(laws) = self.kind_laws(physical) else { return false };
+        self.tel.leaves.kind_laws += 1;
+        self.below_under_laws(domain, physical, power, &laws, cutoff)
     }
 
     /// The laws read from a team's multiset of lottery kinds can prune the teams that hold the same multiset in a
@@ -255,19 +242,9 @@ impl Engine<'_, '_> {
                 if pruned.is_some() {
                     return Ok(Leaf::Pruned);
                 }
-                // In a traversal whose bounds weigh the laws of its domain, the laws read from the team's multiset of
-                // lottery kinds are those of its own orders: the bounds of a cluster holding them cover the team, and
-                // so do the bounds compiled under them alone, which weigh no law of another team of the domain.
-                if let Some(laws) = (!bounds.laws().is_empty()).then(|| self.kind_laws(physical)).flatten() {
-                    if self.below_in_law_clusters(bounds, domain, physical, power, &laws, below) {
-                        self.tel.leaves.cluster_pruned += 1;
-                        return Ok(Leaf::Pruned);
-                    }
-                    self.tel.leaves.kind_laws += 1;
-                    if self.below_under_laws(domain, physical, power, &laws, (threshold, kth_power)) {
-                        self.tel.leaves.law_pruned += 1;
-                        return Ok(Leaf::Pruned);
-                    }
+                if self.below_under_kind_laws(domain, bounds, physical, power, (threshold, kth_power)) {
+                    self.tel.leaves.law_pruned += 1;
+                    return Ok(Leaf::Pruned);
                 }
             }
             let mut input = expectation::context(self.pool, physical, &self.request.objective)?;

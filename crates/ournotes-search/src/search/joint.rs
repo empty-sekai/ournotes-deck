@@ -49,7 +49,8 @@ mod split_tables;
 mod tail;
 pub(crate) use bonus::BonusScratch;
 use compile::row_spread;
-pub(crate) use law_clusters::{LawClusters, MAX_CLUSTERS, NO_KIND, pack};
+use law_clusters::LawPart;
+pub(crate) use law_clusters::{LawClusters, LawTables, MAX_CLUSTERS, NO_KIND, pack};
 pub(crate) use order_steps::OrderSteps;
 pub(crate) use orders::TeamCaps;
 pub(crate) use point_bound::term_cap;
@@ -136,8 +137,11 @@ pub(crate) struct JointBounds {
     carrier_split: Option<carrier_split::CarrierSplit>,
     /// The lottery laws the bounds weigh (see [`JointBounds::compile_with_laws`]).
     laws: Vec<std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>>,
-    /// The domain's bounds under clusters of those laws, which the traversals check after these (see `LawClusters`).
+    /// The domain's bounds under clusters of those laws, whose traversals take the place of one under these (see
+    /// `LawClusters`).
     law_clusters: Option<Box<LawClusters>>,
+    /// With bounds of one such cluster: the cluster, whose traversal visits the teams of its multisets of kinds.
+    part: Option<LawPart>,
 }
 
 /// The cheap bounds of decks with at most `n < 5` Gekisou combo carriers (a slot whose member and Snap bring combo

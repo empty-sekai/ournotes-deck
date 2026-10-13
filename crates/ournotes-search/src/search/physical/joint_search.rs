@@ -104,7 +104,7 @@ pub(super) fn joint_regimes(
         }
         lend(e, &mut census);
         e.rec.begin(&mut e.tel, "search", None);
-        ordered_root(p, &plan.domain, bounds, orders, e)?;
+        traverse(p, &plan.domain, bounds, orders, e)?;
         e.rec.end(&mut e.tel);
         return Ok(());
     }
@@ -233,7 +233,7 @@ pub(super) fn joint_regimes(
             part.set_rules(e.pool, &domain, r.clone());
             *p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
             e.rec.begin(&mut e.tel, "search", Some(label.clone()));
-            let more = ordered_root(p, &domain, &part, orders, e)?;
+            let more = traverse(p, &domain, &part, orders, e)?;
             e.rec.end(&mut e.tel);
             if !more {
                 if e.rec.parts_done + 1 < total {
@@ -247,8 +247,8 @@ pub(super) fn joint_regimes(
     Ok(())
 }
 
-/// Orders the law clusters of `bounds` by their root bounds, largest first: the check of a node stops at the first
-/// cluster whose bounds leave it open, and a cluster with a larger root bound leaves more nodes open.
+/// Orders the law clusters of `bounds` by their root bounds, largest first: their traversals then meet the best teams
+/// early.
 fn order_law_clusters(
     e: &Engine<'_, '_>,
     domain: &crate::domain::CandidateDomain,
@@ -265,6 +265,32 @@ fn order_law_clusters(
     order.sort_by_key(|&c| std::cmp::Reverse(roots[c]));
     clusters.reorder(&order);
     Ok(())
+}
+
+/// One whole-domain traversal of `bounds`; with law clusters, one traversal per cluster under its bounds, each visiting
+/// the teams of the multisets of kinds that belong to it. Once one stops, the root bounds of the clusters after it
+/// cover their teams.
+fn traverse(
+    p: &mut PhysicalDeck,
+    domain: &crate::domain::CandidateDomain,
+    bounds: &crate::search::joint::JointBounds,
+    orders: &[([usize; 5], u128)],
+    e: &mut Engine<'_, '_>,
+) -> Result<bool, Error> {
+    let Some(clusters) = bounds.law_clusters() else { return ordered_root(p, domain, bounds, orders, e) };
+    for (c, cluster) in clusters.bounds.iter().enumerate() {
+        e.rec.frontier.clear();
+        *p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
+        if !ordered_root(p, domain, cluster, orders, e)? {
+            for later in &clusters.bounds[c + 1..] {
+                let started = e.bound_start();
+                let upper = joint_root_upper(e.pool, domain, later, orders, 0)?;
+                e.fold_unexplored(upper, started);
+            }
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// One whole-domain traversal, root children in bound order (static under the validation ablation `STATIC_ORDER`).
@@ -427,43 +453,6 @@ pub(super) fn joint_rec(
                 }
             }
         }
-        // Every completion's laws lie in a cluster holding a multiset of kinds that contains the prefix's kinds, whose
-        // bounds cover it.
-        if depth < 5
-            && let Some(clusters) = bounds.law_clusters()
-        {
-            joint.modules.entry("lawClusters").or_default().checks += 1;
-            let below =
-                |cap: i128| cap < threshold || (exact_ties && cap == threshold && power < i64::from(cutoff_power));
-            let open = clusters.completions(p, depth, &choices);
-            let mut pruned = true;
-            for (c, cluster) in clusters.bounds.iter().enumerate() {
-                if open >> c & 1 == 0 {
-                    continue;
-                }
-                let level = cluster.carrier_level((cluster.carriers_placed(p, depth, &choices) + 5 - depth).min(5));
-                let placed = cluster.keyed(p, depth, &choices, 5 - depth, 5 - depth);
-                if below(level.expected_upper_keyed(e.pool, domain, p, depth, orders, placed.as_ref())?.0)
-                    || (e.correlated
-                        && below(level.correlated_expected_upper_keyed(
-                            e.pool,
-                            domain,
-                            p,
-                            depth,
-                            orders,
-                            placed.as_ref(),
-                        )?))
-                {
-                    continue;
-                }
-                pruned = false;
-                break;
-            }
-            if pruned {
-                joint.modules.entry("lawClusters").or_default().pruned += 1;
-                return Ok(true);
-            }
-        }
         if seed_bonus.is_none() && depth < 5 && bounds.is_pt() {
             joint.bonus.check(depth);
             if let Some((cap, cap_power)) =
@@ -608,7 +597,7 @@ pub(super) fn joint_rec(
         if snap.is_some() && SLOTS[..depth].iter().any(|&s| p.snaps[s] == snap) {
             continue;
         }
-        if !bounds.allows(slot, choice) {
+        if !bounds.allows(slot, choice) || !bounds.part_allows(p, depth, &choices, m, choice)? {
             continue;
         }
         let (pair_bounds, pair_tail) = match &tail_high {

@@ -506,9 +506,6 @@ pub struct Leaves {
     /// LUCK teams whose own laws were read from the multiset of their performers' lottery kinds, before the caps under
     /// the laws of their domain.
     pub kind_laws: u64,
-    /// LUCK teams dropped because their caps under the bounds of a cluster of laws holding their own stay below the
-    /// K-th.
-    pub cluster_pruned: u64,
     pub cutoff: Cutoff,
     pub order_tree: OrderTree,
     pub peak_retained: usize,

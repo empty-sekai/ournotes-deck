@@ -1,8 +1,7 @@
 //! The bounds of a domain under clusters of the lottery laws of its teams.
 
 use super::*;
-use crate::search::certified_search::LuckLaw;
-use std::sync::Arc;
+use std::rc::Rc;
 
 /// The most clusters a domain's laws split into (one bit each in a cluster set).
 pub(crate) const MAX_CLUSTERS: usize = 64;
@@ -11,68 +10,81 @@ pub(crate) const MAX_CLUSTERS: usize = 64;
 pub(crate) const NO_KIND: u32 = u32::MAX;
 
 /// The bounds of a domain compiled under clusters of the lottery laws of its multisets of lottery kinds
-/// ([`JointBounds::compile_with_laws`]). The laws of every multiset lie in one cluster, whose bounds then cover every
-/// team holding that multiset: the completions of a prefix are below the K-th when the bounds of every cluster that
-/// holds a multiset containing the prefix's kinds prove them below.
+/// ([`JointBounds::compile_with_laws`]). The laws of every multiset lie in a cluster, whose bounds then cover every
+/// team holding that multiset; each multiset belongs to one such cluster, and the traversal of a cluster's bounds
+/// visits the teams of its multisets (see [`JointBounds::part_allows`]).
 pub(crate) struct LawClusters {
     /// The bounds of each cluster.
     pub(crate) bounds: Vec<JointBounds>,
+    tables: Rc<LawTables>,
+}
+
+/// What places a prefix of a team among the clusters.
+pub(crate) struct LawTables {
     /// The lottery kind index of each pool member with each choice (0 = no Snap, `j + 1` = domain Snap `j`), or
     /// `NO_KIND`; empty for a member outside the domain.
     kinds: Vec<Box<[u32]>>,
-    /// The clusters (bits) whose law sets hold each law, by its address.
-    holding: HashMap<usize, u64>,
     /// The clusters (bits) of the multisets that contain each sorted multiset of one to four kind indices, by its
     /// [`pack`] key.
     prefixes: HashMap<u64, u64>,
+    /// The cluster each multiset of five kinds belongs to, by its [`pack`] key.
+    teams: HashMap<u64, u8>,
 }
 
-/// A sorted multiset of at most four kind indices below 4096 as one key; None when an index is larger.
+/// The cluster of the laws a traversal's bounds weigh: it visits the teams whose multiset of kinds belongs to it.
+pub(crate) struct LawPart {
+    tables: Rc<LawTables>,
+    cluster: usize,
+}
+
+/// A sorted multiset of at most five kind indices below 4096 as one key; None when an index is larger.
 pub(crate) fn pack(kinds: &[usize]) -> Option<u64> {
     kinds.iter().try_fold(kinds.len() as u64, |key, &k| (k < 1 << 12).then_some((key << 12) | k as u64))
 }
 
+impl LawTables {
+    /// The kinds of each pool member by choice, the cluster sets of the sub-multisets and the cluster of each multiset
+    /// of five kinds, as in the fields of the same names.
+    pub(crate) fn new(kinds: Vec<Box<[u32]>>, prefixes: HashMap<u64, u64>, teams: HashMap<u64, u8>) -> LawTables {
+        LawTables { kinds, prefixes, teams }
+    }
+
+    /// The sorted kinds of the first `depth` search slots of `p` (choice of each slot by slot), and of `extra` when
+    /// given; None when one takes no kind.
+    fn prefix(
+        &self,
+        p: &PhysicalDeck,
+        depth: usize,
+        choices: &[usize; 5],
+        extra: Option<(usize, usize)>,
+    ) -> Option<([usize; 5], usize)> {
+        let kind = |m: usize, choice: usize| {
+            self.kinds.get(m).and_then(|row| row.get(choice)).copied().filter(|&k| k != NO_KIND).map(|k| k as usize)
+        };
+        let mut kinds = [0usize; 5];
+        let mut n = 0;
+        for &slot in &SLOTS[..depth] {
+            kinds[n] = kind(p.members[slot], choices[slot])?;
+            n += 1;
+        }
+        if let Some((m, choice)) = extra {
+            kinds[n] = kind(m, choice)?;
+            n += 1;
+        }
+        kinds[..n].sort_unstable();
+        Some((kinds, n))
+    }
+}
+
 impl LawClusters {
-    /// The clusters of the bounds `bounds` (at most [`MAX_CLUSTERS`]), with the kinds, law sets and prefix sets of
-    /// the fields of the same names.
-    pub(crate) fn new(
-        bounds: Vec<JointBounds>,
-        kinds: Vec<Box<[u32]>>,
-        holding: HashMap<usize, u64>,
-        prefixes: HashMap<u64, u64>,
-    ) -> LawClusters {
+    /// The clusters of the bounds `bounds` (at most [`MAX_CLUSTERS`]) with their tables.
+    pub(crate) fn new(mut bounds: Vec<JointBounds>, tables: LawTables) -> LawClusters {
         assert!((1..=MAX_CLUSTERS).contains(&bounds.len()), "law clusters outside the cluster set width");
-        LawClusters { bounds, kinds, holding, prefixes }
-    }
-
-    fn every(&self) -> u64 {
-        u64::MAX >> (MAX_CLUSTERS - self.bounds.len())
-    }
-
-    /// The clusters (bits) whose bounds cover the completions of prefix `p` of `depth < 5` slots (`choices` by slot):
-    /// those holding a multiset of kinds that contains the kinds of its slots; every cluster when a slot takes no
-    /// kind or no such multiset was read.
-    pub(crate) fn completions(&self, p: &PhysicalDeck, depth: usize, choices: &[usize; 5]) -> u64 {
-        let n = depth.min(4);
-        let mut kinds = [0usize; 4];
-        for (k, &slot) in SLOTS[..n].iter().enumerate() {
-            match self.kinds.get(p.members[slot]).and_then(|row| row.get(choices[slot])) {
-                Some(&kind) if kind != NO_KIND => kinds[k] = kind as usize,
-                _ => return self.every(),
-            }
+        let tables = Rc::new(tables);
+        for (cluster, b) in bounds.iter_mut().enumerate() {
+            b.part = Some(LawPart { tables: tables.clone(), cluster });
         }
-        let prefix = &mut kinds[..n];
-        prefix.sort_unstable();
-        pack(prefix).and_then(|key| self.prefixes.get(&key)).copied().unwrap_or_else(|| self.every())
-    }
-
-    /// The clusters (bits) whose law sets hold every law of `laws` (none for no laws).
-    pub(crate) fn holding(&self, laws: &[LuckLaw]) -> u64 {
-        if laws.is_empty() {
-            return 0;
-        }
-        let of = |law: &LuckLaw| self.holding.get(&(Arc::as_ptr(law) as usize)).copied().unwrap_or(0);
-        laws.iter().fold(self.every(), |clusters, law| clusters & of(law))
+        LawClusters { bounds, tables }
     }
 
     /// Renumbers the clusters: cluster `order[i]` becomes cluster `i`.
@@ -83,11 +95,42 @@ impl LawClusters {
         }
         let mut bounds: Vec<Option<JointBounds>> = self.bounds.drain(..).map(Some).collect();
         self.bounds = order.iter().map(|&old| bounds[old].take().expect("a permutation")).collect();
-        let renumber = |set: &mut u64| {
+        self.bounds.iter_mut().for_each(|b| b.part = None);
+        let tables = Rc::get_mut(&mut self.tables).expect("law tables held by their clusters alone");
+        for set in tables.prefixes.values_mut() {
             let old = *set;
             *set = (0..to.len()).filter(|&c| old >> c & 1 != 0).fold(0, |new, c| new | 1 << to[c]);
+        }
+        tables.teams.values_mut().for_each(|c| *c = to[*c as usize] as u8);
+        for (cluster, b) in self.bounds.iter_mut().enumerate() {
+            b.part = Some(LawPart { tables: self.tables.clone(), cluster });
+        }
+    }
+}
+
+impl JointBounds {
+    /// With bounds of a cluster of laws: whether the traversal visits the child of prefix `p` of `depth < 5` slots
+    /// (`choices` by slot) that takes `m` with `choice` in the next slot: some multiset of the cluster contains its
+    /// kinds, and a complete team's multiset belongs to the cluster. Always without a cluster; an error for a team
+    /// whose kinds the census did not read.
+    pub(crate) fn part_allows(
+        &self,
+        p: &PhysicalDeck,
+        depth: usize,
+        choices: &[usize; 5],
+        m: usize,
+        choice: usize,
+    ) -> Result<bool, Error> {
+        let Some(part) = &self.part else { return Ok(true) };
+        let outside = || Error::Domain("a team outside the lottery census of its domain".into());
+        let Some((kinds, n)) = part.tables.prefix(p, depth, choices, Some((m, choice))) else {
+            return if depth == 4 { Err(outside()) } else { Ok(true) };
         };
-        self.holding.values_mut().for_each(renumber);
-        self.prefixes.values_mut().for_each(renumber);
+        let key = pack(&kinds[..n]);
+        if n == 5 {
+            let cluster = key.and_then(|key| part.tables.teams.get(&key)).ok_or_else(outside)?;
+            return Ok(*cluster as usize == part.cluster);
+        }
+        Ok(key.is_none_or(|key| part.tables.prefixes.get(&key).is_some_and(|set| set >> part.cluster & 1 != 0)))
     }
 }
