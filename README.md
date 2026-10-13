@@ -15,7 +15,8 @@ BanG Dream! Our Notes 的综合力、跳过分数与演出分数计算，以及�
 
 只需要计算或模拟（例如谱面统计、回放）时依赖 `ournotes-sim`；要搜索时依赖 `ournotes-search`，模型类型仍从 `ournotes-sim`
 引用。`wasm/replay` 是基于 `ournotes-sim` 的回放 WASM，`wasm/recommend` 是基于 `ournotes-search` 的推荐 WASM，
-`tools/search-harness` 是搜索的测量工具；这三个是 workspace 之外的独立 package，各有自己的 `Cargo.lock`。
+`python` 是 Python 包 `ournotes-sim`（`ournotes-sim` 的谱面统计，见 [python/README.md](python/README.md)），
+`tools/search-harness` 是搜索的测量工具；这四个是 workspace 之外的独立 package，各有自己的 `Cargo.lock`。
 两个 crate 都有 `search-diagnostics` 特性；`ournotes-search` 的这个特性会同时打开 `ournotes-sim` 的。
 
 ## 推荐主链
@@ -148,6 +149,15 @@ for deck in &out.results {
 }
 ```
 
+在 Python 里，PyPI 包 `ournotes-sim` 用同一版本的模型计算 deck data 文件的谱面统计：
+
+```python
+import json
+import ournotes_sim
+
+stats = json.loads(ournotes_sim.chart_stats(open("deck-data.json", encoding="utf-8").read()))
+```
+
 ## 命令行
 
 统一入口为 `ournotes-deck`。JSON 推荐请求使用 `recommend` 子命令：
@@ -238,7 +248,8 @@ Just 率插值和 Great 比例缩放是统计摘要的近似使用方式，完�
 
 在仓库根目录运行 `cargo test`，即运行两个 crate 的单元测试与集成测试：读取合成的 deck data 文件，并在小规模合成卡池上
 将搜索结果与穷举结果逐项比较。两个 WASM package 用 `cargo build --manifest-path wasm/<replay|recommend>/Cargo.toml
---target wasm32-unknown-unknown --release` 构建。
+--target wasm32-unknown-unknown --release` 构建。Python 包用 `pip install ./python[test]` 构建并安装，
+`pytest python/tests` 测试它。
 可用 `OURNOTES_DECK_ORACLE_CASES`、`OURNOTES_DECK_ORACLE_SEED0`、`OURNOTES_DECK_ORACLE_MEMBERS`、
 `OURNOTES_DECK_ORACLE_SNAPS` 扩大比较规模。含 snap 技能的演出分数可用 `OURNOTES_DECK_SNAPS_CASES`、
 `OURNOTES_DECK_SNAPS_SEED0`、`OURNOTES_DECK_SNAPS_MEMBERS`、`OURNOTES_DECK_SNAPS_SNAPS`、`OURNOTES_DECK_SNAPS_NOTES`、
@@ -246,7 +257,7 @@ Just 率插值和 Great 比例缩放是统计摘要的近似使用方式，完�
 
 ## 版本记录
 
-改动见 [CHANGELOG.md](CHANGELOG.md)，由 [git-cliff](https://git-cliff.org/) 根据提交（Conventional Commits）生成。发版时，改版本号的那个提交同时重新生成它：`git cliff --tag vX.Y.Z -o CHANGELOG.md`。
+改动见 [CHANGELOG.md](CHANGELOG.md)，由 [git-cliff](https://git-cliff.org/) 根据提交（Conventional Commits）生成。发版时，改版本号的那个提交（workspace、`wasm/*` 与 `python` 的清单及其锁文件）同时重新生成它：`git cliff --tag vX.Y.Z -o CHANGELOG.md`。
 
 ## 许可证
 
