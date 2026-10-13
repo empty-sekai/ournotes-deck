@@ -54,6 +54,8 @@ pub(super) struct CarrierSplit {
     sets: Vec<Vec<Vec<u16>>>,
     /// Envelopes by sorted carrier lists (`env_key`).
     envs: RefCell<FxHashMap<u32, Rc<SplitEnv>>>,
+    /// `[n]`: the envelope of every deck with at most `n` carriers (filled on first use).
+    wide: Vec<OnceCell<Rc<SplitEnv>>>,
     /// The approximate bytes of the envelopes kept and their tables.
     bytes: Cell<usize>,
 }
@@ -185,6 +187,7 @@ impl CarrierSplit {
             plain_power,
             sets,
             envs: RefCell::default(),
+            wide: (0..=5).map(|_| OnceCell::new()).collect(),
             bytes: Cell::new(0),
         })
     }
@@ -209,13 +212,7 @@ impl CarrierSplit {
         if let Some(e) = self.envs.borrow().get(&key) {
             return e.clone();
         }
-        let e = Rc::new(SplitEnv {
-            env: self.keys.build_envelope(ids, 0),
-            read: RefCell::new(vec![f64::NAN; self.classes]),
-            gain: self.starts.iter().map(|_| (0..self.lists).map(|_| OnceCell::new()).collect()).collect(),
-            plain: self.starts.iter().map(|_| OnceCell::new()).collect(),
-            coupled: RefCell::default(),
-        });
+        let e = Rc::new(self.split_env(self.keys.build_envelope(ids, 0)));
         let mut envs = self.envs.borrow_mut();
         if envs.len() >= ENV_CACHE || self.bytes.get() >= TABLE_BUDGET {
             envs.clear();
@@ -224,6 +221,28 @@ impl CarrierSplit {
         self.keep(e.env.bytes() + self.classes * std::mem::size_of::<f64>());
         envs.insert(key, e.clone());
         e
+    }
+
+    /// The envelope of every deck with at most `n` carriers.
+    fn wide(&self, n: usize) -> Rc<SplitEnv> {
+        self.wide[n]
+            .get_or_init(|| {
+                let e = self.split_env(self.keys.build_envelope(&[], n));
+                self.keep(e.env.bytes() + self.classes * std::mem::size_of::<f64>());
+                Rc::new(e)
+            })
+            .clone()
+    }
+
+    /// An envelope with none of its tables filled.
+    fn split_env(&self, env: KeyedEnvelope) -> SplitEnv {
+        SplitEnv {
+            env,
+            read: RefCell::new(vec![f64::NAN; self.classes]),
+            gain: self.starts.iter().map(|_| (0..self.lists).map(|_| OnceCell::new()).collect()).collect(),
+            plain: self.starts.iter().map(|_| OnceCell::new()).collect(),
+            coupled: RefCell::default(),
+        }
     }
 
     /// The position-mean gain of a pool member and choice under an envelope (read once per member and class).
@@ -469,8 +488,8 @@ impl JointBounds {
                 gain = add_up(gain, split.gains(&e, k, list).top(&taken, &taken_snaps, n, 0.0, add_up)?);
             }
             let k0 = r - t.len();
+            let level = self.carrier_level(ids.len());
             if k0 > 0 {
-                let tables = split.plain(&e, k)?;
                 let pp = match free_power[k0] {
                     Some(v) => v,
                     None => {
@@ -480,9 +499,22 @@ impl JointBounds {
                     }
                 };
                 power += pp;
+                // The slots to fill without a carrier first read the envelope of every deck with as many carriers,
+                // which covers the multiset's decks too: a multiset that bound puts below the threshold needs no
+                // tables of its own.
+                let wide = split.plain(&split.wide(ids.len()), k).and_then(|tables| {
+                    let gain = add_up(gain, plain_gain(&tables.parts(k0, &taken, &taken_snaps, 0.0)));
+                    level.payoff_cap_from(a0, power, gain, 0, f64::INFINITY).checked_mul(mass)
+                });
+                if let Some(numerator) = wide
+                    && numerator < threshold.min(couple_above)
+                {
+                    best = best.max(numerator);
+                    continue;
+                }
+                let tables = split.plain(&e, k)?;
                 gain = add_up(gain, plain_gain(&tables.parts(k0, &taken, &taken_snaps, 0.0)));
             }
-            let level = self.carrier_level(ids.len());
             let mut numerator = level.payoff_cap_from(a0, power, gain, 0, f64::INFINITY).checked_mul(mass)?;
             if numerator > couple_above
                 && let Some(j) = weight(add_up(a0, gain), power)
