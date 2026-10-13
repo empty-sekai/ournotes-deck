@@ -23,17 +23,6 @@ pub(crate) struct LuckLaws<'l> {
     laws: &'l [Arc<LuckDpCertifiedResult>],
 }
 
-/// What the luck weights of a set of note times read, each time over the class distributions the laws give a note
-/// at it (see [`LuckLaws::hulls`]).
-pub(crate) struct LawHulls {
-    times: Vec<i32>,
-    /// The largest Rush mass of a distribution.
-    rush: Vec<f64>,
-    /// With a law that has a probe holder: the masses (probe only, Rush and probe) of each distribution of such a
-    /// law that no other one reaches in both.
-    probes: Option<Vec<Vec<(f64, f64)>>>,
-}
-
 /// The play frames whose skill boundary turns the direct-probe class on, over the laws. A direct-Rush row that
 /// activates once per such frame files its start and end commands once for each.
 #[derive(Clone, Copy, Debug)]
@@ -101,18 +90,21 @@ impl<'l> LuckLaws<'l> {
         ProbeStarts { most, expected: expected.min(most), luck: 1.0 }
     }
 
-    /// What the luck weights of notes at `times` read. A note at a time reads, in each law, one distribution of
-    /// its classes: the state its time keeps once its lotteries are filed, or what a score query of its own judging
-    /// frame (the first one at or after its time) reads before that frame's lottery, on the side of the frame's time
-    /// the note is. Laws that share their curves read alike, so each curve is read once, in one pass over the times
-    /// in order, with the probe lines of a law that has a probe holder when one of its laws does.
-    pub(crate) fn hulls(&self, times: &[i32]) -> LawHulls {
-        let mut times = times.to_vec();
-        times.sort_unstable();
-        times.dedup();
-        let mut rush = vec![0f64; times.len()];
+    /// The luck weights `(luck, probe_luck)` of notes at the times `notes.0`, in nondecreasing order, whose luck
+    /// factor in a Rush is `notes.1 >= 1`: the largest `E[L]` and `E[L probe]` over the distributions of its classes
+    /// the note reads in each law. A note at a time reads one distribution: the state its time keeps once its lotteries
+    /// are filed, or what a score query of its own judging frame (the first one at or after its time) reads before that
+    /// frame's lottery, on the side of the frame's time the note is. With Rush mass `R`, `E[L] = 1 + (l - 1) R`; with
+    /// probe masses `a` (probe only) and `b` (Rush and probe), `E[L probe] = a + l b`. A team whose law has no probe
+    /// holder runs no direct-Rush score up, so `probe_luck` reads the laws with one; without any it is `luck`.
+    ///
+    /// Laws that share their curves read alike, so each curve is read once, in one pass over the notes, as a law with
+    /// a probe holder when one of its laws has one.
+    pub(crate) fn weights(&self, notes: &[(i32, f64)]) -> Vec<(f64, f64)> {
+        assert!(notes.is_sorted_by_key(|&(time, _)| time), "notes in time order");
+        let mut rush = vec![0f64; notes.len()];
         let held = |law: &LuckDpCertifiedResult| law.probes.iter().any(|&p| p);
-        let mut probes = self.laws.iter().any(|law| held(law)).then(|| vec![Vec::new(); times.len()]);
+        let mut probe = self.laws.iter().any(|law| held(law)).then(|| vec![0f64; notes.len()]);
         let mut curves: Vec<_> = self
             .laws
             .iter()
@@ -121,11 +113,12 @@ impl<'l> LuckLaws<'l> {
         curves.sort_unstable_by_key(|&(curve, bare, _)| (curve, bare));
         curves.dedup_by_key(|&mut (curve, _, _)| curve);
         let before = [ProbabilityMass::ONE, ProbabilityMass::ZERO, ProbabilityMass::ZERO, ProbabilityMass::ZERO];
-        // The distributions a note reads at the current state of the pass: its Rush weight and probe line of each.
-        let mut reads_at: Vec<(f64, (f64, f64))> = Vec::with_capacity(3);
+        // The distributions a note reads at the current state of the pass: the Rush weight and the probe masses (probe
+        // only, Rush and probe) of each.
+        let mut reads_at: Vec<(f64, f64, f64)> = Vec::with_capacity(3);
         for (_, bare, law) in curves {
             let (mut step, mut query, mut state) = (0, 0, None);
-            for (k, &time) in times.iter().enumerate() {
+            for (k, &(time, l)) in notes.iter().enumerate() {
                 while law.steps.get(step).is_some_and(|(at, _)| *at <= time) {
                     step += 1;
                 }
@@ -146,40 +139,25 @@ impl<'l> LuckLaws<'l> {
                     for masses in std::iter::once(masses).chain(reads) {
                         let (lo, hi) = (masses.map(|m| m.interval().lower()), masses.map(|m| m.interval().upper()));
                         let m = fill(lo, hi, PROBE_FIRST);
-                        reads_at.push((lp_max(lo, hi, RUSH.map(f64::from)), (m[1], m[3])));
+                        reads_at.push((lp_max(lo, hi, RUSH.map(f64::from)), m[1], m[3]));
                     }
                 }
-                for &(weight, line) in &reads_at {
+                for &(weight, a, b) in &reads_at {
                     rush[k] = rush[k].max(weight);
-                    if let Some(lines) = probes.as_mut().map(|probes| &mut probes[k]).filter(|_| !bare)
-                        && !lines.iter().any(|&(a, b)| a >= line.0 && b >= line.1)
-                    {
-                        lines.retain(|&(a, b)| a > line.0 || b > line.1);
-                        lines.push(line);
+                    if let Some(probe) = probe.as_mut().filter(|_| !bare) {
+                        probe[k] = probe[k].max((a + (l * b).next_up()).next_up());
                     }
                 }
             }
         }
-        LawHulls { times, rush, probes }
-    }
-}
-
-impl LawHulls {
-    /// `(luck, probe_luck)` of a note at `time_ms`, one of the times swept, whose luck factor in a Rush is `l >= 1`:
-    /// the largest `E[L]` and `E[L probe]` over the distributions the note can read. With Rush mass `R`,
-    /// `E[L] = 1 + (l - 1) R`; with probe masses `a` (probe only) and `b` (Rush and probe), `E[L probe] = a + l b`.
-    /// A team whose law has no probe holder runs no direct-Rush score up, so `probe_luck` reads the laws with one;
-    /// without any it is `luck`.
-    pub(crate) fn entry(&self, time_ms: i32, l: f64) -> (f64, f64) {
-        let k = self.times.binary_search(&time_ms).expect("a note time the laws were swept at");
-        let luck = (1.0 + ((l - 1.0).next_up() * self.rush[k]).next_up()).next_up().min(l);
-        match &self.probes {
-            Some(probes) => {
-                let probe = probes[k].iter().fold(0f64, |max, &(a, b)| max.max((a + (l * b).next_up()).next_up()));
-                (luck, probe.min(luck))
-            }
-            None => (luck, luck),
-        }
+        notes
+            .iter()
+            .enumerate()
+            .map(|(k, &(_, l))| {
+                let luck = (1.0 + ((l - 1.0).next_up() * rush[k]).next_up()).next_up().min(l);
+                (luck, probe.as_ref().map_or(luck, |probe| probe[k].min(luck)))
+            })
+            .collect()
     }
 }
 
@@ -307,7 +285,7 @@ mod tests {
     fn the_weights_take_the_largest_expectation_of_one_distribution() {
         // One law puts the probe on with the Rush, the other one without it; no distribution has both halves.
         let laws = [law([5, 0, 0, 5], true, Vec::new(), 0.0), law([0, 5, 5, 0], true, Vec::new(), 0.0)];
-        let (luck, probe_luck) = LuckLaws::new(&laws).unwrap().hulls(&[1]).entry(1, 2.0);
+        let (luck, probe_luck) = LuckLaws::new(&laws).unwrap().weights(&[(1, 2.0)])[0];
         // E[L] = 1 + 0.5 in both; E[L probe] is 2 * 0.5 and 0.5
         assert!((1.5..1.5 + 1e-9).contains(&luck), "{luck}");
         assert!((1.0..1.0 + 1e-9).contains(&probe_luck), "{probe_luck}");
@@ -329,13 +307,13 @@ mod tests {
             Vec::new(),
             0.0,
         )];
-        let hulls = LuckLaws::new(&laws).unwrap().hulls(&[5, 10, 11]);
-        let (luck, probe_luck) = hulls.entry(5, 2.0);
+        let weights = LuckLaws::new(&laws).unwrap().weights(&[(5, 2.0), (10, 2.0), (11, 2.0)]);
+        let (luck, probe_luck) = weights[0];
         assert!((2.0..2.0 + 1e-9).contains(&luck) && probe_luck < 1e-9, "{luck} {probe_luck}");
-        let (luck, probe_luck) = hulls.entry(10, 2.0);
+        let (luck, probe_luck) = weights[1];
         assert!((1.0..1.0 + 1e-9).contains(&luck) && (1.0..1.0 + 1e-9).contains(&probe_luck), "{luck} {probe_luck}");
         // after the last judging frame: the kept state
-        let (luck, probe_luck) = hulls.entry(11, 2.0);
+        let (luck, probe_luck) = weights[2];
         assert!((1.0..1.0 + 1e-9).contains(&luck) && probe_luck < 1e-9, "{luck} {probe_luck}");
     }
 
@@ -349,23 +327,34 @@ mod tests {
             Vec::new(),
             0.0,
         )];
-        let hulls = LuckLaws::new(&laws).unwrap().hulls(&[12, 1, 5, 10, 11, 5]);
-        for (time, luck, probe_luck) in [(1, 2.0, 1.0), (5, 2.0, 1.0), (10, 2.0, 0.0), (11, 1.0, 0.0), (12, 1.0, 0.0)] {
-            let (l, p) = hulls.entry(time, 2.0);
-            assert!((luck..luck + 1e-9).contains(&l) && (probe_luck..probe_luck + 1e-9).contains(&p), "{time} {l} {p}");
+        // (time, Rush luck factor), then the expected luck and probe weights
+        let cases = [
+            ((1, 2.0), 2.0, 1.0),
+            ((5, 2.0), 2.0, 1.0),
+            ((5, 1.5), 1.5, 1.0),
+            ((10, 2.0), 2.0, 0.0),
+            ((11, 2.0), 1.0, 0.0),
+            ((12, 2.0), 1.0, 0.0),
+        ];
+        let weights = LuckLaws::new(&laws).unwrap().weights(&cases.map(|(note, _, _)| note));
+        for (&(note, luck, probe_luck), &(l, p)) in cases.iter().zip(&weights) {
+            assert!(
+                (luck..luck + 1e-9).contains(&l) && (probe_luck..probe_luck + 1e-9).contains(&p),
+                "{note:?} {l} {p}"
+            );
         }
     }
 
     #[test]
-    fn laws_that_share_their_curves_read_their_probe_lines_when_one_holds_a_probe() {
+    fn laws_that_share_their_curves_read_as_a_probe_holder_when_one_has_one() {
         let held = law([5, 1, 1, 3], true, Vec::new(), 0.0);
         let bare = Arc::new(LuckDpCertifiedResult { probes: vec![false], ..(*held).clone() });
         let other = law([2, 0, 8, 0], false, Vec::new(), 0.0);
         for laws in [[bare.clone(), held.clone(), other.clone()], [held.clone(), other.clone(), bare.clone()]] {
-            let (luck, probe_luck) = LuckLaws::new(&laws).unwrap().hulls(&[10]).entry(10, 2.0);
+            let (luck, probe_luck) = LuckLaws::new(&laws).unwrap().weights(&[(10, 2.0)])[0];
             assert!((luck - 1.8).abs() < 1e-9 && (probe_luck - 0.7).abs() < 1e-9, "{luck} {probe_luck}");
         }
-        let (luck, probe_luck) = LuckLaws::new(&[bare, other]).unwrap().hulls(&[10]).entry(10, 2.0);
+        let (luck, probe_luck) = LuckLaws::new(&[bare, other]).unwrap().weights(&[(10, 2.0)])[0];
         assert_eq!(luck, probe_luck);
     }
 
@@ -391,7 +380,7 @@ mod tests {
         let held = law([5, 1, 1, 3], true, vec![0b10, 0b01, 0b10], 1.25);
         let bare = law([2, 0, 8, 0], false, vec![0b10; 7], 3.0);
         let both = [held.clone(), bare.clone()];
-        let (luck, probe_luck) = LuckLaws::new(&both).unwrap().hulls(&[10]).entry(10, 2.0);
+        let (luck, probe_luck) = LuckLaws::new(&both).unwrap().weights(&[(10, 2.0)])[0];
         // the larger expected luck factor is the bare law's 0.2 + 2 * 0.8
         assert!((luck - 1.8).abs() < 1e-9, "{luck}");
         // the probe classes of the law with a holder: 0.1 + 2 * 0.3
@@ -400,12 +389,12 @@ mod tests {
         assert_eq!((starts.most, starts.expected, starts.luck), (2.0, 1.25, 1.0));
         // no law with a holder: the probe weight is the luck weight and no start counts
         let bare = [bare];
-        let (luck, probe_luck) = LuckLaws::new(&bare).unwrap().hulls(&[10]).entry(10, 2.0);
+        let (luck, probe_luck) = LuckLaws::new(&bare).unwrap().weights(&[(10, 2.0)])[0];
         assert_eq!(luck, probe_luck);
         let starts = LuckLaws::new(&bare).unwrap().probe_starts();
         assert_eq!((starts.most, starts.expected), (0.0, 0.0));
         // before the first step the lottery has not run
-        let (luck, probe_luck) = LuckLaws::new(&[held]).unwrap().hulls(&[-1, 10]).entry(-1, 2.0);
+        let (luck, probe_luck) = LuckLaws::new(&[held]).unwrap().weights(&[(-1, 2.0), (10, 2.0)])[0];
         assert!((1.0..1.0 + 1e-9).contains(&luck) && (0.0..1e-9).contains(&probe_luck), "{luck} {probe_luck}");
     }
 

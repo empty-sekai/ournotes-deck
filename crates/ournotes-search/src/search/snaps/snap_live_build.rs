@@ -530,7 +530,7 @@ impl<'a> SnapLive<'a> {
         let mdf64 = mdf as f64;
         let mut pre: Vec<f64> = Vec::with_capacity(order.len());
         let mut pre_plain: Vec<f64> = Vec::with_capacity(order.len());
-        // with certified laws: each entry's weight of the direct-Rush score ups (see `LawHulls::entry`)
+        // with certified laws: each entry's weight of the direct-Rush score ups (see `LuckLaws::weights`)
         let mut rush_weight: Vec<f64> = Vec::with_capacity(order.len());
         let mut probe_starts = luck.as_ref().map(|laws| laws.probe_starts());
         // with a Gekisou combo range: each coefficient around its combo factor (see `carrier_level_envelopes`)
@@ -580,7 +580,14 @@ impl<'a> SnapLive<'a> {
             }
             _ => None,
         };
-        let hulls = luck.as_ref().filter(|_| gkf.is_some()).map(|laws| laws.hulls(&times_all));
+        // with certified laws and Gekisou on: each entry's luck weights, in chart-time order
+        let weights = match (&luck, &gkf) {
+            (Some(laws), Some(g)) => {
+                let notes: Vec<(i32, f64)> = times_all.iter().copied().zip(g.l.iter().copied()).collect();
+                Some(laws.weights(&notes))
+            }
+            _ => None,
+        };
         for (pos, &i) in order.iter().enumerate() {
             let (_, n, _) = entries[i];
             // the combo a note reads counts the entries at earlier chart times since the last one that breaks it
@@ -634,9 +641,9 @@ impl<'a> SnapLive<'a> {
             let mut gpool = 1.0;
             if let Some(g) = &gkf {
                 // the expected luck factor under the laws, else its largest value
-                let l = match &hulls {
-                    Some(hulls) => {
-                        let (luck_e, probe_e) = hulls.entry(n.time_ms, g.l[pos]);
+                let l = match &weights {
+                    Some(weights) => {
+                        let (luck_e, probe_e) = weights[pos];
                         rush_weight.push((probe_e / luck_e).next_up().min(1.0));
                         if let Some(starts) = &mut probe_starts {
                             starts.luck = starts.luck.max((g.l[pos] / luck_e).next_up());
