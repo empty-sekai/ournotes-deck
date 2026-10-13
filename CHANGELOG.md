@@ -2,6 +2,12 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.8](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.7...v0.0.8) - 2026-10-13
+
+### Bug fixes
+
+- **sim:** Read charts whose score row lags behind their notes ([00d188f](https://github.com/empty-sekai/ournotes-deck/commit/00d188f12ea0a0067b5274dac0ef4b55dbd62555))
+
 ## [0.0.7](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.6...v0.0.7) - 2026-10-13
 
 ### Features
