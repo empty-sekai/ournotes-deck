@@ -230,7 +230,7 @@ impl Shortlist {
 fn by_fine_caps(w: &Warm<'_>, mut rows: Vec<Ranked>, e: &mut Engine<'_, '_>) -> Result<Vec<Ranked>, Error> {
     for (value, d) in &mut rows {
         let power = i64::from(e.pool.deck_power(&d.as_deck(), e.song, e.event)?.power());
-        if let Some(fine) = w.bounds.fine_upper_orders(w.domain, d, power, &e.positions, &mut e.bound_scratch) {
+        if let Some(fine) = w.bounds.fine_upper_orders(w.domain, d, power, &e.positions, &mut e.bound_scratch, None) {
             value.0 = value.0.min(fine);
         }
     }

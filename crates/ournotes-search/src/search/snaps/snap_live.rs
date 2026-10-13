@@ -398,6 +398,7 @@ impl<'a> SnapLive<'a> {
             coef: self.coef,
             fine: self.fine,
             chain_extra: self.chain_extra,
+            order_sums: OrderSums::new(&self.contrib),
             contrib: self.contrib,
             class_of: self.class_of,
             raw,

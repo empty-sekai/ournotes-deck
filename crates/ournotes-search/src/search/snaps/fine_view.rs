@@ -2,16 +2,16 @@
 use super::*;
 
 /// Command counts of one candidate, each `(executions, lifetime commands)`.
-struct CandCounts {
+pub(super) struct CandCounts {
     /// Whatever the starts of the direct-probe class; without certified laws, all of them.
-    fixed: (f64, f64),
+    pub(super) fixed: (f64, f64),
     /// For each start of the direct-probe class.
-    run: (f64, f64),
+    pub(super) run: (f64, f64),
     /// The most of one play.
-    most: (f64, f64),
+    pub(super) most: (f64, f64),
     /// The largest factor sum at one command time, and intersecting one native score frame.
-    peak: f64,
-    peak_frame: f64,
+    pub(super) peak: f64,
+    pub(super) peak_frame: f64,
 }
 
 /// Immutable per-note envelope shared by the legacy compiler and physical native-root search.
@@ -37,7 +37,7 @@ impl FineView<'_> {
     }
 
     /// The drift of a candidate with these counts.
-    fn counts_drift(&self, counts: &CandCounts) -> f64 {
+    pub(super) fn counts_drift(&self, counts: &CandCounts) -> f64 {
         let drift = |(e, n): (f64, f64)| self.drift_of(e, n, counts.peak, counts.peak_frame);
         let most = drift(counts.most);
         match &self.fine.probe_starts {
@@ -102,7 +102,7 @@ impl FineView<'_> {
     }
 
     /// Adds the command counts of one part to the `[fixed, run, most]` counts of [`CandCounts`].
-    fn add_part_counts(&self, p: &Contrib, rush_masks: Option<&RushMasks>, counts: &mut [(f64, f64); 3]) {
+    pub(super) fn add_part_counts(&self, p: &Contrib, rush_masks: Option<&RushMasks>, counts: &mut [(f64, f64); 3]) {
         let add = |sum: &mut (f64, f64), x: (f64, f64)| *sum = ((sum.0 + x.0).next_up(), (sum.1 + x.1).next_up());
         let [fixed, run, most] = counts;
         let rush_masks = rush_masks.filter(|_| self.fine.rush_eligible);
@@ -133,7 +133,7 @@ impl FineView<'_> {
 
     /// The Gekisou combo factors of a candidate whose parts hold these combo bonus windows, into `scratch.gk_g`
     /// (and their combo sums into `scratch.sums`); nothing without a Gekisou combo.
-    fn fill_combo_factors(&self, parts: [&Contrib; 5], scratch: &mut Scratch) {
+    pub(super) fn fill_combo_factors(&self, parts: [&Contrib; 5], scratch: &mut Scratch) {
         let (c, f) = (&self.coef, &self.fine);
         let Some(gc) = &f.gcombo else { return };
         let mut ev = std::mem::take(&mut scratch.ev);
@@ -432,161 +432,6 @@ impl FineView<'_> {
         }
         total
     }
-
-    /// The sum of [`Self::fine_bound`] over performance orders, without conversion sources, a known life or Rush
-    /// masks, in expected mode; None in other modes. `slots[s][k]` is the part of slot `s` at position `k` and each
-    /// of `orders` holds the positions of the slots. Without conversions an entry has its own judgement `x` in every
-    /// order (mask `m = 1 << x`), and its expected bound is linear in the factors of the windows open at it:
-    /// - a window's note and judgement factors count by their positive parts, which bound the clamped sums;
-    /// - `max(mjp[m] B, jp4[m][j] (B + A_j)) <= mjp[m] B + Σ_j jp4[m][j] A_j`, as `0 <= jp4[m][j] <= mjp[m]` and
-    ///   `A_j >= 0`, an equality for a single judgement;
-    /// - the combo, its breaks and the Gekisou combo factors are the same in every order (the combo bonus windows
-    ///   of a class do not depend on its position).
-    ///
-    /// So the sum reads each part's windows once, weighted by the orders that place it there, and each order's
-    /// drift from its own command counts at the factor peaks of every slot at any of its positions
-    /// ([`slot_peak`]), at least that order's peaks.
-    pub(super) fn fine_bound_orders(
-        &self,
-        power: i64,
-        slots: [&[Contrib; 5]; 5],
-        orders: &[[usize; 5]],
-        scratch: &mut Scratch,
-    ) -> Option<i64> {
-        let (c, f) = (&self.coef, &self.fine);
-        if !f.expected {
-            return None;
-        }
-        let (peak, peak_frame) = (slot_peak(slots, None), slot_peak(slots, Some(f.score_frames)));
-        let mut drift = 0f64;
-        let mut weight = [[0f64; 5]; 5];
-        for positions in orders {
-            let mut counts = [(0f64, 0f64); 3];
-            for s in 0..5 {
-                self.add_part_counts(&slots[s][positions[s]], None, &mut counts);
-                weight[s][positions[s]] += 1.0;
-            }
-            let [fixed, run, most] = counts;
-            drift = (drift + self.counts_drift(&CandCounts { fixed, run, most, peak, peak_frame })).next_up();
-        }
-        let chain = self.chain();
-        if !drift.is_finite() || !chain.is_finite() {
-            return Some(i64::MAX);
-        }
-        self.fill_combo_factors(slots.map(|parts| &parts[0]), scratch);
-        let ne = c.times.len();
-        let judge = slots.iter().flat_map(|parts| parts.iter()).any(|p| p.judge);
-        scratch.note.clear();
-        scratch.note.resize(ne + 1, 0.0);
-        if judge {
-            for v in scratch.judge.iter_mut() {
-                v.clear();
-                v.resize(ne + 1, 0.0);
-            }
-        }
-        scratch.ramp.clear();
-        scratch.ramp.resize(ne, 0.0);
-        let reads = f.gcombo.as_ref().map(|gc| RampReads { gc, sums: &scratch.sums, times: &c.times });
-        for (parts, weight) in slots.iter().zip(&weight) {
-            for (part, &n) in parts.iter().zip(weight).filter(|(_, n)| **n > 0.0) {
-                // no slot has a conversion source
-                for w in part.unconverted.as_ref().unwrap_or(&part.windows) {
-                    let (lo, hi) = (w.lo as usize, w.hi as usize);
-                    if let Some(reads) = reads.as_ref().filter(|_| w.ramp != 0) {
-                        let ramp = &part.ramps[w.ramp as usize - 1];
-                        for e in lo..hi {
-                            scratch.ramp[e] += n * reads.factor(w, ramp, e).max(0.0);
-                        }
-                        continue;
-                    }
-                    scratch.note[lo] += n * w.note.max(0.0);
-                    scratch.note[hi] -= n * w.note.max(0.0);
-                    if judge {
-                        for j in 0..4 {
-                            scratch.judge[j][lo] += n * w.judge[j].max(0.0);
-                            scratch.judge[j][hi] -= n * w.judge[j].max(0.0);
-                        }
-                    }
-                }
-            }
-        }
-        let p = power.max(0) as f64;
-        let n = orders.len() as f64;
-        let (mut acc, mut accj, mut ranked) = (0f64, [0f64; 4], 0f64);
-        let (mut from, mut broke, mut group) = (0usize, None::<usize>, usize::MAX);
-        for e in 0..ne {
-            let gs = f.group[e] as usize;
-            if gs != group {
-                if let Some(b) = broke {
-                    from = b;
-                }
-                group = gs;
-            }
-            let m = 1usize << f.raw[e];
-            if f.breaks[m] {
-                broke = Some(gs);
-            }
-            let since = if f.nobreak.get(e).copied().unwrap_or(false) { gs } else { gs - from };
-            let combo = f.combo_max.get(since).copied().unwrap_or(f64::INFINITY);
-            let k =
-                if f.gcombo.is_some() { f.pre[e] * scratch.gk_g[e] * combo / f.cnc } else { f.pre[e] * combo / f.cnc };
-            acc += scratch.note[e];
-            let mut v = f.mjp[m] * (n + (acc + scratch.ramp[e]).max(0.0) + drift);
-            if judge {
-                for j in 0..4 {
-                    accj[j] += scratch.judge[j][e];
-                    v += f.jp4[m][j] * accj[j].max(0.0);
-                }
-            }
-            let x = p * k * v * (1.0 + chain);
-            let z = if c.z[e] == 1.0 { x } else { c.z[e] * x * (1.0 + 2f64.powi(-20)) };
-            ranked += if f.rank.is_empty() { z } else { z * f.rank[e] };
-        }
-        let v = (ranked * (1.0 + 1e-12)).ceil();
-        Some(if v >= i64::MAX as f64 { i64::MAX } else { v as i64 })
-    }
-}
-
-/// The largest sum over the slots of the largest factor sum of one slot's part at any of its positions (`slots[s][k]`
-/// at position `k`), over the span starts of all of them: of the spans containing that chart time (`frames` None),
-/// or meeting its native score frame. At least the `peak` (or `peak_frame`) of [`CandCounts`] for the parts of every
-/// order, each slot at one of its positions; each sum rounds up.
-fn slot_peak(slots: [&[Contrib; 5]; 5], frames: Option<ScoreFrames>) -> f64 {
-    let mut events = Vec::new();
-    let mut starts = Vec::new();
-    for (s, parts) in slots.iter().enumerate() {
-        for (k, part) in parts.iter().enumerate() {
-            for &(a, b, g) in &part.spans {
-                starts.push(frames.map_or(a, |frames| i64::from(frames.at(a))));
-                // the half-open span of chart times, or of score frames, it adds `g` at
-                let (lo, hi) = match frames {
-                    Some(frames) => match frames.closed(a, b) {
-                        Some((lo, hi)) => (lo, hi + 1),
-                        None => continue,
-                    },
-                    None => (a, b),
-                };
-                if lo < hi {
-                    events.push((lo, 5 * s + k, g));
-                    events.push((hi, 5 * s + k, -g));
-                }
-            }
-        }
-    }
-    events.sort_unstable_by_key(|e| e.0);
-    starts.sort_unstable();
-    starts.dedup();
-    let (mut sums, mut i, mut best) = ([0f64; 25], 0, 0f64);
-    for at in starts {
-        while i < events.len() && events[i].0 <= at {
-            let (_, part, g) = events[i];
-            sums[part] = (sums[part] + g).next_up();
-            i += 1;
-        }
-        let total = sums.chunks(5).fold(0f64, |t, slot| (t + slot.iter().copied().fold(f64::MIN, f64::max)).next_up());
-        best = best.max(total);
-    }
-    best
 }
 
 pub(crate) struct JointFineBounds {
@@ -596,6 +441,8 @@ pub(crate) struct JointFineBounds {
     pub(super) contrib: Vec<Vec<[Contrib; 5]>>,
     pub(super) class_of: Vec<Vec<u16>>,
     pub(super) raw: Option<raw::RawEnvelope>,
+    /// The terms of [`JointFineBounds::upper_orders`].
+    pub(super) order_sums: OrderSums,
 }
 #[derive(Default)]
 pub(crate) struct JointScratch(pub(super) Scratch);
@@ -855,8 +702,8 @@ impl JointFineBounds {
     }
 
     /// The sum of [`JointFineBounds::upper`] (without Rush masks) over performance orders, each of `orders` holding
-    /// the positions of the slots, as one bound ([`FineView::fine_bound_orders`]): None when a slot has a conversion
-    /// source or the bounds are not expected ones.
+    /// the positions of the slots, as one bound (see `order_sums`): None when a slot has a conversion source or the
+    /// bounds are not expected ones. With `below` the bound only needs to decide it (see [`OrderSums::upper`]).
     pub(crate) fn upper_orders(
         &self,
         power: i64,
@@ -864,18 +711,14 @@ impl JointFineBounds {
         choices: [usize; 5],
         orders: &[[usize; 5]],
         scratch: &mut JointScratch,
+        below: Option<&dyn Fn(i64) -> bool>,
     ) -> Option<i64> {
         let classes: [usize; 5] = std::array::from_fn(|s| self.choice_class(members[s], choices[s]));
-        if (0..5).any(|s| self.fine.src[members[s]][classes[s]] != 0) {
+        if !self.fine.expected || (0..5).any(|s| self.fine.src[members[s]][classes[s]] != 0) {
             return None;
         }
-        let slots = std::array::from_fn(|s| &self.contrib[members[s]][classes[s]]);
-        FineView { coef: &self.coef, fine: &self.fine, chain_extra: self.chain_extra }.fine_bound_orders(
-            power,
-            slots,
-            orders,
-            &mut scratch.0,
-        )
+        let view = FineView { coef: &self.coef, fine: &self.fine, chain_extra: self.chain_extra };
+        Some(self.order_sums.upper(&view, &self.contrib, power, members, classes, orders, &mut scratch.0, below))
     }
 }
 

@@ -13,7 +13,7 @@
 //! position acts, the node's live is the live of each of its orders, so each table applies to the shared prefix.
 use super::*;
 use crate::search::certified_search::LuckLaw;
-use crate::search::joint::JointBounds;
+use crate::search::joint::{JointBounds, TeamCaps};
 use ournotes_sim::live::full::{LiveModel, OrdersOutcome, Settled};
 use ournotes_sim::live::random::LiveRandom;
 use std::ops::ControlFlow;
@@ -98,8 +98,8 @@ fn cap_sum(caps: &[i128]) -> i128 {
 
 impl Engine<'_, '_> {
     /// Whether the caps of a team under the lottery `laws` of its own orders prove it below the K-th of `cutoff`
-    /// (its payoff numerator and power): the cheap caps of the domain's bounds compiled under those laws, lowered to
-    /// their raw and fine caps. False when the laws compile no bounds.
+    /// (its payoff numerator and power): the caps of the domain's bounds compiled under those laws
+    /// ([`JointBounds::team_below`]). False when the laws compile no bounds.
     fn below_under_laws(
         &mut self,
         domain: &crate::domain::CandidateDomain,
@@ -118,17 +118,17 @@ impl Engine<'_, '_> {
         });
         let below = |total: i128| total < threshold || (total == threshold && power < kth_power);
         let pruned = bounds.is_some_and(|bounds| {
-            let mut caps = bounds.order_cheap_caps(domain, physical, i64::from(power), &self.positions);
-            bounds.below_over_orders(
-                domain,
-                physical,
-                i64::from(power),
-                &self.positions,
-                &mut caps,
-                &mut self.bound_scratch,
-                below,
-                (&mut self.tel.leaves.order_sums, &mut self.tel.leaves.fine_orders),
-            )
+            bounds
+                .team_below(
+                    domain,
+                    physical,
+                    i64::from(power),
+                    &self.positions,
+                    &mut self.bound_scratch,
+                    below,
+                    (&mut self.tel.leaves.order_sums, &mut self.tel.leaves.fine_orders),
+                )
+                .is_some()
         });
         self.rec.clock.lap(resume);
         pruned
@@ -149,28 +149,24 @@ impl Engine<'_, '_> {
             // The caps prove a team below the K-th whether or not its scores are cached.
             if let (Some((bounds, domain)), Some((threshold, kth_power))) = (cut, self.safe_cutoff()) {
                 let below = |total: i128| total < threshold || (total == threshold && power < kth_power);
-                let mut caps = bounds.order_cheap_caps(domain, physical, i64::from(power), &self.positions);
-                if below(cap_sum(&caps)) {
-                    self.tel.leaves.cheap_pruned += 1;
-                    return Ok(Leaf::Pruned);
+                let (_, resume) = self.rec.clock.lap(slot::FINE);
+                let pruned = bounds.team_below(
+                    domain,
+                    physical,
+                    i64::from(power),
+                    &self.positions,
+                    &mut self.bound_scratch,
+                    below,
+                    (&mut self.tel.leaves.order_sums, &mut self.tel.leaves.fine_orders),
+                );
+                self.rec.clock.lap(resume);
+                match pruned {
+                    Some(TeamCaps::Cheap) => self.tel.leaves.cheap_pruned += 1,
+                    Some(TeamCaps::Fine) => self.tel.leaves.fine_pruned += 1,
+                    None => {}
                 }
-                if bounds.has_fine() {
-                    let (_, resume) = self.rec.clock.lap(slot::FINE);
-                    let pruned = bounds.below_over_orders(
-                        domain,
-                        physical,
-                        i64::from(power),
-                        &self.positions,
-                        &mut caps,
-                        &mut self.bound_scratch,
-                        below,
-                        (&mut self.tel.leaves.order_sums, &mut self.tel.leaves.fine_orders),
-                    );
-                    self.rec.clock.lap(resume);
-                    if pruned {
-                        self.tel.leaves.fine_pruned += 1;
-                        return Ok(Leaf::Pruned);
-                    }
+                if pruned.is_some() {
+                    return Ok(Leaf::Pruned);
                 }
             }
             let mut input = expectation::context(self.pool, physical, &self.request.objective)?;

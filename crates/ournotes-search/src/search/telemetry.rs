@@ -437,7 +437,8 @@ pub struct TimeBreakdown {
     /// Joint node work at each depth: bounds, choice loops and bookkeeping, excluding the activities below.
     pub depth_ms: [f64; DEPTHS],
     pub composition_ms: f64,
-    /// Per-order raw and fine caps of complete teams.
+    /// The caps of complete teams over their performance orders: their fine caps summed at once, and their cheap, raw
+    /// and fine caps per order.
     pub fine_bound_ms: f64,
     pub cutoff_table_ms: f64,
     pub simulation_ms: f64,

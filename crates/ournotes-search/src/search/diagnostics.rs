@@ -472,7 +472,7 @@ pub fn luck_fine_order_sums(
             .fine_upper(built.domain(), &p, power, at, &mut scratch)
             .ok_or_else(|| Error::Input("bounds without a fine cap".into()))?;
     }
-    Ok((each, bounds.fine_upper_orders(built.domain(), &p, power, &positions, &mut scratch)))
+    Ok((each, bounds.fine_upper_orders(built.domain(), &p, power, &positions, &mut scratch, None)))
 }
 
 /// The joint traversal's bounds along the path that reaches a complete legal deck: the leader, then the other pairs

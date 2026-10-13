@@ -49,6 +49,7 @@ mod tail;
 pub(crate) use bonus::BonusScratch;
 use compile::row_spread;
 pub(crate) use order_steps::OrderSteps;
+pub(crate) use orders::TeamCaps;
 pub(crate) use point_bound::term_cap;
 use point_bound::{PointBound, ScoreTarget};
 use relax::order_gain_bound;

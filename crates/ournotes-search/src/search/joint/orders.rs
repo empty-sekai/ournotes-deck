@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// The caps of a complete team that showed it below a cutoff (see [`JointBounds::team_below`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TeamCaps {
+    /// Its cheap caps.
+    Cheap,
+    /// Its raw and fine caps.
+    Fine,
+}
+
 impl JointBounds {
     /// The fine payoff cap of a complete deck in the performance order with these positions.
     pub(crate) fn fine_upper(
@@ -19,7 +28,8 @@ impl JointBounds {
     }
 
     /// At least the sum of [`JointBounds::fine_upper`] over the performance orders `orders` of a complete deck, as one
-    /// cap ([`JointFineBounds::upper_orders`]), for a score payoff without a least final life; None otherwise.
+    /// cap ([`JointFineBounds::upper_orders`]), for a score payoff without a least final life; None otherwise. With
+    /// `below` the cap only needs to decide it: whether it holds for the cap is whether it holds for the tightest one.
     pub(crate) fn fine_upper_orders(
         &self,
         domain: &CandidateDomain,
@@ -27,37 +37,50 @@ impl JointBounds {
         power: i64,
         orders: &[[usize; 5]],
         scratch: &mut JointScratch,
+        below: Option<&dyn Fn(i128) -> bool>,
     ) -> Option<i128> {
         if self.points.is_some() || self.min_final_life.is_some() {
             return None;
         }
         let choices = Self::prefix_choices(domain, p, 5);
-        self.fine.as_ref()?.upper_orders(power, p.members, choices, orders, scratch).map(i128::from)
+        let below = below.map(|below| move |cap: i64| below(i128::from(cap)));
+        let below = below.as_ref().map(|below| below as &dyn Fn(i64) -> bool);
+        self.fine.as_ref()?.upper_orders(power, p.members, choices, orders, scratch, below).map(i128::from)
     }
 
-    /// Whether `below` holds for the payoff numerator of a complete team over the performance orders `orders`, from
-    /// its per-order caps `caps`: for the lesser of their sum and [`JointBounds::fine_upper_orders`] when that
-    /// applies, and by [`JointBounds::tighten_order_caps_until`] otherwise. `summed` counts the teams whose fine caps
-    /// were summed at once, `computed` the orders whose caps were computed one by one.
+    /// Which caps of a complete team over the performance orders `orders` show `below` for its payoff numerator, if
+    /// any: first its fine caps summed at once ([`JointBounds::fine_upper_orders`]) where that applies, then the sum
+    /// of its cheap caps ([`JointBounds::order_cheap_caps`]), then, where no fine sum applies, those caps lowered to
+    /// their raw and fine caps order by order ([`JointBounds::tighten_order_caps_until`]). `below` holds for a total
+    /// at most one it holds for, so it holds for the least of these sums exactly when it holds for one of them, in
+    /// any order of the checks. `summed` counts the teams whose fine caps were summed at once, `computed` the orders
+    /// whose caps were computed one by one.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn below_over_orders(
+    pub(crate) fn team_below(
         &self,
         domain: &CandidateDomain,
         p: &PhysicalDeck,
         power: i64,
         orders: &[[usize; 5]],
-        caps: &mut [i128],
         scratch: &mut JointScratch,
         below: impl Fn(i128) -> bool,
         (summed, computed): (&mut u64, &mut u64),
-    ) -> bool {
-        match self.fine_upper_orders(domain, p, power, orders, scratch) {
-            Some(sum) => {
-                *summed += 1;
-                below(sum.min(caps.iter().fold(0i128, |a, &c| a.saturating_add(c))))
+    ) -> Option<TeamCaps> {
+        let sum = self.fine_upper_orders(domain, p, power, orders, scratch, Some(&below));
+        if let Some(sum) = sum {
+            *summed += 1;
+            if below(sum) {
+                return Some(TeamCaps::Fine);
             }
-            None => self.tighten_order_caps_until(domain, p, power, orders, caps, scratch, below, computed),
         }
+        let mut caps = self.order_cheap_caps(domain, p, power, orders);
+        if below(caps.iter().fold(0i128, |a, &c| a.saturating_add(c))) {
+            return Some(TeamCaps::Cheap);
+        }
+        (sum.is_none()
+            && self.fine.is_some()
+            && self.tighten_order_caps_until(domain, p, power, orders, &mut caps, scratch, below, computed))
+        .then_some(TeamCaps::Fine)
     }
 
     /// The event bonus of a complete deck (0 without a PT objective).
