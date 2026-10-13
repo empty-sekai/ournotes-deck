@@ -111,7 +111,8 @@ impl Geo<'_> {
 }
 
 /// Score-factor windows of the performer at one position: its live rows (with their condition results) and its
-/// snap class's active rows; also the number of factor commands and the total factor that can be active at once.
+/// snap class's active rows, and the windows of a team without a conversion when they differ; also the number of
+/// factor commands and the total factor that can be active at once.
 #[allow(clippy::type_complexity)]
 pub(super) fn windows(
     geo: &Geo,
@@ -119,7 +120,18 @@ pub(super) fn windows(
     live: &[LiveRow],
     snap: &[ActiveRow],
     events: &[i32],
-) -> (Vec<Window>, f64, [f64; 4], f64, Vec<(i64, i64, f64)>, Vec<ComboRamp>, Vec<rush::RushRef>, f64, f64) {
+) -> (
+    Vec<Window>,
+    Option<Vec<Window>>,
+    f64,
+    [f64; 4],
+    f64,
+    Vec<(i64, i64, f64)>,
+    Vec<ComboRamp>,
+    Vec<rush::RushRef>,
+    f64,
+    f64,
+) {
     let nk = events.len() as f64;
     let mut ext = 0f64;
     let mut unbounded = false;
@@ -170,11 +182,14 @@ pub(super) fn windows(
     };
     let mut ramps: Vec<ComboRamp> = Vec::new();
     let mut rush_rows = Vec::new();
-    let mut push = |(lo, hi): (u32, u32), note: f64, judge: [f64; 4], ramp: u32, rush: u32| {
+    let push = |out: &mut Vec<Window>, (lo, hi): (u32, u32), note: f64, judge: [f64; 4], ramp: u32, rush: u32| {
         if hi > lo && (note != 0.0 || judge.iter().any(|&x| x != 0.0)) {
             out.push(Window { lo, hi, note, judge, ramp, rush });
         }
     };
+    // the windows `unconverted` replaces: index ranges into `out`
+    let mut replaced: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut unconverted = Vec::new();
     let can = |x: &LiveRow| matches!(x.row.effect_type, 2000 | 2004) && x.out.is_none_or(|o| o.yes);
     for (i, x) in live.iter().enumerate() {
         let r = &x.row;
@@ -201,7 +216,7 @@ pub(super) fn windows(
             let Some(i0) = geo.first_frame(ev) else { continue };
             // a second event of the position restarts the effect without removing the first factor
             let end = if events.len() >= 2 { i64::MAX } else { geo.end(ev, i0, r.act, ext, unbounded) };
-            push(geo.range(ev as i64, end), note, judge, 0, 0);
+            push(&mut out, geo.range(ev as i64, end), note, judge, 0, 0);
             cmds = (cmds + 2.0 * c).next_up();
             cmds_plain = (cmds_plain + 2.0 * c).next_up();
             add(&mut fac, note, judge, 1.0);
@@ -217,14 +232,22 @@ pub(super) fn windows(
         }
         let (note, judge, c) = factors(r.effect_type, r.value, &r.targets);
         if let Some(ramp) = &r.cumulative_ramp {
-            for segments in ramp.iter() {
-                for (k, &(a, b, value)) in segments.iter().enumerate() {
-                    let (note, judge, _) = factors(r.effect_type, value, &r.targets);
-                    // one update replaces the factor by the next segment's, at least as large: a historical snapshot
-                    // of the replacement's score frame holds one of the two, so the next segment covers it
-                    let range = if k + 1 < segments.len() { geo.range_before(a, b) } else { geo.range(a, b) };
-                    push(range, note, judge, 0, 0);
+            let segments_of = |ramp: &ramp::RampWindows, out: &mut Vec<Window>| {
+                for segments in ramp.iter() {
+                    for (k, &(a, b, value)) in segments.iter().enumerate() {
+                        let (note, judge, _) = factors(r.effect_type, value, &r.targets);
+                        // one update replaces the factor by the next segment's, at least as large: a historical
+                        // snapshot of the replacement's score frame holds one of the two, so the next segment covers it
+                        let range = if k + 1 < segments.len() { geo.range_before(a, b) } else { geo.range(a, b) };
+                        push(out, range, note, judge, 0, 0);
+                    }
                 }
+            };
+            let from = out.len();
+            segments_of(ramp, &mut out);
+            if let Some(raw) = &r.cumulative_ramp_raw {
+                replaced.push(from..out.len());
+                segments_of(raw, &mut unconverted);
             }
         }
         if let Some(ws) = r.gk_event_win.as_ref().map(|w| &w[position]).or(r.gk_win.as_ref()) {
@@ -272,7 +295,7 @@ pub(super) fn windows(
                         }
                         _ => 0,
                     };
-                    push(geo.range(a, b), note * mult, judge.map(|x| x * mult), ramp, rush);
+                    push(&mut out, geo.range(a, b), note * mult, judge.map(|x| x * mult), ramp, rush);
                 }
                 // Pool size bounds simultaneous factors, not lifetime starts: an
                 // updater can be returned and reused many times in this span.
@@ -315,7 +338,7 @@ pub(super) fn windows(
                 let Some(i0) = geo.first_frame(ev) else { continue };
                 let exec = geo.frames[i0];
                 let end = geo.end(exec, i0, r.act, 0.0, false);
-                push(geo.range(exec as i64, end), note, judge, 0, 0);
+                push(&mut out, geo.range(exec as i64, end), note, judge, 0, 0);
                 cmds = (cmds + 2.0 * c).next_up();
                 cmds_plain = (cmds_plain + 2.0 * c).next_up();
                 add(&mut fac, note, judge, 1.0);
@@ -331,7 +354,7 @@ pub(super) fn windows(
             // a cumulative note score up replaces its factor (two commands) in any frame while it runs
             let churn = if r.churn { POOL + 1.0 } else { 1.0 };
             let judge5 = judge.map(|x| x * POOL);
-            push(geo.range(i64::MIN, i64::MAX), note * POOL, judge5, 0, 0);
+            push(&mut out, geo.range(i64::MIN, i64::MAX), note * POOL, judge5, 0, 0);
             let count = product_up(product_up(2.0 * c, geo.frames.len() as f64), churn);
             cmds = (cmds + count).next_up();
             cmds_plain = (cmds_plain + count).next_up();
@@ -342,7 +365,11 @@ pub(super) fn windows(
             spans.push((i64::MIN, i64::MAX, (note + judge.iter().copied().fold(0f64, f64::max)) * POOL));
         }
     }
-    (out, cmds, fac, ops, spans, ramps, rush_rows, ops_plain, cmds_plain)
+    let unconverted = (!replaced.is_empty()).then(|| {
+        let kept = out.iter().enumerate().filter(|(i, _)| !replaced.iter().any(|r| r.contains(i)));
+        kept.map(|(_, &w)| w).chain(unconverted).collect()
+    });
+    (out, unconverted, cmds, fac, ops, spans, ramps, rush_rows, ops_plain, cmds_plain)
 }
 
 fn product_up(a: f64, b: f64) -> f64 {

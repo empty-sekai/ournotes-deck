@@ -243,6 +243,9 @@ pub(super) struct ComboRamp {
 #[derive(Clone, Debug, Default)]
 pub(super) struct Contrib {
     pub(super) windows: Vec<Window>,
+    /// The windows of a team without a conversion, when they differ: cumulative judgement counts read the raw
+    /// judgements, not every judgement a conversion of an allowed card can give.
+    pub(super) unconverted: Option<Vec<Window>>,
     pub(super) gain: f64,
     pub(super) judge: bool,
     /// Score-frame executions that apply this performer's factor commands (see `cand_eps`).

@@ -583,6 +583,8 @@ pub(super) struct ActiveRow {
     pub(super) budget: Option<f64>,
     /// Per-execution judgement-count caps, with initial backdating preserved.
     pub(super) cumulative_ramp: Option<ramp::RampWindows>,
+    /// The same caps of a team without a conversion, when they differ.
+    pub(super) cumulative_ramp_raw: Option<ramp::RampWindows>,
     /// A cumulative note score up counting the playing range's combo: unit, count cap and note factor table.
     pub(super) combo_ramp: Option<(i64, i64, Rc<Vec<f64>>)>,
     pub(super) rush: Option<Rc<rush::RushSpec>>,

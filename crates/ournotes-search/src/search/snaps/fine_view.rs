@@ -216,6 +216,7 @@ impl FineView<'_> {
         let rush_masks = rush_masks.filter(|_| self.fine.rush_eligible);
         let mut rounding = rush_masks.map(|_| float_margin::WindowRoundoff::default());
         let mut refined = false;
+        let unconverted = src.iter().all(|&s| s == 0);
         for (k, p) in parts.iter().enumerate() {
             scratch.rush_replacements.clear();
             for row in &p.rush {
@@ -223,7 +224,8 @@ impl FineView<'_> {
                     rush::cached_windows(&mut scratch.rush_cache, &row.spec, masks, &self.coef.times)
                 }));
             }
-            for w in &p.windows {
+            let windows = p.unconverted.as_ref().filter(|_| unconverted).unwrap_or(&p.windows);
+            for w in windows {
                 if w.rush != 0 && scratch.rush_replacements[w.rush as usize - 1].is_some() {
                     refined = true;
                     continue;
@@ -487,7 +489,8 @@ impl FineView<'_> {
         let reads = f.gcombo.as_ref().map(|gc| RampReads { gc, sums: &scratch.sums, times: &c.times });
         for (parts, weight) in slots.iter().zip(&weight) {
             for (part, &n) in parts.iter().zip(weight).filter(|(_, n)| **n > 0.0) {
-                for w in &part.windows {
+                // no slot has a conversion source
+                for w in part.unconverted.as_ref().unwrap_or(&part.windows) {
                     let (lo, hi) = (w.lo as usize, w.hi as usize);
                     if let Some(reads) = reads.as_ref().filter(|_| w.ramp != 0) {
                         let ramp = &part.ramps[w.ramp as usize - 1];

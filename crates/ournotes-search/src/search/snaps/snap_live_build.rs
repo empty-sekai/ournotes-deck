@@ -1015,9 +1015,10 @@ impl<'a> SnapLive<'a> {
             for c in &classes[m] {
                 let mut arr: [Contrib; 5] = Default::default();
                 for k in 0..5 {
-                    let (w, mut cmds, fac, mut ops, spans, ramps, rush, ops_plain, cmds_plain) =
+                    let (w, unconverted, mut cmds, fac, mut ops, spans, ramps, rush, ops_plain, cmds_plain) =
                         windows(&geo, k, &member_live[m], &c.rows, &ev_by_k[k]);
-                    let w = if rush_weight.is_empty() { w } else { weigh_rush_windows(w, &rush_weight) };
+                    let weigh = |w| if rush_weight.is_empty() { w } else { weigh_rush_windows(w, &rush_weight) };
+                    let (w, unconverted) = (weigh(w), unconverted.map(weigh));
                     let fac = fac.iter().copied().fold(0f64, f64::max);
                     let judge = w.iter().any(|x| x.judge.iter().any(|&j| j != 0.0));
                     if let Some(starts) = fine.probe_starts {
@@ -1047,6 +1048,7 @@ impl<'a> SnapLive<'a> {
                     let cb = if fine.gcombo.is_some() { combo_windows(&c.rows) } else { Vec::new() };
                     arr[k] = Contrib {
                         windows: w,
+                        unconverted,
                         gain: 0.0,
                         judge,
                         ops,
