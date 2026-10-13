@@ -496,6 +496,13 @@ impl KindCensus<'_, '_, '_> {
         }
         // The contributions of the formation's orders, each once.
         let rows = kinds.map(|kind| lottery.entries[kind.index()].ids);
+        // Performers whose contribution is the same at every position compose the same contributions in every order
+        // that places each of them once.
+        let fixed = rows.iter().all(|row| row.iter().all(|&id| id == row[0]))
+            && orders
+                .iter()
+                .all(|order| order.iter().fold(0u32, |seen, &member| seen | 1 << member) == (1 << POSITIONS) - 1);
+        let orders = if fixed { &orders[..orders.len().min(1)] } else { orders };
         let mut met: Vec<OrderIds> = Vec::new();
         let mut laws: Vec<std::sync::Arc<LuckDpCertifiedResult>> = Vec::new();
         for order in orders {
