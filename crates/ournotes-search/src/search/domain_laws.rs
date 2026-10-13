@@ -453,8 +453,13 @@ fn domain_laws(
     Ok((laws, multisets))
 }
 
-/// The laws of a domain split into at most this many clusters (see [`cluster_laws`]).
-const LAW_CLUSTERS: usize = 8;
+/// The laws of a domain split into about one cluster per this many laws (see [`cluster_laws`]), within
+/// [`LAW_CLUSTERS`]: each cluster's bounds weigh fewer laws, and each cluster adds a traversal of the prefixes its
+/// multisets share with the others.
+const LAWS_PER_CLUSTER: usize = 190;
+
+/// The fewest and the most clusters of the laws of a domain.
+const LAW_CLUSTERS: (usize, usize) = (8, 16);
 
 /// Points of the time grid on which [`cluster_laws`] compares the curves of the laws.
 const CURVE_POINTS: i64 = 64;
@@ -691,7 +696,9 @@ impl Engine<'_, '_> {
         domain: &CandidateDomain,
         multisets: &[Multiset],
     ) -> Option<LawClusters> {
-        let (sets, cluster) = cluster_laws(multisets, &census.read.laws, LAW_CLUSTERS.min(MAX_CLUSTERS))?;
+        let laws: std::collections::HashSet<u32> = multisets.iter().flat_map(|(_, ids)| ids.iter().copied()).collect();
+        let k = ((laws.len() + LAWS_PER_CLUSTER / 2) / LAWS_PER_CLUSTER).clamp(LAW_CLUSTERS.0, LAW_CLUSTERS.1);
+        let (sets, cluster) = cluster_laws(multisets, &census.read.laws, k.min(MAX_CLUSTERS))?;
         if sets.len() < 2 {
             return None;
         }
