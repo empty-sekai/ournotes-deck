@@ -99,6 +99,15 @@ fn reads_a_file_and_computes_the_chart_counts() {
 }
 
 #[test]
+fn the_judged_notes_come_from_the_chart() {
+    // The score row's full combo count (6) is not the chart's judged notes (5); the chart's notes decide.
+    let d = load(&document(6, vec![chart_json(1004)])).unwrap();
+    assert_eq!(d.master.live_music_score(1004).unwrap().full_combo_count, 6);
+    let c = d.data_chart(1004).unwrap();
+    assert_eq!(ournotes_sim::live::skip::judgement_note_total_count(&c.notes), 5);
+}
+
+#[test]
 fn float_columns_are_binary32() {
     let text = document(5, vec![chart_json(1004)]).to_string().replace("0.123456", "1e999");
     let d = DeckData::from_json(&text).unwrap();
@@ -115,7 +124,7 @@ fn rejects_bad_files() {
     let mut v = document(5, vec![chart_json(1004)]);
     v["format"] = json!("something else");
     assert!(bad(v).contains("not a deck data file"));
-    assert!(bad(document(6, vec![chart_json(1004)])).contains("full combo"));
+    assert!(bad(document(5, vec![chart_json(9)])).contains("no MasterLiveMusicScore row"));
     let mut v = document(5, vec![chart_json(1004)]);
     v["charts"][0]["notes"]["id"][1] = json!(1);
     assert!(bad(v).contains("listed twice"));
