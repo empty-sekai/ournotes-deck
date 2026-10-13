@@ -78,11 +78,41 @@ pub struct LotteryRefinement {
     /// Complete laws successfully installed in the ranking frontier.
     pub installed_orders: u64,
     pub declined_orders: u64,
+    /// The declined orders by the reason the provider gave.
+    pub declines: RefinementDeclines,
     /// Complete laws whose search-side exact payoff arithmetic exceeded its representation.
     pub arithmetic_declines: u64,
     pub replay_runs: u64,
     pub terminal_paths: u64,
     pub frames: u64,
+}
+
+/// Orders the exact lottery provider declined, by its reason.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefinementDeclines {
+    pub domain: u64,
+    pub branch_depth: u64,
+    pub work_budget: u64,
+    pub arithmetic: u64,
+    pub unhandled_random: u64,
+    pub cancelled: u64,
+    pub unsupported: u64,
+}
+
+impl RefinementDeclines {
+    pub(crate) fn count(&mut self, why: ournotes_sim::live::full::LuckExactDecline) {
+        use ournotes_sim::live::full::LuckExactDecline as Why;
+        *match why {
+            Why::Domain => &mut self.domain,
+            Why::BranchDepth => &mut self.branch_depth,
+            Why::WorkBudget => &mut self.work_budget,
+            Why::Arithmetic => &mut self.arithmetic,
+            Why::UnhandledRandom => &mut self.unhandled_random,
+            Why::Cancelled => &mut self.cancelled,
+            Why::Unsupported => &mut self.unsupported,
+        } += 1;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]

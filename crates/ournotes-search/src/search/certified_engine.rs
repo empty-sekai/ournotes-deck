@@ -409,6 +409,7 @@ impl Engine<'_, '_> {
                 telemetry.terminal_paths += result.stats.terminal_paths;
                 let Some(law) = result.law else {
                     telemetry.declined_orders += 1;
+                    telemetry.declines.count(result.decline.expect("a declined attempt gives its reason"));
                     if result.decline == Some(LuckExactDecline::Cancelled) {
                         return Ok(());
                     }

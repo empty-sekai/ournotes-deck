@@ -140,6 +140,8 @@ fn long_stream_refinement_materializes_the_boundary_candidate() {
     if long.completion == Completion::RefinementRequired {
         assert_eq!(long.optimality, ournotes_search::types::Optimality::Unproven);
         assert!(counters.declined_orders > 0);
+        // The allowance runs out: the declines name the work budget.
+        assert_eq!(counters.declines.work_budget, counters.declined_orders);
         assert_eq!(counters.frames, ournotes_sim::live::full::LuckExactBudget::default().remaining_frames);
     } else {
         assert!(long.results.iter().all(|row| row.rank_certified == Some(true)));
