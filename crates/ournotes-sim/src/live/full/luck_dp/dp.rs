@@ -578,11 +578,33 @@ fn rest_id(rests: &mut Vec<State>, ids: &mut FxHashMap<State, RestId>, mut state
 /// gauges it puts a table of them before its runs, a run of which ends where the old table starts. So its runs are
 /// the longest runs of the branches at its gauges, ended at its breaks as well; a step adds the masses of a run to the
 /// masses of each of its branches in turn, and the order in which one mass meets several branches follows its runs.
+///
+/// `whole` holds, once read for the current gauges, the rest the shared table takes every state at them to with the
+/// same gauge and certainty, if it does: then it holds them and its single run there has that one branch.
 struct Reads {
     from: i32,
     to: i32,
     table: u32,
     breaks: Vec<i32>,
+    whole: Option<Option<RestId>>,
+}
+
+/// The rest `table` takes every state at the gauges `from..to` to with the same gauge and certainty, if it holds them
+/// in one run whose only branch does so.
+fn whole_run<M: Mass>(table: &Table<M>, from: i32, to: i32) -> Option<RestId> {
+    let run = table.runs.get(table.runs.partition_point(|run| run.to <= from))?;
+    match &table.branches[run.branches.clone()] {
+        &[branch]
+            if run.from <= from
+                && to <= run.to
+                && branch.shift == 0
+                && branch.draw.is_none()
+                && branch.probability.bits() == M::ONE.bits() =>
+        {
+            Some(branch.rest)
+        }
+        _ => None,
+    }
 }
 
 /// The lottery-state distribution in blocks of states with one rest, and the tables of the steps it took.
@@ -700,7 +722,7 @@ impl<'t, M: Mass> Dp<'t, M> {
             u32::MAX => {
                 held[rest as usize] = self.reads.len() as u32;
                 let table = self.tables.table(rest, key);
-                self.reads.push(Reads { from: lo, to: hi, table, breaks: Vec::new() });
+                self.reads.push(Reads { from: lo, to: hi, table, breaks: Vec::new(), whole: None });
                 self.reads.len() - 1
             }
             index => {
@@ -708,8 +730,12 @@ impl<'t, M: Mass> Dp<'t, M> {
                 if lo < reads.from {
                     reads.breaks.push(reads.from);
                     reads.from = lo;
+                    reads.whole = None;
                 }
-                reads.to = reads.to.max(hi);
+                if hi > reads.to {
+                    reads.to = hi;
+                    reads.whole = None;
+                }
                 index as usize
             }
         }
@@ -745,17 +771,22 @@ impl<'t, M: Mass> Dp<'t, M> {
             let (lo, hi) = (block.lo, block.lo + block.masses.len() as i32);
             let reads = self.reads(step, number, block.rest, lo, hi);
             let index = self.reads[reads].table;
-            self.tables.cover(index, block.rest, lo, hi, &mut filed, &mut scratch, &mut branches)?;
-            self.fit_slots();
+            // The shared table holds the gauges of every block this rest took under the step since `whole` was read.
+            let whole = match self.reads[reads].whole {
+                Some(whole) => whole,
+                None => {
+                    self.tables.cover(index, block.rest, lo, hi, &mut filed, &mut scratch, &mut branches)?;
+                    self.fit_slots();
+                    let Reads { from, to, .. } = self.reads[reads];
+                    let whole = whole_run(&self.tables.tables[index as usize], from, to);
+                    self.reads[reads].whole = Some(whole);
+                    whole
+                }
+            };
             let Self { tables, out, slots, spare, reads: all_reads, transitions, range_moments, .. } = self;
             let (table, breaks) = (&tables.tables[index as usize], &all_reads[reads].breaks);
             let rests = &tables.rests;
-            let first = table.runs.partition_point(|run| run.to <= lo);
-            let whole = table.runs.get(first).filter(|run| run.from <= lo && hi <= run.to);
-            if let Some(&[branch]) = whole.map(|run| &table.branches[run.branches.clone()])
-                && branch.shift == 0
-                && branch.draw.is_none()
-                && branch.probability.bits() == M::ONE.bits()
+            if let Some(reached) = whole.or_else(|| whole_run(table, lo, hi))
                 && block.masses.first().is_some_and(|mass| mass.possible())
                 && block.masses.last().is_some_and(|mass| mass.possible())
             {
@@ -766,7 +797,7 @@ impl<'t, M: Mass> Dp<'t, M> {
                     .checked_add(block.held as u64)
                     .ok_or_else(|| Error::Capacity("LUCK DP transitions overflow".into()))?;
                 if let Some(observe) = observe.as_mut() {
-                    let (taken, reached) = (&rests[block.rest as usize], &rests[branch.rest as usize]);
+                    let (taken, reached) = (&rests[block.rest as usize], &rests[reached as usize]);
                     let mut from = lo;
                     for to in pieces(lo, hi, breaks) {
                         let masses = &block.masses[(from - lo) as usize..(to - lo) as usize];
@@ -776,18 +807,20 @@ impl<'t, M: Mass> Dp<'t, M> {
                         from = to;
                     }
                 }
-                if slots[branch.rest as usize] == u32::MAX {
-                    slots[branch.rest as usize] = out.len() as u32;
-                    out.push(Block { rest: branch.rest, ..block });
+                if slots[reached as usize] == u32::MAX {
+                    slots[reached as usize] = out.len() as u32;
+                    out.push(Block { rest: reached, ..block });
                 } else {
-                    let target = block_at(out, slots, spare, branch.rest, lo, hi);
+                    let target = block_at(out, slots, spare, reached, lo, hi);
                     let offset = (lo - target.lo) as usize;
                     M::accumulate(&mut target.masses[offset..offset + block.masses.len()], &block.masses, M::ONE);
                     spare.push(block.masses);
                 }
                 continue;
             }
-            for run in &table.runs[first..] {
+            // In a block whose masses are all possible, every piece holds its states from end to end.
+            let dense = block.held == block.masses.len();
+            for run in &table.runs[table.runs.partition_point(|run| run.to <= lo)..] {
                 if run.from >= hi {
                     break;
                 }
@@ -798,11 +831,15 @@ impl<'t, M: Mass> Dp<'t, M> {
                     from = to;
                     let masses = &block.masses[(piece - lo) as usize..(to - lo) as usize];
                     let (mut first, mut last, mut possible) = (usize::MAX, 0, 0u64);
-                    for (k, mass) in masses.iter().enumerate() {
-                        if mass.possible() {
-                            first = first.min(k);
-                            last = k;
-                            possible += 1;
+                    if dense {
+                        (first, last, possible) = (0, masses.len() - 1, masses.len() as u64);
+                    } else {
+                        for (k, mass) in masses.iter().enumerate() {
+                            if mass.possible() {
+                                first = first.min(k);
+                                last = k;
+                                possible += 1;
+                            }
                         }
                     }
                     if possible == 0 {
