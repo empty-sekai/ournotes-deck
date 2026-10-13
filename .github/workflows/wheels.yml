@@ -1,0 +1,64 @@
+name: Python wheels
+
+on:
+  workflow_call:
+    inputs:
+      source-commit:
+        description: Source commit to build and verify
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - python/**
+      - scripts/release/smoke-python.py
+      - .github/workflows/wheels.yml
+
+permissions:
+  contents: read
+
+jobs:
+  # one abi3 wheel (CPython 3.11 and later) per platform with the extension module ournotes_sim._native
+  wheel:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, target: x86_64, manylinux: '2_28'}
+          - {runner: ubuntu-24.04-arm, target: aarch64, manylinux: '2_28'}
+          - {runner: windows-2025, target: x64}
+          - {runner: macos-15-intel, target: x86_64}
+          - {runner: macos-15, target: aarch64}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    env:
+      SOURCE_COMMIT: ${{ inputs.source-commit || github.sha }}
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: automation
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source-commit || github.sha }}
+          path: source
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: source/python
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          # SOURCE_COMMIT is compiled into info()["commit"]
+          docker-options: -e SOURCE_COMMIT
+          args: --release --locked --out dist
+      - name: Test the installed wheel
+        run: python automation/scripts/release/smoke-python.py source/python/dist --tests source/python/tests --commit "$SOURCE_COMMIT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.runner }}-${{ matrix.target }}
+          path: source/python/dist/*.whl
+          if-no-files-found: error
