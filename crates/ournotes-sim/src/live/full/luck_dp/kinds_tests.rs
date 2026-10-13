@@ -403,6 +403,44 @@ fn formations_that_differ_only_in_their_score_probes_share_one_propagation() {
 }
 
 #[test]
+fn formations_whose_factor_parts_sum_to_the_same_speeds_share_one_propagation() {
+    let (mut master, notes, params, setup, play, delta) = kinds_fixture();
+    // Gauge speeds of 0.25 (818) and of 0.5 (819) for 0.2 s from a range start, with no other effect.
+    for (skill, value) in [(818, 2500), (819, 5000)] {
+        let mut speed = row(skill, "_gekisouSkillID", skill, 11001, value, 7010, 0, 0);
+        speed["_activationTimeSecond"] = json!(0.2);
+        master.gekisou_skill_effects.push(serde_json::from_value(speed).unwrap());
+        master.gekisou_skills.push(serde_json::from_value(json!({"_id":skill,"_gekisouMissionType":2})).unwrap());
+    }
+    master.reindex().unwrap();
+    let skills = luck_skills(&master).unwrap();
+    let live = lottery_live(&master, &skills, (&notes, params, &setup, &play, &delta));
+    let mut kinds = LotteryKinds::new(&master, usize::MAX);
+    let mut curves = LuckDpCache::new(usize::MAX);
+    let with = |first: Option<i64>, second: Option<i64>| {
+        [holding(first, &[]), holding(second, &[]), holding(Some(1), &[66]), holding(None, &[66]), holding(None, &[])]
+    };
+    let (quarters, half, none) = (with(Some(818), Some(818)), with(Some(819), None), with(None, None));
+    // Two quarters and one half file the same transcript, which the speeds change.
+    let words = composed_words(&mut kinds, &live, &quarters).unwrap();
+    assert_eq!(composed_words(&mut kinds, &live, &half).unwrap(), words);
+    assert_ne!(composed_words(&mut kinds, &live, &none).unwrap(), words);
+    let order = [[0, 1, 2, 3, 4]];
+    let two = kinds.order_laws(&live, &quarters, &order, &mut curves).unwrap().unwrap();
+    let one = kinds.order_laws(&live, &half, &order, &mut curves).unwrap().unwrap();
+    assert_eq!((kinds.stats().composed, kinds.stats().speed_variants), (1, 1));
+    assert!(std::sync::Arc::ptr_eq(&two[0].steps, &one[0].steps));
+    // A formation without the speeds propagates its own.
+    let slow = kinds.order_laws(&live, &none, &order, &mut curves).unwrap().unwrap();
+    assert_eq!((kinds.stats().composed, kinds.stats().speed_variants), (2, 1));
+    for (deck, law) in [(&quarters, &two[0]), (&half, &one[0]), (&none, &slow[0])] {
+        let native = curves.law_of(&native_transcript(&live, deck), &mut || false).unwrap().unwrap();
+        assert_eq!(curve_words(law), curve_words(&native), "{deck:?}");
+        assert_eq!(law.probes, native.probes, "{deck:?}");
+    }
+}
+
+#[test]
 fn a_census_gives_each_law_of_the_orders_of_a_formation_once() {
     let (master, notes, params, setup, play, delta) = kinds_fixture();
     let skills = luck_skills(&master).unwrap();

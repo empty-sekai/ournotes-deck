@@ -154,6 +154,9 @@ pub struct LotteryKindStats {
     pub composed: u64,
     /// Composed laws read from the propagation of a composition that differs from theirs only in its score probes.
     pub probe_variants: u64,
+    /// Composed laws read from the propagation of a composition with other factor parts that sum to the same gauge
+    /// speed at every hit, and the same actions.
+    pub speed_variants: u64,
     pub composed_transitions: u64,
     pub composed_peak_states: usize,
     pub law_evictions: u64,
