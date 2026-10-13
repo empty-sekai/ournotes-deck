@@ -32,8 +32,8 @@
 //! Orders the certificate does not cover are evaluated one by one with [`luck_exact_score`](super::luck_exact_score).
 
 use super::exact::{
-    LuckExactProfile, LuckExactScore, Schedule, Stopwatch, check_probes, exact_model, exact_schedule, exact_score,
-    has_luck, lottery_law, record_exact, rush_percent,
+    LuckExactProfile, LuckExactScore, Observers, PowerTwin, Schedule, Stopwatch, check_probes, exact_model,
+    exact_schedule, exact_score, has_luck, lottery_law, record_exact, rush_percent,
 };
 use super::exact_paths::{MAX_LANES, Orders, first_orders};
 use super::*;
@@ -110,7 +110,7 @@ pub fn luck_exact_orders(
     details: bool,
 ) -> Result<LuckExactOrders, Error> {
     let live = LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking };
-    exact_orders(&live, deck, orders, None, curves, details)
+    exact_orders(&live, deck, orders, None, curves, details, None)
 }
 
 /// [`luck_exact_orders`] with the lottery law of each order given: `laws[i]` is the law [`luck_order_laws`] gives
@@ -136,9 +136,50 @@ pub fn luck_exact_orders_with_laws(
         return Err(Error::Input("one lottery law per order".into()));
     }
     let live = LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking };
-    exact_orders(&live, deck, orders, Some(laws), curves, details)
+    exact_orders(&live, deck, orders, Some(laws), curves, details, None)
 }
 
+/// Whether the formation `deck` scores the same as at band power `power` on every lottery path of every one of
+/// `orders`, in the live of [`luck_exact_orders`]. The band power enters a native note score alone: no predicate reads
+/// the score, the recorder admits no power command, and the lottery recording reads no score. When every note value of
+/// the evaluation has a single integer score in each lottery class, the same at both powers, every note scores the
+/// same on every path at both powers, so every snapshot, rank bonus and final score does too. `laws` holds the lottery
+/// law of each order when the caller has them. False means the comparison found a note value that may score
+/// differently or several integers.
+#[allow(clippy::too_many_arguments)]
+pub fn luck_exact_orders_power_twin(
+    master: &Master,
+    skills: &LuckSkills,
+    deck: &[Performer],
+    notes: &[LiveNote],
+    events: &[(i32, i32)],
+    params: LiveParams,
+    setup: &GekisouSetup,
+    play: &LivePlay,
+    delta_times: &[f32],
+    ranking: Option<&[crate::replay::RankConfirmation]>,
+    orders: &[[usize; MEMBERS]],
+    laws: Option<&[std::sync::Arc<LuckDpCertifiedResult>]>,
+    curves: Option<&mut LuckDpCache>,
+    power: i32,
+) -> Result<bool, Error> {
+    if laws.is_some_and(|laws| laws.len() != orders.len()) {
+        return Err(Error::Input("one lottery law per order".into()));
+    }
+    if !has_luck(setup) {
+        return Err(refuse("the live has no LUCK range"));
+    }
+    let live = LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking };
+    let mut twin = PowerTwin::new(power);
+    match exact_orders(&live, deck, orders, laws, curves, false, Some(&mut twin)) {
+        Ok(_) => Ok(twin.equal()),
+        // The comparison ends the evaluation at the first note value that may score differently.
+        Err(_) if !twin.equal() => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// The scores of `orders`; `twin` compares every note value scored with its scores at another power.
 fn exact_orders(
     live: &LotteryLive,
     deck: &[Performer],
@@ -146,6 +187,7 @@ fn exact_orders(
     laws: Option<&[std::sync::Arc<LuckDpCertifiedResult>]>,
     curves: Option<&mut LuckDpCache>,
     details: bool,
+    mut twin: Option<&mut PowerTwin>,
 ) -> Result<LuckExactOrders, Error> {
     if deck.len() != MEMBERS {
         return Err(Error::Input("an order evaluation takes five performers".into()));
@@ -160,17 +202,22 @@ fn exact_orders(
     let mut local = LuckDpCache::new(usize::MAX);
     let curves = curves.unwrap_or(&mut local);
     let mut profile = LuckExactOrdersProfile::default();
-    let alone = match splice(live, deck, orders, laws, curves, details, &mut profile) {
+    let alone = match splice(live, deck, orders, laws, curves, details, &mut profile, twin.as_deref_mut()) {
         Ok(spliced) => return Ok(spliced),
         Err(error) => error.to_string(),
     };
+    // The orders one by one score every note value again.
+    if let Some(twin) = twin.as_deref_mut() {
+        twin.restart();
+    }
     let mut watch = Stopwatch::start();
     let scores = orders
         .iter()
         .enumerate()
         .map(|(index, order)| {
             let law = laws.map(|laws| laws[index].clone());
-            exact_score(live, &ordered(deck, order), law, Some(&mut *curves), details)
+            let observers = Observers { reads: None, twin: twin.as_deref_mut() };
+            exact_score(live, &ordered(deck, order), law, Some(&mut *curves), details, observers)
         })
         .collect::<Result<Vec<_>, _>>()?;
     profile.evaluate_ms += watch.lap();
@@ -444,7 +491,8 @@ pub(super) fn order_shape(model: &mut LiveModel, skills: &LuckSkills) -> Result<
 }
 
 /// The scores of `orders` from the rotations' recordings, or why the certificate does not cover them. `given` holds
-/// the law of each order when the caller has them.
+/// the law of each order when the caller has them; `twin` compares the note values with their scores at its power.
+#[allow(clippy::too_many_arguments)]
 fn splice(
     live: &LotteryLive,
     deck: &[Performer],
@@ -453,6 +501,7 @@ fn splice(
     curves: &mut LuckDpCache,
     details: bool,
     profile: &mut LuckExactOrdersProfile,
+    mut twin: Option<&mut PowerTwin>,
 ) -> Result<LuckExactOrders, Error> {
     let mut watch = Stopwatch::start();
     if !has_luck(live.setup) {
@@ -603,6 +652,7 @@ fn splice(
             details,
             LuckExactProfile::default(),
             Stopwatch::start(),
+            Observers { reads: None, twin: twin.as_deref_mut() },
         )?;
         for (&index, score) in group.iter().zip(results) {
             scores[index] = Some(score);

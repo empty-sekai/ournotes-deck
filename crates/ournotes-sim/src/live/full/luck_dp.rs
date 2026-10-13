@@ -31,7 +31,8 @@ pub(super) use cache::RecordingCache;
 pub use cache::{LuckDpCache, LuckDpCacheStats};
 use compose::{ComposedLaws, HeldLive};
 pub use compose::{KindCensus, LotteryLive};
-use dp::{DpResult, Phase, State, StepTables, propagate, propagate_sharing};
+pub(crate) use dp::{ClassResidue, ResiduePlan};
+use dp::{DpResult, Phase, State, StepTables, propagate, propagate_residues, propagate_sharing};
 use kinds::{Conversions, POSITIONS};
 pub use kinds::{LotteryBreak, LotteryKind, LotteryKindStats, LotteryKinds, LotteryRole};
 use life_recorder::life_recorder;
@@ -368,6 +369,68 @@ pub(super) fn certified_mode(
         peak_states: result.peak_states,
         transitions: result.transitions,
     })
+}
+
+/// The recording of one formation in its order with the certified lottery law propagated from it, kept for the
+/// residue laws of sums of the scores its notes read ([`Self::residues`]).
+pub(crate) struct LotteryRecording {
+    transcript: Transcript<ProbabilityMass>,
+    law: std::sync::Arc<LuckDpCertifiedResult>,
+}
+
+impl LotteryRecording {
+    /// Record `deck` in its order and propagate its certified law, as [`luck_rush_dp_certified_with_ranking`] does.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record(
+        master: &Master,
+        skills: &LuckSkills,
+        notes: &[LiveNote],
+        skill_events: &[(i32, i32)],
+        params: LiveParams,
+        setup: &GekisouSetup,
+        play: &LivePlay,
+        delta_times: &[f32],
+        deck: &[Performer],
+        ranking: Option<&[crate::replay::RankConfirmation]>,
+    ) -> Result<Self, Error> {
+        let transcript = record::<ProbabilityMass>(
+            master,
+            skills,
+            notes,
+            skill_events,
+            params,
+            setup,
+            play,
+            delta_times,
+            deck,
+            None,
+            ranking,
+            false,
+        )?;
+        let result = propagate(&transcript)?;
+        let law = std::sync::Arc::new(LuckDpCertifiedResult {
+            probe_transitions: result.probe_transitions,
+            rush_transitions: result.rush_transitions,
+            steps: result.steps.into(),
+            frame_queries: result.frame_queries.into(),
+            probes: result.probes,
+            probe_starts: result.probe_starts,
+            range_moments: result.range_moments,
+            peak_states: result.peak_states,
+            transitions: result.transitions,
+        });
+        Ok(Self { transcript, law })
+    }
+
+    /// The certified lottery law of the recording.
+    pub(crate) fn law(&self) -> std::sync::Arc<LuckDpCertifiedResult> {
+        self.law.clone()
+    }
+
+    /// The certified mass of each residue of `plan`'s sum below its modulus, under the recording's lottery law.
+    pub(crate) fn residues(&self, plan: &ResiduePlan) -> Result<Vec<ProbabilityMass>, Error> {
+        propagate_residues(&self.transcript, plan)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

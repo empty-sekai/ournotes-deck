@@ -2,6 +2,11 @@
 
 use super::*;
 
+mod residues;
+use residues::ResidueReads;
+pub(super) use residues::propagate_residues;
+pub(crate) use residues::{ClassResidue, ResiduePlan};
+
 pub(super) struct DpResult<W> {
     pub(super) probe_transitions: Vec<u8>,
     pub(super) rush_transitions: Vec<u16>,
@@ -106,6 +111,8 @@ pub(super) struct State {
     /// Within a frame: the Rush once the frame's start is processed, and whether a lottery of the frame changed it.
     pub(super) rush_start: bool,
     pub(super) rush_filed: bool,
+    /// The residue of the integer scores a [`ResiduePlan`] has read on the state's lottery path; zero without one.
+    pub(super) residue: u8,
 }
 
 impl std::hash::Hash for State {
@@ -125,7 +132,8 @@ impl std::hash::Hash for State {
                 | ((self.rush as u64) << 52)
                 | ((self.query_rush as u64) << 53)
                 | ((self.score as u64) << 54)
-                | ((self.score_before as u64) << 55),
+                | ((self.score_before as u64) << 55)
+                | (u64::from(self.residue) << 56),
         );
         if self.previous_critical || self.frame_critical {
             hasher.write_u8(u8::from(self.previous_critical) | (u8::from(self.frame_critical) << 1));
@@ -263,7 +271,9 @@ impl<M: Mass> Table<M> {
     }
 }
 
-/// What a step reads besides the state it takes: steps with the same key take each state to the same branches.
+/// What a step reads besides the state it takes: steps with the same key take each state to the same branches. A
+/// residue read point of a [`ResiduePlan`] has its own key in each propagation, so only that propagation's own step
+/// tables hold its tables ([`propagate_residues`]).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum StepKey {
     FrameStart { start: Option<usize>, finish: bool, gate: bool, current_luck: bool, complete: bool },
@@ -272,6 +282,7 @@ enum StepKey {
     Note { range: usize, note_type: i32, judgement: i32, buff: i32, speed: u32, consumes: bool },
     Pending { range: usize, buff: i32 },
     FrameEnd { finish: bool },
+    Residue { point: u32 },
 }
 
 /// Everything the branches of a step read besides the state and what a [`StepTables`] holds for all its propagations
@@ -1098,7 +1109,7 @@ pub(super) fn propagate_cancellable<M: Mass>(
 ) -> Result<Option<DpResult<M::Weights>>, Error> {
     let mut tables = StepTables::default();
     tables.enter_transcript(transcript);
-    let result = propagate_frames(transcript, &mut tables, cancelled)?;
+    let result = propagate_frames(transcript, &mut tables, cancelled, None)?;
     finish(transcript, result)
 }
 
@@ -1115,7 +1126,7 @@ pub(super) fn propagate_sharing<M: Mass>(
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<DpResult<M::Weights>>, Error> {
     tables.enter_transcript(transcript);
-    match propagate_frames(transcript, tables, cancelled) {
+    match propagate_frames(transcript, tables, cancelled, None) {
         Ok(result) => finish(transcript, result),
         Err(_) => {
             *tables = StepTables::default();
@@ -1133,10 +1144,14 @@ fn finish<W>(transcript: &Transcript<impl Mass>, result: Option<DpResult<W>>) ->
     }
 }
 
+/// The propagation of `transcript`. With `residues`, the states also carry the residue of a plan's sum, and the
+/// propagation ends once the plan's last read point is met: no later step changes a residue, and every step keeps the
+/// mass of each residue, so the masses by residue are final there. The result then covers the frames up to that point.
 fn propagate_frames<M: Mass>(
     transcript: &Transcript<M>,
     tables: &mut StepTables<M>,
     cancelled: &mut impl FnMut() -> bool,
+    mut residues: Option<&mut ResidueReads<'_, M>>,
 ) -> Result<Option<DpResult<M::Weights>>, Error> {
     let t = transcript;
     let mut dp = Dp::<M>::new(tables, t.collect_moments);
@@ -1177,7 +1192,7 @@ fn propagate_frames<M: Mass>(
     let mut previous_lot = false;
     let mut queued = vec![false; t.luck.len()];
     let (mut notes_from, mut actions_from, mut pending_from) = (0usize, 0usize, 0usize);
-    for frame in &t.frames {
+    'frames: for frame in &t.frames {
         if cancelled() {
             return Ok(None);
         }
@@ -1265,6 +1280,11 @@ fn propagate_frames<M: Mass>(
                     frame.time_ms,
                     [Phase::BeforeFrame, Phase::AtFrame, Phase::BeforeSkills].map(|phase| dp.weights(&t.probes, phase)),
                 ));
+                if let Some(residues) = residues.as_deref_mut()
+                    && residues.queries(&mut dp, frame.time_ms, frame.repeat)?
+                {
+                    break 'frames;
+                }
             }
             if gate && frame.target >= 0 {
                 for &action in actions {
@@ -1296,6 +1316,11 @@ fn propagate_frames<M: Mass>(
                     if steps.last().is_none_or(|last| last.1 != values) {
                         steps.push((time, values));
                     }
+                    if let Some(residues) = residues.as_deref_mut()
+                        && residues.kept(&mut dp, time, Phase::BeforeFrame)?
+                    {
+                        break 'frames;
+                    }
                 }
                 i = end;
             }
@@ -1314,6 +1339,11 @@ fn propagate_frames<M: Mass>(
                 let values = dp.weights(&t.probes, Phase::AtFrame);
                 if steps.last().is_none_or(|last| last.1 != values) {
                     steps.push((frame.time_ms, values));
+                }
+                if let Some(residues) = residues.as_deref_mut()
+                    && residues.kept(&mut dp, frame.time_ms, Phase::AtFrame)?
+                {
+                    break 'frames;
                 }
             }
             previous_lot = dp.held().any(|state| state.frame_lot);
@@ -1340,6 +1370,9 @@ fn propagate_frames<M: Mass>(
                 queued[range] = dp.held().any(|state| state.chain.lots > 0);
             }
         }
+    }
+    if let Some(residues) = residues {
+        residues.close(&mut dp);
     }
     Ok(Some(DpResult {
         probe_transitions,

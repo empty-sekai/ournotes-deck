@@ -14,7 +14,7 @@ use serde_json::json;
 /// Uniform lottery results, a Rush score bonus and a 250% rank bonus per range. `probe` gives the performer a
 /// Gekisou score-up that holds while Rush runs. `step` is the play frame length; notes come in triples spread over
 /// `spread` ms.
-fn fixture(
+pub(super) fn fixture(
     probe: Option<i64>,
     step: i32,
     spread: i32,
@@ -113,9 +113,9 @@ fn fixture(
     (master, deck, notes, params, setup, LivePlay { frames, base_seed: 0 }, delta)
 }
 
-type Case = (Master, Vec<Performer>, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>);
+pub(super) type Case = (Master, Vec<Performer>, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>);
 
-fn cases() -> Vec<(&'static str, Case)> {
+pub(super) fn cases() -> Vec<(&'static str, Case)> {
     vec![
         ("one range", fixture(None, 100, 0, &[100, 200, 300], vec![(100, 400)])),
         ("in-frame notes, probe", fixture(Some(8000), 100, 20, &[100, 200, 300], vec![(100, 400)])),
@@ -127,7 +127,7 @@ fn cases() -> Vec<(&'static str, Case)> {
 }
 
 /// The nominal expectation and the scores of the complete outcome tree.
-fn nominal(name: &str, case: &Case, ranking: Option<&[crate::replay::RankConfirmation]>) -> (f64, Vec<i32>) {
+pub(super) fn nominal(name: &str, case: &Case, ranking: Option<&[crate::replay::RankConfirmation]>) -> (f64, Vec<i32>) {
     let (master, deck, notes, params, setup, play, delta) = case;
     let attempt = luck_exact_law_with_ranking(
         master,

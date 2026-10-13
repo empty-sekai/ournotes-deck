@@ -25,6 +25,9 @@ mod owner_order_tests;
 mod probe_lifecycle_tests;
 #[cfg(feature = "search-diagnostics")]
 mod profile;
+mod rank_residues;
+#[cfg(test)]
+mod rank_residues_tests;
 mod recorder_checks;
 mod replay;
 #[cfg(test)]
@@ -34,10 +37,12 @@ pub(super) use bounds::complete_bounds_recording;
 use bounds::{checked_support, luck_score_bounds_internal};
 pub use exact::{LuckExactNote, LuckExactProfile, LuckExactRange, LuckExactScore, luck_exact_score};
 pub use exact_orders::{
-    LuckExactOrders, LuckExactOrdersProfile, luck_exact_orders, luck_exact_orders_with_laws, luck_order_laws,
+    LuckExactOrders, LuckExactOrdersProfile, luck_exact_orders, luck_exact_orders_power_twin,
+    luck_exact_orders_with_laws, luck_order_laws,
 };
 #[cfg(feature = "search-diagnostics")]
 pub use profile::{LuckScoreProfile, take_luck_score_profile};
+pub use rank_residues::luck_exact_score_refined;
 pub(super) use recorder_checks::{
     bind_probe_phase, check_conditioned_recorder, check_recorder, deterministic, deterministic_cumulative,
     probes_in_native_order,

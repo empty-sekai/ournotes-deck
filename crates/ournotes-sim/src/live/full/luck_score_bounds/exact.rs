@@ -121,9 +121,44 @@ fn kept_mass(curve: &LuckDpCertifiedResult, time_ms: i32) -> [ProbabilityMass; 4
     index.checked_sub(1).map_or(NO_LOTTERY, |index| curve.steps[index].1)
 }
 
-/// The class probabilities a note reads when a query at play frame `query_ms` scores it. Notes of earlier frames
-/// keep their filed lottery state; notes of the query's own frame read the state before that frame's lottery, at
-/// their own time, on the side of the frame's skill boundary the query runs.
+/// How a query reads a note's lottery class: the class the note keeps once every lottery filing up to its chart time
+/// is made, or the class a score query of the note's own play frame reads on its side of the frame's skill boundary,
+/// by the phase's index in [`LuckDpCertifiedResult::frame_queries`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum ClassRead {
+    Kept(i32),
+    Query { query_ms: i32, phase: usize },
+}
+
+/// The class read of a note at `note_ms` by a query at play frame `query_ms`. Notes of earlier frames keep their
+/// filed lottery state; notes of the query's own frame read the state before that frame's lottery, at their own time,
+/// on the side of the frame's skill boundary the query runs.
+pub(super) fn class_read(
+    frame_times: &[i32],
+    probability_ready: i32,
+    skills_at: i32,
+    query_ms: i32,
+    note_ms: i32,
+) -> Result<ClassRead, Error> {
+    if note_ms <= probability_ready {
+        return Ok(ClassRead::Kept(note_ms));
+    }
+    let frame = frame_times.binary_search(&query_ms).map_err(|_| refuse("a score snapshot is not at a play frame"))?;
+    let previous = frame.checked_sub(1).map_or(i32::MIN, |frame| frame_times[frame]);
+    if previous > probability_ready || note_ms <= previous || note_ms > query_ms {
+        return Err(refuse("a score snapshot reads a note outside its frame's lottery state"));
+    }
+    let phase = if note_ms < query_ms {
+        0
+    } else if skills_at == query_ms {
+        1
+    } else {
+        2
+    };
+    Ok(ClassRead::Query { query_ms, phase })
+}
+
+/// The class probabilities a note reads when a query at play frame `query_ms` scores it ([`class_read`]).
 pub(super) fn query_mass(
     curve: &LuckDpCertifiedResult,
     frame_times: &[i32],
@@ -132,30 +167,20 @@ pub(super) fn query_mass(
     query_ms: i32,
     note_ms: i32,
 ) -> Result<[ProbabilityMass; 4], Error> {
-    if note_ms <= probability_ready {
-        return Ok(kept_mass(curve, note_ms));
+    match class_read(frame_times, probability_ready, skills_at, query_ms, note_ms)? {
+        ClassRead::Kept(time) => Ok(kept_mass(curve, time)),
+        ClassRead::Query { query_ms, phase } => {
+            let index = curve.frame_queries.partition_point(|(time, _)| *time < query_ms);
+            match curve.frame_queries.get(index) {
+                Some(&(time, masses)) if time == query_ms => Ok(masses[phase]),
+                _ => Err(refuse("a judging frame has no certified query probabilities")),
+            }
+        }
     }
-    let frame = frame_times.binary_search(&query_ms).map_err(|_| refuse("a score snapshot is not at a play frame"))?;
-    let previous = frame.checked_sub(1).map_or(i32::MIN, |frame| frame_times[frame]);
-    if previous > probability_ready || note_ms <= previous || note_ms > query_ms {
-        return Err(refuse("a score snapshot reads a note outside its frame's lottery state"));
-    }
-    let index = curve.frame_queries.partition_point(|(time, _)| *time < query_ms);
-    let masses = match curve.frame_queries.get(index) {
-        Some(&(time, masses)) if time == query_ms => masses,
-        _ => return Err(refuse("a judging frame has no certified query probabilities")),
-    };
-    Ok(if note_ms < query_ms {
-        masses[0]
-    } else if skills_at == query_ms {
-        masses[1]
-    } else {
-        masses[2]
-    })
 }
 
 /// The integer support of each lottery class 00/01/10/11 of a note; None where no path reaches the class.
-type Buckets = [Option<(i32, i32)>; 4];
+pub(super) type Buckets = [Option<(i32, i32)>; 4];
 
 fn join_buckets(buckets: &mut Buckets, other: &Buckets) {
     for (bucket, other) in buckets.iter_mut().zip(other) {
@@ -427,6 +452,146 @@ fn mass_bits(mass: &[ProbabilityMass; 4]) -> [u64; 8] {
     bits
 }
 
+/// The calculator of a formation at another band power, and whether every note value scored so far has one integer
+/// score in each lottery class, the same at both powers.
+pub(super) struct PowerTwin {
+    power: i32,
+    calc: Option<LiveScoreCalculator>,
+    equal: bool,
+}
+
+impl PowerTwin {
+    pub(super) fn new(power: i32) -> Self {
+        Self { power, calc: None, equal: true }
+    }
+
+    /// Whether every note value compared so far scores the same single integer in each lottery class at both powers.
+    pub(super) fn equal(&self) -> bool {
+        self.equal
+    }
+
+    /// Forgets the comparisons made so far.
+    pub(super) fn restart(&mut self) {
+        (self.calc, self.equal) = (None, true);
+    }
+
+    /// Takes the calculator of the formation before it plays: the twin is the same calculator at the other power.
+    fn bind(&mut self, calc: &LiveScoreCalculator) -> Result<(), Error> {
+        if calc.state != crate::live::score::ScoreFactorState::new(calc.state.band_total_power) {
+            return Err(refuse("a power twin needs the calculator before any command"));
+        }
+        let mut twin = calc.clone();
+        twin.state = crate::live::score::ScoreFactorState::new(self.power);
+        self.calc = Some(twin);
+        Ok(())
+    }
+
+    /// Compares the class supports of one note value at the formation's power with those at the twin's. The first
+    /// difference ends the evaluation: no later value can make the scores agree.
+    fn check(
+        &mut self,
+        buckets: &Buckets,
+        note: &NoteCommand,
+        value: &NoteValue,
+        rush_percent: i32,
+        shared_classes: bool,
+    ) -> Result<(), Error> {
+        let calc = self.calc.as_ref().ok_or_else(|| refuse("a power twin has no calculator"))?;
+        let other = value_classes(calc, note, value, rush_percent, shared_classes)?;
+        self.equal &= other == *buckets && buckets.iter().flatten().all(|(lo, hi)| lo == hi);
+        if !self.equal {
+            return Err(refuse("a note value may score differently at the other power"));
+        }
+        Ok(())
+    }
+}
+
+/// One rank bonus of a one-order schedule: its percentage, the enclosures of its snapshot difference and of its
+/// bonus, and the difference as a signed sum of note scores, or None when a filed bonus with several possible values
+/// enters it.
+pub(super) struct RankDifference {
+    pub(super) percent: i64,
+    pub(super) mean: F64Interval,
+    pub(super) support: I32Interval,
+    pub(super) bonus: F64Interval,
+    pub(super) terms: Option<RankTerms>,
+}
+
+/// A snapshot difference as each of its notes, with how its snapshot reads the note's lottery class, the note's
+/// class supports there and its sign, plus a constant.
+pub(super) struct RankTerms {
+    pub(super) notes: Vec<(ClassRead, Buckets, i64)>,
+    pub(super) constant: i64,
+}
+
+/// What the rank snapshots of a one-order schedule read: per snapshot query, each of its notes with its class read
+/// and class supports; each rank bonus as a [`RankDifference`] in filing order; and the coefficient of each filed
+/// bonus in the final score.
+#[derive(Default)]
+pub(super) struct RankReads {
+    snapshots: FxHashMap<usize, Vec<(ClassRead, Buckets)>>,
+    pub(super) ranks: Vec<RankDifference>,
+    pub(super) coefficients: Vec<i64>,
+}
+
+/// The snapshot difference of a rank bonus as a signed sum of note scores, from the notes `reads` holds for its end
+/// and start snapshots, plus the filed bonuses whose coefficients differ between the snapshots; None when such a bonus
+/// has several possible values. A note whose every class has a single score is a function of the class it reads at
+/// its read point alone, so equal reads of such notes add up and opposite ones cancel; any other note keeps its own
+/// term.
+fn rank_terms(
+    reads: &RankReads,
+    start: Option<(usize, &Snapshot)>,
+    end: (usize, &Snapshot),
+    fixed: &[Bonus],
+) -> Result<Option<RankTerms>, Error> {
+    let mut points = std::collections::BTreeMap::<(ClassRead, Buckets), i64>::new();
+    let mut others = Vec::new();
+    let mut add = |query: usize, sign: i64| -> Result<(), Error> {
+        let notes = reads.snapshots.get(&query).ok_or_else(|| refuse("a rank snapshot query was not read"))?;
+        for &(read, buckets) in notes {
+            if buckets.iter().flatten().all(|(lo, hi)| lo == hi) {
+                *points.entry((read, buckets)).or_default() += sign;
+            } else {
+                others.push((read, buckets, sign));
+            }
+        }
+        Ok(())
+    };
+    add(end.0, 1)?;
+    if let Some((start, _)) = start {
+        add(start, -1)?;
+    }
+    let mut constant = 0i64;
+    for (index, (_, _, bonuses)) in fixed.iter().enumerate() {
+        let a = start.and_then(|(_, start)| start.coefficients.get(index)).copied().unwrap_or(0);
+        let b = end.1.coefficients.get(index).copied().unwrap_or(0);
+        let coefficient = i64::from(b) - i64::from(a);
+        if coefficient == 0 {
+            continue;
+        }
+        let support = bonuses.first().ok_or_else(|| refuse("a filed rank bonus has no order"))?.1;
+        if support.lower() != support.upper() {
+            return Ok(None);
+        }
+        constant += coefficient * i64::from(support.lower());
+    }
+    let mut notes: Vec<_> = points
+        .into_iter()
+        .filter(|&(_, coefficient)| coefficient != 0)
+        .map(|((read, buckets), coefficient)| (read, buckets, coefficient))
+        .collect();
+    notes.extend(others);
+    Ok(Some(RankTerms { notes, constant }))
+}
+
+/// Optional records of an exact evaluation.
+#[derive(Default)]
+pub(super) struct Observers<'a> {
+    pub(super) reads: Option<&'a mut RankReads>,
+    pub(super) twin: Option<&'a mut PowerTwin>,
+}
+
 impl MeasuredNote {
     /// Whether the entry is counted with the current values of `exact` and with final class probabilities.
     fn current(&self, exact: &ExactNote) -> bool {
@@ -434,7 +599,8 @@ impl MeasuredNote {
     }
 
     /// Brings the entry to the current values of `exact` and the class probabilities `masses` of the laws of
-    /// orders `laws`, and counts its contribution in `totals`.
+    /// orders `laws`, and counts its contribution in `totals`. `twin` compares each new value's class supports with
+    /// those at its power.
     #[allow(clippy::too_many_arguments)]
     fn measure(
         &mut self,
@@ -447,8 +613,9 @@ impl MeasuredNote {
         laws: &[Orders],
         masses: &[[ProbabilityMass; 4]],
         totals: &mut Totals,
+        twin: Option<&mut PowerTwin>,
     ) -> Result<(), Error> {
-        let previous = self.update(calc, note, exact, rush_percent, shared_classes, every, laws, masses)?;
+        let previous = self.update(calc, note, exact, rush_percent, shared_classes, every, laws, masses, twin)?;
         if !self.counted {
             totals.add(&self.contribution)?;
             self.counted = true;
@@ -481,6 +648,7 @@ impl MeasuredNote {
         every: Orders,
         laws: &[Orders],
         masses: &[[ProbabilityMass; 4]],
+        mut twin: Option<&mut PowerTwin>,
     ) -> Result<Option<Contribution>, Error> {
         let fresh = self.revision != Some(exact.revision);
         if fresh {
@@ -493,7 +661,13 @@ impl MeasuredNote {
             for value in &exact.values {
                 let buckets = match previous.iter().find(|(old, _)| bits(old) == bits(value)) {
                     Some(&(_, buckets)) => buckets,
-                    None => value_classes(calc, note, value, rush_percent, shared_classes)?,
+                    None => {
+                        let buckets = value_classes(calc, note, value, rush_percent, shared_classes)?;
+                        if let Some(twin) = twin.as_deref_mut() {
+                            twin.check(&buckets, note, value, rush_percent, shared_classes)?;
+                        }
+                        buckets
+                    }
                 };
                 self.values.push((*value, buckets));
             }
@@ -693,16 +867,18 @@ pub fn luck_exact_score(
     details: bool,
 ) -> Result<LuckExactScore, Error> {
     let live = LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking };
-    exact_score(&live, deck, None, curves, details)
+    exact_score(&live, deck, None, curves, details, Observers::default())
 }
 
-/// [`luck_exact_score`] in `live`, under `law` when given: the lottery law of `deck` in its order.
+/// [`luck_exact_score`] in `live`, under `law` when given: the lottery law of `deck` in its order. `observers` see the
+/// evaluation ([`exact_schedule`]).
 pub(super) fn exact_score(
     live: &LotteryLive<'_>,
     deck: &[Performer],
     law: Option<std::sync::Arc<LuckDpCertifiedResult>>,
     curves: Option<&mut LuckDpCache>,
     details: bool,
+    observers: Observers<'_>,
 ) -> Result<LuckExactScore, Error> {
     let LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking } = *live;
     let mut watch = Stopwatch::start();
@@ -754,6 +930,7 @@ pub(super) fn exact_score(
         details,
         profile,
         watch,
+        observers,
     )?;
     Ok(scores.pop().expect("one order"))
 }
@@ -881,7 +1058,8 @@ pub(super) fn rush_percent(master: &Master, calc: &LiveScoreCalculator) -> Resul
 
 /// The exact expectation of every order of `schedule`, each under its own lottery law in `laws`. The laws share
 /// their possible probe and Rush transitions, which shape the paths. `deterministic` gives the constant final score
-/// of each order of a live without a LUCK range.
+/// of each order of a live without a LUCK range. `observers` record what the rank snapshots read, which needs a
+/// one-order schedule, and compare the note scores with those at another power.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn exact_schedule(
     schedule: &Schedule,
@@ -896,10 +1074,18 @@ pub(super) fn exact_schedule(
     details: bool,
     mut profile: LuckExactProfile,
     mut watch: Stopwatch,
+    observers: Observers<'_>,
 ) -> Result<Vec<LuckExactScore>, Error> {
     let lanes = schedule.lanes;
     if laws.len() != lanes {
         return Err(Error::Input("one lottery law per order".into()));
+    }
+    let Observers { mut reads, mut twin } = observers;
+    if reads.is_some() && lanes != 1 {
+        return Err(Error::Input("rank reads need a one-order schedule".into()));
+    }
+    if let Some(twin) = twin.as_deref_mut() {
+        twin.bind(calc)?;
     }
     let every = first_orders(lanes);
     // The distinct laws and the orders of each.
@@ -1041,9 +1227,10 @@ pub(super) fn exact_schedule(
                 };
                 let shared = matches!(*start, Some(start) if start <= end);
                 let mut bonuses = Vec::with_capacity(lanes);
+                let mut first = None;
                 for (order, ranges) in ranges.iter_mut().enumerate() {
-                    let first = shared.then(|| since.map_or(i32::MAX, |since| since.of(order)));
-                    let (mean, support) = rank_difference(start_snapshot, end_snapshot, first, order, &fixed)?;
+                    let first_frame = shared.then(|| since.map_or(i32::MAX, |since| since.of(order)));
+                    let (mean, support) = rank_difference(start_snapshot, end_snapshot, first_frame, order, &fixed)?;
                     let x = i128::from(support.lower()) * i128::from(*percent) / 100;
                     let y = i128::from(support.upper()) * i128::from(*percent) / 100;
                     let bonus_support = I32Interval::new(
@@ -1056,6 +1243,9 @@ pub(super) fn exact_schedule(
                         rank_mean_bounds(mean, support, *percent)?
                     };
                     bonuses.push((bonus, bonus_support));
+                    if order == 0 {
+                        first = Some((mean, support, bonus));
+                    }
                     ranges.push(LuckExactRange {
                         range: *range,
                         percent: *percent,
@@ -1063,6 +1253,11 @@ pub(super) fn exact_schedule(
                         support: support.into(),
                         bonus_mean: bonus.into(),
                     });
+                }
+                if let Some(reads) = reads.as_deref_mut() {
+                    let (mean, support, bonus) = first.ok_or_else(|| refuse("a rank bonus has no order"))?;
+                    let terms = rank_terms(reads, start.zip(start_snapshot), (end, end_snapshot), &fixed)?;
+                    reads.ranks.push(RankDifference { percent: *percent, mean, support, bonus, terms });
                 }
                 pending = Some((get_frame(*time_ms), bonuses));
             }
@@ -1132,8 +1327,25 @@ pub(super) fn exact_schedule(
                         &law_orders,
                         &masses,
                         &mut running,
+                        twin.as_deref_mut(),
                     )?;
                     entry.settled = settled;
+                }
+                if let Some(reads) = reads.as_deref_mut() {
+                    // The snapshot holds every note filed up to its last score frame, each reading its class where
+                    // `query_mass` took its probabilities above.
+                    let mut notes = Vec::new();
+                    for &(_, ref note, at) in filed.iter().filter(|&&(frame, _, _)| frame as i32 <= *to) {
+                        let read = class_read(frame_times, probability_ready, skills_at, *time_ms, note.time_ms)?;
+                        let buckets = measured_notes[at]
+                            .classes
+                            .iter()
+                            .find(|(orders, _)| orders & 1 != 0)
+                            .ok_or_else(|| refuse("a snapshot note has no class supports"))?
+                            .1;
+                        notes.push((read, buckets));
+                    }
+                    reads.snapshots.insert(query, notes);
                 }
                 let totals = running.clone();
                 let low = replay.base().min(unsettled);
@@ -1193,6 +1405,7 @@ pub(super) fn exact_schedule(
                 &law_orders,
                 &masses,
                 &mut running,
+                twin.as_deref_mut(),
             )?;
             entry.settled = true;
         }
@@ -1230,6 +1443,10 @@ pub(super) fn exact_schedule(
     profile.undone_frames = replay.undone_frames;
     profile.executed_frames = replay.executed_frames;
     profile.idle_queries = replay.idle_queries;
+    if let Some(reads) = reads {
+        reads.coefficients =
+            fixed.iter().map(|&(frame, offset, _)| i64::from(offset) + i64::from(frame <= prev)).collect();
+    }
     let mut scores = Vec::with_capacity(lanes);
     for (order, ((ranges, (wide_notes, widest_note)), notes)) in
         ranges.into_iter().zip(wide).zip(final_notes).enumerate()
