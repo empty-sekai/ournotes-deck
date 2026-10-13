@@ -84,3 +84,28 @@ fn fixed_command_uses_binary32_delta_and_cumulative_base_without_changing_last_j
     assert_eq!(c.states[0].raw_just, 1);
     assert_eq!(c.states[0].last_just_ms, -1);
 }
+
+#[test]
+fn bonus_changes_filed_together_fold_alike_unless_a_judgement_falls_between_their_times() {
+    // Two combo bonus changes filed after the first judgement, at different times, in either filing order.
+    let recount = |judgements: &[i32], first: (i32, f32), second: (i32, f32)| {
+        let mut c = controller();
+        c.playing.push(0);
+        c.history[0] = vec![(100, J_JUST, 0)];
+        c.seq = 1;
+        c.add_combo_bonus(first.0, first.1);
+        c.add_combo_bonus(second.0, second.1);
+        for (&time, sequence) in judgements.iter().zip(1..) {
+            c.history[0].push((time, J_JUST, sequence));
+        }
+        c.recalculate();
+        (c.bonus_changes_fold_alike(), c.states[0].combo)
+    };
+    let (early, late) = ((150, 1.0), (300, 2.0));
+    // No judgement between 150 and 300: either order takes both at 400.
+    assert_eq!(recount(&[400], early, late), (true, 5));
+    assert_eq!(recount(&[400], late, early), (true, 5));
+    // A judgement at 200 takes the early change only when it was filed first.
+    assert_eq!(recount(&[200, 400], early, late), (false, 7));
+    assert_eq!(recount(&[200, 400], late, early), (false, 6));
+}

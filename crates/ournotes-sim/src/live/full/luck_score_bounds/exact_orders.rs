@@ -15,9 +15,10 @@
 //! The certificate, checked on the formation's models and rotation recordings:
 //! - Gekisou combo and Just state is written only by condition skills whose predicates read no live-skill
 //!   activation, and the binary32 sums of its bonuses are exact. Such a writer runs at the same times in every
-//!   order, and the controller folds the writes of a frame in its later recount. The bonus changes filed between
-//!   two judgements share one time, so the recount takes them together in any filing order; combo protection is
-//!   only read by a judgement that breaks the combo, and the play has none when the formation protects combos.
+//!   order, and the controller folds the writes of a frame in its later recount. Every judgement takes all of the
+//!   bonus changes filed between two judgements or none of them (no judgement falls between their times), so the
+//!   recount takes them together in any filing order; combo protection is only read by a judgement that breaks the
+//!   combo, and the play has none when the formation protects combos.
 //! - Notes deal no damage, so life stays from 1 (the initial life without skill damage) up to twice the maximum
 //!   (the initial life without recovery), and every life predicate gives one answer over that range.
 //! - No judgement is converted.
@@ -590,8 +591,8 @@ fn splice(
         if model.life.has_note_damage() {
             return Err(refuse("a note deals damage"));
         }
-        if model.gk.as_ref().is_some_and(|gk| !gk.ctrl.bonus_changes_share_times()) {
-            return Err(refuse("Gekisou bonus changes between two judgements have different times"));
+        if model.gk.as_ref().is_some_and(|gk| !gk.ctrl.bonus_changes_fold_alike()) {
+            return Err(refuse("a judgement falls between the times of Gekisou bonus changes filed together"));
         }
         rotations.push((model, calc, trace));
     }

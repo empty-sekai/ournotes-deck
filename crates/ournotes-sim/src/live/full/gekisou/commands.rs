@@ -123,12 +123,26 @@ impl Controller {
         self.flag();
     }
 
-    /// Whether the combo and Just bonus changes filed between two judgements share one time. The recount then
-    /// takes such changes together, in whatever order they were filed.
-    pub(crate) fn bonus_changes_share_times(&self) -> bool {
-        [&self.cb_stack, &self.jb_stack]
-            .into_iter()
-            .all(|stack| stack.windows(2).all(|pair| pair[0].2 != pair[1].2 || pair[0].0 == pair[1].0))
+    /// Whether the recount takes the combo and Just bonus changes filed between two judgements together, in whatever
+    /// order they were filed. The recount folds a stack's changes into each judgement of the history as a prefix in
+    /// filing order, up to the first change the judgement does not take yet; the changes filed between two judgements
+    /// share their judgement sequence, and a judgement takes those whose time is before its own (or equal, from the
+    /// last judgement filed before them on). So when every judgement of the history takes all of them or none, which
+    /// holds when they share one time or no judgement falls between their times, the recount is the same in any
+    /// filing order.
+    pub(crate) fn bonus_changes_fold_alike(&self) -> bool {
+        [&self.cb_stack, &self.jb_stack].into_iter().all(|stack| {
+            stack.chunk_by(|a, b| a.2 == b.2).all(|run| {
+                let low = run.iter().map(|change| change.0).min().expect("a run is not empty");
+                let high = run.iter().map(|change| change.0).max().expect("a run is not empty");
+                let sequence = run[0].2;
+                low == high
+                    || self.history.iter().flatten().all(|&(time, _, judgement)| {
+                        let takes = |at: i32| at < time || (at == time && judgement >= sequence);
+                        takes(low) == takes(high)
+                    })
+            })
+        })
     }
 
     /// Whether every binary32 sum of filed lot and gauge factors is exact in any filing order: the factors of each
