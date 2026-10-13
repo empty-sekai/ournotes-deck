@@ -65,6 +65,13 @@ impl Geo<'_> {
         (lo as u32, hi.max(lo) as u32)
     }
 
+    /// Entries with a chart time in `[a, b)`, without the end score frame of [`Geo::range`].
+    pub(super) fn range_before(&self, a: i64, b: i64) -> (u32, u32) {
+        let lo = self.times.partition_point(|&x| (x as i64) < a);
+        let hi = self.times.partition_point(|&x| (x as i64) < b);
+        (lo as u32, hi.max(lo) as u32)
+    }
+
     /// Index of the first frame at or after `t`.
     pub(super) fn first_frame(&self, t: i32) -> Option<usize> {
         let i = self.frames.partition_point(|&x| x < t);
@@ -163,8 +170,7 @@ pub(super) fn windows(
     };
     let mut ramps: Vec<ComboRamp> = Vec::new();
     let mut rush_rows = Vec::new();
-    let mut push = |a: i64, b: i64, note: f64, judge: [f64; 4], ramp: u32, rush: u32| {
-        let (lo, hi) = geo.range(a, b);
+    let mut push = |(lo, hi): (u32, u32), note: f64, judge: [f64; 4], ramp: u32, rush: u32| {
         if hi > lo && (note != 0.0 || judge.iter().any(|&x| x != 0.0)) {
             out.push(Window { lo, hi, note, judge, ramp, rush });
         }
@@ -195,7 +201,7 @@ pub(super) fn windows(
             let Some(i0) = geo.first_frame(ev) else { continue };
             // a second event of the position restarts the effect without removing the first factor
             let end = if events.len() >= 2 { i64::MAX } else { geo.end(ev, i0, r.act, ext, unbounded) };
-            push(ev as i64, end, note, judge, 0, 0);
+            push(geo.range(ev as i64, end), note, judge, 0, 0);
             cmds = (cmds + 2.0 * c).next_up();
             cmds_plain = (cmds_plain + 2.0 * c).next_up();
             add(&mut fac, note, judge, 1.0);
@@ -211,9 +217,14 @@ pub(super) fn windows(
         }
         let (note, judge, c) = factors(r.effect_type, r.value, &r.targets);
         if let Some(ramp) = &r.cumulative_ramp {
-            for &(a, b, value) in ramp.iter() {
-                let (note, judge, _) = factors(r.effect_type, value, &r.targets);
-                push(a, b, note, judge, 0, 0);
+            for segments in ramp.iter() {
+                for (k, &(a, b, value)) in segments.iter().enumerate() {
+                    let (note, judge, _) = factors(r.effect_type, value, &r.targets);
+                    // one update replaces the factor by the next segment's, at least as large: a historical snapshot
+                    // of the replacement's score frame holds one of the two, so the next segment covers it
+                    let range = if k + 1 < segments.len() { geo.range_before(a, b) } else { geo.range(a, b) };
+                    push(range, note, judge, 0, 0);
+                }
             }
         }
         if let Some(ws) = r.gk_event_win.as_ref().map(|w| &w[position]).or(r.gk_win.as_ref()) {
@@ -261,7 +272,7 @@ pub(super) fn windows(
                         }
                         _ => 0,
                     };
-                    push(a, b, note * mult, judge.map(|x| x * mult), ramp, rush);
+                    push(geo.range(a, b), note * mult, judge.map(|x| x * mult), ramp, rush);
                 }
                 // Pool size bounds simultaneous factors, not lifetime starts: an
                 // updater can be returned and reused many times in this span.
@@ -304,7 +315,7 @@ pub(super) fn windows(
                 let Some(i0) = geo.first_frame(ev) else { continue };
                 let exec = geo.frames[i0];
                 let end = geo.end(exec, i0, r.act, 0.0, false);
-                push(exec as i64, end, note, judge, 0, 0);
+                push(geo.range(exec as i64, end), note, judge, 0, 0);
                 cmds = (cmds + 2.0 * c).next_up();
                 cmds_plain = (cmds_plain + 2.0 * c).next_up();
                 add(&mut fac, note, judge, 1.0);
@@ -320,7 +331,7 @@ pub(super) fn windows(
             // a cumulative note score up replaces its factor (two commands) in any frame while it runs
             let churn = if r.churn { POOL + 1.0 } else { 1.0 };
             let judge5 = judge.map(|x| x * POOL);
-            push(i64::MIN, i64::MAX, note * POOL, judge5, 0, 0);
+            push(geo.range(i64::MIN, i64::MAX), note * POOL, judge5, 0, 0);
             let count = product_up(product_up(2.0 * c, geo.frames.len() as f64), churn);
             cmds = (cmds + count).next_up();
             cmds_plain = (cmds_plain + count).next_up();
@@ -467,6 +478,10 @@ mod lifetime_command_tests {
         assert_eq!(geo.range(160, i64::MAX), (0, 6));
         geo.snapshot_frame_limit = Some(10);
         assert_eq!(geo.range(160, 400), (0, 6));
+        // a factor replaced at 390 leaves the end score frame to its successor
+        geo.snapshot_frame_limit = Some(99);
+        assert_eq!(geo.range_before(160, 390), (0, 2));
+        assert_eq!(geo.range(390, 420), (2, 6));
     }
 
     #[test]

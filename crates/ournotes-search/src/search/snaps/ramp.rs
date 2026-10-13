@@ -2,7 +2,8 @@
 use super::*;
 
 pub(super) type RampKey = (GkWindowKey, i64, i64, i64);
-pub(super) type RampWindows = Rc<Vec<(i64, i64, i64)>>;
+/// The factor segments `(start, end, value)` of each execution, in time order.
+pub(super) type RampWindows = Rc<Vec<Vec<(i64, i64, i64)>>>;
 
 pub(super) fn windows(env: &Env, r: &Row, event_bound: bool) -> Option<RampWindows> {
     if !r.gk || event_bound || r.effect_type != 2001 || r.trigger_type != 1 || r.value <= 0 {
@@ -17,7 +18,7 @@ pub(super) fn windows(env: &Env, r: &Row, event_bound: bool) -> Option<RampWindo
     result
 }
 
-fn compile(env: &Env, r: &Row) -> Option<Vec<(i64, i64, i64)>> {
+fn compile(env: &Env, r: &Row) -> Option<Vec<Vec<(i64, i64, i64)>>> {
     let g = env.gkf.as_ref()?;
     let c = env.master.cumulative_condition(r.cumulative)?;
     if !(1000..=1002).contains(&c.condition_type) || g.ent.len() > i32::MAX as usize {
@@ -70,16 +71,21 @@ fn compile(env: &Env, r: &Row) -> Option<Vec<(i64, i64, i64)>> {
         return None;
     }
     let ends = g.ends(env, r, &starts, &possible);
-    let mut out = Vec::new();
-    for (&start, end) in starts.iter().zip(ends) {
-        out.extend(execution(&g.times, &prefix, start, g.wlo[start], end.0, unit, max_count, r.value, ceiling));
-    }
-    Some(out)
+    Some(
+        starts
+            .iter()
+            .zip(ends)
+            .map(|(&start, end)| {
+                execution(&g.times, &prefix, start, g.wlo[start], end.0, unit, max_count, r.value, ceiling)
+            })
+            .collect(),
+    )
 }
 
 /// A new one-shot updater starts at zero and is reset before returning to its
 /// available stack. It counts at most once per processing frame. Its initial
 /// factor may be backdated; replacements are filed at their current frame time.
+/// The segments are contiguous and their values do not decrease.
 #[allow(clippy::too_many_arguments)]
 fn execution(
     frames: &[i32],
