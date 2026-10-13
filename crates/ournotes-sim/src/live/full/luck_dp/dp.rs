@@ -699,6 +699,27 @@ impl<'t, M: Mass> Dp<'t, M> {
 
     /// The rests of the distribution's states, each with its total mass.
     fn totals(&mut self) -> impl Iterator<Item = (&State, M)> + '_ {
+        // Read the totals not read yet up to four side by side ([`Mass::totals`]).
+        let mut unread = self.dist.iter_mut().filter(|block| block.total.is_none());
+        while let Some(a) = unread.next() {
+            match (unread.next(), unread.next(), unread.next()) {
+                (Some(b), Some(c), Some(d)) => {
+                    let totals = M::totals([&a.masses[..], &b.masses[..], &c.masses[..], &d.masses[..]]);
+                    [a, b, c, d].into_iter().zip(totals).for_each(|(block, total)| block.total = Some(total));
+                }
+                (Some(b), Some(c), None) => {
+                    let totals = M::totals([&a.masses[..], &b.masses[..], &c.masses[..]]);
+                    [a, b, c].into_iter().zip(totals).for_each(|(block, total)| block.total = Some(total));
+                }
+                (Some(b), None, _) => {
+                    let totals = M::totals([&a.masses[..], &b.masses[..]]);
+                    [a, b].into_iter().zip(totals).for_each(|(block, total)| block.total = Some(total));
+                }
+                (None, ..) => {
+                    a.total();
+                }
+            }
+        }
         let rests = &self.tables.rests;
         self.dist.iter_mut().filter_map(|block| block.total().map(|total| (&rests[block.rest as usize], total)))
     }

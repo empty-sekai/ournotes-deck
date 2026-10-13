@@ -18,6 +18,10 @@ pub(super) trait Mass: Copy {
     fn accumulate(out: &mut [Self], masses: &[Self], probability: Self);
     /// The merged masses of `masses` that are possible; None without one.
     fn total(masses: &[Self]) -> Option<Self>;
+    /// [`Mass::total`] of each of `lists`.
+    fn totals<const N: usize>(lists: [&[Self]; N]) -> [Option<Self>; N] {
+        lists.map(Self::total)
+    }
     /// The value's bit pattern; equal patterns mean equal values.
     fn bits(self) -> [u64; 2];
     fn interval(self) -> F64Interval;
@@ -150,6 +154,10 @@ impl Mass for ProbabilityMass {
 
     fn total(masses: &[Self]) -> Option<Self> {
         ProbabilityMass::total(masses)
+    }
+
+    fn totals<const N: usize>(lists: [&[Self]; N]) -> [Option<Self>; N] {
+        ProbabilityMass::totals(lists)
     }
 
     fn bits(self) -> [u64; 2] {
