@@ -28,8 +28,13 @@ pub(crate) struct SnapLive<'a> {
     /// With `life_bound`: the largest conversion budget term (`Contrib::budget`) of each member's classes without
     /// other life-raising rows, by `m * 5 + k`.
     pub(super) split_budget: Vec<f64>,
-    /// Relative margin of the bounds.
+    /// Relative margin of the bounds. With certified lottery laws the bounds are expectations over the lottery and
+    /// this is the expected margin of a play (see `ProbeStarts::expected_drift`).
     pub(super) eps: f64,
+    /// The largest relative margin of one play, which the checks that hold for each play read: the positive factor
+    /// chain, the rounding reserve of negative notes and the observed certificate of a power representative. It is
+    /// `eps` without certified lottery laws.
+    pub(super) play_eps: f64,
     /// Optional additive factor-drift envelope for the physical joint solver.
     /// Legacy class/fine/raw bounds and their overflow guard retain `eps`.
     pub(super) joint_additive: Option<(f64, f64, f64)>,

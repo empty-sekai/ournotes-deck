@@ -488,7 +488,7 @@ impl Leaf<'_, '_, '_> {
         let setup = self.sl.setup;
         let params = LiveParams { total_power: power, ..setup.params };
         let mut model = LiveModel::new(self.sl.master, &perf, &setup.notes, &setup.events, params)?;
-        if self.sl.eps >= 0.5 {
+        if self.sl.play_eps >= 0.5 {
             model.track_score_up_factors();
         }
         let score = model.run(&setup.play)?;
@@ -522,7 +522,7 @@ impl SeedRunner {
     pub(super) fn new(leaf: &Leaf, c: &Cand) -> Result<SeedRunner, Error> {
         let (perf, power) = leaf.performers(c)?;
         let mut fresh = leaf.sl.setup.gekisou_model(leaf.sl.master, &perf, power)?;
-        if leaf.sl.eps >= 0.5 {
+        if leaf.sl.play_eps >= 0.5 {
             fresh.track_score_up_factors();
             fresh.begin_score_program_recording()?;
         }
@@ -558,10 +558,10 @@ impl SeedRunner {
 }
 
 fn certify_score_up(sl: &SnapLive, model: &LiveModel, power: i32) -> Result<(), Error> {
-    if sl.eps >= 0.5 && model.minimum_score_up().is_none_or(|value| value.is_nan() || value <= 0.5) {
+    if sl.play_eps >= 0.5 && model.minimum_score_up().is_none_or(|value| value.is_nan() || value <= 0.5) {
         return Err(Error::Domain("observed score factors cannot certify the power representative".into()));
     }
-    if sl.eps >= 0.5 && sl.setup.gk.is_some() {
+    if sl.play_eps >= 0.5 && sl.setup.gk.is_some() {
         let monotone = model.recorded_score_program()?.and_then(|program| program.certify_nondecreasing(0, power));
         if monotone.is_none() {
             return Err(Error::Domain("Gekisou score program does not certify the power representative".into()));

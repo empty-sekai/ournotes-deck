@@ -1184,12 +1184,14 @@ impl<'a> SnapLive<'a> {
         let chain_extra = if gk_on { GK_CHAIN_EPS } else { 0.0 };
         let eps = float_margin::with_chain(drift, chain_extra)
             .ok_or_else(|| Error::Domain("nonfinite factor drift certificate".into()))?;
+        let play_eps = eps;
         // With certified laws the bounds are expectations over the lottery, and the margin of a play grows with its
         // starts of the direct-probe class along a convex curve: take the expected margin (see
-        // `ProbeStarts::expected_drift`) between the play without a start and the play with the most. The margin
-        // of every play stays below the signed-value and rounding reserves, which read `eps` per play.
+        // `ProbeStarts::expected_drift`) between the play without a start and the play with the most. A play's bound
+        // is affine in its margin, so its expectation reads the expected margin; the checks that hold for each play
+        // read `play_eps`.
         let eps = match &fine.probe_starts {
-            Some(starts) if eps < 0.5 => {
+            Some(starts) => {
                 let total = |part: fn(&(f64, f64)) -> f64, of: &[(f64, f64); 5]| {
                     of.iter().fold(0.0f64, |sum, x| (sum + part(x)).next_up())
                 };
@@ -1231,8 +1233,10 @@ impl<'a> SnapLive<'a> {
             settings.judgement_score_factor_percent.values().copied().max().map(|p| (p as f64 / 100.0).next_up());
         let roundings = factor_roundings(executions, n_cmd);
         let additive = judgement_max.and_then(|j| factor_error_sensitivity(&coef, j)).map(|b| (roundings, b));
-        let joint_additive =
-            additive.and_then(|(roundings, b)| additive_joint_envelope(a0, global, eps, roundings, b, chain_extra));
+        // The additive envelope keeps every play's factor positive, which its own margin's bound on a play needs.
+        let joint_additive = additive
+            .filter(|_| play_eps < 0.5)
+            .and_then(|(roundings, b)| additive_joint_envelope(a0, global, eps, roundings, b, chain_extra));
         let carrier_levels = match gkf.as_ref() {
             Some(g @ GkFactors { combo: Some(gc), .. }) if !level_terms.is_empty() => {
                 carrier_level_envelopes(
@@ -1348,6 +1352,7 @@ impl<'a> SnapLive<'a> {
             split,
             split_budget,
             eps,
+            play_eps,
             joint_additive,
             carrier_levels,
             carrier_keys,
@@ -1366,17 +1371,17 @@ impl<'a> SnapLive<'a> {
         u.sort_unstable_by(|x, y| y.cmp(x));
         let p_max: i64 = u.iter().take(5).sum();
         let chain = float_margin::with_chain(0.0, 0.0).expect("finite post-floor chain");
-        let rounding_reserve = if sl.eps < 0.5 {
+        let rounding_reserve = if sl.play_eps < 0.5 {
             0.0
         } else {
             sl.coef.z.iter().enumerate().fold(0.0f64, |sum, (entry, &post)| {
                 let rank = sl.fine.rank.get(entry).copied().unwrap_or(1.0);
-                let rank = if gk_on && sl.eps >= 1.0 { (2.0 * rank).next_up() } else { rank };
+                let rank = if gk_on && sl.play_eps >= 1.0 { (2.0 * rank).next_up() } else { rank };
                 let unit = ((post * (1.0 + chain).next_up()).next_up() + 1.0).next_up();
                 (sum + (unit * rank).next_up()).next_up()
             })
         };
-        let absolute_cap = (ub(p_max, sl.global, sl.eps) as f64 + rounding_reserve).next_up();
+        let absolute_cap = (ub(p_max, sl.global, sl.play_eps) as f64 + rounding_reserve).next_up();
         if !absolute_cap.is_finite() || absolute_cap >= (i32::MAX as f64 / 2.0).next_down() {
             return Err(Error::Domain("live score bound exceeds the 32-bit range".into()));
         }
