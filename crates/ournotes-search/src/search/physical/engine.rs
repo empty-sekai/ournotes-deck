@@ -166,6 +166,18 @@ impl Engine<'_, '_> {
         physical: PhysicalDeck,
         cut: Option<(&crate::search::joint::JointBounds, &crate::domain::CandidateDomain)>,
     ) -> Result<bool, Error> {
+        self.consider_within(physical, cut, None)
+    }
+
+    /// [`Engine::consider_with`] for a deck whose power is at most `power_upper`, when known: its caps at that power
+    /// may drop it before its power is computed ([`Engine::below_at_power_bound`]). The canonical layout keeps the
+    /// leader and the member and Snap of every slot, so it keeps the power too.
+    pub(super) fn consider_within(
+        &mut self,
+        physical: PhysicalDeck,
+        cut: Option<(&crate::search::joint::JointBounds, &crate::domain::CandidateDomain)>,
+        power_upper: Option<i64>,
+    ) -> Result<bool, Error> {
         self.tel.leaves.proposed += 1;
         self.offered = None;
         if self.expired() {
@@ -186,6 +198,12 @@ impl Engine<'_, '_> {
             return Ok(false);
         }
         self.tel.leaves.visited += 1;
+        if let (Some(upper), Some(cut)) = (power_upper, cut)
+            && self.below_at_power_bound(&physical, upper, cut)
+        {
+            self.remember(physical);
+            return Ok(true);
+        }
         let power = self.pool.deck_power(&physical.as_deck(), self.song, self.event)?.power();
         let evaluation = if self.live {
             match self.evaluate_orders(&physical, power, cut)? {

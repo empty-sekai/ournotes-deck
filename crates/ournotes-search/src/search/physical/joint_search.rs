@@ -303,6 +303,8 @@ pub(super) fn joint_rec(
     let node_bounds = bounds.carrier_level(level);
     let keyed = if depth > 0 { bounds.keyed(p, depth, &choices, 5 - depth, 5 - depth) } else { None };
     e.order_steps[depth].reset();
+    // At a complete team, the power of the node's bound: at least the team's power.
+    let mut power_upper = None;
     if depth > 0
         && let Some((threshold, cutoff_power)) = e.safe_cutoff()
     {
@@ -312,6 +314,7 @@ pub(super) fn joint_rec(
         joint.branch.check(depth);
         joint.carriers.nodes[level] += 1;
         let (numerator, power) = node_bounds.expected_upper_keyed(e.pool, domain, p, depth, orders, keyed.as_ref())?;
+        power_upper = (!orders.is_empty()).then_some(power);
         if numerator < threshold || (exact_ties && numerator == threshold && power < i64::from(cutoff_power)) {
             joint.branch.prune(depth);
             return Ok(true);
@@ -407,7 +410,7 @@ pub(super) fn joint_rec(
         }
     }
     if depth == 5 {
-        let more = e.consider_with(*p, Some((bounds, domain)))?;
+        let more = e.consider_within(*p, Some((bounds, domain)), power_upper)?;
         if !more {
             e.unexplored_node(p, depth, domain, bounds, orders)?;
         }

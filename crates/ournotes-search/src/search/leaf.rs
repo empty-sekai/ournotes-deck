@@ -134,6 +134,32 @@ impl Engine<'_, '_> {
         pruned
     }
 
+    /// Whether a played-live team of a certified evaluation, whose power is at most `upper`, is below the K-th by its
+    /// fine caps summed over the performance orders at the power `upper` ([`JointBounds::fine_upper_orders`]): the
+    /// caps do not decrease with the power, so the team's own sum is at most that one, and a sum strictly below the
+    /// K-th payoff needs no power tie-break. This check runs before the team's power is computed.
+    pub(super) fn below_at_power_bound(
+        &mut self,
+        physical: &PhysicalDeck,
+        upper: i64,
+        (bounds, domain): (&JointBounds, &crate::domain::CandidateDomain),
+    ) -> bool {
+        if self.certified.is_none() || !self.live || !bounds.has_fine() {
+            return false;
+        }
+        let Some((threshold, _)) = self.safe_cutoff() else { return false };
+        let below = |total: i128| total < threshold;
+        let (_, resume) = self.rec.clock.lap(slot::FINE);
+        let sum =
+            bounds.fine_upper_orders(domain, physical, upper, &self.positions, &mut self.bound_scratch, Some(&below));
+        self.rec.clock.lap(resume);
+        let Some(sum) = sum else { return false };
+        self.tel.leaves.order_sums += 1;
+        let pruned = below(sum);
+        self.tel.leaves.fine_pruned += u64::from(pruned);
+        pruned
+    }
+
     /// The payoff numerator of a team over the performance orders: each order simulated once, the sum over all of
     /// them. With a full Top-K and bounds, the team's per-order caps (cheap, then raw and fine) are summed first; the
     /// orders then run in descending cap order, each with a cutoff table when the fine bound is compiled. The team

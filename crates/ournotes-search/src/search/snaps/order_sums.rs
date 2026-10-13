@@ -686,6 +686,15 @@ mod tests {
                         // Without probe starts the drift grows with the counts and peaks.
                         assert!(quick >= exact, "{name}");
                     }
+                    // A cutoff decided by the sum is decided as by the exact one, on either side of it.
+                    for threshold in [exact - 1 - rng.below(1_000) as i64, exact, exact + 1, quick, quick + 1] {
+                        let below = |total: i64| total < threshold;
+                        assert_eq!(below(upper(Some(&below))), below(exact), "{name}, cutoff {threshold}");
+                    }
+                    // The sum does not decrease with the power.
+                    let more = power + 1 + rng.below(100_000) as i64;
+                    let higher = sums.upper(&view, &contrib, more, members, classes, orders, &mut scratch, None);
+                    assert!(higher >= exact, "{name}, power {more}: {higher}");
                 }
             }
         }
