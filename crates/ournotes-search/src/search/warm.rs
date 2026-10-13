@@ -27,6 +27,9 @@ const DIVES: usize = 3;
 const SURROGATE_CHECKS: u64 = 4_000;
 /// Best distinct decks by leaf bound that are evaluated exactly.
 const POOL: usize = 16;
+/// Best distinct decks by leaf bound that a certified search ranks by their fine caps, the first `POOL` of which it
+/// evaluates.
+const CERTIFIED_SHORTLIST: usize = 4 * POOL;
 /// Exact evaluations of the neighbourhood of the best deck, per polishing round.
 const POLISH: usize = 8;
 /// Polishing rounds after a new best deck found by the traversal, and at the end of the warm start; a round runs
@@ -200,10 +203,14 @@ fn neighbours(w: &Warm<'_>, d: &PhysicalDeck, e: &Engine<'_, '_>) -> Vec<Physica
     out
 }
 
-/// The best distinct decks by leaf bound seen by the local search.
+/// A deck and its leaf bound value.
+type Ranked = ((i128, i64), PhysicalDeck);
+
+/// The best `size` distinct decks by leaf bound seen by the local search.
 struct Shortlist {
-    rows: Vec<((i128, i64), PhysicalDeck)>,
+    rows: Vec<Ranked>,
     seen: HashSet<PhysicalDeck>,
+    size: usize,
 }
 impl Shortlist {
     fn offer(&mut self, value: (i128, i64), d: PhysicalDeck) {
@@ -211,11 +218,24 @@ impl Shortlist {
             return;
         }
         let at = self.rows.partition_point(|r| r.0 >= value);
-        if at < POOL {
+        if at < self.size {
             self.rows.insert(at, (value, d));
-            self.rows.truncate(POOL);
+            self.rows.truncate(self.size);
         }
     }
+}
+
+/// `rows` with each leaf bound lowered to the deck's fine cap summed over the performance orders where the bounds
+/// have one, best first: the fine cap bounds the same payoff numerator, more tightly.
+fn by_fine_caps(w: &Warm<'_>, mut rows: Vec<Ranked>, e: &mut Engine<'_, '_>) -> Result<Vec<Ranked>, Error> {
+    for (value, d) in &mut rows {
+        let power = i64::from(e.pool.deck_power(&d.as_deck(), e.song, e.event)?.power());
+        if let Some(fine) = w.bounds.fine_upper_orders(w.domain, d, power, &e.positions, &mut e.bound_scratch) {
+            value.0 = value.0.min(fine);
+        }
+    }
+    rows.sort_by_key(|row| std::cmp::Reverse(row.0));
+    Ok(rows)
 }
 
 /// Greedy dive from a leader pair: each further slot (in `SLOTS` order) takes the legal pair with the highest
@@ -332,8 +352,8 @@ impl Engine<'_, '_> {
 /// local search saw, then polishing rounds around the best deck. Certified seeding starts new proposals during
 /// the first quarter of the remaining time for unbounded score targets. Bounded
 /// targets use the complete request deadline for their finite proposal shortlist.
-/// Certified requests allow POOL proposals for a domain with one empty Snap binding,
-/// POOL for bounded score targets, and min(K, DIVES) otherwise.
+/// Certified requests make `POOL` proposals: the best `CERTIFIED_SHORTLIST` decks by leaf bound, in the order of
+/// their fine caps over the performance orders.
 /// The complete-domain traversal handles subsequent candidates.
 pub(super) fn seed(e: &mut Engine<'_, '_>) -> Result<(), Error> {
     let Some(w) = e.warm.take() else { return Ok(()) };
@@ -365,8 +385,7 @@ fn bounded_target(metric: &crate::types::Metric) -> bool {
 
 fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>, deadline: Option<Instant>) -> Result<(), Error> {
     let initial_evaluations = e.tel.incumbents.warm_start.evaluations;
-    let proposal_limit =
-        if w.domain.snaps().is_empty() || bounded_target(e.metric) { POOL } else { e.request.k.min(DIVES) } as u64;
+    let proposal_limit = POOL as u64;
     let certified_seed_complete = |e: &Engine<'_, '_>| {
         e.certified.is_some()
             && e.tel.incumbents.warm_start.evaluations.saturating_sub(initial_evaluations) >= proposal_limit
@@ -388,7 +407,8 @@ fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>, deadline: Option<Instant>) -
             leaders.push((m, choice));
         }
     }
-    let mut shortlist = Shortlist { rows: Vec::new(), seen: HashSet::new() };
+    let size = if e.certified.is_some() { CERTIFIED_SHORTLIST } else { POOL };
+    let mut shortlist = Shortlist { rows: Vec::new(), seen: HashSet::new(), size };
     let mut checks = 0u64;
     for leader in leaders {
         if paused(e) {
@@ -431,7 +451,8 @@ fn seed_inner(w: &Warm<'_>, e: &mut Engine<'_, '_>, deadline: Option<Instant>) -
             (value, current) = (v, n);
         }
     }
-    for (value, d) in shortlist.rows.clone() {
+    let rows = if e.certified.is_some() { by_fine_caps(w, shortlist.rows, e)? } else { shortlist.rows };
+    for (value, d) in rows {
         if certified_seed_complete(e) {
             return Ok(());
         }
