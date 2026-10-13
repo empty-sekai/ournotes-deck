@@ -24,7 +24,7 @@ fn formation(
         })
         .collect();
     let live = |id: i64, skill: i64, effect: i64, value: i64, condition: i64| {
-        let targets: &[i64] = if effect == 12006 { &[57] } else { &[] };
+        let targets: &[i64] = if matches!(effect, 12006 | 13005) { &[57] } else { &[] };
         json!({"_id":id,"_liveSkillID":skill,"_level":1,"_skillEffectType":effect,"_effectValue":value,
             "_activationTimeSecond":0.3,"_skillConditionGroup":condition,"_skillTargetIDs":targets})
     };
@@ -81,9 +81,15 @@ fn formation(
             {"_id":6,"_key":"gekisou_luck_gauge_max_rush","_value":"70"},
             {"_id":7,"_key":"gekisou_luck_rush_score_bonus_percent","_value":"10"}],
         "MasterLiveNoteParameter":[{"_id":1,"_noteOperateType":1,"_scorePercent":100}],
-        "MasterLiveJudgementParameter":[{"_id":1,"_noteSimulateJudgement":5,"_scorePercent":100,"_damage":0}],
-        "MasterLiveJudgementTiming":[{"_id":1,"_noteJudgementType":1,"_noteSimulateJudgement":5,"_afterMs":0}],
-        "MasterLiveGekisouLuckBasePoint":[{"_id":1,"_noteCategory":0,"_noteSimulateJudgement":5,"_weight":1,"_basePoint":60}],
+        "MasterLiveJudgementParameter":[
+            {"_id":1,"_noteSimulateJudgement":5,"_scorePercent":100,"_damage":0},
+            {"_id":2,"_noteSimulateJudgement":6,"_scorePercent":110,"_damage":0}],
+        "MasterLiveJudgementTiming":[
+            {"_id":1,"_noteJudgementType":1,"_noteSimulateJudgement":5,"_afterMs":0},
+            {"_id":2,"_noteJudgementType":1,"_noteSimulateJudgement":6,"_afterMs":0}],
+        "MasterLiveGekisouLuckBasePoint":[
+            {"_id":1,"_noteCategory":0,"_noteSimulateJudgement":5,"_weight":1,"_basePoint":60},
+            {"_id":2,"_noteCategory":0,"_noteSimulateJudgement":6,"_weight":1,"_basePoint":80}],
         "MasterLiveGekisouLuckBonusLot":lots,
         "MasterSkillTarget":[{"_id":56,"_skillTargetType":5,"_gekisouMissionType":2},{"_id":57,"_skillTargetType":2,"_judgement":5}],
         "MasterSkillCondition":condition_rows,
@@ -345,6 +351,48 @@ fn lottery_free_orders_match_the_native_play_of_each_order() {
             let scores: std::collections::BTreeSet<_> = native.iter().collect();
             assert!(scores.len() > 1, "{name}: the order must change the score");
         }
+    }
+}
+
+#[test]
+fn performers_that_convert_judgements_stay_in_place() {
+    // Converters turn Perfect into Just within their skill windows, which follow their positions. One or two of them
+    // stay in place while the rotations move the others; three are more than the rotations hold.
+    let cases =
+        [("one converter", &[4][..], true), ("two converters", &[3, 4][..], true), ("three", &[2, 3, 4][..], false)];
+    let orders: Vec<_> = permutations().into_iter().step_by(5).collect();
+    for (name, converters, covered) in cases {
+        let mut formation = formation(&[(16, 13005, 0, 0)], &[], &[]);
+        for &member in converters {
+            formation.1[member].live_skill = Some((16, 1));
+        }
+        let (master, deck, notes, events, params, setup, play, delta) = &formation;
+        let live = crate::live::full::OrderedLive {
+            performers: deck.clone(),
+            notes: notes.clone(),
+            events: events.clone(),
+            params: *params,
+            gekisou: Some(setup.clone()),
+            rank_confirmations: None,
+            play: play.clone(),
+            delta_times: delta.clone(),
+            lottery_free: None,
+        };
+        let played = live.simulate(master, &orders[0], crate::live::random::LiveRandom::new(0)).unwrap();
+        assert!(played.converted_judgements() > 0, "{name}: the converters convert");
+        let mut curves = LuckDpCache::new(usize::MAX);
+        let joint = joint(&formation, &orders, None, &mut curves);
+        match joint.alone.as_deref() {
+            None => assert!(covered, "{name}: spliced"),
+            Some(why) => {
+                assert!(!covered && why.contains("hold in place"), "{name}: {why}");
+                continue;
+            }
+        }
+        let means: std::collections::BTreeSet<_> =
+            joint.scores.iter().map(|score| score.final_mean.lower.to_bits()).collect();
+        assert!(means.len() > 1, "{name}: the order must change the score");
+        assert_alone(name, &formation, &orders, None, &mut curves, &joint);
     }
 }
 

@@ -21,11 +21,13 @@
 //!   combo, and the play has none when the formation protects combos.
 //! - Notes deal no damage, so life stays from 1 (the initial life without skill damage) up to twice the maximum
 //!   (the initial life without recovery), and every life predicate gives one answer over that range.
-//! - No judgement is converted.
+//! - Only the performers that hold a judgement conversion convert judgements.
 //! - The rotations share their calculators and agree on every event that is not a member command.
 //!
-//! A member's conversions likewise depend only on the member, its position and the common events, so with none in any
-//! rotation no order converts a judgement. The lottery law of an order is composed from the lottery kinds of its
+//! A member's conversions likewise depend only on the member, its position and the common events. The performers that
+//! hold a conversion therefore stay in place: the orders that give them the same positions form a block, whose
+//! rotations move only the other performers over the other positions, and the judgements they convert are common
+//! events of the block. The lottery law of an order is composed from the lottery kinds of its
 //! performers when the caller holds them ([`LotteryKinds::order_laws`]), and otherwise recorded once for the class of
 //! orders that its recording shows to share it ([`LuckDpCache::certified_order_class`]), and per order when a
 //! recording shows no class. A live without a LUCK range draws no lottery: every note keeps class 00, and each order
@@ -39,7 +41,9 @@ use super::exact::{
 };
 use super::exact_paths::{MAX_LANES, Orders, first_orders};
 use super::*;
-use crate::live::full::luck_dp::{LotteryKinds, LotteryLive, OrderClass, PAIR_POSITIONS, PositionPairs};
+use crate::live::full::luck_dp::{
+    LotteryKinds, LotteryLive, OrderClass, PAIR_POSITIONS, PositionPairs, luck_has_judgement_conversion,
+};
 
 const MEMBERS: usize = 5;
 
@@ -539,6 +543,9 @@ pub(super) fn order_shape(model: &mut LiveModel, skills: &LuckSkills) -> Result<
 
 /// The scores of `orders` from the rotations' recordings, or why the certificate does not cover them. `given` holds
 /// the law of each order when the caller has them; `twin` compares the note values with their scores at its power.
+///
+/// The performers that hold a judgement conversion stay in place: the orders that give them the same positions form a
+/// block, whose rotations move only the other performers over the other positions ([`splice_block`]).
 #[allow(clippy::too_many_arguments)]
 fn splice(
     live: &LotteryLive,
@@ -551,7 +558,12 @@ fn splice(
     mut twin: Option<&mut PowerTwin>,
 ) -> Result<LuckExactOrders, Error> {
     let mut watch = Stopwatch::start();
-    let luck = has_luck(live.setup);
+    let pinned: Vec<usize> = (0..MEMBERS)
+        .filter(|&member| luck_has_judgement_conversion(live.master, std::slice::from_ref(&deck[member])))
+        .collect();
+    if pinned.len() > MAX_PINNED {
+        return Err(refuse("more performers convert judgements than the rotations hold in place"));
+    }
     // The shape of each order, on one model of the formation whose members move to each order in turn: members that
     // have not acted move to other positions exactly as a model built for the new order (see `OrderedLive`).
     let mut model = live.model(deck)?;
@@ -562,14 +574,114 @@ fn splice(
         shapes.push(order_shape(&mut model, live.skills)?);
     }
     profile.setup_ms += watch.lap();
-    let mut rotations = Vec::with_capacity(MEMBERS);
-    let mut life = None;
-    for rotation in 0..MEMBERS {
-        let order: [usize; MEMBERS] = std::array::from_fn(|position| (rotation + position) % MEMBERS);
+    let mut blocks = Vec::<(Vec<usize>, Vec<usize>)>::new();
+    for (index, order) in orders.iter().enumerate() {
+        let at: Vec<usize> = pinned
+            .iter()
+            .map(|&member| order.iter().position(|&other| other == member).expect("an order is a permutation"))
+            .collect();
+        match blocks.iter_mut().find(|(other, _)| *other == at) {
+            Some((_, block)) => block.push(index),
+            None => blocks.push((at, vec![index])),
+        }
+    }
+    let mut scores = vec![None; orders.len()];
+    let mut distinct = Vec::<std::sync::Arc<LuckDpCertifiedResult>>::new();
+    let (mut law_recordings, mut replays, mut life) = (0, 0, None);
+    for (at, block) in &blocks {
+        let pick = |index: &usize| (orders[*index], shapes[*index].clone());
+        let (block_orders, block_shapes): (Vec<_>, Vec<_>) = block.iter().map(pick).unzip();
+        let block_given: Option<Vec<_>> = given.map(|laws| block.iter().map(|&index| laws[index].clone()).collect());
+        let spliced = splice_block(
+            live,
+            deck,
+            Block { pinned: &pinned, at, orders: &block_orders, shapes: &block_shapes, given: block_given.as_deref() },
+            curves,
+            details,
+            profile,
+            twin.as_deref_mut(),
+            &mut life,
+            &mut watch,
+        )?;
+        for (&index, score) in block.iter().zip(spliced.scores) {
+            scores[index] = Some(score);
+        }
+        for law in spliced.laws {
+            if !distinct.iter().any(|other| std::sync::Arc::ptr_eq(other, &law)) {
+                distinct.push(law);
+            }
+        }
+        law_recordings += spliced.law_recordings;
+        replays += spliced.replays;
+    }
+    Ok(LuckExactOrders {
+        scores: scores.into_iter().map(|score| score.expect("every order has a block")).collect(),
+        alone: None,
+        laws: distinct.len(),
+        law_recordings,
+        replays,
+        profile: *profile,
+    })
+}
+
+/// The most performers [`splice`] holds in place: a block of orders then still takes its scores from three rotations.
+const MAX_PINNED: usize = 2;
+
+/// The orders of one block of [`splice`]: each places the performer `pinned[t]` at the position `at[t]`.
+struct Block<'a> {
+    pinned: &'a [usize],
+    at: &'a [usize],
+    orders: &'a [[usize; MEMBERS]],
+    shapes: &'a [(Vec<ProbeRow>, bool)],
+    given: Option<&'a [std::sync::Arc<LuckDpCertifiedResult>]>,
+}
+
+/// What [`splice_block`] gives: the score and the law of each order of the block, the reduced recordings made for
+/// the laws and the joint replays run.
+struct SplicedBlock {
+    scores: Vec<LuckExactScore>,
+    laws: Vec<std::sync::Arc<LuckDpCertifiedResult>>,
+    law_recordings: usize,
+    replays: usize,
+}
+
+/// The scores of a block's orders from the recordings of its rotations. With `k` free positions `open` and free
+/// performers `free`, rotation `j` places `free[(j + i) % k]` at `open[i]` and every pinned performer at its position,
+/// so every free performer takes every free position in exactly one rotation. The certificate of this module then
+/// holds for the block's orders as it does for all orders with five rotations: a pinned performer's commands and
+/// conversions are a function of the performer, its position and the common events, so every rotation of the block
+/// files them alike, and the judgements its conversions change are common events of the block. `life` keeps the life
+/// bounds of the first rotation certified.
+#[allow(clippy::too_many_arguments)]
+fn splice_block(
+    live: &LotteryLive,
+    deck: &[Performer],
+    block: Block<'_>,
+    curves: &mut LuckDpCache,
+    details: bool,
+    profile: &mut LuckExactOrdersProfile,
+    mut twin: Option<&mut PowerTwin>,
+    life: &mut Option<IntegerBounds>,
+    watch: &mut Stopwatch,
+) -> Result<SplicedBlock, Error> {
+    let Block { pinned, at, orders, shapes, given } = block;
+    let luck = has_luck(live.setup);
+    let open: Vec<usize> = (0..MEMBERS).filter(|position| !at.contains(position)).collect();
+    let free: Vec<usize> = (0..MEMBERS).filter(|member| !pinned.contains(member)).collect();
+    let k = open.len();
+    let mut rotations = Vec::with_capacity(k);
+    for rotation in 0..k {
+        let mut order = [0; MEMBERS];
+        for (&member, &position) in pinned.iter().zip(at) {
+            order[position] = member;
+        }
+        for (i, &position) in open.iter().enumerate() {
+            order[position] = free[(rotation + i) % k];
+        }
         let mut model = live.model(&ordered(deck, &order))?;
         check_recorder(&model, live.skills)?;
-        if rotation == 0 {
-            life = Some(certify(&model)?);
+        if life.is_none() {
+            *life = Some(certify(&model)?);
             // Good to Just keep the combo; waiting and passed notes leave it.
             let breaks = live
                 .play
@@ -585,7 +697,7 @@ fn splice(
         let calc = model.score.calc.clone();
         model.set_luck_weights(live.skills, Vec::new())?;
         let trace = record_exact(&mut model, probes, luck, live.play, live.delta_times)?;
-        if model.converted_judgements() != 0 {
+        if pinned.is_empty() && model.converted_judgements() != 0 {
             return Err(refuse("a judgement is converted"));
         }
         if model.life.has_note_damage() {
@@ -638,11 +750,16 @@ fn splice(
     }
     let mut scores = vec![None; orders.len()];
     for group in &groups {
-        // The lanes whose order places the member of rotation `j` at position `q`, by `[j][q]`.
+        // The lanes whose order takes the commands of rotation `j` at position `q`, by `[j][q]`: those of the rotation
+        // that places the order's performer there, and those of the first rotation at a pinned position.
         let mut lanes = [[0 as Orders; MEMBERS]; MEMBERS];
         for (lane, &index) in group.iter().enumerate() {
             for (position, &member) in orders[index].iter().enumerate() {
-                lanes[(member + MEMBERS - position) % MEMBERS][position] |= 1 << lane;
+                let rotation = match open.iter().position(|&other| other == position) {
+                    Some(i) => (free.iter().position(|&other| other == member).expect("a free performer") + k - i) % k,
+                    None => 0,
+                };
+                lanes[rotation][position] |= 1 << lane;
             }
         }
         let all = first_orders(group.len());
@@ -706,18 +823,10 @@ fn splice(
         }
     }
     profile.evaluate_ms += watch.lap();
-    let mut distinct = Vec::<&std::sync::Arc<LuckDpCertifiedResult>>::new();
-    for law in &laws {
-        if !distinct.iter().any(|other| std::sync::Arc::ptr_eq(other, law)) {
-            distinct.push(law);
-        }
-    }
-    Ok(LuckExactOrders {
+    Ok(SplicedBlock {
         scores: scores.into_iter().map(|score| score.expect("every order has a group")).collect(),
-        alone: None,
-        laws: distinct.len(),
+        laws,
         law_recordings,
         replays: groups.len(),
-        profile: *profile,
     })
 }
