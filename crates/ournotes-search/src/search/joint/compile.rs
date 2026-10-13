@@ -52,7 +52,7 @@ impl JointBounds {
         input: Option<&EventPayoffInput>,
         simulation: &SimulationInput,
     ) -> Result<Self, Error> {
-        Self::compile_with_laws(pool, request, domain, metric, input, simulation, &[])
+        Self::compile_with_laws(pool, request, domain, metric, input, simulation, &[], None)
     }
 
     /// [`JointBounds::compile`] with the certified lottery laws of every team of the domain in every order: the
@@ -60,7 +60,9 @@ impl JointBounds {
     /// (see `LuckLaws`). No law: every note takes its largest luck factor.
     ///
     /// A weighted bound caps the expected score of an order, which is the order's expected payoff only when the
-    /// payoff is the score itself, so laws compile for no other metric.
+    /// payoff is the score itself, so laws compile for no other metric. The luck weights are read from `memo` when it
+    /// holds those of the same laws and notes.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn compile_with_laws(
         pool: &Pool,
         request: &SearchRequest,
@@ -69,6 +71,7 @@ impl JointBounds {
         input: Option<&EventPayoffInput>,
         simulation: &SimulationInput,
         laws: &[std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>],
+        memo: Option<&crate::search::snaps::WeightsMemo>,
     ) -> Result<Self, Error> {
         if !domain.is_feasible() {
             return Err(unavailable("empty legal domain"));
@@ -127,7 +130,7 @@ impl JointBounds {
         }
         let setup =
             crate::search::full_setup(pool, &request.objective)?.ok_or_else(|| unavailable("missing Live setup"))?;
-        let envelope = SnapLive::new(pool, &t, &allowed, &setup, laws)?;
+        let envelope = SnapLive::new(pool, &t, &allowed, &setup, laws, memo)?;
         let (a0, global, eps, order_gains) = envelope.joint_envelope();
         let levels = if setup.gk.is_some() { envelope.joint_carrier_levels() } else { None };
         let keys = levels.as_ref().and_then(|_| envelope.carrier_keys());

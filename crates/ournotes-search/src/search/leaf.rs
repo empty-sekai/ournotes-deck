@@ -114,7 +114,7 @@ impl Engine<'_, '_> {
         let (_, resume) = self.rec.clock.lap(slot::FINE);
         let bounds = self.certified.as_mut().expect("certified request").law_bounds.get(domain, laws, |laws| {
             *compiled += 1;
-            JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, laws).ok()
+            JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, laws, None).ok()
         });
         let below = |total: i128| total < threshold || (total == threshold && power < kth_power);
         let pruned = bounds.is_some_and(|bounds| {

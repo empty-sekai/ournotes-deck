@@ -3,13 +3,15 @@ use super::*;
 
 impl<'a> SnapLive<'a> {
     /// Prepares the objective for the allowed members and snaps (`t.snaps`); rejects cards the simulation cannot run
-    /// and inputs outside the domain of the bounds.
+    /// and inputs outside the domain of the bounds. The luck weights under `laws` are read from `memo` when it holds
+    /// those of the same laws and notes.
     pub fn new(
         pool: &Pool<'a>,
         t: &Tables,
         allowed_members: &[bool],
         setup: &'a FullSetup,
         laws: &[std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>],
+        memo: Option<&WeightsMemo>,
     ) -> Result<SnapLive<'a>, Error> {
         let luck = LuckLaws::new(laws);
         let master: &'a Master = pool.master;
@@ -584,7 +586,7 @@ impl<'a> SnapLive<'a> {
         let weights = match (&luck, &gkf) {
             (Some(laws), Some(g)) => {
                 let notes: Vec<(i32, f64)> = times_all.iter().copied().zip(g.l.iter().copied()).collect();
-                Some(laws.weights(&notes))
+                Some(memo.map_or_else(|| laws.weights(&notes).into(), |memo| memo.weights(laws, &notes)))
             }
             _ => None,
         };

@@ -256,6 +256,8 @@ struct ReadLaws {
     index: ournotes_sim::num::FxHashMap<usize, u32>,
     /// The indices of the laws of each multiset of kinds (sorted kind indices), or None when its kinds compose none.
     multisets: ournotes_sim::num::FxHashMap<[usize; 5], Option<Box<[u32]>>>,
+    /// The luck weights of the bounds last compiled under the laws of a census.
+    weights: crate::search::snaps::WeightsMemo,
 }
 
 impl ReadLaws {
@@ -454,10 +456,11 @@ impl Engine<'_, '_> {
         self.keep_luck_kinds(kinds);
         self.certified.as_mut().expect("certified request").luck_curves = curves;
         let started = Instant::now();
+        let memo = Some(&census.read.weights);
         let bounds = laws.and_then(|laws| {
             let (request, metric, event_input, simulation) =
                 (self.request, self.metric, self.event_input, self.simulation);
-            JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, &laws)
+            JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, &laws, memo)
                 .map_err(|error| format!("the weighed bounds do not compile: {error}"))
         });
         stats.compile_ms += started.elapsed().as_secs_f64() * 1000.0;

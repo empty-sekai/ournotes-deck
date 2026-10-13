@@ -5,6 +5,8 @@
 //! nothing else in the score. With `a` the other score ups and `r` the direct-Rush ones,
 //! `E[L (1 + a + r probe)] = E[L] (1 + a) + E[L probe] r`, so a law that bounds the note's class masses bounds its
 //! expected score by `luck (1 + a) + probe_luck r` with `luck >= E[L]` and `probe_luck >= E[L probe]`.
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use ournotes_sim::live::certified::ProbabilityMass;
@@ -21,6 +23,33 @@ const PROBE_FIRST: [usize; 4] = [3, 1, 0, 2];
 /// The certified laws that cover every team the bound describes, in every order.
 pub(crate) struct LuckLaws<'l> {
     laws: &'l [Arc<LuckDpCertifiedResult>],
+}
+
+/// The luck weights last read and the laws and notes they were read for, so that bounds compiled again under the same
+/// laws read them once.
+#[derive(Default)]
+pub(crate) struct WeightsMemo {
+    held: RefCell<Option<Held>>,
+}
+
+/// Laws, the notes read under them and the weights read.
+type Held = (Vec<Arc<LuckDpCertifiedResult>>, Vec<(i32, f64)>, Rc<[(f64, f64)]>);
+
+impl WeightsMemo {
+    /// [`LuckLaws::weights`] of `notes`, those last read when the laws (by address, in order) and notes are the same.
+    pub(crate) fn weights(&self, laws: &LuckLaws<'_>, notes: &[(i32, f64)]) -> Rc<[(f64, f64)]> {
+        if let Some((held, read, weights)) = &*self.held.borrow()
+            && held.len() == laws.laws.len()
+            && held.iter().zip(laws.laws).all(|(a, b)| Arc::ptr_eq(a, b))
+            && read.len() == notes.len()
+            && read.iter().zip(notes).all(|(a, b)| a.0 == b.0 && a.1.to_bits() == b.1.to_bits())
+        {
+            return weights.clone();
+        }
+        let weights: Rc<[(f64, f64)]> = laws.weights(notes).into();
+        *self.held.borrow_mut() = Some((laws.laws.to_vec(), notes.to_vec(), weights.clone()));
+        weights
+    }
 }
 
 /// The play frames whose skill boundary turns the direct-probe class on, over the laws. A direct-Rush row that
