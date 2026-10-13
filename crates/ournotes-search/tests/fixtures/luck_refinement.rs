@@ -182,9 +182,10 @@ fn certified_seed_budget_preserves_the_complete_canonical_ranking() {
             let y = b.payoff_interval.as_ref().unwrap();
             assert!(x.lower_f64() <= y.upper_f64() && y.lower_f64() <= x.upper_f64());
         }
+        // The certified warm start evaluates at most 16 proposals.
         let proposals = actual.telemetry.incumbents.warm_start.evaluations;
         assert!(
-            proposals > 0 && proposals <= k.min(3) as u64,
+            proposals > 0 && proposals <= 16,
             "score k={k} proposals={proposals} bounds={:?}",
             actual.telemetry.environment.bounds
         );

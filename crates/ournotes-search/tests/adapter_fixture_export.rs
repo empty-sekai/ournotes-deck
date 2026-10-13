@@ -963,7 +963,7 @@ fn built_problem_reuses_frozen_inputs_across_live_snap_and_gekisou_score_pt() {
                 "execution":{"kind":"live","scoreId":SCORE_ID,"gekisou":gekisou,"play":{"kind":"theoreticalBest"}},
                 "scenario":{"kind":mode,"musicId":10}, "context":context_document(false,false,false),
                 "metric":metric,"k":3,"constraints":{"leader":3},
-                "strategy":{"kind":"exhaustive"},"limits":{"cacheEntries":0}})
+                "strategy":{"kind":"exhaustive"},"limits":{"timeLimitMs":null,"cacheEntries":0}})
             .to_string();
             let mut request: ournotes_search::types::RecommendationRequest =
                 serde_json::from_str(&request_json).unwrap();
