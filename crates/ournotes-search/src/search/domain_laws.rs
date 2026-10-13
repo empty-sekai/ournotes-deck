@@ -307,9 +307,18 @@ fn domain_laws(
     stats.formations += found.formations.len();
     let orders = crate::search::uniform::all_orders();
     let mut laws: Vec<LuckLaw> = Vec::new();
-    // The laws held, by address, and the contributions of the orders whose laws they hold.
+    // The laws held, by address.
     let mut held = ournotes_sim::num::FxHashSet::default();
-    let mut seen = ournotes_sim::num::FxHashSet::default();
+    let mut hold = |found: Vec<LuckLaw>| {
+        for law in found {
+            if held.insert(Arc::as_ptr(&law)) {
+                laws.push(law);
+            }
+        }
+    };
+    // Formations whose kinds compose no law, read by their performers once the census is done.
+    let mut separate = Vec::new();
+    let mut census = lottery.census(&live).map_err(|error| error.to_string())?;
     for formation in &found.formations {
         if cancelled() {
             return Err("the search stopped".into());
@@ -318,31 +327,26 @@ fn domain_laws(
             let (i, j) = formation[k];
             kinds[i][j.map_or(0, |j| j + 1)]
         });
-        let composed = lottery
-            .formation_laws(&live, formation_kinds, &orders, curves, &mut seen)
-            .map_err(|error| error.to_string())?;
-        let found = match composed {
-            Some(found) => found,
-            None => {
-                let started = Instant::now();
-                let deck = formation
-                    .iter()
-                    .map(|&(i, j)| {
-                        let snap = j.map(|j| &pool.snaps[domain.snaps()[j]]);
-                        crate::search::snaps::performer(&pool.members[domain.members()[i]], snap)
-                    })
-                    .collect::<Result<Vec<_>, Error>>()
-                    .map_err(|error| error.to_string())?;
-                stats.performers_ms += started.elapsed().as_secs_f64() * 1000.0;
-                luck_order_laws(&live, &deck, &orders, curves, Some(&mut *lottery))
-                    .map_err(|error| error.to_string())?
-            }
-        };
-        for law in found {
-            if held.insert(Arc::as_ptr(&law)) {
-                laws.push(law);
-            }
+        match census.formation_laws(formation_kinds, &orders, curves).map_err(|error| error.to_string())? {
+            Some(found) => hold(found),
+            None => separate.push(*formation),
         }
+    }
+    for formation in separate {
+        if cancelled() {
+            return Err("the search stopped".into());
+        }
+        let started = Instant::now();
+        let deck = formation
+            .iter()
+            .map(|&(i, j)| {
+                let snap = j.map(|j| &pool.snaps[domain.snaps()[j]]);
+                crate::search::snaps::performer(&pool.members[domain.members()[i]], snap)
+            })
+            .collect::<Result<Vec<_>, Error>>()
+            .map_err(|error| error.to_string())?;
+        stats.performers_ms += started.elapsed().as_secs_f64() * 1000.0;
+        hold(luck_order_laws(&live, &deck, &orders, curves, Some(&mut *lottery)).map_err(|error| error.to_string())?);
     }
     stats.laws = laws.len();
     Ok(laws)
