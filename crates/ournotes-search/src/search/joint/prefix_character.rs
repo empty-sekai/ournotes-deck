@@ -192,7 +192,7 @@ impl PrefixCharacterTables {
         (best < i128::MAX).then_some(best)
     }
 
-    /// What [`JointBounds::character_pair_upper`] reads of a prefix of `depth` in 1..4 slots: per correlation scale,
+    /// What [`JointBounds::character_pair_upper`] reads of a prefix of one to four slots: per correlation scale,
     /// the quantized edges of its slots, the best edges of the characters left (the first `5 - depth`), and `r * A0`.
     #[allow(clippy::too_many_arguments)]
     fn pairs(
@@ -205,7 +205,7 @@ impl PrefixCharacterTables {
         positions: &[usize; 5],
         keyed: Option<&super::Keyed>,
     ) -> Option<[(i64, ResidualRow, f64); 3]> {
-        if !(1..4).contains(&depth) {
+        if !(1..5).contains(&depth) {
             return None;
         }
         let profile = b.profile[p.members[2]];
@@ -254,9 +254,10 @@ pub(crate) struct CharacterPairs {
 }
 
 impl JointBounds {
-    /// With the character prefix tables: what bounds each child of the prefix `p` of `depth` in 1..4 slots in the
-    /// way [`JointBounds::correlated_expected_upper_keyed`] bounds the prefix itself (see
-    /// [`JointBounds::character_pair_upper`]).
+    /// With the character prefix tables: what bounds each child of the prefix `p` of one to four slots in the way
+    /// [`JointBounds::correlated_expected_upper_keyed`] bounds the prefix itself (see
+    /// [`JointBounds::character_pair_upper`]). A child of four slots is a complete team, whose bound has no
+    /// characters left: `P * (A0 + G)` is at most `(P + r * (A0 + G))^2 / (4 * r)` for a team as for a prefix.
     pub(crate) fn character_pairs(
         &self,
         pool: &Pool,
@@ -271,8 +272,9 @@ impl JointBounds {
         let weight = orders.iter().try_fold(0i128, |sum, &(_, w)| sum.checked_add(i128::try_from(w).ok()?))?;
         let scales = t.pairs(self, pool, domain, p, depth, positions, keyed)?;
         let rest = scales.each_ref().map(|(_, shared, _)| {
-            let edges: Vec<i64> = shared.0.iter().flatten().take(4 - depth).map(|e| e.value).collect();
-            (edges.len() == 4 - depth).then(|| edges.iter().try_fold(0i64, |sum, &v| sum.checked_add(v))).flatten()
+            let edges = shared.0.iter().flatten().take(4 - depth);
+            let (n, sum) = edges.fold((0, Some(0i64)), |(n, sum), e| (n + 1, sum.and_then(|s| s.checked_add(e.value))));
+            sum.filter(|_| n == 4 - depth)
         });
         Some(CharacterPairs { scales, rest, depth, profile: self.profile[p.members[2]], weight })
     }

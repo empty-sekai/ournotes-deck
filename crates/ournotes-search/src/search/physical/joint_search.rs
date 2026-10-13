@@ -495,9 +495,9 @@ pub(super) fn joint_rec(
     };
     // The tail bound of every kind of child, also for what a stop leaves unexplored.
     let tail_check = tail_high.as_ref().or(tail.as_ref()).map(|state| (high, state));
-    // Where the children check their correlated bounds, the node's bound of each child with its pair fixed (see
-    // `JointBounds::character_pairs`): it drops the children that check would drop before they are visited.
-    let character_pairs = if e.correlated && (1..4).contains(&depth) {
+    // With correlated bounds, the node's correlated bound of each child with its pair fixed (see
+    // `JointBounds::character_pairs`): it drops children below the cutoff before they are visited.
+    let character_pairs = if e.correlated && (1..5).contains(&depth) {
         node_bounds.character_pairs(e.pool, domain, p, depth, orders, keyed.as_ref())
     } else {
         None
