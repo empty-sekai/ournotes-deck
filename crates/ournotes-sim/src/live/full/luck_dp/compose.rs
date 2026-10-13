@@ -300,7 +300,7 @@ impl<'m> LotteryKinds<'m> {
         if !self.live.as_ref().is_some_and(|held| held.is(live)) {
             return Err(Error::Input("lottery kinds are read in the live they were found in".into()));
         }
-        Ok(KindCensus { kinds: self, live, seen: FxHashSet::default() })
+        Ok(KindCensus { kinds: self, live, read: FxHashMap::default() })
     }
 
     fn kind_laws(
@@ -455,18 +455,16 @@ impl<'m> LotteryKinds<'m> {
 }
 
 /// The laws of the formations of one live, composed from the kinds found in it ([`LotteryKinds::census`]), and the
-/// contributions of the orders read so far. Orders with the same contributions share their law, so the laws the census
-/// returns are those of every order of the formations it read.
+/// law of each contribution of the orders read so far. Orders with the same contributions share their law.
 pub struct KindCensus<'k, 'm, 'l> {
     kinds: &'k mut LotteryKinds<'m>,
     live: &'k LotteryLive<'l>,
-    seen: FxHashSet<OrderIds>,
+    read: FxHashMap<OrderIds, std::sync::Arc<LuckDpCertifiedResult>>,
 }
 
 impl KindCensus<'_, '_, '_> {
-    /// The laws of `orders` of a formation of performers with `kinds`, but for the orders whose contributions the
-    /// census read before: each law once. None as [`LotteryKinds::order_laws`], and then the census reads none of
-    /// the formation's orders.
+    /// The laws of `orders` of a formation of performers with `kinds`, each law once. None as
+    /// [`LotteryKinds::order_laws`]. The contributions the census read before take the law it read for them.
     pub fn formation_laws(
         &mut self,
         kinds: [LotteryKind; POSITIONS],
@@ -480,31 +478,34 @@ impl KindCensus<'_, '_, '_> {
         if !lottery.composes(kinds, orders)? {
             return Ok(None);
         }
-        // The new contributions, each with its first order.
+        // The contributions of the formation's orders, each once.
         let rows = kinds.map(|kind| lottery.entries[kind.index()].ids);
-        let mut fresh: Vec<(OrderIds, usize)> = Vec::new();
-        for (o, order) in orders.iter().enumerate() {
+        let mut met: Vec<OrderIds> = Vec::new();
+        let mut laws: Vec<std::sync::Arc<LuckDpCertifiedResult>> = Vec::new();
+        for order in orders {
             let mut ids: OrderIds = std::array::from_fn(|position| rows[order[position]][position]);
             ids.sort_unstable();
-            if !self.seen.contains(&ids) && !fresh.iter().any(|(held, _)| *held == ids) {
-                fresh.push((ids, o));
+            if met.contains(&ids) {
+                continue;
             }
-        }
-        let mut laws: Vec<std::sync::Arc<LuckDpCertifiedResult>> = Vec::with_capacity(fresh.len());
-        for &(ids, o) in &fresh {
-            match lottery.order_law(self.live, kinds, &orders[o], ids, curves)? {
-                Some(law) => {
-                    if !laws.iter().any(|held| std::sync::Arc::ptr_eq(held, &law)) {
-                        laws.push(law);
+            met.push(ids);
+            let law = match self.read.get(&ids) {
+                Some(law) => law.clone(),
+                None => match lottery.order_law(self.live, kinds, order, ids, curves)? {
+                    Some(law) => {
+                        self.read.insert(ids, law.clone());
+                        law
                     }
-                }
-                None => {
-                    lottery.stats.uncomposed += 1;
-                    return Ok(None);
-                }
+                    None => {
+                        lottery.stats.uncomposed += 1;
+                        return Ok(None);
+                    }
+                },
+            };
+            if !laws.iter().any(|held| std::sync::Arc::ptr_eq(held, &law)) {
+                laws.push(law);
             }
         }
-        self.seen.extend(fresh.iter().map(|&(ids, _)| ids));
         Ok(Some(laws))
     }
 }

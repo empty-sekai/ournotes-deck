@@ -243,6 +243,29 @@ pub(super) struct LotteryCensus {
     live: LiveSetting,
     skills: Arc<LuckSkills>,
     pub(super) roles: DomainRoles,
+    read: ReadLaws,
+}
+
+/// The laws the censuses of a plan read. A formation's orders place its performers in every order, so the multiset
+/// of its kinds gives its laws.
+#[derive(Default)]
+struct ReadLaws {
+    /// The laws read, distinct by address.
+    laws: Vec<LuckLaw>,
+    /// The index in `laws` of each law, by its address.
+    index: ournotes_sim::num::FxHashMap<usize, u32>,
+    /// The indices of the laws of each multiset of kinds (sorted kind indices), or None when its kinds compose none.
+    multisets: ournotes_sim::num::FxHashMap<[usize; 5], Option<Box<[u32]>>>,
+}
+
+impl ReadLaws {
+    /// The index of `law`, held from now on.
+    fn hold(laws: &mut Vec<LuckLaw>, index: &mut ournotes_sim::num::FxHashMap<usize, u32>, law: LuckLaw) -> u32 {
+        *index.entry(Arc::as_ptr(&law) as usize).or_insert_with(|| {
+            laws.push(law);
+            (laws.len() - 1) as u32
+        })
+    }
 }
 
 /// The live of the lottery recordings of `live`; None without a Gekisou range.
@@ -264,20 +287,20 @@ fn lottery_live<'a>(
     })
 }
 
-/// The laws of the teams of `domain`, whose members and Snaps `roles` holds, distinct by address, or why the census
-/// reads none.
+/// The laws of the teams of `domain`, whose members and Snaps the census's roles hold, distinct by address, or why the
+/// census reads none.
 #[allow(clippy::too_many_arguments)]
 fn domain_laws(
     pool: &Pool,
-    census: &LotteryCensus,
+    census: &mut LotteryCensus,
     domain: &CandidateDomain,
     curves: &mut LuckDpCache,
     lottery: &mut LotteryKinds<'_>,
     stats: &mut telemetry::DomainLaws,
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<Vec<LuckLaw>, String> {
-    let roles = &census.roles;
-    let live = lottery_live(pool.master, &census.skills, &census.live).ok_or("the live has no Gekisou range")?;
+    let LotteryCensus { live: setting, skills, roles, read } = census;
+    let live = lottery_live(pool.master, skills, setting).ok_or("the live has no Gekisou range")?;
     let column = |s: usize| roles.snaps.iter().position(|&r| r == s).map(|j| j + 1);
     let columns: Vec<usize> = std::iter::once(Some(0))
         .chain(domain.snaps().iter().map(|&s| column(s)))
@@ -306,15 +329,14 @@ fn domain_laws(
     (stats.profiles, stats.snap_types, stats.classes) = (found.profiles, found.snap_types, found.formations.len());
     stats.formations += found.formations.len();
     let orders = crate::search::uniform::all_orders();
-    let mut laws: Vec<LuckLaw> = Vec::new();
-    // The laws held, by address.
-    let mut held = ournotes_sim::num::FxHashSet::default();
-    let mut hold = |found: Vec<LuckLaw>| {
-        for law in found {
-            if held.insert(Arc::as_ptr(&law)) {
-                laws.push(law);
-            }
+    // Whether the domain's teams hold each law read.
+    let mut held: Vec<bool> = Vec::new();
+    let mark = |held: &mut Vec<bool>, i: u32| {
+        let i = i as usize;
+        if held.len() <= i {
+            held.resize(i + 1, false);
         }
+        held[i] = true;
     };
     // Formations whose kinds compose no law, read by their performers once the census is done.
     let mut separate = Vec::new();
@@ -327,8 +349,21 @@ fn domain_laws(
             let (i, j) = formation[k];
             kinds[i][j.map_or(0, |j| j + 1)]
         });
-        match census.formation_laws(formation_kinds, &orders, curves).map_err(|error| error.to_string())? {
-            Some(found) => hold(found),
+        let mut multiset = formation_kinds.map(|kind| kind.index());
+        multiset.sort_unstable();
+        let ids = match read.multisets.entry(multiset) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let found =
+                    census.formation_laws(formation_kinds, &orders, curves).map_err(|error| error.to_string())?;
+                let ids = found.map(|laws| {
+                    laws.into_iter().map(|law| ReadLaws::hold(&mut read.laws, &mut read.index, law)).collect()
+                });
+                entry.insert(ids)
+            }
+        };
+        match ids {
+            Some(ids) => ids.iter().for_each(|&i| mark(&mut held, i)),
             None => separate.push(*formation),
         }
     }
@@ -346,8 +381,12 @@ fn domain_laws(
             .collect::<Result<Vec<_>, Error>>()
             .map_err(|error| error.to_string())?;
         stats.performers_ms += started.elapsed().as_secs_f64() * 1000.0;
-        hold(luck_order_laws(&live, &deck, &orders, curves, Some(&mut *lottery)).map_err(|error| error.to_string())?);
+        for law in luck_order_laws(&live, &deck, &orders, curves, Some(&mut *lottery)).map_err(|e| e.to_string())? {
+            mark(&mut held, ReadLaws::hold(&mut read.laws, &mut read.index, law));
+        }
     }
+    let laws: Vec<LuckLaw> =
+        held.iter().zip(&read.laws).filter(|&(&held, _)| held).map(|(_, law)| law.clone()).collect();
     stats.laws = laws.len();
     Ok(laws)
 }
@@ -385,7 +424,7 @@ impl Engine<'_, '_> {
             Ok((skills, roles)) => {
                 stats.separated_snaps = roles.breaking_snaps().len();
                 stats.breaks = roles.breaks();
-                Some(LotteryCensus { live, skills, roles })
+                Some(LotteryCensus { live, skills, roles, read: ReadLaws::default() })
             }
             Err(why) => {
                 stats.unavailable = Some(why);
@@ -398,7 +437,11 @@ impl Engine<'_, '_> {
 
     /// The joint bounds of `domain` weighing the lottery laws of its teams, or None when the census reads none or
     /// they do not compile (the reason then in the telemetry).
-    pub(super) fn weighed_bounds(&mut self, census: &LotteryCensus, domain: &CandidateDomain) -> Option<JointBounds> {
+    pub(super) fn weighed_bounds(
+        &mut self,
+        census: &mut LotteryCensus,
+        domain: &CandidateDomain,
+    ) -> Option<JointBounds> {
         let pool = self.pool;
         let mut kinds = self.take_luck_kinds();
         let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);

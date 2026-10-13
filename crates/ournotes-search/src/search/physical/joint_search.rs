@@ -75,7 +75,7 @@ pub(super) fn joint_regimes(
     e: &mut Engine<'_, '_>,
 ) -> Result<(), Error> {
     use crate::search::joint::{JointBounds, SLOTS, SlotRules};
-    let census = e.lottery_census(&plan.domain);
+    let mut census = e.lottery_census(&plan.domain);
     let mut converting = bounds.conversion_snaps(&plan.domain);
     let conversion = converting.len();
     for s in census.as_ref().map_or_else(Vec::new, |census| census.roles.breaking_snaps()) {
@@ -85,7 +85,7 @@ pub(super) fn joint_regimes(
     }
     (e.rec.tracked, e.rec.bounded) = (true, true);
     if converting.is_empty() {
-        let weighed = census.as_ref().and_then(|census| e.weighed_bounds(census, &plan.domain));
+        let weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &plan.domain));
         let bounds = weighed.as_ref().unwrap_or(bounds);
         if weighed.is_some() {
             e.correlated = bounds.correlation_worthwhile(e.pool, &plan.domain, orders)?;
@@ -172,7 +172,7 @@ pub(super) fn joint_regimes(
         }
         e.rec.begin(&mut e.tel, "conversionCompile", None);
         let prepare = Instant::now();
-        let weighed = census.as_ref().and_then(|census| e.weighed_bounds(census, &domain));
+        let weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &domain));
         let result = match weighed {
             Some(weighed) => Ok(weighed),
             None => JointBounds::compile(e.pool, e.request, &domain, e.metric, e.event_input, e.simulation),

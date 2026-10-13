@@ -403,7 +403,7 @@ fn formations_that_differ_only_in_their_score_probes_share_one_propagation() {
 }
 
 #[test]
-fn a_census_gives_each_law_of_the_orders_of_its_formations_once() {
+fn a_census_gives_each_law_of_the_orders_of_a_formation_once() {
     let (master, notes, params, setup, play, delta) = kinds_fixture();
     let skills = luck_skills(&master).unwrap();
     let live = lottery_live(&master, &skills, (&notes, params, &setup, &play, &delta));
@@ -431,20 +431,19 @@ fn a_census_gives_each_law_of_the_orders_of_its_formations_once() {
     let formations: Vec<[LotteryKind; POSITIONS]> =
         [&first, &second, &first].iter().map(|deck| std::array::from_fn(|k| kind(&mut kinds, &deck[k]))).collect();
     let mut census = kinds.census(&live).unwrap();
-    let mut read = Vec::new();
-    for &formation in &formations[..2] {
-        read.extend(census.formation_laws(formation, &orders, &mut curves).unwrap().unwrap());
-    }
-    // A formation read again reads no new law.
-    assert!(census.formation_laws(formations[2], &orders, &mut curves).unwrap().unwrap().is_empty());
-    let mut all = Vec::new();
-    for deck in [&first, &second] {
-        all.extend(kinds.order_laws(&live, deck, &orders, &mut curves).unwrap().unwrap());
-    }
+    let read: Vec<Vec<std::sync::Arc<LuckDpCertifiedResult>>> = formations
+        .iter()
+        .map(|&formation| census.formation_laws(formation, &orders, &mut curves).unwrap().unwrap())
+        .collect();
     let addresses = |laws: &[std::sync::Arc<LuckDpCertifiedResult>]| {
         laws.iter().map(std::sync::Arc::as_ptr).collect::<std::collections::BTreeSet<_>>()
     };
-    assert_eq!(addresses(&read).len(), read.len());
-    assert_eq!(addresses(&read), addresses(&all));
-    assert!(read.len() >= 2, "{}", read.len());
+    for (laws, deck) in read.iter().zip([&first, &second, &first]) {
+        let own = kinds.order_laws(&live, deck, &orders, &mut curves).unwrap().unwrap();
+        assert_eq!(addresses(laws).len(), laws.len());
+        assert_eq!(addresses(laws), addresses(&own));
+    }
+    // A formation read again reads the same laws.
+    assert_eq!(addresses(&read[2]), addresses(&read[0]));
+    assert!(read.iter().flatten().map(std::sync::Arc::as_ptr).collect::<std::collections::BTreeSet<_>>().len() >= 2);
 }
