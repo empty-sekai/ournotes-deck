@@ -30,6 +30,7 @@ mod composition;
 mod correlated;
 mod cutoff;
 mod lambda;
+mod law_clusters;
 #[cfg(test)]
 mod network_point_tests;
 mod order_steps;
@@ -48,6 +49,7 @@ mod split_tables;
 mod tail;
 pub(crate) use bonus::BonusScratch;
 use compile::row_spread;
+pub(crate) use law_clusters::{LawClusters, MAX_CLUSTERS, NO_KIND, pack};
 pub(crate) use order_steps::OrderSteps;
 pub(crate) use orders::TeamCaps;
 pub(crate) use point_bound::term_cap;
@@ -134,6 +136,8 @@ pub(crate) struct JointBounds {
     carrier_split: Option<carrier_split::CarrierSplit>,
     /// The lottery laws the bounds weigh (see [`JointBounds::compile_with_laws`]).
     laws: Vec<std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>>,
+    /// The domain's bounds under clusters of those laws, which the traversals check after these (see `LawClusters`).
+    law_clusters: Option<Box<LawClusters>>,
 }
 
 /// The cheap bounds of decks with at most `n < 5` Gekisou combo carriers (a slot whose member and Snap bring combo
@@ -200,6 +204,20 @@ impl JointBounds {
     /// The lottery laws the bounds weigh; empty when every note takes its largest luck factor.
     pub(crate) fn laws(&self) -> &[std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>] {
         &self.laws
+    }
+
+    /// The bounds of the domain under clusters of the laws these weigh, when they are split.
+    pub(crate) fn law_clusters(&self) -> Option<&LawClusters> {
+        self.law_clusters.as_deref()
+    }
+
+    pub(crate) fn law_clusters_mut(&mut self) -> Option<&mut LawClusters> {
+        self.law_clusters.as_deref_mut()
+    }
+
+    /// Splits the bounds by `clusters` of the laws they weigh, compiled for the same domain.
+    pub(crate) fn set_law_clusters(&mut self, clusters: LawClusters) {
+        self.law_clusters = Some(Box::new(clusters));
     }
 
     /// Whether the bounds cover a team whose performance orders have the lottery laws `own`: they weigh no law, or
@@ -271,6 +289,11 @@ impl JointBounds {
     pub(crate) fn set_rules(&mut self, pool: &Pool, domain: &CandidateDomain, rules: Option<SlotRules>) {
         if let Some(levels) = &mut self.carrier_levels {
             for b in levels.at.iter_mut().flatten() {
+                b.set_rules(pool, domain, rules.clone());
+            }
+        }
+        if let Some(clusters) = &mut self.law_clusters {
+            for b in &mut clusters.bounds {
                 b.set_rules(pool, domain, rules.clone());
             }
         }

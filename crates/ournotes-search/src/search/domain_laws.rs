@@ -16,12 +16,17 @@
 //! The formation of a multiset takes members of a profile with distinct characters while it has them, and distinct
 //! Snaps of a type. Bounds compiled under the laws read ([`JointBounds::compile_with_laws`]) cover every team of the
 //! domain; the leaf evaluation checks the laws of each team it evaluates under them ([`JointBounds::cover_laws`]).
+//!
+//! A domain that reads many laws also splits them into clusters of laws with similar curves, the laws of each multiset
+//! of kinds in one cluster. The bounds compiled under a cluster's laws cover the teams of its multisets, and a node is
+//! below the K-th when the bounds of every cluster holding a multiset that contains its kinds prove it below
+//! ([`LawClusters`]).
 
 use super::*;
 use crate::domain::CandidateDomain;
 use crate::search::certified_search::LuckLaw;
 use crate::search::expectation::LiveSetting;
-use crate::search::joint::JointBounds;
+use crate::search::joint::{JointBounds, LawClusters, MAX_CLUSTERS, NO_KIND, pack};
 use ournotes_sim::live::full::{
     LotteryBreak, LotteryKinds, LotteryLive, LotteryRole, LuckDpCache, LuckSkills, luck_order_laws,
 };
@@ -328,8 +333,11 @@ fn lottery_live<'a>(
     })
 }
 
-/// The laws of the teams of `domain`, whose members and Snaps the census's roles hold, distinct by address, or why the
-/// census reads none.
+/// A multiset of kinds read (sorted kind indices) with the indices of its laws in the census.
+type Multiset = ([usize; 5], Box<[u32]>);
+
+/// The laws of the teams of `domain`, whose members and Snaps the census's roles hold, distinct by address, with every
+/// multiset of kinds read; or why the census reads none.
 #[allow(clippy::too_many_arguments)]
 fn domain_laws(
     pool: &Pool,
@@ -339,8 +347,9 @@ fn domain_laws(
     lottery: &mut LotteryKinds<'_>,
     stats: &mut telemetry::DomainLaws,
     mut cancelled: impl FnMut() -> bool,
-) -> Result<Vec<LuckLaw>, String> {
+) -> Result<(Vec<LuckLaw>, Vec<Multiset>), String> {
     let LotteryCensus { live: setting, skills, roles, read } = census;
+    let mut multisets: Vec<Multiset> = Vec::new();
     let live = lottery_live(pool.master, skills, setting).ok_or("the live has no Gekisou range")?;
     let column = |s: usize| roles.snaps.iter().position(|&r| r == s).map(|j| j + 1);
     let columns: Vec<usize> = std::iter::once(Some(0))
@@ -404,7 +413,10 @@ fn domain_laws(
             }
         };
         match ids {
-            Some(ids) => ids.iter().for_each(|&i| mark(&mut held, i)),
+            Some(ids) => {
+                ids.iter().for_each(|&i| mark(&mut held, i));
+                multisets.push((multiset, ids.clone()));
+            }
             None => separate.push(*formation),
         }
     }
@@ -412,6 +424,11 @@ fn domain_laws(
         if cancelled() {
             return Err("the search stopped".into());
         }
+        let mut multiset: [usize; 5] = std::array::from_fn(|k| {
+            let (i, j) = formation[k];
+            kinds[i][j.map_or(0, |j| j + 1)].index()
+        });
+        multiset.sort_unstable();
         let started = Instant::now();
         let deck = formation
             .iter()
@@ -422,14 +439,152 @@ fn domain_laws(
             .collect::<Result<Vec<_>, Error>>()
             .map_err(|error| error.to_string())?;
         stats.performers_ms += started.elapsed().as_secs_f64() * 1000.0;
+        let mut group = Vec::new();
         for law in luck_order_laws(&live, &deck, &orders, curves, Some(&mut *lottery)).map_err(|e| e.to_string())? {
-            mark(&mut held, ReadLaws::hold(&mut read.laws, &mut read.index, law));
+            let i = ReadLaws::hold(&mut read.laws, &mut read.index, law);
+            mark(&mut held, i);
+            group.push(i);
         }
+        multisets.push((multiset, group.into()));
     }
     let laws: Vec<LuckLaw> =
         held.iter().zip(&read.laws).filter(|&(&held, _)| held).map(|(_, law)| law.clone()).collect();
     stats.laws = laws.len();
-    Ok(laws)
+    Ok((laws, multisets))
+}
+
+/// The laws of a domain split into at most this many clusters (see [`cluster_laws`]).
+const LAW_CLUSTERS: usize = 8;
+
+/// Points of the time grid on which [`cluster_laws`] compares the curves of the laws.
+const CURVE_POINTS: i64 = 64;
+
+/// The laws of the multisets of kinds read in at most `k` clusters of laws with similar Rush and probe curves: the law
+/// set of each cluster and the cluster of each multiset. Each multiset goes to the cluster of its first law's curve with
+/// all its laws, so bounds compiled under a cluster's laws cover every team holding one of its multisets. None when a
+/// multiset reads no law.
+///
+/// The curves are compared by their luck weights (Rush factor and probe weight) at a single note on a grid over the
+/// laws' times, and grouped by k-means from the farthest-point seeding.
+fn cluster_laws(multisets: &[Multiset], laws: &[LuckLaw], k: usize) -> Option<(Vec<Vec<LuckLaw>>, Vec<usize>)> {
+    let key = |law: &LuckLaw| (law.steps.as_ptr() as usize, law.frame_queries.as_ptr() as usize);
+    let held = |law: &LuckLaw| law.probes.iter().any(|&p| p);
+    // one law per curve, one that holds a probe when some law of the curve does
+    let mut index = HashMap::<(usize, usize), usize>::new();
+    let mut curves: Vec<LuckLaw> = Vec::new();
+    for (_, ids) in multisets {
+        for &i in ids.iter() {
+            let law = &laws[i as usize];
+            match index.get(&key(law)) {
+                Some(&c) => {
+                    if held(law) && !held(&curves[c]) {
+                        curves[c] = law.clone();
+                    }
+                }
+                None => {
+                    index.insert(key(law), curves.len());
+                    curves.push(law.clone());
+                }
+            }
+        }
+    }
+    let n = curves.len();
+    let k = k.clamp(1, n.max(1));
+    let mut label = vec![0usize; n];
+    if k > 1 {
+        let times =
+            curves.iter().flat_map(|law| law.steps.iter().map(|s| s.0).chain(law.frame_queries.iter().map(|q| q.0)));
+        let (lo, hi) = times.fold((i32::MAX, i32::MIN), |(lo, hi), t| (lo.min(t), hi.max(t)));
+        let (lo, hi) = if lo > hi { (0, 1) } else { (lo, hi.max(lo + 1)) };
+        let span = hi as i64 - lo as i64;
+        let grid: Vec<(i32, f64)> =
+            (0..CURVE_POINTS).map(|i| ((lo as i64 + span * i / (CURVE_POINTS - 1)) as i32, 2.0)).collect();
+        let features: Vec<Vec<f64>> = curves
+            .iter()
+            .map(|law| {
+                let one = [law.clone()];
+                let weights = crate::search::snaps::LuckLaws::new(&one).expect("one law").weights(&grid);
+                let probe = held(law);
+                let rush = weights.iter().map(|w| w.0 - 1.0);
+                rush.chain(weights.iter().map(|w| if probe { w.1 } else { 0.0 })).collect()
+            })
+            .collect();
+        let d2 = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f64>();
+        let first = (0..n)
+            .max_by(|&a, &b| features[a].iter().sum::<f64>().total_cmp(&features[b].iter().sum::<f64>()))
+            .expect("a curve");
+        let mut centers = vec![features[first].clone()];
+        let mut dist = vec![f64::INFINITY; n];
+        while centers.len() < k {
+            let last = centers.last().expect("a center");
+            for i in 0..n {
+                dist[i] = dist[i].min(d2(&features[i], last));
+            }
+            let far = (0..n).max_by(|&a, &b| dist[a].total_cmp(&dist[b])).expect("a curve");
+            centers.push(features[far].clone());
+        }
+        for _ in 0..30 {
+            let mut moved = false;
+            for i in 0..n {
+                let best = (0..k)
+                    .min_by(|&a, &b| d2(&features[i], &centers[a]).total_cmp(&d2(&features[i], &centers[b])))
+                    .expect("a center");
+                moved |= best != label[i];
+                label[i] = best;
+            }
+            for (c, center) in centers.iter_mut().enumerate() {
+                let members: Vec<usize> = (0..n).filter(|&i| label[i] == c).collect();
+                if members.is_empty() {
+                    continue;
+                }
+                for (d, value) in center.iter_mut().enumerate() {
+                    *value = members.iter().map(|&i| features[i][d]).sum::<f64>() / members.len() as f64;
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
+    }
+    let mut taken = vec![vec![false; laws.len()]; k];
+    let mut sets: Vec<Vec<LuckLaw>> = vec![Vec::new(); k];
+    let mut cluster: Vec<usize> = Vec::with_capacity(multisets.len());
+    for (_, ids) in multisets {
+        let c = label[index[&key(&laws[*ids.first()? as usize])]];
+        for &i in ids.iter() {
+            if !std::mem::replace(&mut taken[c][i as usize], true) {
+                sets[c].push(laws[i as usize].clone());
+            }
+        }
+        cluster.push(c);
+    }
+    // the clusters without a multiset are dropped
+    let mut renumber = vec![0; k];
+    let mut kept = Vec::new();
+    for (c, set) in sets.into_iter().enumerate() {
+        if !set.is_empty() {
+            renumber[c] = kept.len();
+            kept.push(set);
+        }
+    }
+    Some((kept, cluster.into_iter().map(|c| renumber[c]).collect()))
+}
+
+/// The clusters (bits) of the multisets read that contain each sorted multiset of one to four kinds, by its packed key
+/// (`cluster`: the cluster of each multiset). Empty when a kind index does not pack.
+fn prefix_sets(multisets: &[Multiset], cluster: &[usize]) -> HashMap<u64, u64> {
+    let mut sets = HashMap::<u64, u64>::new();
+    let mut sub = Vec::with_capacity(4);
+    for ((multiset, _), &c) in multisets.iter().zip(cluster) {
+        // every proper nonempty subset of the five positions
+        for pick in 1u32..31 {
+            sub.clear();
+            sub.extend((0..5).filter(|&i| pick >> i & 1 != 0).map(|i| multiset[i]));
+            let Some(key) = pack(&sub) else { return HashMap::new() };
+            *sets.entry(key).or_default() |= 1 << c;
+        }
+    }
+    sets
 }
 
 impl Engine<'_, '_> {
@@ -496,17 +651,67 @@ impl Engine<'_, '_> {
         self.certified.as_mut().expect("certified request").luck_curves = curves;
         let started = Instant::now();
         let memo = Some(&census.read.weights);
-        let bounds = laws.and_then(|laws| {
+        let (laws, multisets) = match laws {
+            Ok((laws, multisets)) => (Ok(laws), multisets),
+            Err(error) => (Err(error), Vec::new()),
+        };
+        let mut bounds = laws.as_ref().map_err(Clone::clone).and_then(|laws| {
             let (request, metric, event_input, simulation) =
                 (self.request, self.metric, self.event_input, self.simulation);
-            JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, &laws, memo)
+            JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, laws, memo)
                 .map_err(|error| format!("the weighed bounds do not compile: {error}"))
         });
         stats.compile_ms += started.elapsed().as_secs_f64() * 1000.0;
+        stats.law_clusters = 0;
+        if let Ok(bounds) = &mut bounds {
+            let started = Instant::now();
+            if let Some(clusters) = self.law_clusters(census, domain, &multisets) {
+                stats.law_clusters = clusters.bounds.len();
+                bounds.set_law_clusters(clusters);
+            }
+            stats.clusters_ms += started.elapsed().as_secs_f64() * 1000.0;
+        }
         stats.unavailable = bounds.as_ref().err().cloned();
         stats.weighed += usize::from(bounds.is_ok());
         self.tel.environment.bounds.domain_laws = Some(stats);
         bounds.ok()
+    }
+
+    /// The bounds of `domain` under clusters of the laws of the multisets of kinds `multisets` read by `census` (see
+    /// [`cluster_laws`]), or None when they form one cluster or the bounds of a cluster do not compile.
+    fn law_clusters(
+        &self,
+        census: &LotteryCensus,
+        domain: &CandidateDomain,
+        multisets: &[Multiset],
+    ) -> Option<LawClusters> {
+        let (sets, cluster) = cluster_laws(multisets, &census.read.laws, LAW_CLUSTERS.min(MAX_CLUSTERS))?;
+        if sets.len() < 2 {
+            return None;
+        }
+        let (pool, request, metric, event_input, simulation) =
+            (self.pool, self.request, self.metric, self.event_input, self.simulation);
+        let bounds = sets
+            .iter()
+            .map(|set| {
+                JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, set, None)
+            })
+            .collect::<Result<Vec<_>, Error>>()
+            .ok()?;
+        let mut holding = HashMap::<usize, u64>::new();
+        for (c, set) in sets.iter().enumerate() {
+            for law in set {
+                *holding.entry(Arc::as_ptr(law) as usize).or_default() |= 1 << c;
+            }
+        }
+        let mut kinds = vec![Box::<[u32]>::default(); pool.members.len()];
+        for &m in domain.members() {
+            let choices = std::iter::once(None).chain(domain.snaps().iter().map(|&s| Some(s)));
+            kinds[m] = choices
+                .map(|snap| census.kind_index(m, snap).and_then(|k| u32::try_from(k).ok()).unwrap_or(NO_KIND))
+                .collect();
+        }
+        Some(LawClusters::new(bounds, kinds, holding, prefix_sets(multisets, &cluster)))
     }
 }
 

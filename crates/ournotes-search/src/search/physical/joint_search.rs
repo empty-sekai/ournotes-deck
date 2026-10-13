@@ -92,7 +92,10 @@ pub(super) fn joint_regimes(
         }
     };
     if converting.is_empty() {
-        let weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &plan.domain));
+        let mut weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &plan.domain));
+        if let Some(weighed) = weighed.as_mut() {
+            order_law_clusters(e, &plan.domain, weighed, orders)?;
+        }
         let bounds = weighed.as_ref().unwrap_or(bounds);
         if weighed.is_some() {
             e.correlated = bounds.correlation_worthwhile(e.pool, &plan.domain, orders)?;
@@ -217,6 +220,7 @@ pub(super) fn joint_regimes(
         }
         e.correlated = part.correlation_worthwhile(e.pool, &domain, orders)?;
         e.resource = part.resource_worthwhile(e.pool, &domain, orders, e.correlated)?;
+        order_law_clusters(e, &domain, &mut part, orders)?;
         let mut rule_order: Vec<_> = (0..rules.len()).collect();
         rule_order.sort_by_key(|&j| std::cmp::Reverse(priority.get(&(i, j)).copied()));
         for j in rule_order {
@@ -240,6 +244,26 @@ pub(super) fn joint_regimes(
             e.rec.parts_done += 1;
         }
     }
+    Ok(())
+}
+
+/// Orders the law clusters of `bounds` by their root bounds, largest first: the check of a node stops at the first
+/// cluster whose bounds leave it open, and a cluster with a larger root bound leaves more nodes open.
+fn order_law_clusters(
+    e: &Engine<'_, '_>,
+    domain: &crate::domain::CandidateDomain,
+    bounds: &mut crate::search::joint::JointBounds,
+    orders: &[([usize; 5], u128)],
+) -> Result<(), Error> {
+    let Some(clusters) = bounds.law_clusters_mut() else { return Ok(()) };
+    let roots = clusters
+        .bounds
+        .iter()
+        .map(|b| joint_root_upper(e.pool, domain, b, orders, 0))
+        .collect::<Result<Vec<_>, Error>>()?;
+    let mut order: Vec<usize> = (0..roots.len()).collect();
+    order.sort_by_key(|&c| std::cmp::Reverse(roots[c]));
+    clusters.reorder(&order);
     Ok(())
 }
 
@@ -401,6 +425,43 @@ pub(super) fn joint_rec(
                     joint.modules.entry(module.name()).or_default().pruned += 1;
                     return Ok(true);
                 }
+            }
+        }
+        // Every completion's laws lie in a cluster holding a multiset of kinds that contains the prefix's kinds, whose
+        // bounds cover it.
+        if depth < 5
+            && let Some(clusters) = bounds.law_clusters()
+        {
+            joint.modules.entry("lawClusters").or_default().checks += 1;
+            let below =
+                |cap: i128| cap < threshold || (exact_ties && cap == threshold && power < i64::from(cutoff_power));
+            let open = clusters.completions(p, depth, &choices);
+            let mut pruned = true;
+            for (c, cluster) in clusters.bounds.iter().enumerate() {
+                if open >> c & 1 == 0 {
+                    continue;
+                }
+                let level = cluster.carrier_level((cluster.carriers_placed(p, depth, &choices) + 5 - depth).min(5));
+                let placed = cluster.keyed(p, depth, &choices, 5 - depth, 5 - depth);
+                if below(level.expected_upper_keyed(e.pool, domain, p, depth, orders, placed.as_ref())?.0)
+                    || (e.correlated
+                        && below(level.correlated_expected_upper_keyed(
+                            e.pool,
+                            domain,
+                            p,
+                            depth,
+                            orders,
+                            placed.as_ref(),
+                        )?))
+                {
+                    continue;
+                }
+                pruned = false;
+                break;
+            }
+            if pruned {
+                joint.modules.entry("lawClusters").or_default().pruned += 1;
+                return Ok(true);
             }
         }
         if seed_bonus.is_none() && depth < 5 && bounds.is_pt() {
