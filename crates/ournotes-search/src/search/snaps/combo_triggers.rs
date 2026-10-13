@@ -285,6 +285,7 @@ mod tests {
             raw: vec![5],
             count_reach: reach,
             entry_reach: Vec::new(),
+            just_blocked: Vec::new(),
             gk: None,
             gkf: Some(Rc::new(g)),
             rush_cache: RefCell::new(HashMap::new()),

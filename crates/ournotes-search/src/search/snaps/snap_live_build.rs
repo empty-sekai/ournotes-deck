@@ -76,6 +76,7 @@ impl<'a> SnapLive<'a> {
         let mut raw: Vec<i32> = entries.iter().map(|e| e.2).collect();
         raw.sort_unstable();
         raw.dedup();
+        let blocked = just_blocked(master, &entries);
 
         let members: Vec<usize> = (0..pool.members.len()).filter(|&m| allowed_members[m]).collect();
         fn attr(m: &MemberView) -> Attr<'_> {
@@ -95,6 +96,7 @@ impl<'a> SnapLive<'a> {
             raw,
             count_reach: std::array::from_fn(|j| 1u8 << j),
             entry_reach: Vec::new(),
+            just_blocked: blocked.clone(),
             gk: None,
             gkf: None,
             rush_cache: RefCell::new(HashMap::new()),
@@ -272,11 +274,12 @@ impl<'a> SnapLive<'a> {
         }
         convs.retain(|c| c.0.0 != -1);
         // `all`: every conversion; else without the rows with a conversion budget (their score is bounded apart)
-        let reach = |j: i32, t: i64, all: bool| -> Vec<i32> {
+        let reach = |i: usize, j: i32, t: i64, all: bool| -> Vec<i32> {
             let mut v = vec![j];
             for ((to, targets, w), budget) in &convs {
                 if (all || !budget)
                     && *to != j
+                    && converts(*to, blocked[i])
                     && targets.contains(&(j as i64))
                     && !v.contains(to)
                     && w.iter().any(|&(a, b)| a < t && t <= b)
@@ -286,19 +289,22 @@ impl<'a> SnapLive<'a> {
             }
             v
         };
-        let reached: Vec<Vec<i32>> = entries.iter().map(|&(fi, _, j)| reach(j, fi as i64, true)).collect();
+        let reached: Vec<Vec<i32>> =
+            entries.iter().enumerate().map(|(i, &(fi, _, j))| reach(i, j, fi as i64, true)).collect();
         // Count conditions read the final judgement of each judged entry. Close every conversion registered for its
         // frame transitively; outside every registration window an entry keeps its raw judgement. The windows were
         // derived with the whole-pool closure, so they only over-approximate.
         env.entry_reach = entries
             .iter()
-            .map(|&(fi, _, j)| {
+            .enumerate()
+            .map(|(i, &(fi, _, j))| {
                 let t = fi as i64;
                 let mut mask = if (0..8).contains(&j) { 1u8 << j } else { 0 };
                 loop {
                     let mut next = mask;
                     for ((to, targets, w), _) in &convs {
                         if (0..8).contains(to)
+                            && converts(*to, blocked[i])
                             && w.iter().any(|&(a, b)| a < t && t <= b)
                             && targets.iter().any(|&x| (0..8).contains(&x) && mask & (1u8 << x) != 0)
                         {
@@ -313,7 +319,8 @@ impl<'a> SnapLive<'a> {
             })
             .collect();
         // the judgements the score bounds read outside the conversion budgets
-        let reached_v: Vec<Vec<i32>> = entries.iter().map(|&(fi, _, j)| reach(j, fi as i64, false)).collect();
+        let reached_v: Vec<Vec<i32>> =
+            entries.iter().enumerate().map(|(i, &(fi, _, j))| reach(i, j, fi as i64, false)).collect();
         if let Some(sc) = &sched {
             env.gk = Some(GkEnv {
                 missions: sc.ranges.iter().map(|r| r.mission).collect(),
@@ -940,9 +947,10 @@ impl<'a> SnapLive<'a> {
                     let (mut out, mut out_v) = (Vec::with_capacity(ne), Vec::with_capacity(ne));
                     for e in 0..ne {
                         let (j, fi) = (fine.raw[e] as i32, ent_frame[e]);
+                        let skips_just = blocked[order[e]];
                         let (mut mask, mut mask_v) = (0u8, 0u8);
                         for (to, tg) in &key.0 {
-                            if *to != j && tg.contains(&(j as i64)) {
+                            if *to != j && converts(*to, skips_just) && tg.contains(&(j as i64)) {
                                 mask |= 1 << to;
                                 mask_v |= 1 << to;
                             }
@@ -957,7 +965,7 @@ impl<'a> SnapLive<'a> {
                                     })
                                 }
                             };
-                            let hit = *to != j && tg.contains(&(j as i64)) && seen;
+                            let hit = *to != j && converts(*to, skips_just) && tg.contains(&(j as i64)) && seen;
                             if hit {
                                 mask |= 1 << to;
                             }
