@@ -364,7 +364,7 @@ mod tests {
             Vec::new(),
             0.0,
         )];
-        // (time, Rush luck factor), then the expected luck and probe weights
+        // (time, Rush luck factor, snapshot read), then the expected luck and probe weights
         let cases = [
             ((1, 2.0, true), 2.0, 1.0),
             ((5, 2.0, true), 2.0, 1.0),
@@ -373,7 +373,7 @@ mod tests {
             ((11, 2.0, true), 1.0, 0.0),
             ((12, 2.0, true), 1.0, 0.0),
         ];
-        let weights = LuckLaws::new(&laws).unwrap().weights(&cases.map(|((time, l), _, _)| (time, l, true)));
+        let weights = LuckLaws::new(&laws).unwrap().weights(&cases.map(|(note, _, _)| note));
         for (&(note, luck, probe_luck), &(l, p)) in cases.iter().zip(&weights) {
             assert!(
                 (luck..luck + 1e-9).contains(&l) && (probe_luck..probe_luck + 1e-9).contains(&p),
