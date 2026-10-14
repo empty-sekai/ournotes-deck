@@ -59,9 +59,9 @@ impl JointBounds {
     /// per-note bounds then weigh the Rush factor and the direct-Rush score ups by their certified class masses
     /// (see `LuckLaws`). No law: every note takes its largest luck factor.
     ///
-    /// A weighted bound caps the expected score of an order, which is the order's expected payoff only when the
-    /// payoff is the score itself, so laws compile for no other metric. The luck weights are read from `memo` when it
-    /// holds those of the same laws and notes.
+    /// A weighted bound caps the expected score of an order, and the payoff reads it through a concave nondecreasing
+    /// majorant ([`PointBound::weighed`]), so laws compile for every metric without a score target. The luck weights
+    /// are read from `memo` when it holds those of the same laws and notes.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn compile_with_laws(
         pool: &Pool,
@@ -76,8 +76,8 @@ impl JointBounds {
         if !domain.is_feasible() {
             return Err(unavailable("empty legal domain"));
         }
-        if !laws.is_empty() && !matches!(metric, Metric::Score) {
-            return Err(unavailable("lottery laws weigh only a score objective"));
+        if !laws.is_empty() && !metric.weighs_laws() {
+            return Err(unavailable("lottery laws weigh no score target"));
         }
         if !matches!(request.objective.inner(), Objective::LiveScore { .. })
             || !matches!(
@@ -131,6 +131,7 @@ impl JointBounds {
         let setup =
             crate::search::full_setup(pool, &request.objective)?.ok_or_else(|| unavailable("missing Live setup"))?;
         let envelope = SnapLive::new(pool, &t, &allowed, &setup, laws, memo)?;
+        let nonnegative_scores = envelope.nonnegative_scores();
         let (a0, global, eps, order_gains) = envelope.joint_envelope();
         let levels = if setup.gk.is_some() { envelope.joint_carrier_levels() } else { None };
         let keys = levels.as_ref().and_then(|_| envelope.carrier_keys());
@@ -163,20 +164,33 @@ impl JointBounds {
                         input.ok_or_else(|| unavailable("missing event input"))?,
                         *event_id,
                         matches!(metric, Metric::ClientChallengePoints { .. }),
-                        eps < 1.0,
+                        nonnegative_scores,
                     )?)
                 }
                 Metric::RankedEventItems { event_id, resource_type, resource_id } => {
-                    let cap = ((maximum_slot * 5) as f64 * global * (1.0 + eps)).ceil();
+                    // Under laws the envelope caps an expected score, which bounds no single score.
+                    let cap = if laws.is_empty() {
+                        ((maximum_slot * 5) as f64 * global * (1.0 + eps)).ceil()
+                    } else {
+                        f64::from(i32::MAX)
+                    };
                     if !cap.is_finite() {
                         return Err(unavailable("ranked-item score support is not finite"));
                     }
-                    let support = (if eps < 1.0 { 0 } else { i32::MIN }, cap.clamp(0.0, i32::MAX as f64) as i32);
+                    let input = input.ok_or_else(|| unavailable("missing event input"))?;
+                    let context =
+                        request.objective.context().ok_or_else(|| unavailable("items need resolved context"))?;
+                    let route = context.event_request(pool.master, input, *event_id)?.route;
+                    let nonnegative = nonnegative_scores
+                        || point_bound::negative_scores_unpaid(pool, context, input, |rank| {
+                            ournotes_sim::event::ranked_event_reward(pool.master, *event_id, &route, rank).is_ok()
+                        });
+                    let support = (if nonnegative { 0 } else { i32::MIN }, cap.clamp(0.0, i32::MAX as f64) as i32);
                     Some(PointBound::compile_items(
                         pool,
                         request,
                         domain,
-                        input.ok_or_else(|| unavailable("missing event input"))?,
+                        input,
                         (*event_id, *resource_type, *resource_id),
                         support,
                     )?)
@@ -202,6 +216,13 @@ impl JointBounds {
                 Some(PointBound::combined(pool, domain, parts)?)
             }
             None => term_points(metric)?,
+        };
+        // Under laws every score cap bounds an expected score.
+        let points = match points {
+            Some(pt) if !laws.is_empty() => {
+                Some(pt.weighed().ok_or_else(|| unavailable("lottery laws weigh no score target"))?)
+            }
+            points => points,
         };
         // Per-note caps of complete teams: one per performance order, and the cutoff tables of the simulations.
         let fine = Some(envelope.into_joint_fine());

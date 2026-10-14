@@ -600,12 +600,12 @@ fn multiset_places(multisets: &[Multiset], cluster: &[usize]) -> Option<(FxHashM
 }
 
 impl Engine<'_, '_> {
-    /// The lottery roles of the plan's domain when its bounds can weigh lottery laws: a certified score search of a
-    /// Gekisou live in its declared clocks. None otherwise, or when the roles cannot be read (the reason then in the
-    /// telemetry).
+    /// The lottery roles of the plan's domain when its bounds can weigh lottery laws: a certified search of a Gekisou
+    /// live in its declared clocks for a metric bounded through expected scores ([`Metric::weighs_laws`]). None
+    /// otherwise, or when the roles cannot be read (the reason then in the telemetry).
     pub(super) fn lottery_census(&mut self, domain: &CandidateDomain) -> Option<LotteryCensus> {
         if self.certified.is_none()
-            || !matches!(self.metric, Metric::Score)
+            || !self.metric.weighs_laws()
             || self.simulation.music_length_ms.is_some()
             || self.simulation.score_music_length_ms.is_some()
         {

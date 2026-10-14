@@ -21,6 +21,9 @@ pub(super) struct PointBound {
     /// their largest bonuses.
     pub(super) weight: i128,
     pub(super) others: Vec<(i128, i64, PointBound)>,
+    /// Whether the score caps this bound reads bound the expected score of an order over its lottery paths rather
+    /// than each of its scores (see [`PointBound::weighed`]).
+    pub(super) expected: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -154,7 +157,55 @@ impl PointBound {
             (Some(tiers), None) => Some(tiers.iter().map(|&(score, _)| score).collect()),
             _ => None,
         };
-        Self { member, snap, multiplier, score_tiers, hulls, target, step_scores, weight: 1, others: Vec::new() }
+        Self {
+            member,
+            snap,
+            multiplier,
+            score_tiers,
+            hulls,
+            target,
+            step_scores,
+            weight: 1,
+            others: Vec::new(),
+            expected: false,
+        }
+    }
+
+    /// This bound for score caps that bound the expected score of an order over its lottery paths, as the bounds
+    /// compiled under lottery laws give. Every payoff it reads then is concave and nondecreasing in the score: a
+    /// capped score is, and point tiers read the concave majorant of their whole step function, so its value at a cap
+    /// of the expected score bounds the expected payoff (Jensen). None when a term is a score target, whose indicator
+    /// has no such majorant below one.
+    pub(super) fn weighed(&self) -> Option<Self> {
+        if matches!(self.target, Some(ScoreTarget::AtLeast(_))) {
+            return None;
+        }
+        let others = self
+            .others
+            .iter()
+            .map(|(weight, bonus, part)| Some((*weight, *bonus, part.weighed()?)))
+            .collect::<Option<_>>()?;
+        Some(Self { step_scores: None, others, expected: true, ..self.clone() })
+    }
+
+    /// The point payoff of an order of a deck with this event bonus at a score cap without a score target: the step
+    /// multiplier at the cap, or, for expected-score caps, the concave majorant of the whole step function there.
+    fn tier_payoff(&self, bonus: i64, score_cap: i128) -> i128 {
+        if !self.expected {
+            return ((bonus + 10000) * self.multiplier_at(score_cap) / 10000) as i128;
+        }
+        match (&self.hulls, &self.score_tiers) {
+            (Some(hulls), Some(_)) => crate::search::uniform::concave_value_ceil(
+                hulls.last().expect("a hull per tier"),
+                score_cap,
+                i128::from(bonus + 10000),
+                10000,
+            )
+            .expect("PT values in the nonwrapping domain"),
+            // A step function without hulls is bounded by its largest step.
+            (None, Some(_)) => ((bonus + 10000) * self.multiplier_at(i128::MAX) / 10000) as i128,
+            _ => ((bonus + 10000) * self.multiplier / 10000) as i128,
+        }
     }
 
     /// The bound of a combined metric's payoff from its terms' weights and bounds. The first term whose payoff
@@ -301,7 +352,7 @@ impl PointBound {
                 ScoreTarget::Capped(threshold) => score_cap.min(i128::from(threshold)),
             };
         }
-        ((bonus + 10000) * self.multiplier_at(score_cap) / 10000) as i128
+        self.tier_payoff(bonus, score_cap)
     }
 
     /// A bound of the mean PT over the performance orders of a deck with this event bonus whose mean score is at most
@@ -310,7 +361,9 @@ impl PointBound {
     /// `max_cap`, where `m` equals the step of the tiers at or below `max_cap`; the concave majorant `M` of that
     /// truncated step gives `E[m(S)] <= E[M(S)] <= M(E[S]) <= M(score_cap)` (Jensen, `M` non-decreasing), and the
     /// rounding goes up. The PT of every order is also at most the PT at `max_cap`. Without score tiers the multiplier
-    /// is constant. A combined payoff sums the bounds of its terms, each a bound of the term's mean.
+    /// is constant. A combined payoff sums the bounds of its terms, each a bound of the term's mean. For
+    /// expected-score caps ([`PointBound::weighed`]) `max_cap` bounds an expectation too, and the whole step's majorant
+    /// applies.
     pub(super) fn mean_payoff(&self, bonus: i64, score_cap: i128, max_cap: i128) -> i128 {
         let own = self.own_mean_payoff(bonus, score_cap, max_cap);
         if !self.is_combined() {
@@ -332,6 +385,9 @@ impl PointBound {
                 ScoreTarget::Capped(threshold) => score_cap.min(i128::from(threshold)),
             };
         }
+        if self.expected {
+            return self.tier_payoff(bonus, score_cap);
+        }
         match (&self.hulls, &self.score_tiers) {
             (Some(hulls), Some(tiers)) => {
                 let k = tiers.partition_point(|&(score, _)| i128::from(score) <= max_cap).max(1) - 1;
@@ -346,7 +402,7 @@ impl PointBound {
     /// At least the payoff of an order of a deck with this event bonus whose score is at most `score_cap`: the first
     /// term's multiplier at the cap, without its score target, plus the other terms.
     pub(crate) fn cutoff_payoff(&self, bonus: i64, score_cap: i128) -> i128 {
-        let own = ((bonus + 10000) * self.multiplier_at(score_cap) / 10000) as i128;
+        let own = self.tier_payoff(bonus, score_cap);
         if !self.is_combined() {
             return own;
         }
@@ -468,6 +524,8 @@ impl PointBound {
         let context = request.objective.context().ok_or_else(|| unavailable("PT needs resolved context"))?;
         let q = context.event_request(pool.master, input, event_id)?;
         let route = point_route::PointRoute::compile(pool.master, &q, event_id, challenge_points)?;
+        let nonnegative_scores = nonnegative_scores
+            || negative_scores_unpaid(pool, context, input, |rank| route.value_at_rank(pool.master, rank).is_ok());
         if !nonnegative_scores && route.value_at_rank(pool.master, event::RANK_NONE).is_err() {
             return Err(unavailable("signed score domain requires a defined NONE payoff"));
         }
@@ -587,6 +645,32 @@ impl PointBound {
             .map(|tiers| (1..=tiers.len()).map(|k| crate::search::uniform::concave_majorant(&tiers[..k])).collect());
         Ok(Self::plain(member, snap, multiplier, score_tiers, hulls, None))
     }
+}
+
+/// Whether no negative local score has a native result: the local score -1 has no rank (a solo score below every
+/// threshold is a game error), or its room total takes NONE and `paid` holds for no NONE reward. Ranks walk the
+/// thresholds a score or total reaches, so every smaller score takes no higher rank, and NONE is the least. Settlement
+/// then reports a Game error for every negative score, and every team with a result scores at least zero in every
+/// play, whatever its factor margin. False when the request maps no local score to a total.
+pub(super) fn negative_scores_unpaid(
+    pool: &Pool,
+    context: &ournotes_sim::scenario::ResolvedContext,
+    input: &EventPayoffInput,
+    paid: impl Fn(i64) -> bool,
+) -> bool {
+    use ournotes_sim::event;
+    use ournotes_sim::scenario::Scenario;
+    let Some(music) = pool.master.live_music(context.resolved.live_music_id) else { return false };
+    let group = music.live_score_rank_group;
+    if !matches!(context.scenario, Scenario::Battle(_) | Scenario::Arena(_)) {
+        return event::score_rank(pool.master, group, -1).is_err();
+    }
+    input.multiplayer_score_policy.as_ref().and_then(|policy| policy.total_and_count(-1).ok()).is_some_and(
+        |(total, players)| {
+            event::battle_score_rank(pool.master, group, i64::from(total), players) == event::RANK_NONE
+                && !paid(event::RANK_NONE)
+        },
+    )
 }
 
 pub(super) fn signed_network_reward_values(

@@ -20,9 +20,12 @@ impl JointBounds {
             .collect()
     }
 
-    /// The steps of one term's own payoff.
+    /// The steps of one term's own payoff; None for expected-score caps, whose steps bound no order.
     fn steps_of(&self, pt: &PointBound) -> Option<crate::search::deck_payoff::ScoreSteps> {
         use crate::search::deck_payoff::Step;
+        if pt.expected {
+            return None;
+        }
         let steps = match (pt.target, &pt.score_tiers) {
             (Some(ScoreTarget::AtLeast(threshold)), _) => {
                 vec![(i128::MIN, Step::Target(false)), (i128::from(threshold), Step::Target(true))]

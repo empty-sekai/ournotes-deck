@@ -405,6 +405,11 @@ impl Metric {
             _ => test(self),
         }
     }
+    /// Whether bounds of expected scores bound the metric's expected payoff: every term's payoff has a concave
+    /// nondecreasing majorant in the score, which a score target's indicator lacks.
+    pub(crate) fn weighs_laws(&self) -> bool {
+        !self.any(|m| matches!(m, Self::Power | Self::ScoreAtLeast { .. } | Self::ScoreAndLifeAtLeast { .. }))
+    }
     pub(crate) fn event(&self) -> Option<i64> {
         match *self {
             Self::ClientEventPoints { event_id }

@@ -161,9 +161,9 @@ impl Engine<'_, '_> {
     }
 
     /// The laws of the orders of `physical` read from the multiset of its performers' lottery kinds, when the
-    /// traversal of a score search holds the census of its domain (see `LotteryCensus::team_laws`).
+    /// traversal of a search whose bounds weigh laws holds the census of its domain (see `LotteryCensus::team_laws`).
     fn kind_laws(&self, physical: &PhysicalDeck) -> Option<Vec<LuckLaw>> {
-        if !matches!(self.metric, Metric::Score) {
+        if !self.metric.weighs_laws() {
             return None;
         }
         self.certified.as_ref()?.census.as_ref()?.team_laws(physical)
@@ -266,7 +266,8 @@ impl Engine<'_, '_> {
                 // evaluation takes them as they are. Bounds that weigh the laws of the team's domain must cover them.
                 let mut laws = None;
                 let cutoff = self.safe_cutoff();
-                if let (Some((bounds, domain)), Metric::Score) = (cut, self.metric)
+                if let Some((bounds, domain)) = cut
+                    && self.metric.weighs_laws()
                     && (cutoff.is_some() || !bounds.laws().is_empty())
                 {
                     let (_, resume) = self.rec.clock.lap(slot::SIMULATION);

@@ -247,6 +247,13 @@ impl<'a> SnapLive<'a> {
         (a0, global, eps, gains)
     }
 
+    /// Whether every play of every team scores at least zero: its factor margin (`play_eps`, every play's, not the
+    /// expected one of certified laws) stays below one, so every factor keeps the sign of its ideal value, at least
+    /// one.
+    pub(crate) fn nonnegative_scores(&self) -> bool {
+        self.play_eps < 1.0
+    }
+
     /// `joint_envelope` for the decks with at most `n < 5` Gekisou combo carriers: per `n`, `(A0, global, gains)`
     /// with gains by member and choice (None: the next level's, finally the pool-wide one), and whether each member
     /// and choice is a carrier. None without a combo range.

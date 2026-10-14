@@ -102,6 +102,44 @@ fn payoff_steps_sum_the_best_order_payoffs_and_never_fall_below_at_tier_edges() 
 }
 
 #[test]
+fn weighed_bounds_cover_the_expected_payoff_of_every_score_law() {
+    let tiers = vec![(0, 15), (2_104_068, 25), (5_025_129, 35), (11_281_724, 50), (15_052_045, 75), (20_496_573, 100)];
+    let hulls = (1..=tiers.len()).map(|k| super::super::uniform::concave_majorant(&tiers[..k])).collect();
+    let points = PointBound::plain(Vec::new(), Vec::new(), 100, Some(tiers), Some(hulls), None);
+    let capped = PointBound::score_target(0, 0, ScoreTarget::Capped(12_000_000));
+    let weighed = [points.weighed().unwrap(), capped.weighed().unwrap()];
+    assert!(PointBound::score_target(0, 0, ScoreTarget::AtLeast(1)).weighed().is_none());
+    let mut x = 0x5851_f42d_4c95_7f2du64;
+    let mut next = || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    for _ in 0..2000 {
+        // The lottery paths of one order: scores with rational masses, the cap at least their expectation.
+        let centre = (next() % 22_000_000) as i128;
+        let width = (next() % 6_000_000) as i128;
+        let paths: Vec<(i128, i128)> = (0..1 + next() % 8)
+            .map(|_| ((centre + (next() % (width as u64 + 1)) as i128).max(0), 1 + (next() % 16) as i128))
+            .collect();
+        let mass: i128 = paths.iter().map(|&(_, w)| w).sum();
+        let mean_ceiling = (paths.iter().map(|&(s, w)| s * w).sum::<i128>() + mass - 1) / mass;
+        let cap = mean_ceiling + (next() % 1000) as i128;
+        let bonus = (next() % 20_000) as i64;
+        for (plain, weighed) in [&points, &capped].into_iter().zip(&weighed) {
+            let expected: i128 = paths.iter().map(|&(s, w)| plain.order_payoff(bonus, s) * w).sum();
+            assert!(expected <= mass * weighed.order_payoff(bonus, cap), "{centre} {width}");
+            assert!(expected <= mass * weighed.mean_payoff(bonus, cap, 0), "{centre} {width}");
+            assert!(expected <= mass * weighed.cutoff_payoff(bonus, cap) || plain.target.is_some());
+        }
+    }
+    // A cap between tiers reads the whole majorant, above the step there.
+    assert!(weighed[0].order_payoff(8500, 12_105_470) > points.order_payoff(8500, 12_105_470));
+    assert_eq!(weighed[0].order_payoff(8500, 12_105_470), points.mean_payoff(8500, 12_105_470, i128::MAX));
+}
+
+#[test]
 fn pareto_pairs_keep_exactly_the_undominated_pairs() {
     let pairs = vec![(5, 1), (3, 4), (5, 2), (1, 9), (3, 3), (2, 4), (1, 9), (0, 10)];
     assert_eq!(pareto_pairs(pairs), vec![(5, 2), (3, 4), (1, 9), (0, 10)]);
