@@ -2,6 +2,16 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.10](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.9...v0.0.10) - 2026-10-15
+
+### Bug fixes
+
+- **wasm:** Grow the recommend module's memory in proportion to its size ([71abc84](https://github.com/empty-sekai/ournotes-deck/commit/71abc847ea6efcb1f5e7b828ed3861b93643157c))
+
+### Performance
+
+- **search:** Bound each order's payoff in the certified maximum search ([0323f44](https://github.com/empty-sekai/ournotes-deck/commit/0323f441f3924b32566e436bd66f3321886be4ac))
+
 ## [0.0.9](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.8...v0.0.9) - 2026-10-14
 
 ### Features
