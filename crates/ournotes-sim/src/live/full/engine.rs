@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 
 use super::conditions::{CheckCtx, Checker, Cumulative};
-use super::gekisou::M_ALL;
+use super::gekisou::{Controller, M_ALL};
 use crate::error::Error;
 use crate::num::{FxHashMap, ceil_to_i32};
 
@@ -30,11 +30,18 @@ pub(crate) fn mission_gate_open(gate: Option<i64>, ctx: &CheckCtx) -> Result<boo
         return Ok(true);
     }
     let c = ctx.gk.ok_or_else(|| Error::Unsupported("Gekisou skill in a live without Gekisou".into()))?.ctrl;
+    Ok(mission_open(c, mission))
+}
+
+/// Whether the gate of `mission` (a mission, not [`M_ALL`]) is open this frame: a range of the mission changed state
+/// or is the playing range.
+#[inline]
+fn mission_open(c: &Controller, mission: i64) -> bool {
     if c.state_updates.iter().any(|&i| c.ranges[i].mission == mission) {
-        return Ok(true);
+        return true;
     }
     let i = c.current_playing_index;
-    Ok(i >= 0 && c.ranges[i as usize].mission == mission)
+    i >= 0 && c.ranges[i as usize].mission == mission
 }
 
 /// One effect state.
@@ -400,9 +407,47 @@ impl ConditionSkillUpdater {
         self.gated_frame = false;
     }
 
+    /// Whether an earlier call of this frame found the skill idle or its triggers closed. Every later call of the frame
+    /// then returns at once without reading the context or changing the skill, so a frame loop may skip it.
+    #[inline]
+    pub(crate) fn asleep(&self) -> bool {
+        self.idle_frame || self.gated_frame
+    }
+
+    /// Whether the first call of a frame (with the frame's fired `events`, `finished` input and Gekisou controller
+    /// `gk`) would put the skill to sleep: no instance runs, and the idle plan admits the events or the triggers are
+    /// closed. Such a frame reads no checker, draws nothing and lists no updater; it only sets this frame's trigger
+    /// cache and flags, which the first call of any later frame rewrites before reading them. A frame loop may
+    /// therefore skip the skill for the whole frame. False when the gate check would fail (a mission gate without
+    /// Gekisou), so that the call reports the failure.
+    #[inline]
+    pub(crate) fn sleeps(&self, events: &[(i32, i32)], finished: bool, gk: Option<&Controller>) -> bool {
+        if !self.executing.is_empty() {
+            return false;
+        }
+        let mission = self.gate.filter(|&mission| mission != M_ALL);
+        if mission.is_some() && gk.is_none() {
+            return false;
+        }
+        if self.idle_plan.as_ref().is_some_and(|plan| plan.quiet(events)) {
+            #[cfg(any(test, feature = "search-diagnostics"))]
+            super::idle_plan::skipped();
+            return true;
+        }
+        finished || mission.zip(gk).is_some_and(|(mission, c)| !mission_open(c, mission))
+    }
+
     /// The effects of the skill (read only).
     pub(super) fn effects(&self) -> &[CondEffect] {
         &self.effects
+    }
+
+    /// Renumber the effect rows, for a model whose row list is renumbered the same way. The rows are read only
+    /// through these numbers.
+    pub(super) fn renumber_rows(&mut self, mut number: impl FnMut(usize) -> usize) {
+        for effect in &mut self.effects {
+            effect.row = number(effect.row);
+        }
     }
 
     /// Relabel identities on a private cache-key snapshot, never on an executing model. Keep the
@@ -432,6 +477,19 @@ impl ConditionSkillUpdater {
             }
         }
         Ok(found)
+    }
+
+    /// Folds the life comparisons of the conditions of the effects whose row `folds` over the life range `range`
+    /// ([`Checker::fold_life`]). An effect reads its condition only once it triggered, so the triggers, the resets
+    /// and the idle plan stand.
+    pub(super) fn fold_life_conditions(&mut self, range: (i32, i32), folds: impl Fn(usize) -> bool) {
+        for effect in &mut self.effects {
+            if folds(effect.row)
+                && let Some(condition) = effect.condition.as_mut()
+            {
+                condition.fold_life(range);
+            }
+        }
     }
 
     /// Effect metadata stays private so a compiled idle plan cannot be invalidated
@@ -510,10 +568,15 @@ impl ConditionSkillUpdater {
             && self.idle_plan.as_ref().is_some_and(|plan| plan.quiet(ctx.events));
         if first_idle {
             self.trigger_checked = true;
-            self.cache.fill(None);
-            if !inp.is_live_finished && self.gate_open(ctx)? {
-                self.cache.fill(Some(TriggerResult { is_trigger: false, time_ms: inp.time_ms }));
-            }
+            let open = !inp.is_live_finished
+                && match self.gate_open(ctx) {
+                    Ok(open) => open,
+                    Err(e) => {
+                        self.cache.fill(None);
+                        return Err(e);
+                    }
+                };
+            self.cache.fill(open.then_some(TriggerResult { is_trigger: false, time_ms: inp.time_ms }));
             self.idle_frame = true;
         } else if !self.trigger_checked && self.executing.is_empty() {
             let closed = inp.is_live_finished
@@ -773,6 +836,37 @@ impl ConditionSkillUpdater {
             s.enabled = false;
         }
         Ok(None)
+    }
+}
+
+/// The condition skills (the first 64 of a live) that sleep through the current frame. A frame loop asks
+/// [`FrameSleep::skip`] before it calls a skill in a phase.
+#[derive(Default)]
+pub(crate) struct FrameSleep(u64);
+
+impl FrameSleep {
+    /// Whether the loop skips skill `index` in `phase`: in the first phase when it sleeps through the frame
+    /// ([`ConditionSkillUpdater::sleeps`]), in a later phase when it did or went to sleep in an earlier one.
+    #[inline]
+    pub(crate) fn skip(
+        &mut self,
+        phase: i64,
+        index: usize,
+        updater: &ConditionSkillUpdater,
+        events: &[(i32, i32)],
+        finished: bool,
+        gk: Option<&Controller>,
+    ) -> bool {
+        let bit = 1u64.checked_shl(index as u32).unwrap_or(0);
+        if phase == super::PHASES[0] {
+            let sleeps = bit != 0 && updater.sleeps(events, finished, gk);
+            if sleeps {
+                self.0 |= bit;
+            }
+            sleeps
+        } else {
+            self.0 & bit != 0 || updater.asleep()
+        }
     }
 }
 

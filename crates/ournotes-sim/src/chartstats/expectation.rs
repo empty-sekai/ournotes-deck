@@ -271,8 +271,11 @@ impl<'a, 'm> Evaluator<'a, 'm> {
                     } else {
                         LuckDpCertifiedResult {
                             probe_transitions: vec![1; play.frames.len()],
-                            steps: Vec::new(),
+                            rush_transitions: vec![65; play.frames.len()],
+                            steps: Vec::new().into(),
+                            frame_queries: Vec::new().into(),
                             probes: vec![false; self.skills.shapes.len()],
+                            probe_starts: crate::live::certified::F64Interval::ZERO,
                             range_moments: vec![LuckRangeMoments::default(); g.setup.fevers.len()],
                             peak_states: 1,
                             transitions: 0,

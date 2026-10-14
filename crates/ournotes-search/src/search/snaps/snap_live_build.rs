@@ -3,13 +3,17 @@ use super::*;
 
 impl<'a> SnapLive<'a> {
     /// Prepares the objective for the allowed members and snaps (`t.snaps`); rejects cards the simulation cannot run
-    /// and inputs outside the domain of the bounds.
+    /// and inputs outside the domain of the bounds. The luck weights under `laws` are read from `memo` when it holds
+    /// those of the same laws and notes.
     pub fn new(
         pool: &Pool<'a>,
         t: &Tables,
         allowed_members: &[bool],
         setup: &'a FullSetup,
+        laws: &[std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>],
+        memo: Option<&WeightsMemo>,
     ) -> Result<SnapLive<'a>, Error> {
+        let luck = LuckLaws::new(laws);
         let master: &'a Master = pool.master;
         let settings = LiveScoreSettings::from_master(master)?;
         let combo = ComboTable::from_master(master)?;
@@ -72,6 +76,7 @@ impl<'a> SnapLive<'a> {
         let mut raw: Vec<i32> = entries.iter().map(|e| e.2).collect();
         raw.sort_unstable();
         raw.dedup();
+        let blocked = just_blocked(master, &entries);
 
         let members: Vec<usize> = (0..pool.members.len()).filter(|&m| allowed_members[m]).collect();
         fn attr(m: &MemberView) -> Attr<'_> {
@@ -91,6 +96,7 @@ impl<'a> SnapLive<'a> {
             raw,
             count_reach: std::array::from_fn(|j| 1u8 << j),
             entry_reach: Vec::new(),
+            just_blocked: blocked.clone(),
             gk: None,
             gkf: None,
             rush_cache: RefCell::new(HashMap::new()),
@@ -268,11 +274,12 @@ impl<'a> SnapLive<'a> {
         }
         convs.retain(|c| c.0.0 != -1);
         // `all`: every conversion; else without the rows with a conversion budget (their score is bounded apart)
-        let reach = |j: i32, t: i64, all: bool| -> Vec<i32> {
+        let reach = |i: usize, j: i32, t: i64, all: bool| -> Vec<i32> {
             let mut v = vec![j];
             for ((to, targets, w), budget) in &convs {
                 if (all || !budget)
                     && *to != j
+                    && converts(*to, blocked[i])
                     && targets.contains(&(j as i64))
                     && !v.contains(to)
                     && w.iter().any(|&(a, b)| a < t && t <= b)
@@ -282,19 +289,22 @@ impl<'a> SnapLive<'a> {
             }
             v
         };
-        let reached: Vec<Vec<i32>> = entries.iter().map(|&(fi, _, j)| reach(j, fi as i64, true)).collect();
+        let reached: Vec<Vec<i32>> =
+            entries.iter().enumerate().map(|(i, &(fi, _, j))| reach(i, j, fi as i64, true)).collect();
         // Count conditions read the final judgement of each judged entry. Close every conversion registered for its
         // frame transitively; outside every registration window an entry keeps its raw judgement. The windows were
         // derived with the whole-pool closure, so they only over-approximate.
         env.entry_reach = entries
             .iter()
-            .map(|&(fi, _, j)| {
+            .enumerate()
+            .map(|(i, &(fi, _, j))| {
                 let t = fi as i64;
                 let mut mask = if (0..8).contains(&j) { 1u8 << j } else { 0 };
                 loop {
                     let mut next = mask;
                     for ((to, targets, w), _) in &convs {
                         if (0..8).contains(to)
+                            && converts(*to, blocked[i])
                             && w.iter().any(|&(a, b)| a < t && t <= b)
                             && targets.iter().any(|&x| (0..8).contains(&x) && mask & (1u8 << x) != 0)
                         {
@@ -309,7 +319,8 @@ impl<'a> SnapLive<'a> {
             })
             .collect();
         // the judgements the score bounds read outside the conversion budgets
-        let reached_v: Vec<Vec<i32>> = entries.iter().map(|&(fi, _, j)| reach(j, fi as i64, false)).collect();
+        let reached_v: Vec<Vec<i32>> =
+            entries.iter().enumerate().map(|(i, &(fi, _, j))| reach(i, j, fi as i64, false)).collect();
         if let Some(sc) = &sched {
             env.gk = Some(GkEnv {
                 missions: sc.ranges.iter().map(|r| r.mission).collect(),
@@ -528,6 +539,9 @@ impl<'a> SnapLive<'a> {
         let mdf64 = mdf as f64;
         let mut pre: Vec<f64> = Vec::with_capacity(order.len());
         let mut pre_plain: Vec<f64> = Vec::with_capacity(order.len());
+        // with certified laws: each entry's weight of the direct-Rush score ups (see `LuckLaws::weights`)
+        let mut rush_weight: Vec<f64> = Vec::with_capacity(order.len());
+        let mut probe_starts = luck.as_ref().map(|laws| laws.probe_starts());
         // with a Gekisou combo range: each coefficient around its combo factor (see `carrier_level_envelopes`)
         let mut level_terms: Vec<(f64, f64, f64)> = Vec::new();
         // with Gekisou on: the Gekisou combo, luck and rank bonus factors of each entry (chart-time order)
@@ -567,11 +581,21 @@ impl<'a> SnapLive<'a> {
                     &order,
                     &frames,
                     &reached,
+                    &env.entry_reach,
                     overrides,
                     current,
                     &member_cb,
                     &command_floors,
                 )?)
+            }
+            _ => None,
+        };
+        // with certified laws and Gekisou on: each entry's luck weights, in chart-time order
+        let weights = match (&luck, &gkf) {
+            (Some(laws), Some(g)) => {
+                let notes: Vec<(i32, f64, bool)> =
+                    times_all.iter().zip(&g.l).zip(&g.snapshot).map(|((&time, &l), &read)| (time, l, read)).collect();
+                Some(memo.map_or_else(|| laws.weights(&notes).into(), |memo| memo.weights(laws, &notes)))
             }
             _ => None,
         };
@@ -627,13 +651,25 @@ impl<'a> SnapLive<'a> {
             let mut rank = 1.0;
             let mut gpool = 1.0;
             if let Some(g) = &gkf {
+                // the expected luck factor under the laws, else its largest value
+                let l = match &weights {
+                    Some(weights) => {
+                        let (luck_e, probe_e) = weights[pos];
+                        rush_weight.push((probe_e / luck_e).next_up().min(1.0));
+                        if let Some(starts) = &mut probe_starts {
+                            starts.luck = starts.luck.max((g.l[pos] / luck_e).next_up());
+                        }
+                        luck_e
+                    }
+                    None => g.l[pos],
+                };
                 if g.combo.is_some() {
                     // the candidate bound reads its own Gekisou combo factor
-                    pre_e *= g.l[pos];
+                    pre_e *= l;
                     gpool = g.g[pos];
                 } else {
                     plain_e *= g.g[pos];
-                    pre_e *= g.g[pos] * g.l[pos];
+                    pre_e *= g.g[pos] * l;
                 }
                 rank = g.r[pos];
             }
@@ -684,7 +720,10 @@ impl<'a> SnapLive<'a> {
         }
         let mut fine = Fine {
             score_frames: ScoreFrames::new(&setup.params),
-            rush_eligible: rush::eligible(&env, &entries),
+            // Rush masks follow one lottery realization; an expectation over the lottery reads none
+            rush_eligible: luck.is_none() && rush::eligible(&env, &entries),
+            expected: luck.is_some(),
+            probe_starts,
             raw: order.iter().map(|&i| entries[i].2 as u8).collect(),
             group: Vec::with_capacity(ne),
             pre_plain: if gkf.as_ref().is_some_and(|g| g.l.iter().any(|&l| l != 1.0)) { pre_plain } else { Vec::new() },
@@ -909,9 +948,10 @@ impl<'a> SnapLive<'a> {
                     let (mut out, mut out_v) = (Vec::with_capacity(ne), Vec::with_capacity(ne));
                     for e in 0..ne {
                         let (j, fi) = (fine.raw[e] as i32, ent_frame[e]);
+                        let skips_just = blocked[order[e]];
                         let (mut mask, mut mask_v) = (0u8, 0u8);
                         for (to, tg) in &key.0 {
-                            if *to != j && tg.contains(&(j as i64)) {
+                            if *to != j && converts(*to, skips_just) && tg.contains(&(j as i64)) {
                                 mask |= 1 << to;
                                 mask_v |= 1 << to;
                             }
@@ -926,7 +966,7 @@ impl<'a> SnapLive<'a> {
                                     })
                                 }
                             };
-                            let hit = *to != j && tg.contains(&(j as i64)) && seen;
+                            let hit = *to != j && converts(*to, skips_just) && tg.contains(&(j as i64)) && seen;
                             if hit {
                                 mask |= 1 << to;
                             }
@@ -973,6 +1013,10 @@ impl<'a> SnapLive<'a> {
         // command and factor totals for the drift margin: per position, the largest over members and classes
         let mut cmd_k = [0f64; 5];
         let mut executions_k = [0f64; 5];
+        // with certified laws, the same split by the starts of the direct-probe class: `(executions, commands)`
+        // whatever the starts, and for each start
+        let mut fixed_k = [(0f64, 0f64); 5];
+        let mut run_k = [(0f64, 0f64); 5];
         let mut fac_k = [0f64; 5];
         let mut frame_norm_k = [0f64; 5];
         let forward_clamp = setup.params.music_length_ms > 0
@@ -990,10 +1034,27 @@ impl<'a> SnapLive<'a> {
             for c in &classes[m] {
                 let mut arr: [Contrib; 5] = Default::default();
                 for k in 0..5 {
-                    let (w, cmds, fac, ops, spans, ramps, rush, ops_plain, cmds_plain) =
+                    let (w, unconverted, mut cmds, fac, mut ops, spans, ramps, rush, ops_plain, cmds_plain) =
                         windows(&geo, k, &member_live[m], &c.rows, &ev_by_k[k]);
+                    let weigh = |w| if rush_weight.is_empty() { w } else { weigh_rush_windows(w, &rush_weight) };
+                    let (w, unconverted) = (weigh(w), unconverted.map(weigh));
                     let fac = fac.iter().copied().fold(0f64, f64::max);
                     let judge = w.iter().any(|x| x.judge.iter().any(|&j| j != 0.0));
+                    if let Some(starts) = fine.probe_starts {
+                        let (mut fixed, mut run) = ((ops_plain, cmds_plain), (0f64, 0f64));
+                        let mut most = fixed;
+                        for row in &rush {
+                            let (row_fixed, row_run) = row.by_start(None);
+                            fixed = ((fixed.0 + row_fixed.0).next_up(), (fixed.1 + row_fixed.1).next_up());
+                            run = ((run.0 + row_run.0).next_up(), (run.1 + row_run.1).next_up());
+                            // no play files more than its open-gate frames allow
+                            most.0 = (most.0 + starts.at_most(row_fixed.0, row_run.0).min(row.ops)).next_up();
+                            most.1 = (most.1 + starts.at_most(row_fixed.1, row_run.1).min(row.cmds)).next_up();
+                        }
+                        (ops, cmds) = (ops.min(most.0), cmds.min(most.1));
+                        fixed_k[k] = (fixed_k[k].0.max(fixed.0), fixed_k[k].1.max(fixed.1));
+                        run_k[k] = (run_k[k].0.max(run.0), run_k[k].1.max(run.1));
+                    }
                     cmd_k[k] = cmd_k[k].max(cmds);
                     executions_k[k] = executions_k[k].max(if ops.is_nan() { f64::INFINITY } else { ops });
                     fac_k[k] = fac_k[k].max(fac);
@@ -1006,6 +1067,7 @@ impl<'a> SnapLive<'a> {
                     let cb = if fine.gcombo.is_some() { combo_windows(&c.rows) } else { Vec::new() };
                     arr[k] = Contrib {
                         windows: w,
+                        unconverted,
                         gain: 0.0,
                         judge,
                         ops,
@@ -1132,6 +1194,31 @@ impl<'a> SnapLive<'a> {
         let chain_extra = if gk_on { GK_CHAIN_EPS } else { 0.0 };
         let eps = float_margin::with_chain(drift, chain_extra)
             .ok_or_else(|| Error::Domain("nonfinite factor drift certificate".into()))?;
+        let play_eps = eps;
+        // With certified laws the bounds are expectations over the lottery, and the margin of a play grows with its
+        // starts of the direct-probe class along a convex curve: take the expected margin (see
+        // `ProbeStarts::expected_drift`) between the play without a start and the play with the most. A play's bound
+        // is affine in its margin, so its expectation reads the expected margin; the checks that hold for each play
+        // read `play_eps`.
+        let eps = match &fine.probe_starts {
+            Some(starts) => {
+                let total = |part: fn(&(f64, f64)) -> f64, of: &[(f64, f64); 5]| {
+                    of.iter().fold(0.0f64, |sum, x| (sum + part(x)).next_up())
+                };
+                let margin = |executions: f64, commands: f64| {
+                    float_margin::with_chain(factor_drift(executions, commands, frame_norm)?, chain_extra)
+                };
+                let (fixed_e, fixed_n) = (total(|x| x.0, &fixed_k), total(|x| x.1, &fixed_k));
+                let (run_e, run_n) = (total(|x| x.0, &run_k), total(|x| x.1, &run_k));
+                let fixed = margin(fixed_e, fixed_n);
+                let most = margin(starts.at_most(fixed_e, run_e), starts.at_most(fixed_n, run_n));
+                match (fixed, most) {
+                    (Some(fixed), Some(most)) => starts.expected_drift(fixed, most).min(eps),
+                    _ => eps,
+                }
+            }
+            _ => eps,
+        };
         // The positive comparison chain bounds either sign of the factor state.
         // Representatives separately certify the observed lower endpoint when
         // the pool drift does not provide it.
@@ -1156,8 +1243,10 @@ impl<'a> SnapLive<'a> {
             settings.judgement_score_factor_percent.values().copied().max().map(|p| (p as f64 / 100.0).next_up());
         let roundings = factor_roundings(executions, n_cmd);
         let additive = judgement_max.and_then(|j| factor_error_sensitivity(&coef, j)).map(|b| (roundings, b));
-        let joint_additive =
-            additive.and_then(|(roundings, b)| additive_joint_envelope(a0, global, eps, roundings, b, chain_extra));
+        // The additive envelope keeps every play's factor positive, which its own margin's bound on a play needs.
+        let joint_additive = additive
+            .filter(|_| play_eps < 0.5)
+            .and_then(|(roundings, b)| additive_joint_envelope(a0, global, eps, roundings, b, chain_extra));
         let carrier_levels = match gkf.as_ref() {
             Some(g @ GkFactors { combo: Some(gc), .. }) if !level_terms.is_empty() => {
                 carrier_level_envelopes(
@@ -1273,6 +1362,7 @@ impl<'a> SnapLive<'a> {
             split,
             split_budget,
             eps,
+            play_eps,
             joint_additive,
             carrier_levels,
             carrier_keys,
@@ -1291,17 +1381,17 @@ impl<'a> SnapLive<'a> {
         u.sort_unstable_by(|x, y| y.cmp(x));
         let p_max: i64 = u.iter().take(5).sum();
         let chain = float_margin::with_chain(0.0, 0.0).expect("finite post-floor chain");
-        let rounding_reserve = if sl.eps < 0.5 {
+        let rounding_reserve = if sl.play_eps < 0.5 {
             0.0
         } else {
             sl.coef.z.iter().enumerate().fold(0.0f64, |sum, (entry, &post)| {
                 let rank = sl.fine.rank.get(entry).copied().unwrap_or(1.0);
-                let rank = if gk_on && sl.eps >= 1.0 { (2.0 * rank).next_up() } else { rank };
+                let rank = if gk_on && sl.play_eps >= 1.0 { (2.0 * rank).next_up() } else { rank };
                 let unit = ((post * (1.0 + chain).next_up()).next_up() + 1.0).next_up();
                 (sum + (unit * rank).next_up()).next_up()
             })
         };
-        let absolute_cap = (ub(p_max, sl.global, sl.eps) as f64 + rounding_reserve).next_up();
+        let absolute_cap = (ub(p_max, sl.global, sl.play_eps) as f64 + rounding_reserve).next_up();
         if !absolute_cap.is_finite() || absolute_cap >= (i32::MAX as f64 / 2.0).next_down() {
             return Err(Error::Domain("live score bound exceeds the 32-bit range".into()));
         }

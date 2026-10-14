@@ -66,6 +66,7 @@ fn request(metric: Metric) -> RecommendationRequest {
         scenario: Some(Scene::Free { music_id: 10 }),
         context: None,
         metric,
+        aggregation: Aggregation::Expected,
         goal: None,
         constraints: Constraints::default(),
         k: 7,

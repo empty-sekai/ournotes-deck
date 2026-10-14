@@ -91,6 +91,11 @@ pub(super) struct PrefixCharacterTables {
     /// Position-mean gains give every position the same rows, indexed by profile, scale and character.
     rows: Vec<TopSnaps>,
     characters: Vec<i64>,
+    /// By profile and scale, the largest quantized edge of the pairs of the choice order from each offset on
+    /// (`suffix`, one more offset than pairs) and of each of its blocks of [`PAIR_BLOCK`] pairs (`blocks`); empty
+    /// past their storage gate.
+    suffix: Vec<i64>,
+    blocks: Vec<i64>,
 }
 impl PrefixCharacterTables {
     /// Empty rows for the domain, None past the storage gate; [`compile_prefix_tables`] fills them.
@@ -106,7 +111,33 @@ impl PrefixCharacterTables {
         if cells > 250_000 {
             return None;
         }
-        Some(Self { rows: vec![TopSnaps::default(); cells], characters })
+        Some(Self { rows: vec![TopSnaps::default(); cells], characters, suffix: Vec::new(), blocks: Vec::new() })
+    }
+
+    /// The suffix and block maxima of the quantized edges along the choice order of `b` (see the fields).
+    fn compile_maxima(&mut self, b: &JointBounds) -> Option<()> {
+        let n = b.choices.len();
+        let nb = n.div_ceil(PAIR_BLOCK);
+        let sets = b.lead.len().checked_mul(3)?;
+        if sets.checked_mul(n + 1 + nb)? > 2_000_000 {
+            return Some(());
+        }
+        let (mut suffix, mut blocks) = (vec![0i64; sets * (n + 1)], vec![0i64; sets * nb]);
+        for profile in 0..b.lead.len() {
+            for (scale, &r) in b.correlation_scales.iter().enumerate() {
+                let set = profile * 3 + scale;
+                for i in (0..n).rev() {
+                    let (m, choice) = b.choices[i];
+                    let power = b.a[m] + b.lead[profile][m] + if choice == 0 { 0 } else { b.w[m][choice - 1] };
+                    let q = super::prefix_resource::quantized(power, b.gains[m][choice][0], r)?;
+                    suffix[set * (n + 1) + i] = suffix[set * (n + 1) + i + 1].max(q);
+                    let block = &mut blocks[set * nb + i / PAIR_BLOCK];
+                    *block = (*block).max(q);
+                }
+            }
+        }
+        (self.suffix, self.blocks) = (suffix, blocks);
+        Some(())
     }
     #[allow(clippy::too_many_arguments)]
     pub(super) fn upper(
@@ -160,6 +191,153 @@ impl PrefixCharacterTables {
         }
         (best < i128::MAX).then_some(best)
     }
+
+    /// What [`JointBounds::character_pair_upper`] reads of a prefix of one to four slots: per correlation scale,
+    /// the quantized edges of its slots, the best edges of the characters left (the first `5 - depth`), and `r * A0`.
+    #[allow(clippy::too_many_arguments)]
+    fn pairs(
+        &self,
+        b: &JointBounds,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        positions: &[usize; 5],
+        keyed: Option<&super::Keyed>,
+    ) -> Option<[(i64, ResidualRow, f64); 3]> {
+        if !(1..5).contains(&depth) {
+            return None;
+        }
+        let profile = b.profile[p.members[2]];
+        let occupied: Vec<_> = SLOTS[..depth].iter().map(|&s| pool.members[p.members[s]].character_id).collect();
+        let mut chosen = [0usize; 5];
+        for &slot in &SLOTS[..depth] {
+            chosen[slot] =
+                p.snaps[slot].map_or(0, |s| domain.snaps().iter().position(|&v| v == s).expect("compiled Snap") + 1);
+        }
+        let mut out = [(0i64, ResidualRow::default(), 0f64); 3];
+        for (scale, &r) in b.correlation_scales.iter().enumerate() {
+            let mut fixed = 0i64;
+            for &slot in &SLOTS[..depth] {
+                let m = p.members[slot];
+                let choice = chosen[slot];
+                let power = b.a[m] + b.lead[profile][m] + if choice == 0 { 0 } else { b.w[m][choice - 1] };
+                let gain = keyed.map_or(b.gains[m][choice][positions[slot]], |k| k.placed[slot][positions[slot]]);
+                fixed += super::prefix_resource::quantized(power, gain, r)?;
+            }
+            let mut shared = ResidualRow::default();
+            let offset = (profile * 3 + scale) * self.characters.len();
+            for (character, id) in self.characters.iter().enumerate() {
+                if occupied.contains(id) {
+                    continue;
+                }
+                if let Some(q) = self.rows[offset + character].best(&chosen) {
+                    shared.insert(character, q, 5 - depth);
+                }
+            }
+            out[scale] = (fixed, shared, (r * keyed.map_or(b.a0, |k| k.a0)).next_up());
+        }
+        Some(out)
+    }
+}
+
+/// The correlated bounds of the children of one prefix (see [`JointBounds::character_pairs`]).
+pub(crate) struct CharacterPairs {
+    scales: [(i64, ResidualRow, f64); 3],
+    /// Per scale, the sum of the best edges of the characters left that the slots after the next one take (None
+    /// when too few are left).
+    rest: [Option<i64>; 3],
+    depth: usize,
+    profile: usize,
+    /// The total mass of the performance orders.
+    weight: i128,
+}
+
+impl JointBounds {
+    /// With the character prefix tables: what bounds each child of the prefix `p` of one to four slots in the way
+    /// [`JointBounds::correlated_expected_upper_keyed`] bounds the prefix itself (see
+    /// [`JointBounds::character_pair_upper`]). A child of four slots is a complete team, whose bound has no
+    /// characters left: `P * (A0 + G)` is at most `(P + r * (A0 + G))^2 / (4 * r)` for a team as for a prefix.
+    pub(crate) fn character_pairs(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        orders: &[([usize; 5], u128)],
+        keyed: Option<&super::Keyed>,
+    ) -> Option<CharacterPairs> {
+        let t = self.prefix_character.as_ref()?;
+        let (positions, _) = orders.first()?;
+        let weight = orders.iter().try_fold(0i128, |sum, &(_, w)| sum.checked_add(i128::try_from(w).ok()?))?;
+        let scales = t.pairs(self, pool, domain, p, depth, positions, keyed)?;
+        let rest = scales.each_ref().map(|(_, shared, _)| {
+            let edges = shared.0.iter().flatten().take(4 - depth);
+            let (n, sum) = edges.fold((0, Some(0i64)), |(n, sum), e| (n + 1, sum.and_then(|s| s.checked_add(e.value))));
+            sum.filter(|_| n == 4 - depth)
+        });
+        Some(CharacterPairs { scales, rest, depth, profile: self.profile[p.members[2]], weight })
+    }
+
+    /// At least [`JointBounds::character_pair_upper`] of every child whose pair lies at or after `offset` in the
+    /// choice order (`blocks` false), or in block `offset` of [`PAIR_BLOCK`] pairs (`blocks` true): the largest edge
+    /// of those pairs with the best edges of every character left, the child's included. None without the maxima.
+    pub(crate) fn character_set_upper(&self, pairs: &CharacterPairs, offset: usize, blocks: bool) -> Option<i128> {
+        let t = self.prefix_character.as_ref()?;
+        let n = self.choices.len();
+        let (table, width) = if blocks { (&t.blocks, n.div_ceil(PAIR_BLOCK)) } else { (&t.suffix, n + 1) };
+        if table.is_empty() {
+            return None;
+        }
+        let mut best = i128::MAX;
+        for (scale, (((fixed, _, a0r), rest), &r)) in
+            pairs.scales.iter().zip(&pairs.rest).zip(&self.correlation_scales).enumerate()
+        {
+            let q = *table.get((pairs.profile * 3 + scale) * width + offset)?;
+            let upper = add_up(fixed.checked_add(q)?.checked_add((*rest)?)? as f64, *a0r);
+            best = best.min(self.correlated_cap(upper, r));
+        }
+        best.checked_mul(pairs.weight)
+    }
+
+    /// The correlated score cap of the sum `upper` of a team's edges and `r * A0` at scale `r`.
+    fn correlated_cap(&self, upper: f64, r: f64) -> i128 {
+        (((upper * upper).next_up() / (4.0 * r)).next_up() * (1.0 + self.eps).next_up()).next_up().ceil() as i128
+    }
+
+    /// At least the correlated bound, summed over the orders, of every completion of the child of the prefix of
+    /// `pairs` that takes `m` with `choice` in the next slot: the prefix's bound with that slot fixed, whose rows
+    /// are the best edges of the characters left but the child's (the child's Snap stays available to them). The
+    /// gains of every position agree in the character tables, so one row serves every order. None when the child
+    /// cannot be completed in the tables or an edge leaves their range.
+    pub(crate) fn character_pair_upper(
+        &self,
+        pairs: &CharacterPairs,
+        pool: &Pool,
+        m: usize,
+        choice: usize,
+    ) -> Option<i128> {
+        let t = self.prefix_character.as_ref()?;
+        let column = t.characters.binary_search(&pool.members[m].character_id).ok()?;
+        let power = self.a[m] + self.lead[pairs.profile][m] + if choice == 0 { 0 } else { self.w[m][choice - 1] };
+        let left = 4 - pairs.depth;
+        let mut best = i128::MAX;
+        for ((fixed, shared, a0r), &r) in pairs.scales.iter().zip(&self.correlation_scales) {
+            let q = super::prefix_resource::quantized(power, self.gains[m][choice][0], r)?;
+            let mut extra = 0i64;
+            let mut taken = 0;
+            for edge in shared.0.iter().flatten().filter(|e| e.character != column).take(left) {
+                extra = extra.checked_add(edge.value)?;
+                taken += 1;
+            }
+            if taken < left {
+                return None;
+            }
+            let upper = add_up(fixed.checked_add(q)?.checked_add(extra)? as f64, *a0r);
+            best = best.min(self.correlated_cap(upper, r));
+        }
+        best.checked_mul(pairs.weight)
+    }
 }
 
 /// Both prefix tables, each None past its own storage gate, in one pass. Position-mean gains give every position
@@ -198,6 +376,11 @@ pub(super) fn compile_prefix_tables(
                 }
             }
         }
+    }
+    if let Some(t) = character.as_mut()
+        && t.compile_maxima(b).is_none()
+    {
+        character = None;
     }
     (resource, character)
 }

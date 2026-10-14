@@ -12,7 +12,7 @@ const JUST: i32 = 6;
 const CONVERT_TO_JUST: i64 = 13005;
 
 /// The judgement a convert effect converts to: Just for 13005, else the effect value when it is 1..=6, else -1.
-fn resolve_convert_to(effect_type: i64, effect_value: i64) -> i32 {
+pub(crate) fn resolve_convert_to(effect_type: i64, effect_value: i64) -> i32 {
     if effect_type == CONVERT_TO_JUST {
         return JUST;
     }

@@ -124,10 +124,10 @@ fn condition_state_aliases_are_part_of_life_dependencies() {
     assert_eq!(first.updaters.last().unwrap().index, second.updaters.last().unwrap().index);
     let mut reduced_deck = input.deck.clone();
     reduced_deck[0].support_skills.clear();
-    let mut reduced = LiveModel::build(
+    let reduced = LiveModel::build(
         &input.master, &reduced_deck, &input.notes, &[], input.params, Some(&input.setup), false, None, Some(&skills),
     ).unwrap();
-    assert!(compile::<ProbabilityMass>(&input.master, &mut reduced, &skills, None, false).is_ok());
+    assert!(compile::<ProbabilityMass>(&input.master, &reduced.cond, &reduced.rows, &skills, None, false).is_ok());
 
     let actual = input.observations(&input.master);
     let filtered = input.observations(&input.filtered());

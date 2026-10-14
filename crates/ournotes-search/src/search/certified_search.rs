@@ -2,7 +2,7 @@
 //! Native step payoffs consume tail probabilities, never a native payoff evaluated at the mean score.
 use super::{
     expectation::ExactExpectation,
-    interval_topk::{compare_exact, exact_in_interval},
+    interval_topk::{compare_exact, compare_exact_real, exact_in_interval},
     uniform,
 };
 use ournotes_sim::{Error, live::certified::F64Interval};
@@ -70,12 +70,29 @@ pub struct BoundaryRefinement {
 
 #[derive(Clone, Debug)]
 pub struct CertifiedEvaluation {
+    /// The aggregate of the 120 order scores under the evaluation's [`Reduction`].
     pub score: F64Interval,
     pub payoff: F64Interval,
     pub exact_score: Option<ExactExpectation>,
     pub exact_payoff: Option<ExactExpectation>,
     pub orders: Vec<OrderScoreInterval>,
     pub refinements: Vec<BoundaryRefinement>,
+    /// Per order of `orders`: whether it can still decide the aggregate. Every order does under
+    /// [`Reduction::Mean`]; under [`Reduction::Maximum`] an order whose payoff upper bound lies strictly below the
+    /// payoff of another order cannot be the maximum.
+    pub contending: Vec<bool>,
+    /// The order of `orders` proved to attain the maximum: the first whose exact payoff is the maximum, or the only
+    /// order that can still attain it. Only [`Reduction::Maximum`] has one.
+    pub best_order: Option<[usize; 5]>,
+}
+
+/// How the payoffs of the 120 performance orders become the payoff of a team.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reduction {
+    /// The mean payoff over the 120 orders.
+    Mean,
+    /// The payoff of the order whose expected payoff is the greatest.
+    Maximum,
 }
 
 /// All cached and refined order labels use this same complete-performer basis. Paired support remains
@@ -457,7 +474,40 @@ pub(super) fn refinement_uncertainty(order: &OrderScoreInterval, map: &PayoffMap
     Ok(bounds.upper() - bounds.lower())
 }
 
-pub fn aggregate_orders(mut orders: Vec<OrderScoreInterval>, map: &PayoffMap) -> Result<CertifiedEvaluation, Error> {
+/// The greatest exact value among `values` when it is proved to be their maximum: every value without an exact one
+/// has an upper bound at or below it. None otherwise.
+fn exact_maximum(values: &[(F64Interval, Option<ExactExpectation>)]) -> Result<Option<ExactExpectation>, Error> {
+    let mut best: Option<ExactExpectation> = None;
+    for exact in values.iter().filter_map(|v| v.1) {
+        if best.map_or(Ok(true), |b| compare_exact(exact, b).map(|o| o.is_gt()))? {
+            best = Some(exact);
+        }
+    }
+    let Some(best) = best else { return Ok(None) };
+    for (bounds, exact) in values {
+        if exact.is_none() && compare_exact_real(best, bounds.upper())?.is_lt() {
+            return Ok(None);
+        }
+    }
+    Ok(Some(best))
+}
+
+/// The interval from the greatest lower bound to the greatest upper bound: the enclosure of the maximum.
+fn maximum_enclosure(values: impl Iterator<Item = F64Interval>) -> Result<F64Interval, Error> {
+    let (mut lower, mut upper) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for value in values {
+        (lower, upper) = (lower.max(value.lower()), upper.max(value.upper()));
+    }
+    F64Interval::new(lower, upper)
+}
+
+/// Aggregates the 120 order enclosures into one certificate under `reduction`. Its refinements are the boundary work of
+/// the orders that can still decide the aggregate.
+pub fn aggregate_orders(
+    mut orders: Vec<OrderScoreInterval>,
+    map: &PayoffMap,
+    reduction: Reduction,
+) -> Result<CertifiedEvaluation, Error> {
     if orders.len() != uniform::ORDERS {
         return Err(invalid("all 120 performance orders required"));
     }
@@ -468,16 +518,85 @@ pub fn aggregate_orders(mut orders: Vec<OrderScoreInterval>, map: &PayoffMap) ->
     if orders.windows(2).any(|v| v[0].order == v[1].order) {
         return Err(invalid("duplicate performance order"));
     }
-    let (mut score, mut payoff) = (F64Interval::ZERO, F64Interval::ZERO);
-    let (mut exact_score, mut exact_payoff) = (Some(fraction(0)), Some(fraction(0)));
+    let values = orders.iter().map(|order| order_payoff(order, map)).collect::<Result<Vec<_>, Error>>()?;
+    let mut contending = vec![true; orders.len()];
+    let mut best_order = None;
+    let (score, mut payoff, exact_score, exact_payoff);
+    match reduction {
+        Reduction::Mean => {
+            let (mut sum_score, mut sum_payoff) = (F64Interval::ZERO, F64Interval::ZERO);
+            let (mut sum_exact_score, mut sum_exact_payoff) = (Some(fraction(0)), Some(fraction(0)));
+            for (order, value) in orders.iter().zip(&values) {
+                sum_score = sum_score.add(order.mean);
+                sum_payoff = sum_payoff.add(value.bounds);
+                sum_exact_score = sum_exact_score.and_then(|a| order.exact_mean.and_then(|b| add_exact(a, b)));
+                sum_exact_payoff = sum_exact_payoff.and_then(|a| value.exact.and_then(|b| add_exact(a, b)));
+            }
+            let denominator = F64Interval::integer(uniform::ORDERS as i128);
+            score = sum_score.divide(denominator)?;
+            payoff = sum_payoff.divide(denominator)?;
+            exact_score = sum_exact_score.and_then(average_exact);
+            exact_payoff = sum_exact_payoff.and_then(average_exact);
+        }
+        Reduction::Maximum => {
+            let payoffs: Vec<_> = values.iter().map(|v| (v.bounds, v.exact)).collect();
+            let means: Vec<_> = orders.iter().map(|o| (o.mean, o.exact_mean)).collect();
+            let (mut best_score, mut best_payoff) =
+                (maximum_enclosure(means.iter().map(|m| m.0))?, maximum_enclosure(payoffs.iter().map(|p| p.0))?);
+            exact_score = exact_maximum(&means)?;
+            exact_payoff = exact_maximum(&payoffs)?;
+            // The maximum is the exact value: it lies in every enclosure of it.
+            if let Some(enclosure) = exact_score.and_then(exact_enclosure) {
+                best_score =
+                    best_score.intersect(enclosure).ok_or_else(|| invalid("exact maximum outside its score"))?;
+            }
+            if let Some(exact) = exact_payoff {
+                if let Some(enclosure) = exact_enclosure(exact) {
+                    best_payoff =
+                        best_payoff.intersect(enclosure).ok_or_else(|| invalid("exact maximum outside its payoff"))?;
+                }
+                for (order, value) in orders.iter().zip(&values) {
+                    if let Some(own) = value.exact
+                        && compare_exact(own, exact)?.is_eq()
+                    {
+                        best_order = Some(order.order);
+                        break;
+                    }
+                }
+            }
+            score = best_score;
+            payoff = best_payoff;
+            // The maximum is at least every lower bound and at least every exact value, so an order whose upper bound
+            // lies strictly below either cannot be it.
+            let mut floor = f64::NEG_INFINITY;
+            let mut greatest_exact: Option<ExactExpectation> = None;
+            for (bounds, exact) in &payoffs {
+                floor = floor.max(bounds.lower());
+                if let Some(exact) = *exact
+                    && greatest_exact.map_or(Ok(true), |g| compare_exact(exact, g).map(|o| o.is_gt()))?
+                {
+                    greatest_exact = Some(exact);
+                }
+            }
+            for (flag, (bounds, _)) in contending.iter_mut().zip(&payoffs) {
+                let below_exact = match greatest_exact {
+                    Some(exact) => compare_exact_real(exact, bounds.upper())?.is_gt(),
+                    None => false,
+                };
+                *flag = !(bounds.upper() < floor || below_exact);
+            }
+            // Every other order lies strictly below the maximum, so the only order that can attain it does.
+            if best_order.is_none() {
+                let mut open = contending.iter().enumerate().filter(|(_, flag)| **flag);
+                if let (Some((index, _)), None) = (open.next(), open.next()) {
+                    best_order = Some(orders[index].order);
+                }
+            }
+        }
+    }
     let mut refinements = Vec::new();
-    for (index, order) in orders.iter().enumerate() {
-        let value = order_payoff(order, map)?;
-        score = score.add(order.mean);
-        payoff = payoff.add(value.bounds);
-        exact_score = exact_score.and_then(|a| order.exact_mean.and_then(|b| add_exact(a, b)));
-        exact_payoff = exact_payoff.and_then(|a| value.exact.and_then(|b| add_exact(a, b)));
-        if !value.thresholds.is_empty() || value.joint_life || value.truncated_at.is_some() {
+    for (index, value) in values.into_iter().enumerate() {
+        if contending[index] && (!value.thresholds.is_empty() || value.joint_life || value.truncated_at.is_some()) {
             refinements.push(BoundaryRefinement {
                 order_index: index,
                 thresholds: value.thresholds,
@@ -486,8 +605,6 @@ pub fn aggregate_orders(mut orders: Vec<OrderScoreInterval>, map: &PayoffMap) ->
             });
         }
     }
-    let denominator = F64Interval::integer(uniform::ORDERS as i128);
-    let mut payoff = payoff.divide(denominator)?;
     if matches!(map, PayoffMap::ScoreAtLeast { .. } | PayoffMap::ScoreAndLifeAtLeast { .. }) {
         // Outward summation/division can extend a certain event a few ulps above one. The objective's
         // semantic range is itself a proof and must remain available to ranking, including exact ties.
@@ -495,20 +612,14 @@ pub fn aggregate_orders(mut orders: Vec<OrderScoreInterval>, map: &PayoffMap) ->
             .intersect(F64Interval::new(0.0, 1.0)?)
             .ok_or_else(|| invalid("indicator expectation outside probability range"))?;
     }
-    Ok(CertifiedEvaluation {
-        score: score.divide(denominator)?,
-        payoff,
-        exact_score: exact_score.and_then(average_exact),
-        exact_payoff: exact_payoff.and_then(average_exact),
-        orders,
-        refinements,
-    })
+    Ok(CertifiedEvaluation { score, payoff, exact_score, exact_payoff, orders, refinements, contending, best_order })
 }
 
 /// The production scorer supplies one all-path law enclosure per order. Cancellation retains no partial value
 /// masquerading as a 120-order mean; callers may retain the completed orders separately for the next refinement.
 pub fn evaluate_orders(
     map: &PayoffMap,
+    reduction: Reduction,
     mut score: impl FnMut([usize; 5]) -> Result<OrderScoreInterval, Error>,
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<Option<CertifiedEvaluation>, Error> {
@@ -526,7 +637,122 @@ pub fn evaluate_orders(
             return Ok(None);
         }
     }
-    aggregate_orders(orders, map).map(Some)
+    aggregate_orders(orders, map, reduction).map(Some)
+}
+
+/// The certified lottery law of one performance order.
+pub type LuckLaw = std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>;
+
+/// The certified lottery law of every performance order of the formation, in [`uniform::all_orders`] order and in
+/// the declared context as [`evaluate_luck_exact`] reads it. `kinds` composes them from the lottery kinds of the
+/// performers when it can.
+pub fn luck_order_laws(
+    master: &ournotes_sim::master::Master,
+    skills: &ournotes_sim::live::full::LuckSkills,
+    input: &super::expectation::FiniteSeedContext,
+    curves: &mut ournotes_sim::live::full::LuckDpCache,
+    kinds: Option<&mut ournotes_sim::live::full::LotteryKinds<'_>>,
+) -> Result<Vec<LuckLaw>, Error> {
+    let setup = input.gekisou.as_ref().ok_or_else(|| invalid("LUCK requires Gekisou context"))?;
+    let live = ournotes_sim::live::full::LotteryLive {
+        master,
+        skills,
+        notes: &input.notes,
+        events: &input.events,
+        params: input.params,
+        setup,
+        play: &input.play,
+        delta_times: &input.delta_times,
+        ranking: input.rank_confirmations.as_deref(),
+    };
+    ournotes_sim::live::full::luck_order_laws(&live, &input.performers, &uniform::all_orders(), curves, kinds)
+}
+
+/// The expected native score of every performance order from one joint evaluation of the formation
+/// ([`ournotes_sim::live::full::luck_exact_orders`]), in the declared context as [`evaluate_luck_context`] reads it.
+/// `laws` holds the formation's [`luck_order_laws`] when the caller has them. With the evaluation, how it went
+/// ([`LuckExactReport`]). None when cancelled before the evaluation starts.
+pub fn evaluate_luck_exact(
+    master: &ournotes_sim::master::Master,
+    skills: &ournotes_sim::live::full::LuckSkills,
+    input: &super::expectation::FiniteSeedContext,
+    map: &PayoffMap,
+    laws: Option<&[LuckLaw]>,
+    curves: Option<&mut ournotes_sim::live::full::LuckDpCache>,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<Option<(CertifiedEvaluation, LuckExactReport)>, Error> {
+    let setup = input.gekisou.as_ref().ok_or_else(|| invalid("LUCK requires Gekisou context"))?;
+    if cancelled() {
+        return Ok(None);
+    }
+    let orders = uniform::all_orders();
+    let (deck, notes, events, play) = (&input.performers, &input.notes, &input.events, &input.play);
+    let (delta, ranking) = (&input.delta_times, input.rank_confirmations.as_deref());
+    let joint = match laws {
+        Some(laws) => ournotes_sim::live::full::luck_exact_orders_with_laws(
+            master,
+            skills,
+            deck,
+            notes,
+            events,
+            input.params,
+            setup,
+            play,
+            delta,
+            ranking,
+            &orders,
+            laws,
+            curves,
+            false,
+        ),
+        None => ournotes_sim::live::full::luck_exact_orders(
+            master,
+            skills,
+            deck,
+            notes,
+            events,
+            input.params,
+            setup,
+            play,
+            delta,
+            ranking,
+            &orders,
+            curves,
+            false,
+        ),
+    }?;
+    let relaxed = joint.scores.iter().any(|score| score.relaxed);
+    let orders = orders
+        .into_iter()
+        .zip(joint.scores)
+        .map(|(order, score)| {
+            let support = (score.final_support.lower, score.final_support.upper);
+            let mean = F64Interval::new(score.final_mean.lower, score.final_mean.upper)?
+                .intersect(F64Interval::new(support.0 as f64, support.1 as f64)?)
+                .ok_or_else(|| invalid("LUCK mean and support disagree"))?;
+            Ok(OrderScoreInterval {
+                order,
+                mean,
+                support,
+                exact_mean: (support.0 == support.1).then(|| fraction(support.0 as i128)),
+                final_life: Some((score.final_life.lower, score.final_life.upper)),
+                tails: BTreeMap::new(),
+                refined_payoff: None,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let report = LuckExactReport { alone: joint.alone, replays: joint.replays, relaxed, profile: joint.profile };
+    Ok(Some((aggregate_orders(orders, map, Reduction::Mean)?, report)))
+}
+
+/// How a joint evaluation of the orders of a formation went: why its orders were not spliced from the recordings of
+/// the rotations (None when they were), the replays it ran, whether the lottery paths of some order exceeded their
+/// exact budget and relaxed bounds of their histories gave its score, and its work.
+pub struct LuckExactReport {
+    pub alone: Option<String>,
+    pub replays: usize,
+    pub relaxed: bool,
+    pub profile: ournotes_sim::live::full::LuckExactOrdersProfile,
 }
 
 /// The actual all-path LUCK scorer in a normal native or WASM build. Performers are permuted before constructing
@@ -579,7 +805,7 @@ pub fn evaluate_luck_context(
             return Ok(None);
         }
     }
-    aggregate_orders(orders, map).map(Some)
+    aggregate_orders(orders, map, Reduction::Mean).map(Some)
 }
 
 #[cfg(test)]
@@ -610,7 +836,7 @@ mod tests {
                 for order in &mut orders {
                     order.final_life = Some((1, 1));
                 }
-                let evaluation = aggregate_orders(orders, &map).unwrap();
+                let evaluation = aggregate_orders(orders, &map, Reduction::Mean).unwrap();
                 assert!(evaluation.payoff.lower() >= 0.0 && evaluation.payoff.upper() <= 1.0);
                 if threshold == 0 {
                     assert_eq!(evaluation.exact_payoff, Some(fraction(1)));
@@ -627,7 +853,7 @@ mod tests {
             PayoffStep { lower: 50, upper: 100, value: 100 },
         ]);
         let mut orders = laws(50.0, (0, 100));
-        let initial = aggregate_orders(orders.clone(), &map).unwrap();
+        let initial = aggregate_orders(orders.clone(), &map, Reduction::Mean).unwrap();
         assert!(initial.payoff.contains(50.0));
         assert!(initial.exact_payoff.is_none());
         assert_eq!(initial.refinements.len(), 120);
@@ -642,7 +868,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        let refined = aggregate_orders(orders, &map).unwrap();
+        let refined = aggregate_orders(orders, &map, Reduction::Mean).unwrap();
         assert_eq!(refined.exact_payoff, Some(fraction(50)));
         assert!(refined.refinements.is_empty());
         assert!(refined.payoff.contains(50.0));
@@ -654,8 +880,8 @@ mod tests {
         for order in &mut orders {
             order.exact_mean = None;
         }
-        let v = aggregate_orders(orders, &PayoffMap::NativeSteps(vec![PayoffStep { lower: 0, upper: 99, value: 73 }]))
-            .unwrap();
+        let map = PayoffMap::NativeSteps(vec![PayoffStep { lower: 0, upper: 99, value: 73 }]);
+        let v = aggregate_orders(orders, &map, Reduction::Mean).unwrap();
         assert!(v.exact_score.is_none());
         assert_eq!(v.exact_payoff, Some(fraction(73)));
     }
@@ -682,10 +908,13 @@ mod tests {
                     }
                 };
                 let actual = (reward(a) + reward(b)) / 2.0;
-                assert!(aggregate_orders(orders.clone(), &map).unwrap().payoff.contains(actual));
+                assert!(aggregate_orders(orders.clone(), &map, Reduction::Mean).unwrap().payoff.contains(actual));
                 let capped = (a.min(3) + b.min(3)) as f64 / 2.0;
                 assert!(
-                    aggregate_orders(orders, &PayoffMap::CappedScore { threshold: 3 }).unwrap().payoff.contains(capped)
+                    aggregate_orders(orders, &PayoffMap::CappedScore { threshold: 3 }, Reduction::Mean)
+                        .unwrap()
+                        .payoff
+                        .contains(capped)
                 );
             }
         }
@@ -693,13 +922,116 @@ mod tests {
     #[test]
     fn partial_duplicate_orders_and_unproved_life_never_become_exact() {
         let mut orders = laws(50.0, (0, 100));
-        assert!(aggregate_orders(orders[..119].to_vec(), &PayoffMap::Score).is_err());
+        assert!(aggregate_orders(orders[..119].to_vec(), &PayoffMap::Score, Reduction::Mean).is_err());
         orders[119].order = orders[0].order;
-        assert!(aggregate_orders(orders, &PayoffMap::Score).is_err());
-        let value =
-            aggregate_orders(laws(50.0, (0, 100)), &PayoffMap::ScoreAndLifeAtLeast { threshold: 1, min_final_life: 1 })
-                .unwrap();
+        assert!(aggregate_orders(orders, &PayoffMap::Score, Reduction::Mean).is_err());
+        let map = PayoffMap::ScoreAndLifeAtLeast { threshold: 1, min_final_life: 1 };
+        let value = aggregate_orders(laws(50.0, (0, 100)), &map, Reduction::Mean).unwrap();
         assert!(value.exact_payoff.is_none());
         assert!(value.refinements.iter().all(|r| r.joint_life));
+    }
+    /// Orders whose mean lies in `[lower, upper]` (the support is 0..=100), exact when `exact` holds a value.
+    fn ranged(value: impl Fn(usize) -> (f64, f64, Option<i128>)) -> Vec<OrderScoreInterval> {
+        uniform::all_orders()
+            .into_iter()
+            .enumerate()
+            .map(|(index, order)| {
+                let (lower, upper, exact) = value(index);
+                OrderScoreInterval {
+                    order,
+                    mean: F64Interval::new(lower, upper).unwrap(),
+                    support: (0, 100),
+                    exact_mean: exact.map(fraction),
+                    final_life: None,
+                    tails: BTreeMap::new(),
+                    refined_payoff: None,
+                }
+            })
+            .collect()
+    }
+    fn maximum(orders: Vec<OrderScoreInterval>, map: &PayoffMap) -> CertifiedEvaluation {
+        aggregate_orders(orders, map, Reduction::Maximum).unwrap()
+    }
+
+    #[test]
+    fn the_maximum_of_exact_orders_is_the_greatest_and_names_its_first_order() {
+        let exact = |i: usize| ((i % 50) as f64, Some((i % 50) as i128));
+        let orders = ranged(|i| (exact(i).0, exact(i).0, exact(i).1));
+        let value = maximum(orders, &PayoffMap::Score);
+        assert_eq!(value.exact_payoff, Some(fraction(49)));
+        assert_eq!(value.exact_score, Some(fraction(49)));
+        assert_eq!(value.best_order, Some(uniform::all_orders()[49]));
+        assert!(value.payoff.contains(49.0) && value.payoff.lower() > 48.9 && value.payoff.upper() < 49.1);
+        assert_eq!(value.contending.iter().filter(|&&c| c).count(), 2);
+        assert!(value.contending[49] && value.contending[99]);
+    }
+    #[test]
+    fn an_exact_order_that_no_inexact_order_can_exceed_is_the_exact_maximum() {
+        let orders = ranged(|i| if i == 7 { (60.0, 60.0, Some(60)) } else { (10.0, 60.0, None) });
+        let value = maximum(orders, &PayoffMap::Score);
+        assert_eq!(value.exact_payoff, Some(fraction(60)));
+        assert_eq!(value.exact_score, Some(fraction(60)));
+        assert_eq!(value.best_order, Some(uniform::all_orders()[7]));
+        assert!(value.payoff.contains(60.0));
+        assert!(value.payoff.upper() < 60.1);
+    }
+    #[test]
+    fn an_inexact_order_that_may_exceed_the_exact_value_leaves_the_maximum_open() {
+        let orders = ranged(|i| match i {
+            7 => (60.0, 60.0, Some(60)),
+            9 => (10.0, 61.0, None),
+            _ => (10.0, 60.0, None),
+        });
+        let value = maximum(orders, &PayoffMap::Score);
+        assert!(value.exact_payoff.is_none() && value.exact_score.is_none() && value.best_order.is_none());
+        assert_eq!((value.payoff.lower(), value.payoff.upper()), (60.0, 61.0));
+        assert_eq!((value.score.lower(), value.score.upper()), (60.0, 61.0));
+    }
+    #[test]
+    fn orders_below_the_maximum_leave_the_refinements() {
+        let map = PayoffMap::ScoreAtLeast { threshold: 50 };
+        // Mean 90 gives a tail of at least 0.8 and mean 10 a tail of at most 0.2.
+        let orders = || ranged(|i| if i == 3 { (90.0, 90.0, None) } else { (10.0, 10.0, None) });
+        let value = maximum(orders(), &map);
+        assert_eq!(value.contending.iter().filter(|&&c| c).count(), 1);
+        assert!(value.contending[3]);
+        // The only order that can attain the maximum is proved to attain it, its value still an interval.
+        assert_eq!(value.best_order, Some(uniform::all_orders()[3]));
+        assert!(value.exact_payoff.is_none());
+        assert_eq!(value.refinements.iter().map(|r| r.order_index).collect::<Vec<_>>(), [3]);
+        assert!(value.payoff.lower() >= 0.8 && value.payoff.upper() <= 1.0);
+        let mean = aggregate_orders(orders(), &map, Reduction::Mean).unwrap();
+        assert!(mean.contending.iter().all(|&c| c));
+        assert_eq!(mean.refinements.len(), 120);
+        assert!(mean.best_order.is_none());
+    }
+    #[test]
+    fn an_exact_order_removes_the_orders_whose_upper_bound_lies_below_it() {
+        // The inexact orders' enclosures overlap each other, and only the exact order bounds them from below.
+        let orders = ranged(|i| match i {
+            0 => (50.0, 50.0, Some(50)),
+            1 => (50.0, 50.0, None),
+            _ => (0.0, 49.5, None),
+        });
+        let value = maximum(orders, &PayoffMap::Score);
+        assert!(value.contending[0] && value.contending[1]);
+        assert!(value.contending[2..].iter().all(|&c| !c));
+    }
+    #[test]
+    fn the_maximum_never_lies_below_the_mean() {
+        for shift in [0.0, 5.0, 20.0] {
+            let orders = || {
+                ranged(|i| {
+                    let lower = (i % 7) as f64 * 3.0 + shift;
+                    (lower, lower + (i % 5) as f64, None)
+                })
+            };
+            let (max, mean) = (
+                maximum(orders(), &PayoffMap::Score),
+                aggregate_orders(orders(), &PayoffMap::Score, Reduction::Mean).unwrap(),
+            );
+            assert!(max.payoff.lower() >= mean.payoff.lower() && max.payoff.upper() >= mean.payoff.upper());
+            assert!(max.score.lower() >= mean.score.lower());
+        }
     }
 }

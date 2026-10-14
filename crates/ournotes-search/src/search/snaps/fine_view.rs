@@ -1,6 +1,19 @@
 //! Per-note candidate caps and the joint fine-bound view used by physical search.
 use super::*;
 
+/// Command counts of one candidate, each `(executions, lifetime commands)`.
+pub(super) struct CandCounts {
+    /// Whatever the starts of the direct-probe class; without certified laws, all of them.
+    pub(super) fixed: (f64, f64),
+    /// For each start of the direct-probe class.
+    pub(super) run: (f64, f64),
+    /// The most of one play.
+    pub(super) most: (f64, f64),
+    /// The largest factor sum at one command time, and intersecting one native score frame.
+    pub(super) peak: f64,
+    pub(super) peak_frame: f64,
+}
+
 /// Immutable per-note envelope shared by the legacy compiler and physical native-root search.
 pub(super) struct FineView<'a> {
     pub(super) coef: &'a Coef,
@@ -16,8 +29,29 @@ impl FineView<'_> {
     /// binary32 representation adds two more roundings per lifetime command
     /// (integer-to-float conversion and division, including saturated mill values). Infinite without a
     /// certificate.
+    ///
+    /// With certified lottery laws the bound is an expectation over the lottery, and the drift is the expected one
+    /// (see `ProbeStarts::expected_drift`): the drift of a play is convex in its starts of the direct-probe class.
     pub(super) fn cand_drift(&self, parts: [&Contrib; 5], rush_masks: Option<&RushMasks>) -> f64 {
-        let (e, n, peak, peak_frame) = self.cand_counts(parts, rush_masks);
+        self.counts_drift(&self.cand_counts(parts, rush_masks))
+    }
+
+    /// The drift of a candidate with these counts.
+    pub(super) fn counts_drift(&self, counts: &CandCounts) -> f64 {
+        let drift = |(e, n): (f64, f64)| self.drift_of(e, n, counts.peak, counts.peak_frame);
+        let most = drift(counts.most);
+        match &self.fine.probe_starts {
+            Some(starts) => {
+                let linear =
+                    (starts.at_most(counts.fixed.0, counts.run.0), starts.at_most(counts.fixed.1, counts.run.1));
+                starts.expected_drift(drift(counts.fixed), drift(linear)).min(most)
+            }
+            None => most,
+        }
+    }
+
+    /// The drift of `e` command executions and `n` lifetime commands.
+    fn drift_of(&self, e: f64, n: f64, peak: f64, peak_frame: f64) -> f64 {
         let representation = (2.0 * n).next_up();
         let weight = ((3.0 * e).next_up() + representation).next_up();
         let Some(amplification) = float_margin::amplification(weight, 2f64.powi(-24)) else {
@@ -39,21 +73,13 @@ impl FineView<'_> {
         float_margin::with_chain(0.0, self.chain_extra).unwrap_or(f64::INFINITY)
     }
 
-    /// The counts `cand_drift` reads: command executions, lifetime commands, the largest factor sum at one command
-    /// time and intersecting one native score frame.
-    fn cand_counts(&self, parts: [&Contrib; 5], rush_masks: Option<&RushMasks>) -> (f64, f64, f64, f64) {
+    /// The counts `cand_drift` reads.
+    fn cand_counts(&self, parts: [&Contrib; 5], rush_masks: Option<&RushMasks>) -> CandCounts {
         let mut peak = 0f64;
         let mut peak_frame = 0f64;
-        let (mut e, mut n) = (0f64, 0f64);
-        let rush_masks = rush_masks.filter(|_| self.fine.rush_eligible);
+        let mut counts = [(0f64, 0f64); 3];
         for p in parts {
-            e = (e + p.ops_plain).next_up();
-            n = (n + p.cmds_plain).next_up();
-            for row in &p.rush {
-                let (ops, cmds) = row.counts(rush_masks);
-                e = (e + ops).next_up();
-                n = (n + cmds).next_up();
-            }
+            self.add_part_counts(p, rush_masks, &mut counts);
             for &(a, _, _) in &p.spans {
                 let frame = self.fine.score_frames.at(a);
                 let (mut at, mut near) = (0f64, 0f64);
@@ -71,7 +97,74 @@ impl FineView<'_> {
                 peak_frame = peak_frame.max(near);
             }
         }
-        (e, n, peak, peak_frame)
+        let [fixed, run, most] = counts;
+        CandCounts { fixed, run, most, peak, peak_frame }
+    }
+
+    /// Adds the command counts of one part to the `[fixed, run, most]` counts of [`CandCounts`].
+    pub(super) fn add_part_counts(&self, p: &Contrib, rush_masks: Option<&RushMasks>, counts: &mut [(f64, f64); 3]) {
+        let add = |sum: &mut (f64, f64), x: (f64, f64)| *sum = ((sum.0 + x.0).next_up(), (sum.1 + x.1).next_up());
+        let [fixed, run, most] = counts;
+        let rush_masks = rush_masks.filter(|_| self.fine.rush_eligible);
+        add(fixed, (p.ops_plain, p.cmds_plain));
+        add(most, (p.ops_plain, p.cmds_plain));
+        for row in &p.rush {
+            let counted = row.counts(rush_masks);
+            match &self.fine.probe_starts {
+                Some(starts) => {
+                    let (row_fixed, row_run) = row.by_start(rush_masks);
+                    add(fixed, row_fixed);
+                    add(run, row_run);
+                    add(
+                        most,
+                        (
+                            starts.at_most(row_fixed.0, row_run.0).min(counted.0),
+                            starts.at_most(row_fixed.1, row_run.1).min(counted.1),
+                        ),
+                    );
+                }
+                None => {
+                    add(fixed, counted);
+                    add(most, counted);
+                }
+            }
+        }
+    }
+
+    /// The Gekisou combo factors of a candidate whose parts hold these combo bonus windows, into `scratch.gk_g`
+    /// (and their combo sums into `scratch.sums`); nothing without a Gekisou combo.
+    pub(super) fn fill_combo_factors(&self, parts: [&Contrib; 5], scratch: &mut Scratch) {
+        let (c, f) = (&self.coef, &self.fine);
+        let Some(gc) = &f.gcombo else { return };
+        let mut ev = std::mem::take(&mut scratch.ev);
+        let plain: Vec<(i64, i64, f64)> =
+            parts.iter().flat_map(|q| q.cb.iter()).filter(|w| w.3.is_none()).map(|w| (w.0, w.1, w.2)).collect();
+        let gated: Vec<ComboBonusRow> =
+            parts.iter().flat_map(|q| q.cb.iter()).filter(|w| w.3.is_some()).copied().collect();
+        bonus_at(&plain, &mut ev);
+        let (mut ri0, mut i, mut cur) = (usize::MAX, 0usize, 0f64);
+        gc.fill(
+            &c.times,
+            |ri, q, acc, group| {
+                if ri != ri0 {
+                    (ri0, i, cur) = (ri, 0, 0.0);
+                }
+                let t = c.times[gc.entries[ri][q] as usize] as i64;
+                while i < ev.len() && ev[i].0 <= t {
+                    cur += ev[i].1;
+                    i += 1;
+                }
+                if gated.is_empty() {
+                    return cur;
+                }
+                gated_bonus(ri, acc, group, |open| {
+                    cur + gated.iter().filter(|w| w.0 <= t && t <= w.1 && open(w)).map(|w| w.2).sum::<f64>()
+                })
+            },
+            &mut scratch.gk_g,
+            &mut scratch.sums,
+        );
+        scratch.ev = ev;
     }
 
     /// Per-note bound of one candidate (conversion source `src[k]` at position `k`): the sum over the stream of each
@@ -123,6 +216,7 @@ impl FineView<'_> {
         let rush_masks = rush_masks.filter(|_| self.fine.rush_eligible);
         let mut rounding = rush_masks.map(|_| float_margin::WindowRoundoff::default());
         let mut refined = false;
+        let unconverted = src.iter().all(|&s| s == 0);
         for (k, p) in parts.iter().enumerate() {
             scratch.rush_replacements.clear();
             for row in &p.rush {
@@ -130,7 +224,8 @@ impl FineView<'_> {
                     rush::cached_windows(&mut scratch.rush_cache, &row.spec, masks, &self.coef.times)
                 }));
             }
-            for w in &p.windows {
+            let windows = p.unconverted.as_ref().filter(|_| unconverted).unwrap_or(&p.windows);
+            for w in windows {
                 if w.rush != 0 && scratch.rush_replacements[w.rush as usize - 1].is_some() {
                     refined = true;
                     continue;
@@ -192,42 +287,8 @@ impl FineView<'_> {
         let extra_v: [Option<&[u8]>; 5] =
             std::array::from_fn(|k| (src[k] != 0).then(|| &f.extra_v[src[k] as usize][k][..]));
         // the candidate's own Gekisou combo factors, from its combo bonus windows
-        let mut gk_g = std::mem::take(&mut scratch.gk_g);
-        if let Some(gc) = &f.gcombo {
-            let mut ev = std::mem::take(&mut scratch.ev);
-            let plain: Vec<(i64, i64, f64)> =
-                parts.iter().flat_map(|q| q.cb.iter()).filter(|w| w.3.is_none()).map(|w| (w.0, w.1, w.2)).collect();
-            let gated: Vec<ComboBonusRow> =
-                parts.iter().flat_map(|q| q.cb.iter()).filter(|w| w.3.is_some()).copied().collect();
-            bonus_at(&plain, &mut ev);
-            let (mut ri0, mut i, mut cur) = (usize::MAX, 0usize, 0f64);
-            gc.fill(
-                &c.times,
-                |ri, q, acc, group| {
-                    if ri != ri0 {
-                        (ri0, i, cur) = (ri, 0, 0.0);
-                    }
-                    let t = c.times[gc.entries[ri][q] as usize] as i64;
-                    while i < ev.len() && ev[i].0 <= t {
-                        cur += ev[i].1;
-                        i += 1;
-                    }
-                    if gated.is_empty() {
-                        return cur;
-                    }
-                    let running = || gated.iter().filter(|w| w.0 <= t && t <= w.1);
-                    // the step reads every other window open; a gate opened by it only adds bonus
-                    let all = cur + running().map(|w| w.2).sum::<f64>();
-                    cur + running()
-                        .filter(|w| gate_open(w.3, ri, acc, group, gate_step(all, w.2)))
-                        .map(|w| w.2)
-                        .sum::<f64>()
-                },
-                &mut gk_g,
-                &mut scratch.sums,
-            );
-            scratch.ev = ev;
-        }
+        self.fill_combo_factors(parts, scratch);
+        let gk_g = std::mem::take(&mut scratch.gk_g);
         // Combo ramps: each entry reads the factor at the count of the frame it reads (the flat factor where unknown).
         scratch.ramp.clear();
         scratch.ramp.resize(ne, 0.0);
@@ -309,6 +370,9 @@ impl FineView<'_> {
                     }
                 }
                 let x = p * k * v * (1.0 + chain);
+                if f.expected {
+                    return if ze == 1.0 { x } else { ze * x * (1.0 + 2f64.powi(-20)) };
+                }
                 let y = x.floor();
                 if ze == 1.0 { y } else { (ze * y * (1.0 + 2f64.powi(-20))).floor() }
             };
@@ -322,7 +386,9 @@ impl FineView<'_> {
             if let Some(terms) = scratch.terms.as_mut() {
                 terms.entries.push((c.times[e], z, rk));
             }
-            if f.rank.is_empty() {
+            if f.expected && f.rank.is_empty() {
+                ranked += z;
+            } else if f.rank.is_empty() {
                 total = total.saturating_add(z as i64);
             } else {
                 // a rank bonus adds its percent of the range score, the sum of these entries' scores
@@ -358,7 +424,7 @@ impl FineView<'_> {
             terms.network_ranking = f.network_ranking;
             terms.ranges = f.rank_ranges.clone();
         }
-        if !f.rank.is_empty() {
+        if f.expected || !f.rank.is_empty() {
             let v = ((ranked + conv) * (1.0 + 1e-12)).ceil();
             total = if v >= i64::MAX as f64 { i64::MAX } else { v as i64 };
         } else if conv > 0.0 {
@@ -375,6 +441,8 @@ pub(crate) struct JointFineBounds {
     pub(super) contrib: Vec<Vec<[Contrib; 5]>>,
     pub(super) class_of: Vec<Vec<u16>>,
     pub(super) raw: Option<raw::RawEnvelope>,
+    /// The terms of [`JointFineBounds::upper_orders`].
+    pub(super) order_sums: OrderSums,
 }
 #[derive(Default)]
 pub(crate) struct JointScratch(pub(super) Scratch);
@@ -434,12 +502,15 @@ impl JointFineBounds {
                 })
             })
             .collect();
-        let (executions, commands, peak, peak_frame) = view.cand_counts(parts, rush_masks);
+        let CandCounts { fixed, run, most: (executions, commands), peak, peak_frame } =
+            view.cand_counts(parts, rush_masks);
         let exec = &self.fine.exec_profile;
         let per_second: Vec<u32> = exec.chunks(25).map(|c| c.iter().copied().max().unwrap_or(0)).collect();
         serde_json::json!({
             "executionsMaxPerSecond": per_second,
             "countedExecutions": executions, "countedCommands": commands, "peakFactor": peak,
+            "fixedCounts": fixed, "countsPerProbeStart": run,
+            "probeStarts": self.fine.probe_starts.map(|s| [s.most, s.expected, s.luck]),
             "peakFactorNearFrame": peak_frame,
             "candidateDrift": view.cand_drift(parts, rush_masks), "chainMargin": view.chain(),
             "fineScoreUpper": fine_upper.to_string(),
@@ -628,6 +699,26 @@ impl JointFineBounds {
             &mut scratch.0,
             rush_masks,
         )
+    }
+
+    /// The sum of [`JointFineBounds::upper`] (without Rush masks) over performance orders, each of `orders` holding
+    /// the positions of the slots, as one bound (see `order_sums`): None when a slot has a conversion source or the
+    /// bounds are not expected ones. With `below` the bound only needs to decide it (see [`OrderSums::upper`]).
+    pub(crate) fn upper_orders(
+        &self,
+        power: i64,
+        members: [usize; 5],
+        choices: [usize; 5],
+        orders: &[[usize; 5]],
+        scratch: &mut JointScratch,
+        below: Option<&dyn Fn(i64) -> bool>,
+    ) -> Option<i64> {
+        let classes: [usize; 5] = std::array::from_fn(|s| self.choice_class(members[s], choices[s]));
+        if !self.fine.expected || (0..5).any(|s| self.fine.src[members[s]][classes[s]] != 0) {
+            return None;
+        }
+        let view = FineView { coef: &self.coef, fine: &self.fine, chain_extra: self.chain_extra };
+        Some(self.order_sums.upper(&view, &self.contrib, power, members, classes, orders, &mut scratch.0, below))
     }
 }
 

@@ -18,7 +18,7 @@ pub(crate) mod physical;
 pub(crate) use physical::session_start_clock;
 pub use physical::{
     GOAL_SPEC_VERSION, GoalSpec, SESSION_FORMAT, SearchSession, SessionBinding, SessionProgress, SessionStatus,
-    StepBudget, evaluate_declared_context, score_summary, solve_physical,
+    StepBudget, evaluate_declared_context, score_summary, solve_physical, solve_physical_with_aggregation,
 };
 
 mod budget;
@@ -562,7 +562,7 @@ pub fn search_best_order_diagnostic(pool: &Pool, req: &SearchRequest) -> Result<
     }
     let snap_live = match &setup {
         None => None,
-        Some(s) => Some(snaps::SnapLive::new(pool, &t, &allowed.members, s)?),
+        Some(s) => Some(snaps::SnapLive::new(pool, &t, &allowed.members, s, &[], None)?),
     };
     if budget.expired() {
         return Ok(preparation_timeout(t0));

@@ -221,9 +221,12 @@ fn probe_boundary_guard_requires_every_late_transition_to_stay_off_and_all_nativ
     };
     let mut curve = LuckDpCertifiedResult {
         probe_transitions: vec![2, 4, 1, 1],
+        rush_transitions: vec![65; 4],
         range_moments: Vec::new(),
-        steps: Vec::new(),
+        steps: Vec::new().into(),
+        frame_queries: Vec::new().into(),
         probes: vec![true],
+        probe_starts: crate::live::certified::F64Interval::ZERO,
         peak_states: 1,
         transitions: 0,
     };

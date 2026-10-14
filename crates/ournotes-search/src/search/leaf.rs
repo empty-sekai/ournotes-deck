@@ -12,12 +12,70 @@
 //! orders, of the order's cap and of its cutoff table at the node's settled prefix: until a member of an open
 //! position acts, the node's live is the live of each of its orders, so each table applies to the shared prefix.
 use super::*;
+use crate::search::certified_search::{LuckLaw, Reduction};
+use crate::search::joint::{JointBounds, TeamCaps};
 use ournotes_sim::live::full::{LiveModel, OrdersOutcome, Settled};
 use ournotes_sim::live::random::LiveRandom;
 use std::ops::ControlFlow;
+use std::rc::Rc;
+use std::sync::Arc;
 
 /// Frames between two bound checks of the node being played.
 const CUTOFF_EVERY: usize = 30;
+
+/// Sets of laws whose bounds one domain keeps.
+const LAW_BOUNDS: usize = 16;
+
+/// The joint bounds of one domain compiled under the lottery laws of single teams
+/// ([`JointBounds::compile_with_laws`]). Bounds compiled under the laws of every order of a team cover that team,
+/// and any other team of the domain whose orders have the same laws.
+#[derive(Default)]
+pub(super) struct LawBounds {
+    /// The members and Snaps of the domain.
+    members: Vec<usize>,
+    snaps: Vec<usize>,
+    /// The distinct laws of a team in address order with their bounds (None: they do not compile), the latest used
+    /// last.
+    sets: Vec<(Vec<LuckLaw>, Option<Rc<JointBounds>>)>,
+}
+
+impl LawBounds {
+    /// The bounds of `domain` under `laws`, from `compile` when the domain keeps none.
+    fn get(
+        &mut self,
+        domain: &crate::domain::CandidateDomain,
+        laws: &[LuckLaw],
+        compile: impl FnOnce(&[LuckLaw]) -> Option<JointBounds>,
+    ) -> Option<Rc<JointBounds>> {
+        if (self.members.as_slice(), self.snaps.as_slice()) != (domain.members(), domain.snaps()) {
+            (self.members, self.snaps) = (domain.members().to_vec(), domain.snaps().to_vec());
+            self.sets.clear();
+        }
+        let mut distinct = Vec::<LuckLaw>::new();
+        for law in laws {
+            if !distinct.iter().any(|other| Arc::ptr_eq(other, law)) {
+                distinct.push(law.clone());
+            }
+        }
+        distinct.sort_unstable_by_key(|law| Arc::as_ptr(law) as usize);
+        let same = |(set, _): &(Vec<LuckLaw>, Option<Rc<JointBounds>>)| {
+            set.len() == distinct.len() && set.iter().zip(&distinct).all(|(a, b)| Arc::ptr_eq(a, b))
+        };
+        let entry = match self.sets.iter().position(same) {
+            Some(at) => self.sets.remove(at),
+            None => {
+                if self.sets.len() == LAW_BOUNDS {
+                    self.sets.remove(0);
+                }
+                let bounds = compile(&distinct).map(Rc::new);
+                (distinct, bounds)
+            }
+        };
+        let bounds = entry.1.clone();
+        self.sets.push(entry);
+        bounds
+    }
+}
 
 /// How the evaluation of a team's performance orders ended.
 pub(super) enum Leaf {
@@ -39,6 +97,120 @@ fn cap_sum(caps: &[i128]) -> i128 {
 }
 
 impl Engine<'_, '_> {
+    /// Whether the caps of a team under the lottery `laws` of its own orders prove it below the K-th of `cutoff`
+    /// (its payoff numerator and power): the caps of the domain's bounds compiled under those laws
+    /// ([`JointBounds::team_below`]). False when the laws compile no bounds.
+    fn below_under_laws(
+        &mut self,
+        domain: &crate::domain::CandidateDomain,
+        physical: &PhysicalDeck,
+        power: i32,
+        laws: &[LuckLaw],
+        (threshold, kth_power): (i128, i32),
+    ) -> bool {
+        let (pool, request, event_input, simulation) = (self.pool, self.request, self.event_input, self.simulation);
+        let metric = self.metric;
+        let compiled = &mut self.tel.leaves.law_bounds;
+        let (_, resume) = self.rec.clock.lap(slot::FINE);
+        let bounds = self.certified.as_mut().expect("certified request").law_bounds.get(domain, laws, |laws| {
+            *compiled += 1;
+            JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, laws, None).ok()
+        });
+        let below = |total: i128| total < threshold || (total == threshold && power < kth_power);
+        let pruned = bounds.is_some_and(|bounds| {
+            bounds
+                .team_below(
+                    domain,
+                    physical,
+                    i64::from(power),
+                    &self.positions,
+                    &mut self.bound_scratch,
+                    below,
+                    (&mut self.tel.leaves.order_sums, &mut self.tel.leaves.fine_orders),
+                )
+                .is_some()
+        });
+        self.rec.clock.lap(resume);
+        pruned
+    }
+
+    /// Whether a played-live team of a certified evaluation, whose power is at most `upper`, is below the K-th by its
+    /// fine caps summed over the performance orders at the power `upper` ([`JointBounds::fine_upper_orders`]): the
+    /// caps do not decrease with the power, so the team's own sum is at most that one, and a sum strictly below the
+    /// K-th payoff needs no power tie-break. This check runs before the team's power is computed.
+    pub(super) fn below_at_power_bound(
+        &mut self,
+        physical: &PhysicalDeck,
+        upper: i64,
+        (bounds, domain): (&JointBounds, &crate::domain::CandidateDomain),
+    ) -> bool {
+        if self.certified.as_ref().is_none_or(|state| state.reduction == Reduction::Maximum)
+            || !self.live
+            || !bounds.has_fine()
+        {
+            return false;
+        }
+        let Some((threshold, _)) = self.safe_cutoff() else { return false };
+        let below = |total: i128| total < threshold;
+        let (_, resume) = self.rec.clock.lap(slot::FINE);
+        let sum =
+            bounds.fine_upper_orders(domain, physical, upper, &self.positions, &mut self.bound_scratch, Some(&below));
+        self.rec.clock.lap(resume);
+        let Some(sum) = sum else { return false };
+        self.tel.leaves.order_sums += 1;
+        let pruned = below(sum);
+        self.tel.leaves.fine_pruned += u64::from(pruned);
+        pruned
+    }
+
+    /// The laws of the orders of `physical` read from the multiset of its performers' lottery kinds, when the
+    /// traversal of a search whose bounds weigh laws holds the census of its domain (see `LotteryCensus::team_laws`).
+    fn kind_laws(&self, physical: &PhysicalDeck) -> Option<Vec<LuckLaw>> {
+        if !self.metric.weighs_laws() {
+            return None;
+        }
+        self.certified.as_ref()?.census.as_ref()?.team_laws(physical)
+    }
+
+    /// Whether the caps of a team under the laws read from its multiset of lottery kinds prove it below the K-th of
+    /// `cutoff` ([`Engine::below_under_laws`]), in a traversal whose bounds `traversal` weigh the laws of its domain.
+    /// Those are the laws of its own orders, which weigh no law of another team of the domain. False without such
+    /// laws.
+    fn below_under_kind_laws(
+        &mut self,
+        domain: &crate::domain::CandidateDomain,
+        traversal: &JointBounds,
+        physical: &PhysicalDeck,
+        power: i32,
+        cutoff: (i128, i32),
+    ) -> bool {
+        if traversal.laws().is_empty() {
+            return false;
+        }
+        let Some(laws) = self.kind_laws(physical) else { return false };
+        self.tel.leaves.kind_laws += 1;
+        self.below_under_laws(domain, physical, power, &laws, cutoff)
+    }
+
+    /// The laws read from a team's multiset of lottery kinds can prune the teams that hold the same multiset in a
+    /// traversal whose bounds `traversal` weigh the laws of its domain: they must cover the laws `found` of the
+    /// team's own orders. An error when they do not.
+    fn audit_kind_laws(
+        &self,
+        traversal: &JointBounds,
+        physical: &PhysicalDeck,
+        found: &Result<Vec<LuckLaw>, Error>,
+    ) -> Result<(), Error> {
+        if traversal.laws().is_empty() {
+            return Ok(());
+        }
+        let Some(kind) = self.kind_laws(physical) else { return Ok(()) };
+        match found {
+            Ok(own) if crate::search::snaps::LuckLaws::new(&kind).is_some_and(|laws| laws.cover(own)) => Ok(()),
+            _ => Err(Error::Domain("a team's lottery laws are not those of its multiset of lottery kinds".into())),
+        }
+    }
+
     /// The payoff numerator of a team over the performance orders: each order simulated once, the sum over all of
     /// them. With a full Top-K and bounds, the team's per-order caps (cheap, then raw and fine) are summed first; the
     /// orders then run in descending cap order, each with a cutoff table when the fine bound is compiled. The team
@@ -52,28 +224,39 @@ impl Engine<'_, '_> {
     ) -> Result<Leaf, Error> {
         if self.certified.is_some() {
             // The caps prove a team below the K-th whether or not its scores are cached.
+            let maximum = self.certified.as_ref().is_some_and(|state| state.reduction == Reduction::Maximum);
             if let (Some((bounds, domain)), Some((threshold, kth_power))) = (cut, self.safe_cutoff()) {
                 let below = |total: i128| total < threshold || (total == threshold && power < kth_power);
-                let mut caps = bounds.order_cheap_caps(domain, physical, i64::from(power), &self.positions);
-                if below(cap_sum(&caps)) {
-                    self.tel.leaves.cheap_pruned += 1;
-                    return Ok(Leaf::Pruned);
-                }
-                if bounds.has_fine() {
+                if maximum {
+                    // The team's payoff is its best order's: the greatest per-order cap bounds it, and no sum over
+                    // the orders applies.
+                    let caps = bounds.order_cheap_caps(domain, physical, i64::from(power), &self.positions);
+                    if below(caps.iter().copied().max().unwrap_or(i128::MIN)) {
+                        self.tel.leaves.cheap_pruned += 1;
+                        return Ok(Leaf::Pruned);
+                    }
+                } else {
                     let (_, resume) = self.rec.clock.lap(slot::FINE);
-                    let pruned = bounds.tighten_order_caps_until(
+                    let pruned = bounds.team_below(
                         domain,
                         physical,
                         i64::from(power),
                         &self.positions,
-                        &mut caps,
                         &mut self.bound_scratch,
                         below,
-                        &mut self.tel.leaves.fine_orders,
+                        (&mut self.tel.leaves.order_sums, &mut self.tel.leaves.fine_orders),
                     );
                     self.rec.clock.lap(resume);
-                    if pruned {
-                        self.tel.leaves.fine_pruned += 1;
+                    match pruned {
+                        Some(TeamCaps::Cheap) => self.tel.leaves.cheap_pruned += 1,
+                        Some(TeamCaps::Fine) => self.tel.leaves.fine_pruned += 1,
+                        None => {}
+                    }
+                    if pruned.is_some() {
+                        return Ok(Leaf::Pruned);
+                    }
+                    if self.below_under_kind_laws(domain, bounds, physical, power, (threshold, kth_power)) {
+                        self.tel.leaves.law_pruned += 1;
                         return Ok(Leaf::Pruned);
                     }
                 }
@@ -91,18 +274,85 @@ impl Engine<'_, '_> {
             let score = if let Some(score) = self.cached_certified_score(&program, power) {
                 score
             } else {
-                self.tel.leaves.started += 1;
                 let skills = self.certified_luck_skills()?;
                 let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
+                // The laws of the team's own orders: caps under them can prove the team below the K-th, and the
+                // evaluation takes them as they are. Bounds that weigh the laws of the team's domain must cover them.
+                let mut laws = None;
+                let cutoff = self.safe_cutoff();
+                if let Some((bounds, domain)) = cut
+                    && self.metric.weighs_laws()
+                    && (cutoff.is_some() || !bounds.laws().is_empty())
+                {
+                    let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+                    let mut kinds = self.take_luck_kinds();
+                    let found = crate::search::certified_search::luck_order_laws(
+                        master,
+                        &skills,
+                        &input,
+                        &mut curves,
+                        Some(&mut kinds),
+                    );
+                    self.keep_luck_kinds(kinds);
+                    self.rec.clock.lap(resume);
+                    if !bounds.laws().is_empty() {
+                        match &found {
+                            Ok(own) if bounds.cover_laws(own) => self.tel.leaves.law_audits += 1,
+                            Ok(_) => {
+                                return Err(Error::Domain(
+                                    "a team's lottery laws are not among the laws its domain's bounds weigh".into(),
+                                ));
+                            }
+                            Err(error) => {
+                                return Err(Error::Domain(format!(
+                                    "a team under the lottery laws of its domain has no laws of its own: {error}"
+                                )));
+                            }
+                        }
+                    }
+                    self.audit_kind_laws(bounds, physical, &found)?;
+                    laws = found.ok();
+                    if let (Some(laws), Some(cutoff)) = (&laws, cutoff)
+                        && !maximum
+                        && self.below_under_laws(domain, physical, power, laws, cutoff)
+                    {
+                        self.tel.caches.luck_curves.record(curves.stats());
+                        self.certified.as_mut().expect("certified request").luck_curves = curves;
+                        self.tel.leaves.law_pruned += 1;
+                        return Ok(Leaf::Pruned);
+                    }
+                }
+                self.tel.leaves.started += 1;
                 let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
-                let result = crate::search::certified_search::evaluate_luck_context(
+                let score_map = crate::search::certified_search::PayoffMap::Score;
+                let result = match crate::search::certified_search::evaluate_luck_exact(
                     master,
                     &skills,
                     &input,
-                    &crate::search::certified_search::PayoffMap::Score,
+                    &score_map,
+                    laws.as_deref(),
                     Some(&mut curves),
                     || self.expired(),
-                );
+                ) {
+                    Ok(result) => {
+                        self.tel.leaves.exact_teams += u64::from(result.is_some());
+                        Ok(result.map(|(evaluation, report)| {
+                            self.tel.leaves.record_exact(report);
+                            evaluation
+                        }))
+                    }
+                    Err(error) => {
+                        *self.tel.leaves.exact_declined.entry(error.to_string()).or_default() += 1;
+                        crate::search::certified_search::evaluate_luck_context(
+                            master,
+                            &skills,
+                            &input,
+                            &score_map,
+                            Some(&mut curves),
+                            || self.expired(),
+                        )
+                    }
+                };
                 self.rec.clock.lap(resume);
                 self.tel.caches.luck_curves.record(curves.stats());
                 self.certified.as_mut().expect("certified request").luck_curves = curves;
@@ -126,7 +376,8 @@ impl Engine<'_, '_> {
                 power,
                 support,
             )?;
-            let evaluation = crate::search::certified_search::aggregate_orders(score.orders, &map)?;
+            let reduction = self.certified.as_ref().expect("certified request").reduction;
+            let evaluation = crate::search::certified_search::aggregate_orders(score.orders, &map, reduction)?;
             return Ok(Leaf::Certified(evaluation, program, map));
         }
         if let Some(threshold) = crate::search::snaps::census() {
@@ -239,6 +490,25 @@ impl Engine<'_, '_> {
         let performance_orders = self.orders.clone();
         let missing: Vec<usize> = (0..ORDERS).filter(|&i| outcomes[i].is_none()).collect();
         let missing_orders: Vec<[usize; 5]> = missing.iter().map(|&i| performance_orders[i]).collect();
+        let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+        let spliced = self.spliced_scores(&input, &missing_orders);
+        self.rec.clock.lap(resume);
+        if let Some(scores) = spliced? {
+            for (&i, final_score) in missing.iter().zip(scores) {
+                outcomes[i] = Some(SeedOutcome {
+                    root_seed: 0,
+                    weight: 1,
+                    performance_order: performance_orders[i],
+                    final_score,
+                    terminal_payoff: payoff_of(pool, request, metric, event_input, physical, final_score, power, None)?,
+                });
+            }
+            let evaluation =
+                expectation::aggregate(outcomes.into_iter().map(|o| o.expect("every order evaluated")).collect())?;
+            // The metric reads no final life (`spliced_scores`): the lives of the spliced orders stay unknown.
+            self.team_scores.insert(physical, power, &evaluation, &final_lives, &mut self.tel.caches.team_scores);
+            return Ok(Leaf::Evaluated(evaluation));
+        }
         let orders: Vec<Vec<usize>> = missing_orders.iter().map(|o| o.to_vec()).collect();
         let capture_budget =
             self.programs.capture_budget_for(physical.members, &performers, &mut self.tel.caches.program_admissions);
@@ -371,6 +641,49 @@ impl Engine<'_, '_> {
                 self.rec.clock.lap(resume);
                 Ok(Leaf::Stopped)
             }
+        }
+    }
+
+    /// The native scores of `orders` of a Gekisou team in a live without a LUCK range, spliced from the recordings of
+    /// its five rotations ([`ournotes_sim::live::full::lottery_free_orders`]). None when the live has no Gekisou or a
+    /// LUCK range, when the metric reads the final life (the splice follows scores only), or when the splice does not
+    /// cover the orders; they are then simulated.
+    pub(super) fn spliced_scores(
+        &mut self,
+        input: &expectation::FiniteSeedContext,
+        orders: &[[usize; 5]],
+    ) -> Result<Option<Vec<i32>>, Error> {
+        let Some(setup) = &input.gekisou else { return Ok(None) };
+        if self.metric.any(|m| matches!(m, Metric::ScoreAndLifeAtLeast { .. })) {
+            return Ok(None);
+        }
+        if self.lottery_free.is_none() && self.splice_skills.is_none() {
+            self.splice_skills = Some(Arc::new(ournotes_sim::live::full::luck_skills(self.pool.master)?));
+        }
+        let skills = self.lottery_free.as_ref().or(self.splice_skills.as_ref()).expect("filled above").clone();
+        let spliced = ournotes_sim::live::full::lottery_free_orders(
+            self.pool.master,
+            &skills,
+            &input.performers,
+            &input.notes,
+            &input.events,
+            input.params,
+            setup,
+            &input.play,
+            &input.delta_times,
+            input.rank_confirmations.as_deref(),
+            orders,
+        );
+        match spliced {
+            Ok(scores) => {
+                self.tel.leaves.free_spliced += 1;
+                Ok(Some(scores))
+            }
+            Err(Error::Unsupported(why) | Error::Capacity(why)) => {
+                *self.tel.leaves.free_unspliced.entry(why).or_default() += 1;
+                Ok(None)
+            }
+            Err(error) => Err(error),
         }
     }
 

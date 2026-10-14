@@ -242,7 +242,10 @@ fn merge_certified_batch(
         *combined = Some(batch);
         return Ok(());
     };
-    if result.steps != batch.steps || result.probe_transitions != batch.probe_transitions {
+    if result.steps != batch.steps
+        || result.probe_transitions != batch.probe_transitions
+        || result.rush_transitions != batch.rush_transitions
+    {
         return Err(Error::Unsupported("LUCK certified DP: probe batches have different joint curves".into()));
     }
     if result.probes.len() != batch.probes.len() {
@@ -542,8 +545,11 @@ mod certified_tests {
         joint[bucket] = ProbabilityMass::ONE;
         full::LuckDpCertifiedResult {
             probe_transitions: Vec::new(),
-            steps: vec![(100, joint)],
+            rush_transitions: Vec::new(),
+            steps: vec![(100, joint)].into(),
+            frame_queries: Vec::new().into(),
             probes,
+            probe_starts: crate::live::certified::F64Interval::ZERO,
             range_moments: Vec::new(),
             peak_states,
             transitions,

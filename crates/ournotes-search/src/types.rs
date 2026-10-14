@@ -24,6 +24,9 @@ pub struct RecommendationRequest {
     pub scenario: Option<Scene>,
     pub context: Option<ContextInput>,
     pub metric: Metric,
+    /// How the values of the performance orders combine into a team's value; the mean by default.
+    #[serde(default)]
+    pub aggregation: Aggregation,
     /// Optional player intent. It is checked against execution/metric, never cosmetic.
     pub goal: Option<PlayerGoal>,
     #[serde(default, deserialize_with = "strict_constraints")]
@@ -43,6 +46,42 @@ pub struct RecommendationRequest {
     /// They only fill the Top-K earlier; the result and its proof do not depend on them.
     #[serde(default)]
     pub initial_decks: Vec<DeckInput>,
+}
+
+/// How the payoffs of a team's performance orders combine into the team's value.
+///
+/// `Expected` is the mean over the equally likely performance orders. `Maximum` is the greatest value among the
+/// orders, where the value of one order is the expectation of its terminal payoff over the random draws it contains.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Aggregation {
+    #[default]
+    Expected,
+    Maximum,
+}
+
+/// The value model of Maximum aggregation: which orders it ranges over and what one order is worth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum MaximumModel {
+    /// A deterministic execution has one outcome.
+    Deterministic { performance_orders: usize, order_value: &'static str },
+    /// A played live: the greatest order value over all performance orders.
+    Orders { performance_orders: usize, order_value: &'static str, order_choice: &'static str },
+}
+
+impl MaximumModel {
+    pub const fn for_execution(live: bool) -> Self {
+        if live {
+            Self::Orders {
+                performance_orders: 120,
+                order_value: "expectedTerminalPayoffOverRandomDraws",
+                order_choice: "maximum",
+            }
+        } else {
+            Self::Deterministic { performance_orders: 1, order_value: "terminalPayoff" }
+        }
+    }
 }
 
 /// A deck by public IDs: member cards in physical slots (slot 2 leads) and each slot's Snap.
@@ -405,6 +444,11 @@ impl Metric {
             _ => test(self),
         }
     }
+    /// Whether bounds of expected scores bound the metric's expected payoff: every term's payoff has a concave
+    /// nondecreasing majorant in the score, which a score target's indicator lacks.
+    pub(crate) fn weighs_laws(&self) -> bool {
+        !self.any(|m| matches!(m, Self::Power | Self::ScoreAtLeast { .. } | Self::ScoreAndLifeAtLeast { .. }))
+    }
     pub(crate) fn event(&self) -> Option<i64> {
         match *self {
             Self::ClientEventPoints { event_id }
@@ -653,6 +697,11 @@ pub struct RecommendedDeck {
     pub members: [i64; 5],
     pub snaps: [Option<i64>; 5],
     pub power: i32,
+    /// The ranking value under Maximum aggregation (the greatest order value, of a combined metric's first level);
+    /// absent under Expected aggregation. `expected_score`, `expected_payoff` and `score_summary` are absent under
+    /// Maximum aggregation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective_value: Option<Fraction>,
     pub expected_score: Option<Fraction>,
     /// The exact expectation of the payoff; of a combined metric's first level.
     pub expected_payoff: Option<Fraction>,
@@ -672,7 +721,8 @@ pub struct RecommendedDeck {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rank_certified: Option<bool>,
     pub score_summary: Option<ScoreSummary>,
-    /// Played lives: the performance order with the highest payoff (then score; the first in lexicographic order).
+    /// Played lives: the performance order with the highest payoff (Expected aggregation: then score; the first in
+    /// lexicographic order).
     pub best_order: Option<OrderResult>,
     /// Played lives: each of the 120 performance orders (the result's slots in performance order) with its score
     /// and payoff; empty otherwise. Not part of the JSON result.
@@ -688,6 +738,10 @@ pub struct RecommendationOutcome {
     pub exit_reason: ExitReason,
     pub result_identity: &'static str,
     pub metric: Metric,
+    pub aggregation: Aggregation,
+    /// The value model of Maximum aggregation; absent under Expected aggregation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum_model: Option<MaximumModel>,
     pub player_goal: Option<GoalDescription>,
     pub strategy: Strategy,
     pub probability_law: serde_json::Value,

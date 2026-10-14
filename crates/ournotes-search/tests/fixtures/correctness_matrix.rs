@@ -1,6 +1,6 @@
 //! Synthetic physical-domain and objective matrix for the shared fixed-deck model.
 
-use super::common::set_column;
+use super::common::{extend_table, set_column};
 use super::{EVENT_ID, SCORE_ID, data_document, joint_request_json, roster_document, synthetic_master};
 use ournotes_search::{
     auxiliary, engine, handler,
@@ -20,7 +20,7 @@ use std::{cmp::Ordering, collections::BTreeSet};
 type Key = ([i64; 5], [Option<i64>; 5]);
 
 /// Enumerate member combinations, every eligible leader, and injective optional Snap bindings.
-fn domain(pool: &Pool<'_>, request: &RecommendationRequest) -> Vec<Key> {
+pub(super) fn domain(pool: &Pool<'_>, request: &RecommendationRequest) -> Vec<Key> {
     let constraints = &request.constraints;
     let mut members: Vec<_> = pool
         .members
@@ -100,8 +100,20 @@ fn compare(a: &RecommendedDeck, b: &RecommendedDeck) -> Ordering {
     right.cmp(&left).then_with(|| b.power.cmp(&a.power)).then_with(|| key(a).cmp(&key(b)))
 }
 
-fn fixture(members: i64, snaps: i64, characters: i64, luck: bool) -> (DeckData, Roster) {
+pub(super) fn fixture(members: i64, snaps: i64, characters: i64, luck: bool) -> (DeckData, Roster) {
+    fixture_with(members, snaps, characters, luck, |_| {})
+}
+
+/// [`fixture`] with `edit` applied to the master tables first.
+fn fixture_with(
+    members: i64,
+    snaps: i64,
+    characters: i64,
+    luck: bool,
+    edit: impl FnOnce(&mut super::common::Synth),
+) -> (DeckData, Roster) {
     let mut master = synthetic_master(members, snaps, characters);
+    edit(&mut master);
     for table in ["MasterLiveMusic", "MasterArenaMusic"] {
         set_column(&mut master, table, &mut |row| {
             row["_gekisouMission1"] = json!(if luck { 2 } else { 1 });
@@ -145,7 +157,7 @@ fn fixture(members: i64, snaps: i64, characters: i64, luck: bool) -> (DeckData, 
     (data, roster)
 }
 
-fn request(data: &DeckData, scene: &str, stream: bool, metric: Value) -> RecommendationRequest {
+pub(super) fn request(data: &DeckData, scene: &str, stream: bool, metric: Value) -> RecommendationRequest {
     let gekisou = scene != "free";
     let mut wire = joint_request_json(scene, gekisou, metric);
     if scene == "arena" {
@@ -458,4 +470,178 @@ fn nominal_luck_objectives_certify_equivalent_leader_programs() {
     eprintln!(
         "nominal LUCK matrix: {cases} cases, 55 fixed physical candidates, 5 equivalent leader programs per case"
     );
+}
+
+#[test]
+fn luck_score_caps_under_team_laws_keep_the_exhaustive_ranking() {
+    let (data, roster) = fixture(7, 0, 7, true);
+    let mut current = request(&data, "mission", false, json!({"kind":"score"}));
+    current.constraints.leader = None;
+    current.constraints.no_snaps = true;
+    current.limits.cache_entries = 64;
+    let rows = |decks: &[RecommendedDeck]| {
+        decks.iter().map(|deck| (key(deck), serde_json::to_value(&deck.payoff_interval).unwrap())).collect::<Vec<_>>()
+    };
+    let (mut bounds, mut pruned) = (0, 0);
+    for k in [1, 3, 10] {
+        current.k = k;
+        current.strategy = Strategy::Exhaustive;
+        let oracle = engine::recommend(&data, &roster, &current).unwrap();
+        current.strategy = Strategy::BranchAndBound;
+        let bounded = engine::recommend(&data, &roster, &current).unwrap();
+        assert_eq!((oracle.completion, bounded.completion), (Completion::Complete, Completion::Complete), "k={k}");
+        assert_eq!(rows(&bounded.results), rows(&oracle.results), "k={k}");
+        let leaves = &bounded.telemetry.leaves;
+        assert!(leaves.exact_teams <= oracle.telemetry.leaves.exact_teams, "k={k}");
+        // A team's laws compile bounds only for the teams the pool-wide caps leave open.
+        assert!(leaves.law_bounds <= leaves.visited && leaves.law_pruned <= leaves.visited, "k={k}");
+        bounds += leaves.law_bounds;
+        pruned += leaves.law_pruned;
+        eprintln!(
+            "k={k}: visited {} exact {} cheap {} fine {} law {} bounds {}",
+            leaves.visited,
+            leaves.exact_teams,
+            leaves.cheap_pruned,
+            leaves.fine_pruned,
+            leaves.law_pruned,
+            leaves.law_bounds
+        );
+    }
+    assert!(bounds > 0 && pruned > 0, "{bounds} bounds dropped {pruned} teams");
+}
+
+/// Members holding one of three Gekisou skills: a score up outside the lottery, or a Luck range-start gauge of one of
+/// two values that a 50% chance grants.
+fn lottery_kinds(master: &mut super::common::Synth) {
+    set_column(master, "MasterMemberCard", &mut |row| {
+        row["_gekisouSkillID"] = json!(1 + row["_id"].as_i64().unwrap() % 3);
+    });
+    extend_table(
+        master,
+        "MasterGekisouSkill",
+        (2..=3).map(|id| json!({"_id":id,"_skillCategories":[1],"_gekisouMissionType":2})).collect(),
+    );
+    extend_table(master, "MasterSkillTarget", vec![json!({"_id":990056,"_skillTargetType":5,"_gekisouMissionType":2})]);
+    let conditions = [
+        (990010, 7010, json!([]), json!([990056])),
+        (990011, 4011, json!([50]), json!([])),
+        (990013, 7013, json!([]), json!([])),
+    ];
+    extend_table(
+        master,
+        "MasterSkillCondition",
+        conditions
+            .iter()
+            .map(|(id, kind, values, targets)| {
+                json!({"_id":id,"_conditionType":kind,"_conditionValues":values,"_isPositive":true,
+                    "_conditionTargetIDs":targets})
+            })
+            .collect(),
+    );
+    extend_table(
+        master,
+        "MasterSkillConditionSet",
+        conditions.iter().map(|(id, ..)| json!({"_id":id,"_group":id,"_conditionIds":[id]})).collect(),
+    );
+    extend_table(master, "MasterSkillEffectSetting", vec![json!({"_id":990001,"_skillEffectType":11003,"_phase":1})]);
+    extend_table(
+        master,
+        "MasterGekisouSkillEffect",
+        (2..=3)
+            .map(|skill| {
+                json!({"_id":skill,"_gekisouSkillID":skill,"_level":1,"_skillTriggerType":1,
+                    "_skillTriggerConditionGroup":990010,"_skillConditionGroup":990011,
+                    "_skillReleaseConditionGroup":990013,"_skillTargetIDs":[],"_skillEffectType":11003,
+                    "_activationTimeSecond":0,"_effectValue":10000 * (skill - 1),"_maxEffectValue":0,
+                    "_effectLimitCount":1,"_skillCumulativeConditionID":0,"_effectExecuteLimitCount":0,
+                    "_effectExecuteLimitResetConditionGroup":0})
+            })
+            .collect(),
+    );
+}
+
+#[test]
+fn luck_score_bounds_under_domain_laws_keep_the_exhaustive_ranking() {
+    for (members, snaps, characters, kinds) in [(7, 0, 7, false), (6, 2, 6, false), (8, 0, 8, true), (7, 2, 7, true)] {
+        let (data, roster) = fixture_with(members, snaps, characters, true, |master| {
+            if kinds {
+                lottery_kinds(master);
+            }
+        });
+        let mut current = request(&data, "mission", false, json!({"kind":"score"}));
+        current.constraints.leader = None;
+        current.constraints.no_snaps = snaps == 0;
+        current.limits.cache_entries = 64;
+        let rows = |decks: &[RecommendedDeck]| {
+            decks
+                .iter()
+                .map(|deck| (key(deck), serde_json::to_value(&deck.payoff_interval).unwrap()))
+                .collect::<Vec<_>>()
+        };
+        for k in [1, 5] {
+            current.k = k;
+            current.strategy = Strategy::Exhaustive;
+            let oracle = engine::recommend(&data, &roster, &current).unwrap();
+            current.strategy = Strategy::BranchAndBound;
+            let bounded = engine::recommend(&data, &roster, &current).unwrap();
+            let name = format!("{members} members, {snaps} Snaps, lottery kinds {kinds}, k={k}");
+            assert_eq!((oracle.completion, bounded.completion), (Completion::Complete, Completion::Complete), "{name}");
+            assert_eq!(rows(&bounded.results), rows(&oracle.results), "{name}");
+            // The bounds of the whole domain weigh the laws of its teams, and every team evaluated under them holds
+            // laws among those.
+            let census = bounded.telemetry.environment.bounds.domain_laws.as_ref().expect("a lottery census");
+            assert_eq!((census.unavailable.as_deref(), census.censuses, census.weighed), (None, 1, 1), "{name}");
+            assert_eq!(census.profiles, if kinds { 3 } else { 1 }, "{name}");
+            assert!(census.classes >= census.profiles && census.laws > 0, "{name}: {census:?}");
+            eprintln!(
+                "{name}: {} classes, {} laws in {} clusters, {} teams audited, {} order sums, {} fine orders, {} fine {} law pruned, {} kind laws",
+                census.classes,
+                census.laws,
+                census.law_clusters,
+                bounded.telemetry.leaves.law_audits,
+                bounded.telemetry.leaves.order_sums,
+                bounded.telemetry.leaves.fine_orders,
+                bounded.telemetry.leaves.fine_pruned,
+                bounded.telemetry.leaves.law_pruned,
+                bounded.telemetry.leaves.kind_laws
+            );
+        }
+    }
+}
+
+/// Under the lottery laws of a team's own orders, its fine caps summed over the orders at once cover the caps of each
+/// order but for their rounding, stay close to their sum, and cover the team's exact payoff.
+#[cfg(feature = "search-diagnostics")]
+#[test]
+fn luck_fine_caps_summed_at_once_cover_the_cap_of_each_order() {
+    use ournotes_search::search::diagnostics;
+    let mut summed = 0;
+    for (members, snaps, characters, kinds) in [(7, 0, 7, false), (7, 2, 7, true)] {
+        let (data, roster) = fixture_with(members, snaps, characters, true, |master| {
+            if kinds {
+                lottery_kinds(master);
+            }
+        });
+        let mut current = request(&data, "mission", false, json!({"kind":"score"}));
+        current.constraints.leader = None;
+        current.constraints.no_snaps = snaps == 0;
+        current.k = 3;
+        let oracle = engine::recommend(&data, &roster, &current).unwrap();
+        assert_eq!(oracle.completion, Completion::Complete);
+        let built = handler::build_card_pool(&data, &roster, &current).unwrap();
+        for deck in &oracle.results {
+            let name = format!("{members} members, {snaps} Snaps, lottery kinds {kinds}: {:?}", key(deck));
+            let (each, at_once) = diagnostics::luck_fine_order_sums(&built, deck.members, deck.snaps).unwrap();
+            let upper = &deck.payoff_interval.as_ref().unwrap().upper;
+            let (numerator, denominator) =
+                (upper.numerator.parse::<i128>().unwrap(), upper.denominator.parse::<i128>().unwrap());
+            let Some(at_once) = at_once else { continue };
+            summed += 1;
+            // Each order's cap rounds up on its own.
+            assert!(each <= at_once + 120 && at_once - each <= each / 100_000, "{name}: {each} {at_once}");
+            // The payoff upper is the mean over the orders.
+            assert!(at_once * denominator >= 120 * numerator, "{name}: {at_once} {numerator}/{denominator}");
+        }
+    }
+    assert!(summed > 0);
 }

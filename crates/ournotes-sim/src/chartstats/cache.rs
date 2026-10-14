@@ -104,7 +104,12 @@ impl ChartStatsCache {
         self.evaluate(
             "curve",
             identity,
-            |v| v.probe_transitions.len() == frames && v.probes.len() == probes && v.range_moments.len() == ranges,
+            |v| {
+                v.probe_transitions.len() == frames
+                    && v.rush_transitions.len() == frames
+                    && v.probes.len() == probes
+                    && v.range_moments.len() == ranges
+            },
             compute,
         )
     }
@@ -484,8 +489,11 @@ impl Record for Counted {
 #[serde(deny_unknown_fields)]
 struct CurveRecord {
     probe_transitions: Vec<u8>,
+    rush_transitions: Vec<u16>,
     steps: Vec<(i32, [Interval; 4])>,
+    frame_queries: Vec<(i32, [[Interval; 4]; 3])>,
     probes: Vec<bool>,
+    probe_starts: Interval,
     range_moments: Vec<(Interval, [Interval; 4])>,
     peak_states: usize,
     transitions: u64,
@@ -495,11 +503,25 @@ impl Record for LuckDpCertifiedResult {
     type Stored = CurveRecord;
 
     fn stored(&self) -> Self::Stored {
-        let Self { probe_transitions, steps, probes, range_moments, peak_states, transitions } = self;
+        let Self {
+            probe_transitions,
+            rush_transitions,
+            steps,
+            frame_queries,
+            probes,
+            probe_starts,
+            range_moments,
+            peak_states,
+            transitions,
+        } = self;
+        let interval = |mass: [ProbabilityMass; 4]| mass.map(|m| Interval::of(m.interval().into()));
         CurveRecord {
             probe_transitions: probe_transitions.clone(),
-            steps: steps.iter().map(|(time, mass)| (*time, mass.map(|m| Interval::of(m.interval().into())))).collect(),
+            rush_transitions: rush_transitions.clone(),
+            steps: steps.iter().map(|&(time, mass)| (time, interval(mass))).collect(),
+            frame_queries: frame_queries.iter().map(|&(time, masses)| (time, masses.map(interval))).collect(),
             probes: probes.clone(),
+            probe_starts: Interval::of((*probe_starts).into()),
             range_moments: range_moments
                 .iter()
                 .map(|m| (Interval::of(m.luck_points.into()), m.lot_results.map(|v| Interval::of(v.into()))))
@@ -510,24 +532,26 @@ impl Record for LuckDpCertifiedResult {
     }
 
     fn restore(stored: Self::Stored) -> Option<Self> {
-        if stored.probe_transitions.iter().any(|&v| v > 15) {
+        if stored.probe_transitions.iter().any(|&v| v > 15) || stored.rush_transitions.iter().any(|&v| v >> 10 != 0) {
             return None;
         }
-        let steps = stored
-            .steps
+        let joint = |masses: [Interval; 4]| -> Option<[ProbabilityMass; 4]> {
+            masses
+                .into_iter()
+                .map(|m| {
+                    let bounds = m.bounds()?;
+                    ProbabilityMass::from_bounds(bounds.lower, bounds.upper).ok()
+                })
+                .collect::<Option<Vec<_>>>()?
+                .try_into()
+                .ok()
+        };
+        let steps =
+            stored.steps.into_iter().map(|(time, masses)| Some((time, joint(masses)?))).collect::<Option<Vec<_>>>()?;
+        let frame_queries = stored
+            .frame_queries
             .into_iter()
-            .map(|(time, masses)| {
-                let masses = masses
-                    .into_iter()
-                    .map(|m| {
-                        let bounds = m.bounds()?;
-                        ProbabilityMass::from_bounds(bounds.lower, bounds.upper).ok()
-                    })
-                    .collect::<Option<Vec<_>>>()?
-                    .try_into()
-                    .ok()?;
-                Some((time, masses))
-            })
+            .map(|(time, [inside, after, before])| Some((time, [joint(inside)?, joint(after)?, joint(before)?])))
             .collect::<Option<Vec<_>>>()?;
         let range_moments = stored
             .range_moments
@@ -546,8 +570,11 @@ impl Record for LuckDpCertifiedResult {
             .collect::<Option<Vec<_>>>()?;
         Some(Self {
             probe_transitions: stored.probe_transitions,
-            steps,
+            rush_transitions: stored.rush_transitions,
+            steps: steps.into(),
+            frame_queries: frame_queries.into(),
             probes: stored.probes,
+            probe_starts: stored.probe_starts.interval()?,
             range_moments,
             peak_states: stored.peak_states,
             transitions: stored.transitions,
@@ -608,8 +635,16 @@ mod tests {
 
         let curve = LuckDpCertifiedResult {
             probe_transitions: vec![1, 3, 8],
-            steps: vec![(12, [ProbabilityMass::from_bounds(0.25f64.next_down(), 0.25f64.next_up()).unwrap(); 4])],
+            rush_transitions: vec![65, 0x302, 0x1aa],
+            steps: vec![(12, [ProbabilityMass::from_bounds(0.25f64.next_down(), 0.25f64.next_up()).unwrap(); 4])]
+                .into(),
+            frame_queries: vec![(
+                12,
+                [[ProbabilityMass::ONE, ProbabilityMass::ZERO, ProbabilityMass::ZERO, ProbabilityMass::ZERO]; 3],
+            )]
+            .into(),
             probes: vec![false, true],
+            probe_starts: F64Interval::new(0.5, 0.5f64.next_up()).unwrap(),
             range_moments: vec![LuckRangeMoments {
                 luck_points: F64Interval::new(1.0, 1.0f64.next_up()).unwrap(),
                 lot_results: [F64Interval::new(-0.0, f64::from_bits(1)).unwrap(); 4],
@@ -696,8 +731,11 @@ mod tests {
         let empty_curve = || {
             Ok(LuckDpCertifiedResult {
                 probe_transitions: Vec::new(),
-                steps: Vec::new(),
+                rush_transitions: Vec::new(),
+                steps: Vec::new().into(),
+                frame_queries: Vec::new().into(),
                 probes: Vec::new(),
+                probe_starts: F64Interval::ZERO,
                 range_moments: Vec::new(),
                 peak_states: 1,
                 transitions: 0,

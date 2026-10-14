@@ -1,0 +1,1656 @@
+//! Exact binary32 factor histories of the lottery paths through the recorder's command and query schedule.
+//!
+//! The native calculator keeps one binary32 value per factor field. Executing a score frame applies the frame's
+//! factor commands in (chart time, owner, filing) order, scores its notes in between, and records the binary32 sum
+//! of the commands it applied; undoing the frame subtracts that sum. A score query undoes from the last executed
+//! frame down to the earliest frame that received a filing since the previous query, then executes up to the
+//! query's frame.
+//!
+//! Lottery paths differ in two ways: the direct score probes file their signed score-up pairs at different skill
+//! boundaries, and Rush filings can move the rewind target of a query. Native files a Rush command exactly when the
+//! Rush handle flips, so each path keeps its handle: a range FINISH files where the path's Rush runs, a play
+//! frame's lotteries change it along the transitions the certified lottery law admits for it, and where the law
+//! ties the probe class to the Rush the path's switches follow its handle. Otherwise a path switches along any
+//! probe transition the law admits at that boundary. Where the schedule leaves a path's history open (which of a
+//! play frame's lottery places files its Rush command, and the owner-local order of a switch among ordinary
+//! commands of the same owner and time), every alternative is followed, so the paths cover every lottery history
+//! with positive probability.
+//!
+//! Each [`Path`] is a group of histories with the same schedule ahead: the same probe class and Rush, the same start
+//! class and recorded sum of every frame a later query may still undo, and the same probe switches filed. A recorded sum
+//! starts from zero, so it does not depend on the state. From here on every history of the group therefore applies
+//! the same sequence of binary32 additions of constants to each field, and rounded addition of a constant is
+//! monotone: the least and the greatest state of the group, which are states of member histories, stay the least
+//! and the greatest under every such step. A group keeps exactly these two states per field.
+//!
+//! A note keeps, per probe class and combo inputs, the least and the greatest factor state of its last execution
+//! over all histories: a frame every history executes replaces them, a frame only some histories execute widens
+//! them.
+//!
+//! One replay follows several orders of a formation at once when their schedules differ only in factor commands
+//! that belong to some of the orders and in the owners and values of their probe rows, and the orders share the
+//! possible lottery transitions. A group then covers a set of orders whose histories have the same states, and
+//! every other part of the group is common to them. Groups split where their orders part: at a command of some of
+//! them, at a probe switch of orders with different probe rows, and where a query rewinds them to different frames.
+//! Groups of the same schedule ahead merge again: an order in several of them takes the widest states, exactly as
+//! a replay of that order alone merges its histories, and orders with the same states share one group. Monotone
+//! rounding makes the widest states of merged groups evolve as the groups would separately, so where the merges
+//! happen changes no order's note values.
+
+use super::{BoundsEvent, FIELDS, ProbeRow};
+use crate::error::Error;
+use crate::live::full::luck_dp::RUSH_FINISH;
+use crate::live::skill::FactorCommand;
+use crate::num::FxHashMap;
+use std::cmp::Ordering;
+use std::ops::Range;
+
+/// The most path groups of a replay, and the most frame records they retain together, beyond which
+/// [`super::relaxed_paths::RelaxedReplay`] follows the histories.
+const MAX_PATHS: usize = 16384;
+const MAX_RECORDS: usize = 1 << 20;
+
+#[cfg(test)]
+thread_local! {
+    /// Whether the replays of a test thread go beyond the budgets: tests that compare the joint replay of many orders
+    /// with each order alone lift them.
+    pub(super) static LIFT_BUDGETS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// [`MAX_PATHS`] and [`MAX_RECORDS`].
+fn budgets() -> (usize, usize) {
+    #[cfg(test)]
+    if LIFT_BUDGETS.with(std::cell::Cell::get) {
+        return (usize::MAX, usize::MAX);
+    }
+    (MAX_PATHS, MAX_RECORDS)
+}
+const MAX_MERGES: usize = 4096;
+/// Per order of a replay, the most values of a note.
+pub(super) const MAX_NOTE_VALUES: usize = 4096;
+/// The most orders one replay follows.
+pub(super) const MAX_LANES: usize = 128;
+
+pub(super) type State = [f32; FIELDS];
+type Bits = [u32; FIELDS];
+/// The binary32 factor state of the native calculator, field by field.
+pub(super) type FactorState = State;
+/// A set of orders: bit k is order k.
+pub(super) type Orders = u128;
+
+/// The orders of a set, ascending.
+pub(super) fn each(mut orders: Orders) -> impl Iterator<Item = usize> {
+    std::iter::from_fn(move || {
+        (orders != 0).then(|| {
+            let order = orders.trailing_zeros() as usize;
+            orders &= orders - 1;
+            order
+        })
+    })
+}
+
+/// The set of orders `0..count`.
+pub(super) fn first_orders(count: usize) -> Orders {
+    if count >= MAX_LANES { Orders::MAX } else { (1 << count) - 1 }
+}
+
+/// Splits each set of `cells` into its orders in `by` and the rest.
+pub(super) fn refine(cells: &mut Vec<Orders>, by: Orders) {
+    for index in 0..cells.len() {
+        let (cell, inside) = (cells[index], cells[index] & by);
+        if inside != 0 && inside != cell {
+            cells[index] = inside;
+            cells.push(cell & !inside);
+        }
+    }
+}
+
+pub(super) fn refuse(why: &str) -> Error {
+    Error::Unsupported(format!("native LUCK exact score: {why}"))
+}
+
+fn capacity() -> Error {
+    Error::Capacity("native LUCK exact score: the lottery path set exceeds its complete-work budget".into())
+}
+
+/// An ordinary factor command: the changes native apply adds, in field order. The combo and note fields change
+/// only for a nonzero value; a judgement field (`always`) is added even when its value is zero.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Op {
+    pub(super) time: i32,
+    pub(super) owner: i32,
+    deltas: [f32; FIELDS],
+    always: u8,
+    /// The orders whose schedule holds the command.
+    pub(super) orders: Orders,
+}
+
+impl Op {
+    pub(super) fn of(command: &FactorCommand, orders: Orders) -> Self {
+        let mill = |m: i32| if m != 0 { m as f32 / 100000f32 } else { 0f32 };
+        let mut deltas = [0f32; FIELDS];
+        deltas[0] = mill(command.combo_mill);
+        deltas[1] = mill(command.note_mill);
+        let mut always = 0;
+        if (3..=6).contains(&command.judgement) {
+            let field = 8 - command.judgement as usize;
+            deltas[field] = mill(command.judge_mill);
+            always = 1 << field;
+        }
+        Self { time: command.time_ms, owner: command.owner_id, deltas, always, orders }
+    }
+
+    pub(super) fn changes(&self) -> bool {
+        self.always != 0 || self.deltas.iter().any(|&delta| delta != 0.0)
+    }
+
+    fn apply(&self, sub: &mut Sub) {
+        for field in 0..FIELDS {
+            let delta = self.deltas[field];
+            if self.always >> field & 1 != 0 || delta != 0.0 {
+                sub.low[field] += delta;
+                sub.high[field] += delta;
+                sub.sum[field] += delta;
+            }
+        }
+    }
+}
+
+fn apply_probe(value: f32, sub: &mut Sub) {
+    if value != 0.0 {
+        sub.low[1] += value;
+        sub.high[1] += value;
+        sub.sum[1] += value;
+    }
+}
+
+/// Widens `low..=high` to cover `other_low..=other_high`, field by field.
+pub(super) fn widen(low: &mut State, high: &mut State, other_low: &State, other_high: &State) {
+    for field in 0..FIELDS {
+        if other_low[field] < low[field] {
+            low[field] = other_low[field];
+        }
+        if other_high[field] > high[field] {
+            high[field] = other_high[field];
+        }
+    }
+}
+
+fn same(a: &State, b: &State) -> bool {
+    a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits())
+}
+
+pub(super) fn finite(states: [&State; 2]) -> Result<(), Error> {
+    if states.iter().all(|state| state.iter().all(|value| value.is_finite())) {
+        Ok(())
+    } else {
+        Err(refuse("a factor state may leave the finite binary32 range"))
+    }
+}
+
+/// A group of orders whose histories share the least and the greatest state.
+pub(super) trait Bounded: Clone {
+    fn orders(&self) -> Orders;
+    fn set_orders(&mut self, orders: Orders);
+    fn low(&self) -> &State;
+    fn high(&self) -> &State;
+    fn set_bounds(&mut self, low: State, high: State);
+}
+
+macro_rules! bounded {
+    ($($kind:ty),*) => {$(
+        impl Bounded for $kind {
+            fn orders(&self) -> Orders {
+                self.orders
+            }
+            fn set_orders(&mut self, orders: Orders) {
+                self.orders = orders;
+            }
+            fn low(&self) -> &State {
+                &self.low
+            }
+            fn high(&self) -> &State {
+                &self.high
+            }
+            fn set_bounds(&mut self, low: State, high: State) {
+                (self.low, self.high) = (low, high);
+            }
+        }
+    )*};
+}
+
+bounded!(Path, Lane, Sub, NoteValue);
+
+/// Appends `items`, which share everything but their orders and states, to `out` merged: an order of several
+/// items takes the widest states of its items, and orders with bitwise equal states share one item.
+fn cover<T: Bounded>(items: impl IntoIterator<Item = T>, out: &mut Vec<T>) {
+    let start = out.len();
+    out.extend(items);
+    let (mut union, mut overlap) = (0 as Orders, false);
+    for item in &out[start..] {
+        overlap |= union & item.orders() != 0;
+        union |= item.orders();
+    }
+    if overlap {
+        let items: Vec<T> = out.drain(start..).collect();
+        widest(items, out);
+    }
+    let key = |item: &T| (item.low().map(f32::to_bits), item.high().map(f32::to_bits));
+    out[start..].sort_unstable_by_key(key);
+    let mut kept = start;
+    for index in start..out.len() {
+        if kept > start && key(&out[kept - 1]) == key(&out[index]) {
+            let orders = out[kept - 1].orders() | out[index].orders();
+            out[kept - 1].set_orders(orders);
+        } else {
+            out.swap(kept, index);
+            kept += 1;
+        }
+    }
+    out.truncate(kept);
+}
+
+/// Appends `items` to `out` with each order in one item, whose states are the widest of the order's items.
+fn widest<T: Bounded>(items: Vec<T>, out: &mut Vec<T>) {
+    let start = out.len();
+    for mut item in items {
+        let mut rest = item.orders();
+        let end = out.len();
+        for index in start..end {
+            let shared = out[index].orders() & rest;
+            if shared == 0 {
+                continue;
+            }
+            rest &= !shared;
+            let (mut low, mut high) = (*out[index].low(), *out[index].high());
+            widen(&mut low, &mut high, item.low(), item.high());
+            if same(&low, out[index].low()) && same(&high, out[index].high()) {
+                continue;
+            }
+            if shared == out[index].orders() {
+                out[index].set_bounds(low, high);
+            } else {
+                let mut part = out[index].clone();
+                let left = out[index].orders() & !shared;
+                out[index].set_orders(left);
+                part.set_orders(shared);
+                part.set_bounds(low, high);
+                out.push(part);
+            }
+        }
+        if rest != 0 {
+            item.set_orders(rest);
+            out.push(item);
+        }
+    }
+}
+
+/// Merges the items of `items` that `order` ranks equal, see [`cover`]. `spare` is a buffer to merge into.
+pub(super) fn merge_equal<T: Bounded>(items: &mut Vec<T>, spare: &mut Vec<T>, order: impl Fn(&T, &T) -> Ordering) {
+    if items.len() < 2 {
+        return;
+    }
+    items.sort_unstable_by(&order);
+    if items.windows(2).all(|pair| order(&pair[0], &pair[1]) != Ordering::Equal) {
+        return;
+    }
+    spare.clear();
+    let mut end = items.len();
+    while end > 0 {
+        let mut start = end - 1;
+        while start > 0 && order(&items[start - 1], &items[start]) == Ordering::Equal {
+            start -= 1;
+        }
+        if end - start == 1 {
+            spare.extend(items.drain(start..));
+        } else {
+            cover(items.drain(start..), spare);
+        }
+        end = start;
+    }
+    std::mem::swap(items, spare);
+}
+
+/// One element of a probe switch: an ordinary command of the switch's time or a probe row, by index.
+#[derive(Clone, Copy)]
+pub(super) enum Step {
+    Op(usize),
+    Row(usize),
+}
+
+#[derive(Clone, Default)]
+pub(super) struct Frame {
+    /// Ordinary commands by (time, owner), equal keys in filing order (the native stable sort).
+    pub(super) ops: Vec<Op>,
+    /// Notes by (time, note id).
+    pub(super) notes: Vec<usize>,
+}
+
+/// The notes and ordinary factor commands filed in the score frames of a replay of one or more orders, and the
+/// filings since the previous query.
+pub(super) struct Filings {
+    frames: Vec<Frame>,
+    pub(super) notes: Vec<ExactNote>,
+    lanes: usize,
+    /// Earliest frame of a filing every order makes since the previous query, and the frames of the commands only
+    /// some orders filed since then, with those orders.
+    mandatory: Option<i32>,
+    partial: Vec<(i32, Orders)>,
+}
+
+impl Filings {
+    pub(super) fn new(frames: usize, lanes: usize) -> Self {
+        Self { frames: vec![Frame::default(); frames], notes: Vec::new(), lanes, mandatory: None, partial: Vec::new() }
+    }
+
+    pub(super) fn frame(&self, frame: usize) -> Result<&Frame, Error> {
+        self.frames.get(frame).ok_or_else(|| Error::Input("score frame outside the calculator".into()))
+    }
+
+    fn mandatory(&mut self, frame: usize) {
+        self.mandatory = Some(self.mandatory.map_or(frame as i32, |old| old.min(frame as i32)));
+    }
+
+    /// A note filing; returns the note's index in [`Self::notes`].
+    pub(super) fn file_note(
+        &mut self,
+        frame: usize,
+        time_ms: i32,
+        note_id: i32,
+        key: (usize, usize),
+    ) -> Result<usize, Error> {
+        let index = self.notes.len();
+        self.notes.push(ExactNote { time_ms, note_id, frame, key, values: Vec::new(), revision: 0 });
+        let notes = &self.notes;
+        let entry =
+            self.frames.get_mut(frame).ok_or_else(|| Error::Input("note frame outside the calculator".into()))?;
+        let at = entry.notes.partition_point(|&n| (notes[n].time_ms, notes[n].note_id) <= (time_ms, note_id));
+        entry.notes.insert(at, index);
+        self.mandatory(frame);
+        Ok(index)
+    }
+
+    /// A factor command filing in the schedules of `orders`. A Rush command changes no float field and differs
+    /// between lottery paths: it only moves the rewind target, and a replay files it with the lotteries. Every other
+    /// command is filed by every path.
+    pub(super) fn file_command(&mut self, frame: usize, command: &FactorCommand, orders: Orders) -> Result<(), Error> {
+        let every = first_orders(self.lanes);
+        let orders = orders & every;
+        let op = Op::of(command, orders);
+        if command.luck != 0 {
+            if op.changes() {
+                return Err(refuse("a Rush command changes a float factor"));
+            }
+            if orders != every {
+                return Err(refuse("a Rush command belongs to some orders only"));
+            }
+            return Ok(());
+        }
+        if orders == 0 {
+            return Ok(());
+        }
+        let entry =
+            self.frames.get_mut(frame).ok_or_else(|| Error::Input("score frame outside the calculator".into()))?;
+        if op.changes() {
+            let key = (op.time, op.owner);
+            let at = entry.ops.partition_point(|o| (o.time, o.owner) <= key);
+            entry.ops.insert(at, op);
+        }
+        if orders == every {
+            self.mandatory(frame);
+        } else {
+            match self.partial.iter_mut().find(|(other, _)| *other == frame as i32) {
+                Some((_, filed)) => *filed |= orders,
+                None => self.partial.push((frame as i32, orders)),
+            }
+        }
+        Ok(())
+    }
+
+    /// The orders of each distinct earliest filing since the previous query, None for the orders without one; every
+    /// order has an entry.
+    pub(super) fn earliest(&mut self) -> Vec<(Option<i32>, Orders)> {
+        let mut filings = Vec::<(Option<i32>, Orders)>::with_capacity(self.partial.len() + 1);
+        self.partial.sort_unstable_by_key(|&(frame, _)| frame);
+        let mut rest = first_orders(self.lanes);
+        for &(frame, orders) in &self.partial {
+            let orders = orders & rest;
+            if orders == 0 {
+                continue;
+            }
+            rest &= !orders;
+            let filing = Some(self.mandatory.map_or(frame, |mandatory| mandatory.min(frame)));
+            match filings.iter_mut().find(|(other, _)| *other == filing) {
+                Some((_, all)) => *all |= orders,
+                None => filings.push((filing, orders)),
+            }
+        }
+        if rest != 0 {
+            match filings.iter_mut().find(|(other, _)| *other == self.mandatory) {
+                Some((_, all)) => *all |= rest,
+                None => filings.push((self.mandatory, rest)),
+            }
+        }
+        filings
+    }
+
+    /// Forgets the filings a query took in.
+    pub(super) fn clear(&mut self) {
+        self.mandatory = None;
+        self.partial.clear();
+    }
+
+    /// Takes in the note executions of a query, given each first frame it executed with its orders: the executions of
+    /// each note replace the values of its executing orders. An order with a history that started after the note's
+    /// frame keeps the values of its previous execution too. `values` and `merged` are buffers.
+    pub(super) fn observe(
+        &mut self,
+        observed: &mut [(usize, NoteValue)],
+        firsts: &[(i32, Orders)],
+        values: &mut Vec<NoteValue>,
+        merged: &mut Vec<NoteValue>,
+    ) -> Result<(), Error> {
+        observed.sort_unstable_by_key(|&(note, _)| note);
+        let mut at = 0;
+        while at < observed.len() {
+            let index = observed[at].0;
+            let end = at + observed[at..].partition_point(|&(note, _)| note == index);
+            let note = &mut self.notes[index];
+            let seen = observed[at..end].iter().fold(0, |orders, (_, value)| orders | value.orders);
+            let keep = firsts
+                .iter()
+                .filter(|&&(first, _)| first > note.frame as i32)
+                .fold(0, |orders: Orders, &(_, firsts)| orders | firsts);
+            let carried = !seen | (seen & keep);
+            values.clear();
+            values.extend(observed[at..end].iter().map(|&(_, value)| value));
+            values.extend(
+                note.values
+                    .iter()
+                    .filter(|old| old.orders & carried != 0)
+                    .map(|old| NoteValue { orders: old.orders & carried, ..*old }),
+            );
+            merge_equal(values, merged, |a, b| (a.class, a.combo).cmp(&(b.class, b.combo)));
+            if values.len() > MAX_NOTE_VALUES * self.lanes {
+                return Err(capacity());
+            }
+            let same = values.len() == note.values.len()
+                && values.iter().zip(&note.values).all(|(new, old)| new.bits() == old.bits());
+            if !same {
+                note.values.clone_from(values);
+                note.revision += 1;
+            }
+            at = end;
+        }
+        Ok(())
+    }
+}
+
+/// Probe row configurations: each set of orders with its probe rows.
+pub(super) type Configs = Vec<(Orders, Vec<ProbeRow>)>;
+
+/// The probe rows of a replay of `lanes` orders by the orders that have them, each configuration by owner and in
+/// filing order on equal owners, and whether the orders have probe rows.
+pub(super) fn sorted_configs(configs: &[(Orders, Vec<ProbeRow>)], lanes: usize) -> Result<(Configs, bool), Error> {
+    if !(1..=MAX_LANES).contains(&lanes) {
+        return Err(Error::Input(format!("a replay follows 1..={MAX_LANES} orders")));
+    }
+    let every = first_orders(lanes);
+    let mut covered = 0;
+    let mut sorted = Vec::with_capacity(configs.len());
+    for (orders, rows) in configs {
+        if *orders == 0 || orders & (covered | !every) != 0 {
+            return Err(Error::Input("probe row configurations partition the replay's orders".into()));
+        }
+        covered |= orders;
+        let mut rows = rows.clone();
+        rows.sort_by_key(|row| row.owner);
+        sorted.push((*orders, rows));
+    }
+    let rows = sorted.iter().any(|(_, rows)| !rows.is_empty());
+    if covered != every || sorted.iter().any(|(_, config)| config.is_empty() == rows) {
+        return Err(Error::Input("every order of a replay or none has probe rows".into()));
+    }
+    Ok((sorted, rows))
+}
+
+/// A group of native histories with the same schedule ahead in each of its orders; see the module documentation.
+#[derive(Clone)]
+struct Path {
+    orders: Orders,
+    /// Probe class of the executed state.
+    class: u8,
+    /// Per field, the least and the greatest state of the group's histories.
+    low: State,
+    high: State,
+    /// Probe class after the latest skill boundary.
+    now: u8,
+    /// Whether the Rush handle is set.
+    rush: bool,
+    /// Earliest frame of a probe switch or Rush command filed since the previous query.
+    filed: Option<i32>,
+    /// From the replay's `base` frame to the last executed frame: each frame's start class and recorded sum.
+    starts: Vec<u8>,
+    sums: Vec<Bits>,
+    /// The (frame, time) of each probe switch filed in frames from `base` on.
+    switches: Vec<(i32, i32)>,
+}
+
+impl Path {
+    /// Orders paths by everything that decides their native behavior ahead.
+    fn schedule(a: &Path, b: &Path) -> Ordering {
+        (a.class, a.now, a.rush, a.filed, &a.starts, &a.switches, &a.sums).cmp(&(
+            b.class,
+            b.now,
+            b.rush,
+            b.filed,
+            &b.starts,
+            &b.switches,
+            &b.sums,
+        ))
+    }
+
+    fn file(&mut self, frame: i32) {
+        self.filed = Some(self.filed.map_or(frame, |old| old.min(frame)));
+    }
+}
+
+/// A note's probe class, (ordinary, Gekisou) combo inputs as binary32 bits, and the least and the greatest factor
+/// state of its executions with them in each of `orders`.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct NoteValue {
+    pub orders: Orders,
+    pub class: u8,
+    pub combo: (u32, u32),
+    pub low: State,
+    pub high: State,
+}
+
+/// One alternative of a frame's execution: its orders, probe class, state bounds and recorded sum.
+#[derive(Clone, Copy)]
+struct Sub {
+    orders: Orders,
+    class: u8,
+    low: State,
+    high: State,
+    sum: State,
+}
+
+impl Sub {
+    fn order(a: &Sub, b: &Sub) -> Ordering {
+        (a.class, a.sum.map(f32::to_bits)).cmp(&(b.class, b.sum.map(f32::to_bits)))
+    }
+}
+
+/// A filed note and the values of its last execution over every path.
+#[derive(Clone, Debug)]
+pub(super) struct ExactNote {
+    pub time_ms: i32,
+    pub note_id: i32,
+    pub(super) frame: usize,
+    /// The recorder's (frame, index in the frame) of the note, which keys its combo observations.
+    pub(super) key: (usize, usize),
+    /// The values by (class, combo inputs); those of one key cover disjoint orders.
+    pub values: Vec<NoteValue>,
+    /// How many times a query changed `values`.
+    pub revision: u32,
+}
+
+impl NoteValue {
+    /// The value with its states as binary32 bits.
+    pub(super) fn bits(&self) -> (Orders, u8, (u32, u32), Bits, Bits) {
+        (self.orders, self.class, self.combo, self.low.map(f32::to_bits), self.high.map(f32::to_bits))
+    }
+}
+
+impl ExactNote {
+    /// The values of one order.
+    #[cfg(test)]
+    pub(super) fn values_of(&self, order: usize) -> impl Iterator<Item = &NoteValue> + '_ {
+        self.values.iter().filter(move |value| value.orders >> order & 1 != 0)
+    }
+}
+
+/// A group being executed: its orders, the probe class, the state bounds, and the records of the frames executed
+/// so far.
+#[derive(Clone)]
+struct Lane {
+    orders: Orders,
+    class: u8,
+    low: State,
+    high: State,
+    starts: Vec<u8>,
+    sums: Vec<Bits>,
+}
+
+impl Lane {
+    fn order(a: &Lane, b: &Lane) -> Ordering {
+        (a.class, &a.starts, &a.sums).cmp(&(b.class, &b.starts, &b.sums))
+    }
+}
+
+/// Buffers the executions of the queries reuse.
+#[derive(Default)]
+struct Scratch {
+    forks: Vec<(usize, Orders, i32)>,
+    paths: Vec<Path>,
+    out: Vec<Lane>,
+    lanes: Vec<Lane>,
+    next: Vec<Lane>,
+    switches: Vec<i32>,
+    subs: Vec<Sub>,
+    alternatives: Vec<Sub>,
+    cells: Vec<Orders>,
+    applied: Vec<Op>,
+    merges: Vec<Step>,
+    steps: [Vec<Step>; 3],
+    values: Vec<NoteValue>,
+    merged_paths: Vec<Path>,
+    merged_lanes: Vec<Lane>,
+    merged_subs: Vec<Sub>,
+    merged_values: Vec<NoteValue>,
+}
+
+/// The [`LuckDpCertifiedResult::rush_transitions`] entry of play frame `ready`. The potentials of a play frame
+/// precede its readiness mark.
+///
+/// [`LuckDpCertifiedResult::rush_transitions`]: crate::live::full::LuckDpCertifiedResult::rush_transitions
+pub(super) fn rush_mask(rush_transitions: &[u16], ready: usize) -> Result<u16, Error> {
+    rush_transitions.get(ready).copied().ok_or_else(|| refuse("a Rush potential follows the last play frame"))
+}
+
+/// Whether a Rush potential may file under its play frame's `mask`: at the frame's start only a range FINISH files,
+/// and the frame's lotteries only along a filing transition.
+pub(super) fn rush_may_file(mask: u16, start: bool) -> bool {
+    if start { mask & RUSH_FINISH != 0 } else { mask & 0xaa != 0 }
+}
+
+/// For each score query of `events`, the earliest frame any later query may undo or execute again, `i32::MAX`
+/// after the last query. Every filing since a query's predecessor may set that query's rewind target. A factor
+/// command of some orders only counts as a filing too, so the floors hold for each order.
+pub(super) fn undo_floors<'a>(
+    events: impl IntoIterator<Item = &'a BoundsEvent>,
+    rush_transitions: &[u16],
+) -> Result<Vec<i32>, Error> {
+    let mut lowest = Vec::new();
+    let (mut prev, mut filed, mut ready) = (-1i32, None::<i32>, 0usize);
+    for event in events {
+        let frame = match event {
+            BoundsEvent::Potential { start, .. } if !rush_may_file(rush_mask(rush_transitions, ready)?, *start) => {
+                continue;
+            }
+            BoundsEvent::ProbabilityReady(_) => {
+                ready += 1;
+                continue;
+            }
+            BoundsEvent::Note { frame, .. }
+            | BoundsEvent::Factor { frame, .. }
+            | BoundsEvent::Potential { frame, .. }
+            | BoundsEvent::Probe { frame, .. } => *frame as i32,
+            BoundsEvent::Query { to, .. } => {
+                let u = filed.map_or(*to, |frame| (*to).min(frame - 1));
+                lowest.push(if u < prev { u + 1 } else { prev + 1 });
+                prev = *to;
+                filed = None;
+                continue;
+            }
+            _ => continue,
+        };
+        filed = Some(filed.map_or(frame, |old| old.min(frame)));
+    }
+    let mut floors = vec![i32::MAX; lowest.len()];
+    let mut floor = i32::MAX;
+    for (out, &lowest) in floors.iter_mut().zip(&lowest).rev() {
+        *out = floor;
+        floor = floor.min(lowest);
+    }
+    Ok(floors)
+}
+
+/// Every owner-local merge of the commands of one time with the probe rows that preserves the filing order of each,
+/// into `out` as consecutive merges of `group.len() + rows.len()` steps. Owners stay in native score order; their
+/// independent interleavings form a Cartesian product.
+pub(super) fn merges(
+    group: &[Op],
+    rows: &[ProbeRow],
+    out: &mut Vec<Step>,
+    buffers: &mut [Vec<Step>; 3],
+) -> Result<(), Error> {
+    fn interleavings(ops: Range<usize>, rows: Range<usize>, out: &mut Vec<Step>, prefix: &mut Vec<Step>) {
+        if ops.is_empty() || rows.is_empty() {
+            out.extend_from_slice(prefix);
+            out.extend(ops.map(Step::Op).chain(rows.map(Step::Row)));
+            return;
+        }
+        prefix.push(Step::Op(ops.start));
+        interleavings(ops.start + 1..ops.end, rows.clone(), out, prefix);
+        prefix.pop();
+        prefix.push(Step::Row(rows.start));
+        interleavings(ops, rows.start + 1..rows.end, out, prefix);
+        prefix.pop();
+    }
+    fn choose(a: usize, b: usize) -> Option<usize> {
+        let (n, k) = (a.checked_add(b)?, a.min(b));
+        let mut count = 1usize;
+        for i in 1..=k {
+            count = count.checked_mul(n - k + i)? / i;
+            if count > MAX_MERGES {
+                return None;
+            }
+        }
+        Some(count)
+    }
+    let [blocks, spare, prefix] = buffers;
+    out.clear();
+    let (mut count, mut width) = (1usize, 0usize);
+    let (mut g, mut r) = (0, 0);
+    while g < group.len() || r < rows.len() {
+        let owner = match (group.get(g), rows.get(r)) {
+            (Some(op), Some(row)) => op.owner.min(row.owner),
+            (Some(op), None) => op.owner,
+            (None, Some(row)) => row.owner,
+            (None, None) => unreachable!("a group item remains"),
+        };
+        let ops = g..g + group[g..].partition_point(|op| op.owner == owner);
+        let probes = r..r + rows[r..].partition_point(|row| row.owner == owner);
+        let blocks_count = choose(ops.len(), probes.len()).ok_or_else(capacity)?;
+        count = count.checked_mul(blocks_count).filter(|&total| total <= MAX_MERGES).ok_or_else(capacity)?;
+        let block = ops.len() + probes.len();
+        blocks.clear();
+        prefix.clear();
+        interleavings(ops.clone(), probes.clone(), blocks, prefix);
+        spare.clear();
+        for merge in 0..count / blocks_count {
+            for index in 0..blocks_count {
+                spare.extend_from_slice(&out[merge * width..(merge + 1) * width]);
+                spare.extend_from_slice(&blocks[index * block..(index + 1) * block]);
+            }
+        }
+        std::mem::swap(out, spare);
+        width += block;
+        (g, r) = (ops.end, probes.end);
+    }
+    Ok(())
+}
+
+/// The native factor histories of every lottery path through the recorder's command and query schedule, in each of
+/// one or more orders.
+pub(super) struct ExactReplay {
+    filed: Filings,
+    /// The orders of each probe row configuration and its rows by owner, filing order on equal owners.
+    configs: Configs,
+    /// Whether the orders have probe rows.
+    rows: bool,
+    paths: Vec<Path>,
+    lanes: usize,
+    /// First frame whose record the paths retain.
+    base: i32,
+    prev: i32,
+    /// [`undo_floors`] of the schedule.
+    floors: Vec<i32>,
+    queries: usize,
+    /// The orders the last query rewound to each first executed frame.
+    firsts: Vec<(i32, Orders)>,
+    /// The note executions of the current query.
+    observed: Vec<(usize, NoteValue)>,
+    scratch: Scratch,
+    pub work: ReplayWork,
+}
+
+/// The work of a replay: the most groups of histories it held at once, the histories executed by queries, the score
+/// frames they undid and executed, and the queries that executed no frame.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ReplayWork {
+    pub peak_paths: usize,
+    pub runs: u64,
+    pub undone_frames: u64,
+    pub executed_frames: u64,
+    pub idle_queries: u64,
+}
+
+impl Default for ReplayWork {
+    fn default() -> Self {
+        Self { peak_paths: 1, runs: 0, undone_frames: 0, executed_frames: 0, idle_queries: 0 }
+    }
+}
+
+impl ExactReplay {
+    /// A replay of `lanes` orders, whose probe rows `configs` give by the orders that have them.
+    pub(super) fn new(
+        frames: usize,
+        configs: &[(Orders, Vec<ProbeRow>)],
+        floors: Vec<i32>,
+        lanes: usize,
+    ) -> Result<Self, Error> {
+        let (configs, rows) = sorted_configs(configs, lanes)?;
+        let every = first_orders(lanes);
+        let mut state = [0f32; FIELDS];
+        state[1] = 1.0;
+        let path = Path {
+            orders: every,
+            class: 0,
+            low: state,
+            high: state,
+            now: 0,
+            rush: false,
+            filed: None,
+            starts: Vec::new(),
+            sums: Vec::new(),
+            switches: Vec::new(),
+        };
+        Ok(Self {
+            filed: Filings::new(frames, lanes),
+            configs,
+            rows,
+            paths: vec![path],
+            lanes,
+            base: 0,
+            prev: -1,
+            floors,
+            queries: 0,
+            firsts: Vec::new(),
+            observed: Vec::new(),
+            scratch: Scratch::default(),
+            work: ReplayWork::default(),
+        })
+    }
+
+    /// Without probe rows both probe classes have the same factor history.
+    pub(super) fn shared_classes(&self) -> bool {
+        !self.rows
+    }
+
+    /// The first frame whose record the paths retain: no later query executes an earlier frame.
+    pub(super) fn base(&self) -> i32 {
+        self.base
+    }
+
+    /// The filed notes and the values of their last executions.
+    pub(super) fn notes(&self) -> &[ExactNote] {
+        &self.filed.notes
+    }
+
+    /// A note filing; returns the note's index in [`Self::notes`].
+    pub(super) fn file_note(
+        &mut self,
+        frame: usize,
+        time_ms: i32,
+        note_id: i32,
+        key: (usize, usize),
+    ) -> Result<usize, Error> {
+        self.filed.file_note(frame, time_ms, note_id, key)
+    }
+
+    /// A factor command filing in the schedules of `orders` ([`Filings::file_command`]); the paths file the Rush
+    /// commands through [`Self::finish`] and [`Self::lotteries`].
+    pub(super) fn file_command(&mut self, frame: usize, command: &FactorCommand, orders: Orders) -> Result<(), Error> {
+        self.filed.file_command(frame, command, orders)
+    }
+
+    /// A range FINISH at the start of a play frame, filing in `frame`: every path whose Rush runs disables it.
+    pub(super) fn finish(&mut self, frame: usize) -> Result<(), Error> {
+        if self.paths.iter().all(|path| !path.rush) {
+            return Ok(());
+        }
+        for path in self.paths.iter_mut().filter(|path| path.rush) {
+            path.rush = false;
+            path.file(frame as i32);
+        }
+        self.settle()
+    }
+
+    /// The lotteries of one play frame, which may file Rush commands in `frames`. `mask` holds bit
+    /// `4 * before + 2 * after + filed` for each Rush transition the lottery law admits; a filing transition files
+    /// in any of `frames`.
+    pub(super) fn lotteries(&mut self, frames: &[i32], mask: u16) -> Result<(), Error> {
+        // Paths whose only admitted transition keeps their Rush without a filing are unchanged.
+        let rush = |path: &Path| u16::from(path.rush);
+        if self.paths.iter().all(|path| mask >> (4 * rush(path)) & 0xf == 1 << (2 * rush(path))) {
+            return Ok(());
+        }
+        let mut frames = frames.to_vec();
+        frames.sort_unstable();
+        frames.dedup();
+        let mut next = Vec::with_capacity(self.paths.len() * 2);
+        for path in self.paths.drain(..) {
+            for bit in 0..4u16 {
+                let (after, filed) = (bit >> 1 == 1, bit & 1 == 1);
+                if mask >> (4 * u16::from(path.rush) + bit) & 1 == 0 {
+                    continue;
+                }
+                if !filed {
+                    let mut kept = path.clone();
+                    kept.rush = after;
+                    next.push(kept);
+                    continue;
+                }
+                if frames.is_empty() {
+                    return Err(refuse("a lottery Rush transition has no filing place"));
+                }
+                for &frame in &frames {
+                    let mut forked = path.clone();
+                    forked.rush = after;
+                    forked.file(frame);
+                    next.push(forked);
+                }
+            }
+        }
+        if next.is_empty() {
+            return Err(refuse("no native path follows the certified Rush transitions"));
+        }
+        self.paths = next;
+        self.settle()
+    }
+
+    /// A skill boundary at which every probe row may switch together, filing at `time_ms` in `frame`. `mask` holds
+    /// bit `2 * old + new` for each probe class transition the lottery law admits there; with `follows`, the new
+    /// probe class equals the Rush.
+    pub(super) fn probe(&mut self, frame: usize, time_ms: i32, mask: u8, follows: bool) -> Result<(), Error> {
+        if !self.rows {
+            return Ok(());
+        }
+        let admits =
+            |path: &Path, new: u8| mask >> (2 * path.now + new) & 1 != 0 && (!follows || new == u8::from(path.rush));
+        if self.paths.iter().all(|path| admits(path, path.now) && !admits(path, 1 - path.now)) {
+            return Ok(());
+        }
+        let mut next = Vec::with_capacity(self.paths.len() * 2);
+        for path in self.paths.drain(..) {
+            let class = path.now;
+            if admits(&path, 1 - class) {
+                let mut switched = path.clone();
+                switched.now = 1 - class;
+                switched.switches.push((frame as i32, time_ms));
+                switched.file(frame as i32);
+                next.push(switched);
+            }
+            if admits(&path, class) {
+                next.push(path);
+            }
+        }
+        if next.is_empty() {
+            return Err(refuse("no native path follows the certified probe transitions"));
+        }
+        self.paths = next;
+        self.settle()
+    }
+
+    /// Paths with the same schedule ahead merge.
+    fn settle(&mut self) -> Result<(), Error> {
+        merge_equal(&mut self.paths, &mut self.scratch.merged_paths, Path::schedule);
+        let (paths, records) = budgets();
+        if self.paths.len() > paths || self.paths.iter().map(|path| path.starts.len()).sum::<usize>() > records {
+            return Err(capacity());
+        }
+        self.work.peak_paths = self.work.peak_paths.max(self.paths.len());
+        Ok(())
+    }
+
+    /// The native `calculate` up to score frame `to`, with the combo inputs every filed note reads at this query.
+    /// Returns each first frame some path executed, with the orders of those paths; every order has a path.
+    pub(super) fn query(
+        &mut self,
+        to: i32,
+        combos: &FxHashMap<(usize, usize), (f32, f32)>,
+    ) -> Result<&[(i32, Orders)], Error> {
+        let prev = self.prev;
+        let every = first_orders(self.lanes);
+        let filings = self.filed.earliest();
+        let floor = self.floors.get(self.queries).copied().unwrap_or(i32::MAX).min(to + 1).max(self.base);
+        let later = |filing: Option<i32>| filing.is_none_or(|frame| frame > prev);
+        self.firsts.clear();
+        if to == prev && filings.iter().all(|&(filing, _)| later(filing)) && self.paths.iter().all(|p| later(p.filed)) {
+            // Nothing to undo or execute.
+            self.work.idle_queries += 1;
+            let drop = (floor - self.base) as usize;
+            let filed = self.paths.iter().any(|path| path.filed.is_some());
+            for path in &mut self.paths {
+                let drop = drop.min(path.starts.len());
+                path.starts.drain(..drop);
+                path.sums.drain(..drop);
+                path.switches.retain(|&(frame, _)| frame >= floor);
+                path.filed = None;
+            }
+            if (drop > 0 || filed) && self.paths.len() > 1 {
+                self.settle()?;
+            }
+            self.firsts.push((prev + 1, every));
+        } else {
+            self.execute_query(to, floor, &filings, combos)?;
+        }
+        self.base = floor;
+        self.prev = to;
+        self.filed.clear();
+        self.queries += 1;
+        Ok(&self.firsts)
+    }
+
+    fn execute_query(
+        &mut self,
+        to: i32,
+        floor: i32,
+        filings: &[(Option<i32>, Orders)],
+        combos: &FxHashMap<(usize, usize), (f32, f32)>,
+    ) -> Result<(), Error> {
+        let prev = self.prev;
+        let start = |u: i32| if u < prev { u + 1 } else { prev + 1 };
+        let earliest = |a: Option<i32>, b: Option<i32>| match (a, b) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let mut scratch = std::mem::take(&mut self.scratch);
+        // (path, orders, first frame executed): the orders of a path rewound to the same frame, path by path.
+        let mut forks = std::mem::take(&mut scratch.forks);
+        forks.clear();
+        for (index, path) in self.paths.iter().enumerate() {
+            let at = forks.len();
+            for &(filing, orders) in filings {
+                let orders = orders & path.orders;
+                if orders == 0 {
+                    continue;
+                }
+                let first = start(earliest(filing, path.filed).map_or(to, |frame| to.min(frame - 1)));
+                match forks[at..].iter_mut().find(|fork| fork.2 == first) {
+                    Some(fork) => fork.1 |= orders,
+                    None => forks.push((index, orders, first)),
+                }
+            }
+        }
+        for &(_, orders, first) in &forks {
+            match self.firsts.iter_mut().find(|(other, _)| *other == first) {
+                Some((_, all)) => *all |= orders,
+                None => self.firsts.push((first, orders)),
+            }
+        }
+        if self.firsts.iter().all(|&(first, _)| first > to) {
+            self.work.idle_queries += 1;
+        }
+        let mut observed = std::mem::take(&mut self.observed);
+        observed.clear();
+        let mut next = std::mem::take(&mut scratch.paths);
+        next.clear();
+        let mut lanes = std::mem::take(&mut scratch.out);
+        lanes.clear();
+        let mut old = std::mem::take(&mut self.paths);
+        let mut pending = forks.as_slice();
+        for (index, mut path) in old.drain(..).enumerate() {
+            let (own, rest) = pending.split_at(pending.partition_point(|fork| fork.0 == index));
+            pending = rest;
+            for (fork, &(_, orders, first)) in own.iter().enumerate() {
+                if first < self.base {
+                    return Err(refuse("a query undoes a frame below the retained history"));
+                }
+                let kept = ((first - self.base) as usize).min(path.starts.len());
+                self.work.runs += 1;
+                self.work.undone_frames += (prev + 1 - first).max(0) as u64;
+                self.work.executed_frames += (to + 1 - first).max(0) as u64;
+                if first > prev && first > to {
+                    lanes.push(Lane {
+                        orders,
+                        class: path.class,
+                        low: path.low,
+                        high: path.high,
+                        starts: Vec::new(),
+                        sums: Vec::new(),
+                    });
+                } else {
+                    self.run(&path, orders, first, to, combos, &mut observed, &mut lanes, &mut scratch)?;
+                }
+                // The path's last fork takes over its records.
+                let last_fork = fork + 1 == own.len();
+                let count = lanes.len();
+                for (execution, lane) in lanes.drain(..).enumerate() {
+                    let drop = ((floor - self.base) as usize).min(kept + lane.starts.len());
+                    let skip = drop.saturating_sub(kept);
+                    let (mut starts, mut sums, mut switches) = if last_fork && execution + 1 == count {
+                        let (mut starts, mut sums) = (std::mem::take(&mut path.starts), std::mem::take(&mut path.sums));
+                        starts.truncate(kept);
+                        sums.truncate(kept);
+                        starts.drain(..drop.min(kept));
+                        sums.drain(..drop.min(kept));
+                        (starts, sums, std::mem::take(&mut path.switches))
+                    } else {
+                        let mut starts = Vec::with_capacity(kept + lane.starts.len() - drop);
+                        let mut sums = Vec::with_capacity(starts.capacity());
+                        starts.extend_from_slice(&path.starts[drop.min(kept)..kept]);
+                        sums.extend_from_slice(&path.sums[drop.min(kept)..kept]);
+                        (starts, sums, path.switches.clone())
+                    };
+                    starts.extend_from_slice(&lane.starts[skip..]);
+                    sums.extend_from_slice(&lane.sums[skip..]);
+                    switches.retain(|&(frame, _)| frame >= floor);
+                    next.push(Path {
+                        orders: lane.orders,
+                        class: lane.class,
+                        low: lane.low,
+                        high: lane.high,
+                        now: path.now,
+                        rush: path.rush,
+                        filed: None,
+                        starts,
+                        sums,
+                        switches,
+                    });
+                }
+            }
+        }
+        self.filed.observe(&mut observed, &self.firsts, &mut scratch.values, &mut scratch.merged_values)?;
+        scratch.forks = forks;
+        scratch.out = lanes;
+        scratch.paths = old;
+        self.scratch = scratch;
+        self.observed = observed;
+        self.base = floor;
+        self.paths = next;
+        self.settle()
+    }
+
+    /// Undo the histories of `orders` in `path` from the last executed frame down to `first`, then execute
+    /// `first..=to`; appends the executed groups to `out`.
+    #[allow(clippy::too_many_arguments)]
+    fn run(
+        &self,
+        path: &Path,
+        orders: Orders,
+        first: i32,
+        to: i32,
+        combos: &FxHashMap<(usize, usize), (f32, f32)>,
+        observed: &mut Vec<(usize, NoteValue)>,
+        out: &mut Vec<Lane>,
+        scratch: &mut Scratch,
+    ) -> Result<(), Error> {
+        let (mut low, mut high, mut class) = (path.low, path.high, path.class);
+        for frame in (first..=self.prev).rev() {
+            let at = (frame - self.base) as usize;
+            let (Some(&start), Some(sum)) = (path.starts.get(at), path.sums.get(at)) else {
+                return Err(refuse("a query undoes a frame without a retained record"));
+            };
+            for field in 0..FIELDS {
+                low[field] -= f32::from_bits(sum[field]);
+                high[field] -= f32::from_bits(sum[field]);
+            }
+            finite([&low, &high])?;
+            class = start;
+        }
+        let frames = (to + 1 - first).max(0) as usize;
+        let (mut lanes, mut next) = (std::mem::take(&mut scratch.lanes), std::mem::take(&mut scratch.next));
+        lanes.clear();
+        lanes.push(Lane {
+            orders,
+            class,
+            low,
+            high,
+            starts: Vec::with_capacity(frames),
+            sums: Vec::with_capacity(frames),
+        });
+        for frame in first..=to {
+            scratch.switches.clear();
+            scratch.switches.extend(path.switches.iter().filter(|&&(f, _)| f == frame).map(|&(_, time)| time));
+            scratch.switches.sort_unstable();
+            next.clear();
+            for lane in lanes.drain(..) {
+                self.execute(frame as usize, lane, combos, observed, &mut next, scratch)?;
+            }
+            merge_equal(&mut next, &mut scratch.merged_lanes, Lane::order);
+            if next.len() > budgets().0 {
+                return Err(capacity());
+            }
+            std::mem::swap(&mut lanes, &mut next);
+        }
+        out.append(&mut lanes);
+        (scratch.lanes, scratch.next) = (lanes, next);
+        Ok(())
+    }
+
+    /// Executes score frame `frame` for `lane`, with the probe switches of `scratch.switches`.
+    fn execute(
+        &self,
+        frame: usize,
+        lane: Lane,
+        combos: &FxHashMap<(usize, usize), (f32, f32)>,
+        observed: &mut Vec<(usize, NoteValue)>,
+        out: &mut Vec<Lane>,
+        scratch: &mut Scratch,
+    ) -> Result<(), Error> {
+        let entry = self.filed.frame(frame)?;
+        let (ops, notes) = (&entry.ops, &entry.notes);
+        let start = lane.class;
+        let mut subs = std::mem::take(&mut scratch.subs);
+        subs.clear();
+        subs.push(Sub { orders: lane.orders, class: lane.class, low: lane.low, high: lane.high, sum: [0f32; FIELDS] });
+        let (mut op, mut switch, mut note) = (0, 0, 0);
+        loop {
+            let op_time = ops.get(op).map(|o| o.time);
+            let switch_time = scratch.switches.get(switch).copied();
+            let factor_time = match (op_time, switch_time) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            let note_time = notes.get(note).map(|&n| self.filed.notes[n].time_ms);
+            match (factor_time, note_time) {
+                (Some(t), n) if n.is_none_or(|n| n >= t) => {
+                    if switch_time == Some(t) {
+                        let end = ops[op..].partition_point(|o| o.time == t);
+                        self.switch(&mut subs, &ops[op..op + end], scratch)?;
+                        op += end;
+                        switch += 1;
+                    } else {
+                        let command = &ops[op];
+                        let (count, mut changed) = (subs.len(), false);
+                        for index in 0..count {
+                            let orders = subs[index].orders;
+                            let applies = orders & command.orders;
+                            if applies == 0 {
+                                changed = true;
+                                continue;
+                            }
+                            if applies != orders {
+                                let mut rest = subs[index];
+                                rest.orders = orders & !applies;
+                                subs.push(rest);
+                                subs[index].orders = applies;
+                                changed = true;
+                            }
+                            command.apply(&mut subs[index]);
+                            finite([&subs[index].low, &subs[index].high])?;
+                        }
+                        // A command of some orders may give them the state of the others.
+                        if changed && subs.len() > 1 {
+                            merge_equal(&mut subs, &mut scratch.merged_subs, Sub::order);
+                        }
+                        op += 1;
+                    }
+                }
+                (_, Some(_)) => {
+                    let index = notes[note];
+                    let &(ordinary, gekisou) = combos
+                        .get(&self.filed.notes[index].key)
+                        .ok_or_else(|| refuse("note combo observation is missing"))?;
+                    let combo = (ordinary.to_bits(), gekisou.to_bits());
+                    for sub in &subs {
+                        let (orders, class, low, high) = (sub.orders, sub.class, sub.low, sub.high);
+                        observed.push((index, NoteValue { orders, class, combo, low, high }));
+                    }
+                    note += 1;
+                }
+                (None, None) => break,
+                (Some(_), None) => unreachable!("covered by the factor arm"),
+            }
+        }
+        // The last alternative takes over the lane's records.
+        let count = subs.len();
+        let (mut starts, mut sums) = (lane.starts, lane.sums);
+        for (index, sub) in subs.drain(..).enumerate() {
+            let (mut starts, mut sums) = if index + 1 == count {
+                (std::mem::take(&mut starts), std::mem::take(&mut sums))
+            } else {
+                let mut copy = (Vec::with_capacity(starts.capacity()), Vec::with_capacity(sums.capacity()));
+                copy.0.extend_from_slice(&starts);
+                copy.1.extend_from_slice(&sums);
+                copy
+            };
+            starts.push(start);
+            sums.push(sub.sum.map(f32::to_bits));
+            out.push(Lane { orders: sub.orders, class: sub.class, low: sub.low, high: sub.high, starts, sums });
+        }
+        scratch.subs = subs;
+        Ok(())
+    }
+
+    /// A probe switch among the ordinary commands `group` of its time: every owner-local merge of the commands with
+    /// the probe rows of each order, which flips the probe class of each alternative of `subs`.
+    fn switch(&self, subs: &mut Vec<Sub>, group: &[Op], scratch: &mut Scratch) -> Result<(), Error> {
+        let mut next = std::mem::take(&mut scratch.alternatives);
+        next.clear();
+        let Scratch { cells, applied, merges: steps, steps: buffers, .. } = scratch;
+        for sub in subs.iter() {
+            let sign = if sub.class == 0 { 1f32 } else { -1f32 };
+            for (config, rows) in &self.configs {
+                // Orders with the same rows and the same commands of this time.
+                cells.clear();
+                cells.push(sub.orders & config);
+                if cells[0] == 0 {
+                    continue;
+                }
+                for command in group {
+                    refine(cells, command.orders);
+                }
+                for &cell in cells.iter() {
+                    // Commands of other orders change nothing here and need no place among the rows.
+                    applied.clear();
+                    applied.extend(group.iter().filter(|command| command.orders & cell != 0).copied());
+                    merges(applied, rows, steps, buffers)?;
+                    let width = applied.len() + rows.len();
+                    let count = steps.len().checked_div(width).unwrap_or(1);
+                    for merge in 0..count {
+                        let mut alternative = Sub { orders: cell, ..*sub };
+                        for &step in &steps[merge * width..(merge + 1) * width] {
+                            match step {
+                                Step::Op(i) => applied[i].apply(&mut alternative),
+                                Step::Row(r) => apply_probe(sign * rows[r].value, &mut alternative),
+                            }
+                        }
+                        finite([&alternative.low, &alternative.high])?;
+                        alternative.class = 1 - alternative.class;
+                        next.push(alternative);
+                    }
+                }
+            }
+        }
+        merge_equal(&mut next, &mut scratch.merged_subs, Sub::order);
+        if next.len() > budgets().0 {
+            return Err(capacity());
+        }
+        std::mem::swap(subs, &mut next);
+        scratch.alternatives = next;
+        Ok(())
+    }
+}
+
+/// The schedule ahead of native histories of one order that share it, apart from their factor states: a [`Path`]
+/// without its states. Histories of one track apply the same binary32 additions of constants to their states from
+/// here on, each to its own state.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) struct Track {
+    /// Probe class of the executed state.
+    pub(super) class: u8,
+    /// Probe class after the latest skill boundary.
+    pub(super) now: u8,
+    /// Whether the Rush handle is set.
+    pub(super) rush: bool,
+    filed: Option<i32>,
+    starts: Vec<u8>,
+    sums: Vec<Bits>,
+    switches: Vec<(i32, i32)>,
+}
+
+impl Track {
+    /// A Rush command filed in `frame`.
+    pub(super) fn file(&mut self, frame: i32) {
+        self.filed = Some(self.filed.map_or(frame, |old| old.min(frame)));
+    }
+
+    /// A range FINISH at the start of a play frame, filing in `frame`: a running Rush stops.
+    pub(super) fn finish(&mut self, frame: usize) {
+        if self.rush {
+            self.rush = false;
+            self.file(frame as i32);
+        }
+    }
+
+    /// A probe switch at the skill boundary at `time_ms`, filing in `frame`.
+    pub(super) fn switch(&mut self, frame: usize, time_ms: i32) {
+        self.now = 1 - self.now;
+        self.switches.push((frame as i32, time_ms));
+        self.file(frame as i32);
+    }
+}
+
+/// A note execution of a member of a track: the note's index in [`ExactReplay::notes`], the member and its value.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Observed {
+    pub note: usize,
+    pub member: u32,
+    pub value: NoteValue,
+}
+
+/// A score query of one order's tracks ([`ExactReplay::begin_query`]): the last frame executed before it, its last
+/// frame, the earliest filing of every history since the previous query, and the first frame a later query may
+/// execute again.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct TrackQuery {
+    prev: i32,
+    to: i32,
+    filing: Option<i32>,
+    floor: i32,
+}
+
+/// Buffers of track executions.
+#[derive(Default)]
+pub(super) struct TrackScratch {
+    applied: Vec<Op>,
+    merges: Vec<Step>,
+    steps: [Vec<Step>; 3],
+    states: Vec<(State, State)>,
+}
+
+pub(super) fn add_op(op: &Op, state: &mut State) {
+    for field in 0..FIELDS {
+        let delta = op.deltas[field];
+        if op.always >> field & 1 != 0 || delta != 0.0 {
+            state[field] += delta;
+        }
+    }
+}
+
+pub(super) fn add_probe(value: f32, state: &mut State) {
+    if value != 0.0 {
+        state[1] += value;
+    }
+}
+
+impl ExactReplay {
+    /// The track of every history before the first frame, and its factor state.
+    pub(super) fn start_track(&self) -> Result<(Track, FactorState), Error> {
+        if self.lanes != 1 {
+            return Err(Error::Input("tracks follow one order".into()));
+        }
+        let path = &self.paths[0];
+        let track = Track {
+            class: path.class,
+            now: path.now,
+            rush: path.rush,
+            filed: path.filed,
+            starts: path.starts.clone(),
+            sums: path.sums.clone(),
+            switches: path.switches.clone(),
+        };
+        Ok((track, path.low))
+    }
+
+    /// The score query up to score frame `to` of every track, which [`Self::query_track`] executes track by track
+    /// and [`Self::end_query`] completes.
+    pub(super) fn begin_query(&self, to: i32) -> Result<TrackQuery, Error> {
+        if self.lanes != 1 || !self.filed.partial.is_empty() {
+            return Err(Error::Input("tracks follow one order".into()));
+        }
+        let floor = self.floors.get(self.queries).copied().unwrap_or(i32::MAX).min(to + 1).max(self.base);
+        Ok(TrackQuery { prev: self.prev, to, filing: self.filed.mandatory, floor })
+    }
+
+    /// The native `calculate` of `query` for the histories of `track` with the factor states `lows..=highs`, which
+    /// it updates: undoes from the last executed frame down to the track's rewind target, executes up to the query's
+    /// frame and returns the track after it. Every note executed appends each member's value to `observed`. An
+    /// owner-local merge of a probe switch whose order the schedule leaves open is followed in each alternative: they
+    /// must record the same sums, and each member takes the hull of its states over them.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn query_track(
+        &self,
+        query: &TrackQuery,
+        track: &Track,
+        lows: &mut [FactorState],
+        highs: &mut [FactorState],
+        combos: &FxHashMap<(usize, usize), (f32, f32)>,
+        observed: &mut Vec<Observed>,
+        scratch: &mut TrackScratch,
+    ) -> Result<Track, Error> {
+        let TrackQuery { prev, to, filing, floor } = *query;
+        let earliest = match (filing, track.filed) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let u = earliest.map_or(to, |frame| to.min(frame - 1));
+        let first = if u < prev { u + 1 } else { prev + 1 };
+        if first < self.base {
+            return Err(refuse("a query undoes a frame below the retained history"));
+        }
+        let kept = ((first - self.base) as usize).min(track.starts.len());
+        let (mut class, mut starts, mut sums) = (track.class, Vec::new(), Vec::new());
+        if first <= prev || first <= to {
+            for frame in (first..=prev).rev() {
+                let at = (frame - self.base) as usize;
+                let (Some(&start), Some(sum)) = (track.starts.get(at), track.sums.get(at)) else {
+                    return Err(refuse("a query undoes a frame without a retained record"));
+                };
+                for (low, high) in lows.iter_mut().zip(highs.iter_mut()) {
+                    for field in 0..FIELDS {
+                        low[field] -= f32::from_bits(sum[field]);
+                        high[field] -= f32::from_bits(sum[field]);
+                    }
+                    finite([&*low, &*high])?;
+                }
+                class = start;
+            }
+            let mut switches = Vec::new();
+            for frame in first..=to {
+                switches.clear();
+                switches.extend(track.switches.iter().filter(|&&(f, _)| f == frame).map(|&(_, time)| time));
+                switches.sort_unstable();
+                starts.push(class);
+                let sum;
+                (class, sum) =
+                    self.execute_track(frame as usize, class, &switches, lows, highs, combos, observed, scratch)?;
+                sums.push(sum.map(f32::to_bits));
+            }
+        }
+        let drop = ((floor - self.base) as usize).min(kept + starts.len());
+        let skip = drop.saturating_sub(kept);
+        let mut next = Track {
+            class,
+            now: track.now,
+            rush: track.rush,
+            filed: None,
+            starts: track.starts[drop.min(kept)..kept].to_vec(),
+            sums: track.sums[drop.min(kept)..kept].to_vec(),
+            switches: track.switches.iter().copied().filter(|&(frame, _)| frame >= floor).collect(),
+        };
+        next.starts.extend_from_slice(&starts[skip..]);
+        next.sums.extend_from_slice(&sums[skip..]);
+        Ok(next)
+    }
+
+    /// Completes `query` once every track executed it.
+    pub(super) fn end_query(&mut self, query: &TrackQuery) {
+        self.base = query.floor;
+        self.prev = query.to;
+        self.filed.clear();
+        self.queries += 1;
+    }
+
+    /// Executes score frame `frame` for the members `lows..=highs` of a track in probe class `class`, with the probe
+    /// switches at `switches`; returns the probe class after the frame and the frame's recorded sum.
+    #[allow(clippy::too_many_arguments)]
+    fn execute_track(
+        &self,
+        frame: usize,
+        class: u8,
+        switches: &[i32],
+        lows: &mut [FactorState],
+        highs: &mut [FactorState],
+        combos: &FxHashMap<(usize, usize), (f32, f32)>,
+        observed: &mut Vec<Observed>,
+        scratch: &mut TrackScratch,
+    ) -> Result<(u8, State), Error> {
+        let entry = self.filed.frame(frame)?;
+        let (ops, notes) = (&entry.ops, &entry.notes);
+        let (mut class, mut sum) = (class, [0f32; FIELDS]);
+        let (mut op, mut switch, mut note) = (0, 0, 0);
+        loop {
+            let op_time = ops.get(op).map(|o| o.time);
+            let switch_time = switches.get(switch).copied();
+            let factor_time = match (op_time, switch_time) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            let note_time = notes.get(note).map(|&n| self.filed.notes[n].time_ms);
+            match (factor_time, note_time) {
+                (Some(t), n) if n.is_none_or(|n| n >= t) => {
+                    if switch_time == Some(t) {
+                        let end = ops[op..].partition_point(|o| o.time == t);
+                        class = self.switch_track(class, &mut sum, &ops[op..op + end], lows, highs, scratch)?;
+                        op += end;
+                        switch += 1;
+                    } else {
+                        let command = &ops[op];
+                        add_op(command, &mut sum);
+                        for (low, high) in lows.iter_mut().zip(highs.iter_mut()) {
+                            add_op(command, low);
+                            add_op(command, high);
+                            finite([&*low, &*high])?;
+                        }
+                        op += 1;
+                    }
+                }
+                (_, Some(_)) => {
+                    let index = notes[note];
+                    let &(ordinary, gekisou) = combos
+                        .get(&self.filed.notes[index].key)
+                        .ok_or_else(|| refuse("note combo observation is missing"))?;
+                    let combo = (ordinary.to_bits(), gekisou.to_bits());
+                    for (member, (low, high)) in lows.iter().zip(highs.iter()).enumerate() {
+                        let value = NoteValue { orders: 1, class, combo, low: *low, high: *high };
+                        observed.push(Observed { note: index, member: member as u32, value });
+                    }
+                    note += 1;
+                }
+                (None, None) => break,
+                (Some(_), None) => unreachable!("covered by the factor arm"),
+            }
+        }
+        Ok((class, sum))
+    }
+
+    /// A probe switch among the ordinary commands `group` of its time, for the members `lows..=highs` of a track in
+    /// probe class `class`: every owner-local merge of the commands with the probe rows. Returns the flipped class.
+    fn switch_track(
+        &self,
+        class: u8,
+        sum: &mut State,
+        group: &[Op],
+        lows: &mut [FactorState],
+        highs: &mut [FactorState],
+        scratch: &mut TrackScratch,
+    ) -> Result<u8, Error> {
+        let sign = if class == 0 { 1f32 } else { -1f32 };
+        let rows = &self.configs[0].1;
+        let TrackScratch { applied, merges: steps, steps: buffers, states } = scratch;
+        applied.clear();
+        applied.extend_from_slice(group);
+        merges(applied, rows, steps, buffers)?;
+        let width = applied.len() + rows.len();
+        let count = steps.len().checked_div(width).unwrap_or(1);
+        let apply = |state: &mut State, merge: usize| {
+            for &step in &steps[merge * width..(merge + 1) * width] {
+                match step {
+                    Step::Op(i) => add_op(&applied[i], state),
+                    Step::Row(r) => add_probe(sign * rows[r].value, state),
+                }
+            }
+        };
+        let start = *sum;
+        apply(sum, 0);
+        for merge in 1..count {
+            let mut other = start;
+            apply(&mut other, merge);
+            if other.map(f32::to_bits) != sum.map(f32::to_bits) {
+                return Err(refuse("the owner-local merges of a probe switch record different sums"));
+            }
+        }
+        for (low, high) in lows.iter_mut().zip(highs.iter_mut()) {
+            states.clear();
+            for merge in 0..count {
+                let (mut a, mut b) = (*low, *high);
+                apply(&mut a, merge);
+                apply(&mut b, merge);
+                states.push((a, b));
+            }
+            let (mut a, mut b) = states[0];
+            for (other_low, other_high) in &states[1..] {
+                widen(&mut a, &mut b, other_low, other_high);
+            }
+            (*low, *high) = (a, b);
+            finite([&*low, &*high])?;
+        }
+        Ok(1 - class)
+    }
+}

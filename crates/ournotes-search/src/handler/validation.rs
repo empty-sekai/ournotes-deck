@@ -151,6 +151,37 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
             "maximize the expected weighted sum of the first level's metrics, then of each later level among tied teams, each payoff settled on the same terminal result"
         }
     };
+    let payoff_meaning = if r.aggregation == Aggregation::Maximum {
+        match r.metric {
+            Metric::Power => "maximize current-progression deck power",
+            Metric::Score => {
+                "maximize the final score of the best performance order, each order valued by its expected score over random draws"
+            }
+            Metric::ScoreAtLeast { .. } => {
+                "maximize the probability of reaching the score target in the best performance order"
+            }
+            Metric::CappedScore { .. } => {
+                "maximize E(min(final score, target)) in the best performance order; score above target adds no utility"
+            }
+            Metric::ScoreAndLifeAtLeast { .. } => {
+                "maximize probability of score >= target AND terminal life >= minFinalLife in the best performance order; not native clear/failure probability"
+            }
+            Metric::ClientEventPoints { .. } => {
+                "maximize client event-point preview per declared consumption in the best performance order"
+            }
+            Metric::ClientChallengePoints { .. } => {
+                "maximize newly earned client challenge points per declared Live Boost consumption in the best performance order; no deck event-point bonus"
+            }
+            Metric::RankedEventItems { .. } => {
+                "maximize resource quantity selected by each terminal result grade in the best performance order"
+            }
+            Metric::Combined { .. } => {
+                "maximize the weighted sum of the first level's metrics in the best performance order, then of each later level among tied teams, each payoff settled on the same terminal result"
+            }
+        }
+    } else {
+        payoff_meaning
+    };
     let mut assumptions = vec!["supplied roster progression and player bonuses; no upgrades or costs inferred"];
     if let Execution::Live { play, .. } = &r.execution {
         assumptions.push(match play {
@@ -160,7 +191,11 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
                 "complete declared judgement stream; touch timing and human error distribution not inferred"
             }
         });
-        assumptions.push("the five members perform in a uniformly random order; paired snaps follow their members");
+        if r.aggregation == Aggregation::Maximum {
+            assumptions.push("the value of a team is the greatest value among its 120 performance orders, each order valued by the expectation of its terminal payoff over its random draws; paired snaps follow their members");
+        } else {
+            assumptions.push("the five members perform in a uniformly random order; paired snaps follow their members");
+        }
         if matches!(r.metric, Metric::Combined { .. }) {
             assumptions.push("lottery-free terminal outcomes");
         } else {

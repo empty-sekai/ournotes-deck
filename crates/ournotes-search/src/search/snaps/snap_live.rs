@@ -28,8 +28,13 @@ pub(crate) struct SnapLive<'a> {
     /// With `life_bound`: the largest conversion budget term (`Contrib::budget`) of each member's classes without
     /// other life-raising rows, by `m * 5 + k`.
     pub(super) split_budget: Vec<f64>,
-    /// Relative margin of the bounds.
+    /// Relative margin of the bounds. With certified lottery laws the bounds are expectations over the lottery and
+    /// this is the expected margin of a play (see `ProbeStarts::expected_drift`).
     pub(super) eps: f64,
+    /// The largest relative margin of one play, which the checks that hold for each play read: the positive factor
+    /// chain, the rounding reserve of negative notes and the observed certificate of a power representative. It is
+    /// `eps` without certified lottery laws.
+    pub(super) play_eps: f64,
     /// Optional additive factor-drift envelope for the physical joint solver.
     /// Legacy class/fine/raw bounds and their overflow guard retain `eps`.
     pub(super) joint_additive: Option<(f64, f64, f64)>,
@@ -242,6 +247,13 @@ impl<'a> SnapLive<'a> {
         (a0, global, eps, gains)
     }
 
+    /// Whether every play of every team scores at least zero: its factor margin (`play_eps`, every play's, not the
+    /// expected one of certified laws) stays below one, so every factor keeps the sign of its ideal value, at least
+    /// one.
+    pub(crate) fn nonnegative_scores(&self) -> bool {
+        self.play_eps < 1.0
+    }
+
     /// `joint_envelope` for the decks with at most `n < 5` Gekisou combo carriers: per `n`, `(A0, global, gains)`
     /// with gains by member and choice (None: the next level's, finally the pool-wide one), and whether each member
     /// and choice is a carrier. None without a combo range.
@@ -393,6 +405,7 @@ impl<'a> SnapLive<'a> {
             coef: self.coef,
             fine: self.fine,
             chain_extra: self.chain_extra,
+            order_sums: OrderSums::new(&self.contrib),
             contrib: self.contrib,
             class_of: self.class_of,
             raw,

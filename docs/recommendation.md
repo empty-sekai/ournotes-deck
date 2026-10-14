@@ -110,6 +110,28 @@ order. Every entry has `score`, an exact numerator/denominator and `interval:nul
 term is null. `value.payoff` is the first level's value, and reported upper bounds and gaps describe the first
 level.
 
+## Aggregation over performance orders
+
+`aggregation` is `"expected"` (the default) or `"maximum"`. With `"expected"` a team is worth the mean of its
+payoff over the 120 equally likely performance orders. With `"maximum"` a team is worth the greatest value among the
+120 orders, where each order is valued by the expectation of its own terminal payoff over the random draws that order
+contains. Orders are not weighted, and the payoff of a draw is valued by its true probability.
+
+The value is an exact integer over denominator one in `expectedPayoff`. Each team reports `bestOrder`, the first
+order, in the canonical enumeration, that attains the value, and `objectiveValue`. The outcome echoes `aggregation`
+and a `maximumModel` that states the order count and how an order is valued. `capabilities()` lists both
+aggregations, their laws and their tie breaks.
+
+A live with LUCK lotteries values each order by its certified lottery law, as under `"expected"`. A team's payoff
+interval then runs from the greatest lower bound to the greatest upper bound over its orders, and is exact once an
+order's exact value reaches the upper bound of every other order. `bestOrder` appears once one order is proved to
+attain the maximum: the first order with the exact maximum, or the only order whose upper bound reaches the others'
+lower bounds. Its score is that order's expected score rounded down, and `payoffInterval` and `scoreInterval` keep the
+proved bounds while the value is not exact.
+
+For every team the maximum value is at least its expected value.
+
+
 ## Event-item rewards
 
 `metric:{"kind":"eventItems","eventId":7,"resourceType":4,"resourceId":88,"consumption":1}` maximizes
@@ -145,6 +167,10 @@ This mapping describes the verified challenge-song route. It does not infer the 
 `isMusicRankingDisabled` / `isTotalMusicRankingDisabled` fields absent from the verified native MasterEvent schema.
 Accuracy is a deterministic declared play: Greats are spread evenly over judged notes, then the Just fraction is
 applied to remaining Just-eligible notes. It is not a distribution of human errors. Gekisou-off goals require Just 0.
+In a live with an active LUCK range, a play with Great judgements (a Great accuracy, pattern or stream) returns
+`Unsupported` when a team of the candidate domain holds a judgement conversion that can change those Greats, and
+`capabilities().luckGreatConversions` is false. Plays without Greats, and Great plays whose candidates hold no such
+conversion, are supported.
 
 Event requests accept `eventContext.resultClock` with `kind: played|skip`, `serverNowJstTicks`, and nullable
 `liveStartJstTicks` for a played live. Ticks remain 64-bit integers in the raw JSON text.

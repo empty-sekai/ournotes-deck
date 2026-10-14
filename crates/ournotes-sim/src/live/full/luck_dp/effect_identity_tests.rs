@@ -209,7 +209,7 @@ fn certified_curves_keep_equal_raw_ids_in_distinct_source_and_member_scopes() {
     for capacity in [0, 1 << 20] {
         let mut curves = LuckDpCache::new(capacity);
         let result = input.cached(&deck, &mut curves, None).unwrap().unwrap();
-        for (_, joint) in &result.steps {
+        for (_, joint) in result.steps.iter() {
             let mass = joint.iter().fold(F64Interval::ZERO, |sum, p| sum.add(p.interval()));
             assert!(mass.contains(1.0));
         }

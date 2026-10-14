@@ -13,11 +13,11 @@ use ournotes_sim::num::FxHashMap;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-/// The most distinct carrier lists split over; with more, the multisets to visit grow past a cheap node check.
+/// The most distinct carrier lists split over; with more, the multisets to visit grow past a cheap node check. The
+/// envelopes are keyed by multisets of at most five of these lists, so there are at most `C(MAX_LISTS + 5, 5)` keys.
 const MAX_LISTS: usize = 8;
-/// The most envelopes kept at a time.
-const ENV_CACHE: usize = 512;
-/// The most bytes of envelopes and tables kept at a time (approximately); past it every envelope is dropped.
+/// The most bytes of envelopes and tables kept at a time (approximately); past it every envelope is dropped. Below it
+/// an envelope stays kept for every later node that reads its multiset, so each is built and read once.
 const TABLE_BUDGET: usize = 192 << 20;
 /// The first suffix start after 0; each later one is about half again the previous.
 const FIRST_START: usize = 8;
@@ -52,8 +52,10 @@ pub(super) struct CarrierSplit {
     plain_power: Vec<Vec<OnceCell<Option<Plain<i64>>>>>,
     /// `[r]`: the multisets of at most `r` lists.
     sets: Vec<Vec<Vec<u16>>>,
-    /// Envelopes by sorted carrier lists (`env_key`).
+    /// Envelopes by sorted carrier lists (`env_key`), kept up to the byte budget.
     envs: RefCell<FxHashMap<u32, Rc<SplitEnv>>>,
+    /// `[n]`: the envelope of every deck with at most `n` carriers (filled on first use).
+    wide: Vec<OnceCell<Rc<SplitEnv>>>,
     /// The approximate bytes of the envelopes kept and their tables.
     bytes: Cell<usize>,
 }
@@ -185,6 +187,7 @@ impl CarrierSplit {
             plain_power,
             sets,
             envs: RefCell::default(),
+            wide: (0..=5).map(|_| OnceCell::new()).collect(),
             bytes: Cell::new(0),
         })
     }
@@ -209,21 +212,37 @@ impl CarrierSplit {
         if let Some(e) = self.envs.borrow().get(&key) {
             return e.clone();
         }
-        let e = Rc::new(SplitEnv {
-            env: self.keys.build_envelope(ids, 0),
-            read: RefCell::new(vec![f64::NAN; self.classes]),
-            gain: self.starts.iter().map(|_| (0..self.lists).map(|_| OnceCell::new()).collect()).collect(),
-            plain: self.starts.iter().map(|_| OnceCell::new()).collect(),
-            coupled: RefCell::default(),
-        });
+        let e = Rc::new(self.split_env(self.keys.build_envelope(ids, 0)));
         let mut envs = self.envs.borrow_mut();
-        if envs.len() >= ENV_CACHE || self.bytes.get() >= TABLE_BUDGET {
+        if self.bytes.get() >= TABLE_BUDGET {
             envs.clear();
             self.bytes.set(0);
         }
         self.keep(e.env.bytes() + self.classes * std::mem::size_of::<f64>());
         envs.insert(key, e.clone());
         e
+    }
+
+    /// The envelope of every deck with at most `n` carriers.
+    fn wide(&self, n: usize) -> Rc<SplitEnv> {
+        self.wide[n]
+            .get_or_init(|| {
+                let e = self.split_env(self.keys.build_envelope(&[], n));
+                self.keep(e.env.bytes() + self.classes * std::mem::size_of::<f64>());
+                Rc::new(e)
+            })
+            .clone()
+    }
+
+    /// An envelope with none of its tables filled.
+    fn split_env(&self, env: KeyedEnvelope) -> SplitEnv {
+        SplitEnv {
+            env,
+            read: RefCell::new(vec![f64::NAN; self.classes]),
+            gain: self.starts.iter().map(|_| (0..self.lists).map(|_| OnceCell::new()).collect()).collect(),
+            plain: self.starts.iter().map(|_| OnceCell::new()).collect(),
+            coupled: RefCell::default(),
+        }
     }
 
     /// The position-mean gain of a pool member and choice under an envelope (read once per member and class).
@@ -469,8 +488,8 @@ impl JointBounds {
                 gain = add_up(gain, split.gains(&e, k, list).top(&taken, &taken_snaps, n, 0.0, add_up)?);
             }
             let k0 = r - t.len();
+            let level = self.carrier_level(ids.len());
             if k0 > 0 {
-                let tables = split.plain(&e, k)?;
                 let pp = match free_power[k0] {
                     Some(v) => v,
                     None => {
@@ -480,9 +499,22 @@ impl JointBounds {
                     }
                 };
                 power += pp;
+                // The slots to fill without a carrier first read the envelope of every deck with as many carriers,
+                // which covers the multiset's decks too: a multiset that bound puts below the threshold needs no
+                // tables of its own.
+                let wide = split.plain(&split.wide(ids.len()), k).and_then(|tables| {
+                    let gain = add_up(gain, plain_gain(&tables.parts(k0, &taken, &taken_snaps, 0.0)));
+                    level.payoff_cap_from(a0, power, gain, 0, f64::INFINITY).checked_mul(mass)
+                });
+                if let Some(numerator) = wide
+                    && numerator < threshold.min(couple_above)
+                {
+                    best = best.max(numerator);
+                    continue;
+                }
+                let tables = split.plain(&e, k)?;
                 gain = add_up(gain, plain_gain(&tables.parts(k0, &taken, &taken_snaps, 0.0)));
             }
-            let level = self.carrier_level(ids.len());
             let mut numerator = level.payoff_cap_from(a0, power, gain, 0, f64::INFINITY).checked_mul(mass)?;
             if numerator > couple_above
                 && let Some(j) = weight(add_up(a0, gain), power)

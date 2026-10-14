@@ -240,6 +240,86 @@ impl ProbabilityMass {
     pub fn weighted_integer(self, value: i32) -> F64Interval {
         self.0.scale_integer(i128::from(value))
     }
+
+    /// The merged masses of `masses` that are possible, as [`Self::merge_disjoint`] encloses them; None without one.
+    pub fn total(masses: &[Self]) -> Option<Self> {
+        let [total] = Self::totals([masses]);
+        total
+    }
+
+    /// [`Self::total`] of each of `lists`. Each list merges its masses in its own order, and the merges of the lists
+    /// proceed side by side.
+    pub fn totals<const N: usize>(lists: [&[Self]; N]) -> [Option<Self>; N] {
+        let up = |x: f64| f64::from_bits(x.to_bits() + 1);
+        let down = |x: f64| f64::from_bits(x.to_bits().saturating_sub(1));
+        // The merged endpoints of each list, the number of its possible masses and the place of the last one.
+        let (mut lower, mut upper, mut held, mut last) = ([0f64; N], [0f64; N], [0usize; N], [0usize; N]);
+        let mut merge = |k: usize, i: usize, mass: Self| {
+            if mass.0.upper > 0.0 {
+                held[k] += 1;
+                last[k] = i;
+                lower[k] = down(lower[k] + mass.0.lower);
+                upper[k] = up(upper[k] + mass.0.upper);
+            }
+        };
+        let common = lists.iter().map(|list| list.len()).min().unwrap_or(0);
+        let heads = lists.map(|list| &list[..common]);
+        for i in 0..common {
+            for (k, head) in heads.iter().enumerate() {
+                merge(k, i, head[i]);
+            }
+        }
+        for (k, list) in lists.iter().enumerate() {
+            for (i, &mass) in list.iter().enumerate().skip(common) {
+                merge(k, i, mass);
+            }
+        }
+        std::array::from_fn(|k| match held[k] {
+            0 => None,
+            1 => Some(lists[k][last[k]]),
+            _ => Some(Self(F64Interval { lower: lower[k].min(1.0), upper: upper[k].min(1.0) })),
+        })
+    }
+
+    /// Merge into each of `out` the mass at its place in `masses` times `factor`, as [`Self::multiply`] then
+    /// [`Self::merge_disjoint`] enclose them; a mass that is not possible adds nothing. Endpoints are nonnegative and
+    /// finite, so the next binary64 value above or below one is that of the adjacent bit pattern.
+    pub fn accumulate(out: &mut [Self], masses: &[Self], factor: Self) {
+        let up = |x: f64| f64::from_bits(x.to_bits() + 1);
+        let down = |x: f64| f64::from_bits(x.to_bits().saturating_sub(1));
+        if factor == Self::ZERO {
+            return;
+        }
+        if factor == Self::ONE {
+            // As `merge_disjoint`: an empty mass becomes the added one, and otherwise the endpoint sums move outwards
+            // and stay in the probability range. Adding zero makes a lower sum of zero positive zero, whose next value
+            // below clamps to zero.
+            for (out, mass) in out.iter_mut().zip(masses) {
+                let empty = out.0.upper == 0.0;
+                let sum = F64Interval {
+                    lower: if empty { mass.0.lower } else { down(out.0.lower + mass.0.lower + 0.0).min(1.0) },
+                    upper: if empty { mass.0.upper } else { up(out.0.upper + mass.0.upper).min(1.0) },
+                };
+                if mass.0.upper > 0.0 {
+                    out.0 = sum;
+                }
+            }
+            return;
+        }
+        let (lower, upper) = (factor.0.lower, factor.0.upper);
+        for (out, mass) in out.iter_mut().zip(masses) {
+            let low = down(mass.0.lower * lower);
+            let high = up(mass.0.upper * upper).min(1.0);
+            let empty = out.0.upper == 0.0;
+            let sum = F64Interval {
+                lower: if empty { low } else { down(out.0.lower + low).min(1.0) },
+                upper: if empty { high } else { up(out.0.upper + high).min(1.0) },
+            };
+            if mass.0.upper > 0.0 {
+                out.0 = sum;
+            }
+        }
+    }
 }
 
 /// An enclosure of possible native signed score integers.
@@ -568,6 +648,80 @@ mod tests {
         assert_eq!(ProbabilityMass::ONE.multiply(ProbabilityMass::ONE), ProbabilityMass::ONE);
         assert_eq!(ProbabilityMass::ZERO.complement(), ProbabilityMass::ONE);
         assert_eq!(ProbabilityMass::ONE.complement(), ProbabilityMass::ZERO);
+    }
+
+    #[test]
+    fn accumulating_at_certainty_merges_each_possible_mass() {
+        let mut masses = vec![
+            ProbabilityMass::ZERO,
+            ProbabilityMass::ONE,
+            ProbabilityMass::from_f32(-0.0).unwrap(),
+            ProbabilityMass::from_f32(f32::from_bits(1)).unwrap(),
+            ProbabilityMass::from_bounds(0.0, 1.0e-300).unwrap(),
+            ProbabilityMass::from_bounds(-0.0, 0.25).unwrap(),
+            ProbabilityMass::from_bounds(0.999_999_999, 1.0).unwrap(),
+            ProbabilityMass::from_bounds(1.0f64.next_down(), 1.0).unwrap(),
+        ];
+        for total in [3u64, 7, 10, 19] {
+            for weight in 1..total {
+                masses.push(ProbabilityMass::from_ratio(weight, total).unwrap());
+            }
+        }
+        for &before in &masses {
+            let mut accumulated = vec![before; masses.len()];
+            ProbabilityMass::accumulate(&mut accumulated, &masses, ProbabilityMass::ONE);
+            for (&after, &mass) in accumulated.iter().zip(&masses) {
+                let expected = if mass.interval().upper() > 0.0 { before.merge_disjoint(mass) } else { before };
+                assert_eq!(
+                    [after.interval().lower().to_bits(), after.interval().upper().to_bits()],
+                    [expected.interval().lower().to_bits(), expected.interval().upper().to_bits()],
+                    "{before:?} + {mass:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn totals_side_by_side_are_the_totals_of_each_list() {
+        let masses: Vec<ProbabilityMass> = (0..40u64)
+            .map(|i| match i % 5 {
+                0 => ProbabilityMass::ZERO,
+                1 => ProbabilityMass::from_ratio(i, 41).unwrap(),
+                2 => ProbabilityMass::from_f32(f32::from_bits(i as u32 + 1)).unwrap(),
+                3 if i % 2 == 0 => ProbabilityMass::from_bounds(-0.0, 0.25).unwrap(),
+                3 => ProbabilityMass::from_bounds(0.0, 1.0e-300).unwrap(),
+                _ => ProbabilityMass::from_ratio(1, i + 2).unwrap(),
+            })
+            .collect();
+        let bits = |total: Option<ProbabilityMass>| {
+            total.map(|t| [t.interval().lower(), t.interval().upper()].map(f64::to_bits))
+        };
+        // Independent specification: the possible masses merged one after another, each endpoint rounded outwards to
+        // the adjacent binary64 value; a single possible mass is its own total.
+        let merged = |list: &[ProbabilityMass]| {
+            let held: Vec<F64Interval> = list.iter().map(|m| m.interval()).filter(|m| m.upper() > 0.0).collect();
+            match held.len() {
+                0 => None,
+                1 => ProbabilityMass::from_bounds(held[0].lower(), held[0].upper()).ok(),
+                _ => {
+                    let (lower, upper) = held.iter().fold((0f64, 0f64), |(lower, upper), m| {
+                        ((lower + m.lower()).next_down().max(0.0), (upper + m.upper()).next_up())
+                    });
+                    ProbabilityMass::from_bounds(lower.min(1.0), upper.min(1.0)).ok()
+                }
+            }
+        };
+        for (a, b, c) in [(0, 0, 0), (1, 2, 3), (5, 0, 17), (40, 13, 26), (3, 40, 1), (0, 39, 40)] {
+            let lists = [&masses[..a], &masses[40 - b..], &masses[7..7 + c.min(33)]];
+            let totals = ProbabilityMass::totals(lists);
+            for (list, total) in lists.into_iter().zip(totals) {
+                assert_eq!(bits(total), bits(merged(list)), "{list:?}");
+                assert_eq!(bits(ProbabilityMass::total(list)), bits(merged(list)), "{list:?}");
+            }
+        }
+        assert_eq!(ProbabilityMass::total(&[ProbabilityMass::ZERO, ProbabilityMass::ZERO]), None);
+        let single = ProbabilityMass::from_ratio(3, 7).unwrap();
+        assert_eq!(ProbabilityMass::total(&[ProbabilityMass::ZERO, single]), Some(single));
     }
 
     #[test]

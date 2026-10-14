@@ -40,6 +40,27 @@ pub(super) fn convert_to(effect_type: i64, value: i64) -> i32 {
     if (v.wrapping_sub(1) as u32) > 5 { -1 } else { v }
 }
 
+/// Whether a conversion to `to` can change the judgement of a note: a conversion to Just skips the notes whose
+/// judgement type has timing rows but none of Just (`just_blocked`).
+pub(super) fn converts(to: i32, just_blocked: bool) -> bool {
+    to != 6 || !just_blocked
+}
+
+/// Per stream entry, whether its note's judgement type has judgement timing rows but none of Just.
+pub(super) fn just_blocked(master: &Master, entries: &[(usize, LiveNote, i32)]) -> Vec<bool> {
+    let timings = &master.live_judgement_timings;
+    let listed: std::collections::HashSet<i64> = timings.iter().map(|r| r.note_judgement_type).collect();
+    let just: std::collections::HashSet<i64> =
+        timings.iter().filter(|r| r.note_simulate_judgement == 6).map(|r| r.note_judgement_type).collect();
+    entries
+        .iter()
+        .map(|e| {
+            let t = i64::from(e.1.judgement_type);
+            listed.contains(&t) && !just.contains(&t)
+        })
+        .collect()
+}
+
 /// Whether a sustained effect has an activation time (the simulation rejects that).
 pub(super) fn has_activation_time(act: f32) -> bool {
     if act.is_nan() || act <= 0f32 {
@@ -70,6 +91,8 @@ pub(super) struct Env<'a> {
     /// Per stream entry (processing order), the judgements it can end as under the allowed cards' conversions and
     /// their registration windows, closed transitively. Empty until those windows are known; then `count_reach`.
     pub(super) entry_reach: Vec<u8>,
+    /// Per stream entry (processing order), whether a conversion to Just skips it (see [`converts`]).
+    pub(super) just_blocked: Vec<bool>,
     /// With Gekisou on: the missions of the ranges, whether some range completes in the play, and whether some
     /// reachable judgement is a Miss or a Bad.
     pub(super) gk: Option<GkEnv>,
@@ -107,6 +130,10 @@ impl Env<'_> {
     /// The judgements entry `i` (processing order, raw judgement `raw` in 0..8) can end as.
     pub(super) fn reach_of(&self, i: usize, raw: i32) -> u8 {
         self.entry_reach.get(i).copied().unwrap_or(self.count_reach[raw as usize])
+    }
+    /// Whether a conversion to Just skips entry `i` (processing order); false when unknown.
+    pub(super) fn skips_just(&self, i: usize) -> bool {
+        self.just_blocked.get(i).copied().unwrap_or(false)
     }
     pub(super) fn cond(&self, cid: i64, a: Attr<'_>) -> Result<Option<Out>, Error> {
         let m = self.master;
@@ -583,6 +610,8 @@ pub(super) struct ActiveRow {
     pub(super) budget: Option<f64>,
     /// Per-execution judgement-count caps, with initial backdating preserved.
     pub(super) cumulative_ramp: Option<ramp::RampWindows>,
+    /// The same caps of a team without a conversion, when they differ.
+    pub(super) cumulative_ramp_raw: Option<ramp::RampWindows>,
     /// A cumulative note score up counting the playing range's combo: unit, count cap and note factor table.
     pub(super) combo_ramp: Option<(i64, i64, Rc<Vec<f64>>)>,
     pub(super) rush: Option<Rc<rush::RushSpec>>,

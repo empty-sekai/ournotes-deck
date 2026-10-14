@@ -668,8 +668,12 @@ fn leader_score_cache_preserves_native_order_values_and_full_topk() {
                     );
                 }
                 if capacity == 64 {
+                    // Gekisou lives without a LUCK range splice the orders of a team from its rotations.
+                    let work = |r: &ournotes_search::types::RecommendationOutcome| {
+                        r.telemetry.leaves.simulations + r.telemetry.leaves.free_spliced
+                    };
                     assert!(cached.telemetry.caches.team_scores.hits + cached.telemetry.caches.programs.hits > 0);
-                    assert!(cached.telemetry.leaves.simulations < cold.telemetry.leaves.simulations);
+                    assert!(work(&cached) < work(&cold));
                 }
             }
         }
@@ -726,19 +730,27 @@ fn score_program_cache_reuses_different_snap_power_and_recomputes_event_payoff()
             if matches!(request.metric, Metric::ClientEventPoints { .. }) {
                 assert_ne!(cold.results[0].expected_payoff, cold.results[1].expected_payoff);
             }
-            assert_eq!(cold.telemetry.leaves.simulations, 360);
             request.limits.cache_entries = 64;
             let cached = engine::recommend(&data, &roster, &request).unwrap();
             assert_eq!(cached.results, cold.results, "{mode}: exact scores, orders, ties and current Snap payoff");
             assert_eq!(cached.telemetry.caches.team_scores.hits, 0, "different powers must miss the score cache");
-            assert_eq!(cached.telemetry.caches.programs.hits, 1);
-            assert_eq!(cached.telemetry.caches.program_orders_reused, 120);
-            assert_eq!(cached.telemetry.caches.program_admissions.lookups, 2);
-            assert_eq!(cached.telemetry.caches.program_admissions.hits, 1);
-            assert_eq!(cached.telemetry.caches.program_recordings, 1);
-            assert!(cached.telemetry.caches.program_recorded_nodes > 0);
-            assert!(cached.telemetry.caches.program_recorded_bytes > 0);
-            assert_eq!(cached.telemetry.leaves.simulations, 240);
+            if gekisou {
+                // The orders of each team are spliced from its rotations; no program is recorded.
+                for run in [&cold, &cached] {
+                    assert_eq!((run.telemetry.leaves.simulations, run.telemetry.leaves.free_spliced), (0, 3));
+                    assert_eq!(run.telemetry.caches.program_recordings, 0);
+                }
+            } else {
+                assert_eq!(cold.telemetry.leaves.simulations, 360);
+                assert_eq!(cached.telemetry.caches.programs.hits, 1);
+                assert_eq!(cached.telemetry.caches.program_orders_reused, 120);
+                assert_eq!(cached.telemetry.caches.program_admissions.lookups, 2);
+                assert_eq!(cached.telemetry.caches.program_admissions.hits, 1);
+                assert_eq!(cached.telemetry.caches.program_recordings, 1);
+                assert!(cached.telemetry.caches.program_recorded_nodes > 0);
+                assert!(cached.telemetry.caches.program_recorded_bytes > 0);
+                assert_eq!(cached.telemetry.leaves.simulations, 240);
+            }
             for deck in &cached.results {
                 request.limits.cache_entries = 0;
                 let native = auxiliary::evaluate_fixed(&data, &roster, &request, deck.members, deck.snaps).unwrap();
@@ -755,7 +767,7 @@ fn score_program_cache_reuses_different_snap_power_and_recomputes_event_payoff()
             assert_eq!(cold.completion, Completion::Complete);
             assert_eq!(cached.completion, Completion::Complete);
             assert_eq!(cached.results, cold.results, "{mode}: complete canonical Top-K");
-            assert!(cached.telemetry.caches.program_orders_reused >= 120);
+            assert!(gekisou || cached.telemetry.caches.program_orders_reused >= 120);
         }
     }
 }
@@ -963,7 +975,7 @@ fn built_problem_reuses_frozen_inputs_across_live_snap_and_gekisou_score_pt() {
                 "execution":{"kind":"live","scoreId":SCORE_ID,"gekisou":gekisou,"play":{"kind":"theoreticalBest"}},
                 "scenario":{"kind":mode,"musicId":10}, "context":context_document(false,false,false),
                 "metric":metric,"k":3,"constraints":{"leader":3},
-                "strategy":{"kind":"exhaustive"},"limits":{"cacheEntries":0}})
+                "strategy":{"kind":"exhaustive"},"limits":{"timeLimitMs":null,"cacheEntries":0}})
             .to_string();
             let mut request: ournotes_search::types::RecommendationRequest =
                 serde_json::from_str(&request_json).unwrap();
@@ -2532,3 +2544,11 @@ fn composition_power_frontier_keeps_canonical_ties_in_heuristic_layout() {
 
 #[path = "fixtures/correctness_matrix.rs"]
 mod correctness_matrix;
+#[path = "fixtures/maximum_deck_payoff.rs"]
+mod maximum_deck_payoff;
+#[path = "fixtures/maximum_matrix.rs"]
+mod maximum_matrix;
+#[path = "fixtures/maximum_mode_support.rs"]
+mod maximum_mode_support;
+#[path = "fixtures/maximum_power_cap.rs"]
+mod maximum_power_cap;

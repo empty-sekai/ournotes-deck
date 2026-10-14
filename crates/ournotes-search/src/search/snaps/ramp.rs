@@ -1,23 +1,32 @@
 //! Reachable cumulative score factors of one-shot Gekisou executions.
 use super::*;
 
-pub(super) type RampKey = (GkWindowKey, i64, i64, i64);
-pub(super) type RampWindows = Rc<Vec<(i64, i64, i64)>>;
+pub(super) type RampKey = (GkWindowKey, i64, i64, i64, bool);
+/// The factor segments `(start, end, value)` of each execution, in time order.
+pub(super) type RampWindows = Rc<Vec<Vec<(i64, i64, i64)>>>;
 
-pub(super) fn windows(env: &Env, r: &Row, event_bound: bool) -> Option<RampWindows> {
+/// The factor segments of a cumulative note score up counting judgements; `converted`: each entry counts as any
+/// judgement a conversion of an allowed card can give it, else as its raw judgement (a team without a conversion).
+pub(super) fn windows(env: &Env, r: &Row, event_bound: bool, converted: bool) -> Option<RampWindows> {
     if !r.gk || event_bound || r.effect_type != 2001 || r.trigger_type != 1 || r.value <= 0 {
         return None;
     }
-    let key = ((r.trigger, r.trigger_type, r.gate, r.act.to_bits(), r.release), r.cumulative, r.value, r.max_value);
+    let key = (
+        (r.trigger, r.trigger_type, r.gate, r.act.to_bits(), r.release),
+        r.cumulative,
+        r.value,
+        r.max_value,
+        converted,
+    );
     if let Some(v) = env.ramp_cache.borrow().get(&key) {
         return v.clone();
     }
-    let result = compile(env, r).map(Rc::new);
+    let result = compile(env, r, converted).map(Rc::new);
     env.ramp_cache.borrow_mut().insert(key, result.clone());
     result
 }
 
-fn compile(env: &Env, r: &Row) -> Option<Vec<(i64, i64, i64)>> {
+fn compile(env: &Env, r: &Row, converted: bool) -> Option<Vec<Vec<(i64, i64, i64)>>> {
     let g = env.gkf.as_ref()?;
     let c = env.master.cumulative_condition(r.cumulative)?;
     if !(1000..=1002).contains(&c.condition_type) || g.ent.len() > i32::MAX as usize {
@@ -46,7 +55,7 @@ fn compile(env: &Env, r: &Row) -> Option<Vec<(i64, i64, i64)>> {
         if !(0..8).contains(&raw) {
             return None;
         }
-        let reach = env.reach_of(i, raw);
+        let reach = if converted { env.reach_of(i, raw) } else { 1u8 << raw };
         let hit = (0..8).any(|j| {
             reach & (1u8 << j) != 0
                 && targets.iter().any(|&t| match c.condition_type {
@@ -70,16 +79,21 @@ fn compile(env: &Env, r: &Row) -> Option<Vec<(i64, i64, i64)>> {
         return None;
     }
     let ends = g.ends(env, r, &starts, &possible);
-    let mut out = Vec::new();
-    for (&start, end) in starts.iter().zip(ends) {
-        out.extend(execution(&g.times, &prefix, start, g.wlo[start], end.0, unit, max_count, r.value, ceiling));
-    }
-    Some(out)
+    Some(
+        starts
+            .iter()
+            .zip(ends)
+            .map(|(&start, end)| {
+                execution(&g.times, &prefix, start, g.wlo[start], end.0, unit, max_count, r.value, ceiling)
+            })
+            .collect(),
+    )
 }
 
 /// A new one-shot updater starts at zero and is reset before returning to its
 /// available stack. It counts at most once per processing frame. Its initial
 /// factor may be backdated; replacements are filed at their current frame time.
+/// The segments are contiguous and their values do not decrease.
 #[allow(clippy::too_many_arguments)]
 fn execution(
     frames: &[i32],

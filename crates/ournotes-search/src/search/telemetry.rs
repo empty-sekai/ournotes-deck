@@ -78,11 +78,60 @@ pub struct LotteryRefinement {
     /// Complete laws successfully installed in the ranking frontier.
     pub installed_orders: u64,
     pub declined_orders: u64,
+    /// The declined orders by the reason the provider gave.
+    pub declines: RefinementDeclines,
     /// Complete laws whose search-side exact payoff arithmetic exceeded its representation.
     pub arithmetic_declines: u64,
     pub replay_runs: u64,
     pub terminal_paths: u64,
     pub frames: u64,
+    /// Pairs of overlapping candidates with the same performers at different deck powers whose note scores were
+    /// compared, and those proved to score the same on every outcome.
+    pub power_pairs: u64,
+    pub power_twins: u64,
+    /// Candidates whose rank bonuses the residue laws of their range scores were asked to refine, and those whose
+    /// every order took them.
+    pub residue_candidates: u64,
+    pub residue_installed: u64,
+    /// Orders of overlapping candidates evaluated jointly with their lottery classes, those the joint evaluation
+    /// declined, and those whose enclosure it narrowed.
+    pub joint_orders: u64,
+    pub joint_declined: u64,
+    pub joint_narrowed: u64,
+    /// Wall time of the exact order laws, the power twin checks, the residue laws and the joint evaluations, in
+    /// milliseconds.
+    pub exact_ms: f64,
+    pub twin_ms: f64,
+    pub residue_ms: f64,
+    pub joint_ms: f64,
+}
+
+/// Orders the exact lottery provider declined, by its reason.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefinementDeclines {
+    pub domain: u64,
+    pub branch_depth: u64,
+    pub work_budget: u64,
+    pub arithmetic: u64,
+    pub unhandled_random: u64,
+    pub cancelled: u64,
+    pub unsupported: u64,
+}
+
+impl RefinementDeclines {
+    pub(crate) fn count(&mut self, why: ournotes_sim::live::full::LuckExactDecline) {
+        use ournotes_sim::live::full::LuckExactDecline as Why;
+        *match why {
+            Why::Domain => &mut self.domain,
+            Why::BranchDepth => &mut self.branch_depth,
+            Why::WorkBudget => &mut self.work_budget,
+            Why::Arithmetic => &mut self.arithmetic,
+            Why::UnhandledRandom => &mut self.unhandled_random,
+            Why::Cancelled => &mut self.cancelled,
+            Why::Unsupported => &mut self.unsupported,
+        } += 1;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -218,6 +267,8 @@ pub struct BoundSetup {
     pub class_search: bool,
     pub pt_regime: Option<PtRegime>,
     pub conversion: Option<Conversion>,
+    /// The census of the lottery laws of the domain's teams (certified score searches of a Gekisou live).
+    pub domain_laws: Option<DomainLaws>,
     /// The deck payoff ranking (`deckPayoff` search) of the plan, or why a played Live has none.
     pub deck_payoff: Option<DeckPayoffSetup>,
 }
@@ -256,6 +307,55 @@ pub struct Conversion {
     pub prepared_domains: usize,
     pub fallback: Option<String>,
     pub compile_ms: f64,
+}
+
+/// The lottery laws of every team of a domain, read from one formation per multiset of lottery kinds.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainLaws {
+    /// Lottery kinds of the plan domain's members with each Snap choice.
+    pub kinds: usize,
+    /// Snaps searched in parts of their own because a member takes no lottery kind with them.
+    pub separated_snaps: usize,
+    /// The plan domain's members with each Snap choice that take no lottery kind, by the reason.
+    pub breaks: RoleBreaks,
+    /// Domains whose census ran, and those whose bounds weigh the laws read.
+    pub censuses: usize,
+    pub weighed: usize,
+    /// Of the last census: member profiles, Snap types, multisets of kinds and their distinct laws.
+    pub profiles: usize,
+    pub snap_types: usize,
+    pub classes: usize,
+    pub laws: usize,
+    /// Formations read over every census, and the time the censuses took to enumerate them and to build the performers
+    /// of those whose laws do not compose from their kinds, within `laws_ms`.
+    pub formations: usize,
+    pub roles_ms: f64,
+    pub laws_ms: f64,
+    pub classes_ms: f64,
+    pub performers_ms: f64,
+    pub compile_ms: f64,
+    /// Of the last census: the clusters of laws whose bounds it compiled (0: none), and the time the censuses took to
+    /// split their laws and compile those bounds.
+    pub law_clusters: usize,
+    pub clusters_ms: f64,
+    /// Why the last census read no laws, or its bounds did not compile.
+    pub unavailable: Option<String>,
+}
+
+/// Performers that take no lottery kind, by the reason (see `ournotes_sim::live::full::LotteryBreak`), with the first
+/// reason given of the kinds that carry one.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleBreaks {
+    pub unsupported: usize,
+    pub converts: usize,
+    pub leaves_life_range: usize,
+    pub reads_life: usize,
+    pub reads_formation: usize,
+    pub interacts: usize,
+    pub first_unsupported: Option<String>,
+    pub first_interacts: Option<String>,
 }
 
 /// Proof status. `upperBound` is a true upper bound of the payoff numerator of every deck the search has not
@@ -360,7 +460,8 @@ pub struct TimeBreakdown {
     /// Joint node work at each depth: bounds, choice loops and bookkeeping, excluding the activities below.
     pub depth_ms: [f64; DEPTHS],
     pub composition_ms: f64,
-    /// Per-order raw and fine caps of complete teams.
+    /// The caps of complete teams over their performance orders: their fine caps summed at once, and their cheap, raw
+    /// and fine caps per order.
     pub fine_bound_ms: f64,
     pub cutoff_table_ms: f64,
     pub simulation_ms: f64,
@@ -388,18 +489,75 @@ pub struct Leaves {
     /// Performance orders whose raw and fine caps were computed; the computation of a team's caps stops once
     /// they prove it below the K-th.
     pub fine_orders: u64,
+    /// Played-live teams whose fine caps were summed over their performance orders at once instead.
+    pub order_sums: u64,
     /// Played-live teams whose performance orders started to run.
     pub started: u64,
     /// Teams dropped after some orders: their exact payoffs plus the caps of the other orders stay below the K-th.
     pub order_bound_pruned: u64,
     /// Whole-live simulations (one performance order each) run to the end.
     pub simulations: u64,
+    /// LUCK teams whose performance orders were evaluated jointly, and those whose joint evaluation declined, by why,
+    /// whose orders the all-path bounds evaluated instead.
+    pub exact_teams: u64,
+    pub exact_declined: BTreeMap<String, u64>,
+    /// LUCK teams evaluated jointly whose orders were spliced from the recordings of their rotations, and the others
+    /// by why the splice does not cover them (their orders then evaluated one by one under their laws).
+    pub spliced: u64,
+    pub unspliced: BTreeMap<String, u64>,
+    /// LUCK teams evaluated jointly whose lottery paths in some order exceeded their exact budget, so that relaxed
+    /// bounds of the paths' factor histories gave that order's score.
+    pub relaxed: u64,
+    /// Gekisou teams in a live without a LUCK range whose performance orders were spliced from the recordings of their
+    /// rotations, and the others by why the splice does not cover them (their orders then simulated).
+    pub free_spliced: u64,
+    pub free_unspliced: BTreeMap<String, u64>,
+    /// The joint evaluations: replays run, and the time their models, lottery laws, rotation recordings and
+    /// evaluations took (diagnostic builds).
+    pub exact: ExactWork,
+    /// LUCK teams dropped before their evaluation because their raw and fine caps under the lottery laws of their
+    /// own orders stay below the K-th, and the bounds compiled for such laws.
+    pub law_pruned: u64,
+    pub law_bounds: u64,
+    /// LUCK teams under bounds that weigh the laws of their domain whose own laws were found among those.
+    pub law_audits: u64,
+    /// LUCK teams whose own laws were read from the multiset of their performers' lottery kinds, before the caps under
+    /// the laws of their domain.
+    pub kind_laws: u64,
     pub cutoff: Cutoff,
     pub order_tree: OrderTree,
     pub peak_retained: usize,
     /// Diagnostics only: the census of the teams the caps leave open at a fixed threshold (`set_census`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub census: Option<Census>,
+}
+
+/// The work of the joint evaluations of LUCK teams.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExactWork {
+    pub replays: u64,
+    pub setup_ms: f64,
+    pub law_ms: f64,
+    pub record_ms: f64,
+    pub evaluate_ms: f64,
+}
+
+impl Leaves {
+    /// Count a joint evaluation of a LUCK team.
+    pub(crate) fn record_exact(&mut self, report: crate::search::certified_search::LuckExactReport) {
+        match report.alone {
+            None => self.spliced += 1,
+            Some(why) => *self.unspliced.entry(why).or_default() += 1,
+        }
+        self.relaxed += u64::from(report.relaxed);
+        let ExactWork { replays, setup_ms, law_ms, record_ms, evaluate_ms } = &mut self.exact;
+        *replays += report.replays as u64;
+        *setup_ms += report.profile.setup_ms;
+        *law_ms += report.profile.law_ms;
+        *record_ms += report.profile.record_ms;
+        *evaluate_ms += report.profile.evaluate_ms;
+    }
 }
 
 /// The teams whose per-order caps reach a census threshold, counted instead of simulated.
@@ -531,6 +689,11 @@ pub struct Joint {
     pub tail: Checks,
     pub tail_choices_skipped: [u64; DEPTHS],
     pub pair: Checks,
+    /// The correlated bounds of children, checked in their parent's choice loop.
+    pub character_pairs: Checks,
+    /// The same bounds of the children from an offset on (a prune ends the loop) and of a block of children.
+    pub character_tail: Checks,
+    pub character_blocks: Checks,
     pub root_order: RootOrder,
     pub carriers: Carriers,
     /// Node bounds (branch, bonus) and pair bounds equal to the K-th payoff, surviving on power.
@@ -653,6 +816,8 @@ pub struct Caches {
     pub rush_windows: CacheUse,
     /// Certified lottery curves of LUCK lives, shared across performance orders and teams.
     pub luck_curves: LuckCurves,
+    /// Lottery kinds of performers and the lottery laws composed from them.
+    pub luck_kinds: LuckKinds,
 }
 
 /// Use of the certified lottery-curve cache.
@@ -684,6 +849,70 @@ impl LuckCurves {
             recording_hits: stats.recording_hits,
             record_ms: stats.record_ms,
             propagate_ms: stats.propagate_ms,
+        };
+    }
+}
+
+/// Use of the lottery kinds of performers and the laws composed from them.
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LuckKinds {
+    /// Lives that replaced the held one.
+    pub lives: u64,
+    /// Roles asked, the reduced performers whose kind was read, the kinds and factor parts met, and the native
+    /// recordings of factor skills made for them.
+    pub roles: u64,
+    pub performers: u64,
+    pub kinds: usize,
+    pub parts: usize,
+    pub factor_recordings: u64,
+    /// Teams whose laws were asked, those with a performer without a kind, those whose gauge speeds or gauge
+    /// actions may not compose, and those whose conversions turn Perfects and Justs into one another beside
+    /// conversions that read such a change.
+    pub teams: u64,
+    pub unkinded: u64,
+    pub uncomposed: u64,
+    pub relabel_conflicts: u64,
+    /// Composed laws of distinct orders: held laws found, and transcripts composed with the transitions and the
+    /// largest state count of their propagations.
+    pub laws: CacheUse,
+    pub composed: u64,
+    pub composed_transitions: u64,
+    pub composed_peak_states: usize,
+    /// Composed laws read from the propagation of a composition that differs only in its score probes.
+    pub probe_variants: u64,
+    /// Composed laws read from the propagation of a composition with other factor parts that sum to the same gauge
+    /// speed at every hit.
+    pub speed_variants: u64,
+    /// The most bytes the held laws and their keys took.
+    pub peak_law_bytes: usize,
+}
+
+impl LuckKinds {
+    pub(crate) fn record(&mut self, stats: ournotes_sim::live::full::LotteryKindStats) {
+        *self = Self {
+            lives: stats.lives,
+            roles: stats.roles,
+            performers: stats.performers,
+            kinds: stats.kinds,
+            parts: stats.parts,
+            factor_recordings: stats.factor_recordings,
+            teams: stats.teams,
+            unkinded: stats.unkinded,
+            uncomposed: stats.uncomposed,
+            relabel_conflicts: stats.relabel_conflicts,
+            laws: CacheUse {
+                lookups: stats.law_lookups,
+                hits: stats.law_hits,
+                evictions: stats.law_evictions,
+                peak_entries: stats.peak_laws,
+            },
+            composed: stats.composed,
+            composed_transitions: stats.composed_transitions,
+            composed_peak_states: stats.composed_peak_states,
+            probe_variants: stats.probe_variants,
+            speed_variants: stats.speed_variants,
+            peak_law_bytes: stats.peak_law_bytes,
         };
     }
 }

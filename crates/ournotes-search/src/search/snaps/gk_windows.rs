@@ -26,6 +26,7 @@ pub(super) fn active_row(env: &Env, r: &Row, can_start: bool, event_bound: bool)
         value = if r.max_value > 0 && (r.max_value as i128) < prod { r.max_value } else { prod as i64 };
     }
     let w = r.gk.then(|| gk_row(env, r));
+    let cumulative_ramp = ramp::windows(env, r, event_bound, true);
     Ok(ActiveRow {
         effect_type: r.effect_type,
         value,
@@ -44,7 +45,9 @@ pub(super) fn active_row(env: &Env, r: &Row, can_start: bool, event_bound: bool)
         gk_event_win: (r.gk && event_bound).then(|| std::array::from_fn(|k| gk_event_windows(env, r, k))),
         gk_conv: w.as_ref().map(|x| x.conv.clone()),
         budget: w.as_ref().and_then(|x| gk_budget(env, r, x)),
-        cumulative_ramp: ramp::windows(env, r, event_bound),
+        cumulative_ramp_raw: ramp::windows(env, r, event_bound, false)
+            .filter(|raw| cumulative_ramp.as_ref() != Some(raw)),
+        cumulative_ramp,
         combo_ramp: combo_ramp(env, r),
         rush: rush::spec(env, r),
         rush_run_cap: rush::run_cap_eligible(env, r),
@@ -791,8 +794,12 @@ pub(super) fn gk_budget_uncached(env: &Env, r: &Row, w: &GkRowWin) -> Option<f64
     let seen = g
         .ent
         .iter()
-        .filter(|&&(fi, j)| {
-            j != to && r.targets.contains(&(j as i64)) && w.conv.iter().any(|&(a, b)| a < fi as i64 && fi as i64 <= b)
+        .enumerate()
+        .filter(|&(i, &(fi, j))| {
+            j != to
+                && converts(to, env.skips_just(i))
+                && r.targets.contains(&(j as i64))
+                && w.conv.iter().any(|&(a, b)| a < fi as i64 && fi as i64 <= b)
         })
         .count();
     (to != -1 && n < seen as f64).then_some(n)
@@ -1103,6 +1110,7 @@ mod count_hit_tests {
             raw: vec![4, 5],
             count_reach: std::array::from_fn(|j| 1u8 << j),
             entry_reach: Vec::new(),
+            just_blocked: Vec::new(),
             gk: None,
             gkf: None,
             rush_cache: RefCell::new(HashMap::new()),

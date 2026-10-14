@@ -56,6 +56,14 @@ pub(crate) fn life_settings(master: &Master) -> Result<(i32, FxHashMap<i64, i64>
     Ok((base as i32, damage))
 }
 
+/// Whether a note judgement files no damage ([`LifeController::add_note_damage`]): Wait, Pass, or a judgement whose
+/// damage is not positive.
+pub(crate) fn harmless_judgement(damage: &FxHashMap<i64, i64>, judgement: i32) -> bool {
+    judgement == WAIT
+        || judgement == PASS
+        || damage.get(&i64::from(judgement)).is_some_and(|&damage| damage as i32 <= 0)
+}
+
 /// The life controller.
 #[derive(Clone, Debug)]
 pub(crate) struct LifeController {
@@ -105,6 +113,16 @@ impl LifeController {
 
     pub(crate) fn max_life(&self) -> i32 {
         self.internal_max_life
+    }
+
+    /// The life at the start of the live.
+    pub(crate) fn initial_life(&self) -> i32 {
+        self.initial_life
+    }
+
+    /// Whether a note judgement has dealt damage.
+    pub(crate) fn has_note_damage(&self) -> bool {
+        self.commands.iter().flatten().any(|command| command.kind == NOTE_DAMAGE)
     }
 
     fn frame_of(&self, ms: i32) -> i32 {
