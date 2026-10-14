@@ -2,6 +2,22 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.8](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.7...v0.0.8) - 2026-10-13
+
+### Bug fixes
+
+- **sim:** Read charts whose score row lags behind their notes ([00d188f](https://github.com/empty-sekai/ournotes-deck/commit/00d188f12ea0a0067b5274dac0ef4b55dbd62555))
+
+## [0.0.7](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.6...v0.0.7) - 2026-10-13
+
+### Features
+
+- **python:** Publish the chart statistics as the Python package ournotes-sim ([89d6750](https://github.com/empty-sekai/ournotes-deck/commit/89d6750213df801226dc62499027ba57aa2bce18))
+
+### CI
+
+- **python:** Build and test the platform wheels on pull requests that change the package ([572e16d](https://github.com/empty-sekai/ournotes-deck/commit/572e16d5a0396362497e407c6c0388e2dcd034e6))
+
 ## [0.0.6](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.5...v0.0.6) - 2026-10-11
 
 ### Features
@@ -99,9 +115,9 @@ All notable changes to this project are listed here. Versions follow [Semantic V
 
 ### Features
 
-- One `ournotes-deck` CLI entry point, with JSON recommendation under the `recommend` subcommand; native and WASM release packages with SHA-256 checksums.
 - Snapshot recommendation in wasm and search progress reports ([7112cc1](https://github.com/empty-sekai/ournotes-deck/commit/7112cc13e5855ac8636ce503ff21e637f2a9ce64))
 - Rank played teams by their mean payoff over the 120 performance orders ([dadc22f](https://github.com/empty-sekai/ournotes-deck/commit/dadc22f558714dcaaf7704c01f8568f2fe04558a))
+- **cli:** Unify JSON recommendation under ournotes-deck recommend ([5b24b16](https://github.com/empty-sekai/ournotes-deck/commit/5b24b16548a6b051d02113351c45e63a9b38e19d))
 
 ### Bug fixes
 
@@ -114,6 +130,9 @@ All notable changes to this project are listed here. Versions follow [Semantic V
 - **api:** Preserve whole-domain bounds when finalizing recommendations ([316b30f](https://github.com/empty-sekai/ournotes-deck/commit/316b30f3b9beb90e138d414c2a32a0c1c8b84a90))
 - **search:** Refine ambiguous LUCK rankings with bounded complete laws ([6d85a4a](https://github.com/empty-sekai/ournotes-deck/commit/6d85a4ac41b1ecbc77e179fa567d07b10e509aa6))
 - **sim:** Accept slash-separated master dates ([86a360b](https://github.com/empty-sekai/ournotes-deck/commit/86a360b8889f61579c52b99a381654c926815d45))
+- **release:** Declare synthetic replay audio provenance ([c6b9f9d](https://github.com/empty-sekai/ournotes-deck/commit/c6b9f9d6dff6afad9cdeac4e509db5f6917ee899))
+- **release:** Locate fixture exports from cargo test working directories ([d1f6b2f](https://github.com/empty-sekai/ournotes-deck/commit/d1f6b2fc2f01323cbc7a344a9efbb77fc1abe5cb))
+- **release:** Decode native CLI output as UTF-8 on Windows ([59b871e](https://github.com/empty-sekai/ournotes-deck/commit/59b871e93a4169881975d06cb41b8248cd5e9e5a))
 
 ### Performance
 
@@ -133,8 +152,11 @@ All notable changes to this project are listed here. Versions follow [Semantic V
 ### CI
 
 - Pass the latest stable clippy and move to actions/checkout v7 ([6e03470](https://github.com/empty-sekai/ournotes-deck/commit/6e034704be1501ba9ae2d73622b0d4c70d1abeac))
+- **release:** Publish verified native and wasm artifacts ([b2cbce3](https://github.com/empty-sekai/ournotes-deck/commit/b2cbce377c7a0651d3dced5cd6886f0136c41c02))
+- **release:** Require source CI before artifact publication ([ddf212b](https://github.com/empty-sekai/ournotes-deck/commit/ddf212b601731f9ab74245119d4408d2746a370c))
 
 ### Miscellaneous
 
 - Initial commit ([e27d289](https://github.com/empty-sekai/ournotes-deck/commit/e27d289d549aff74955977659e1bee5c72d6a4f5))
+
 

@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::Error;
 use crate::live::score::LiveScoreSettings;
-use crate::live::skip::{Chart, ChartNote, SkillEvent, judgement_note_total_count};
+use crate::live::skip::{Chart, ChartNote, SkillEvent};
 use crate::master::{Master, TABLES};
 
 /// The format this reader reads.
@@ -183,14 +183,10 @@ fn chart_of(c: ChartRaw, master: &Master) -> Result<DataChart, Error> {
     let notes: Vec<ChartNote> = (0..n)
         .map(|i| ChartNote { id: c.notes.id[i], time_ms: c.notes.time_ms[i], note_type: c.notes.op[i] })
         .collect();
-    let row =
-        master.live_music_score(id).ok_or_else(|| Error::Input(format!("chart {id}: no MasterLiveMusicScore row")))?;
-    let judged = judgement_note_total_count(&notes) as i64;
-    if judged != row.full_combo_count {
-        return Err(Error::Input(format!(
-            "chart {id}: {judged} judged notes, the score row's full combo count is {}",
-            row.full_combo_count
-        )));
+    // The judged notes are the chart's own; the score row's full combo count is not compared with them (the game
+    // plays the converted notes, and the row can lag behind an updated chart).
+    if master.live_music_score(id).is_none() {
+        return Err(Error::Input(format!("chart {id}: no MasterLiveMusicScore row")));
     }
     Ok(DataChart {
         score_id: id,
@@ -206,7 +202,7 @@ fn chart_of(c: ChartRaw, master: &Master) -> Result<DataChart, Error> {
 impl DeckData {
     /// Reads a deck data document. Checks: the format, that the master has every table of [`TABLES`], that every
     /// row has one value per column, equal column lengths inside a chart, unique note ids, fevers sorted by start,
-    /// charts sorted by score id, and that the judged notes of each chart match its score row's full combo count.
+    /// charts sorted by score id, and that each chart has a score row.
     pub fn from_json(text: &str) -> Result<DeckData, Error> {
         let sha256 = sha256_hex(text.as_bytes());
         let text = text.strip_prefix('\u{feff}').unwrap_or(text);

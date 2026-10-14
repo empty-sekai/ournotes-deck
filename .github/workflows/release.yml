@@ -35,6 +35,8 @@ jobs:
           commit=$(git rev-parse "refs/tags/$TAG^{commit}")
           git show "$commit:Cargo.toml" > /tmp/release-Cargo.toml
           python3 -c 'import os,tomllib; assert tomllib.load(open("/tmp/release-Cargo.toml","rb"))["workspace"]["package"]["version"] == os.environ["TAG"][1:]'
+          git show "$commit:python/Cargo.toml" > /tmp/release-python-Cargo.toml
+          python3 -c 'import os,tomllib; assert tomllib.load(open("/tmp/release-python-Cargo.toml","rb"))["package"]["version"] == os.environ["TAG"][1:]'
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
@@ -104,6 +106,12 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  wheels:
+    needs: resolve
+    uses: ./.github/workflows/wheels.yml
+    with:
+      source-commit: ${{ needs.resolve.outputs.commit }}
+
   wasm:
     needs: resolve
     uses: ./.github/workflows/wasm.yml
@@ -112,7 +120,7 @@ jobs:
       tag: ${{ needs.resolve.outputs.tag }}
 
   publish:
-    needs: [resolve, native, wasm]
+    needs: [resolve, native, wasm, wheels]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -127,7 +135,7 @@ jobs:
         run: |
           for attempt in $(seq 1 90); do
             gh api "repos/$GH_REPO/commits/$SOURCE_COMMIT/check-runs?filter=latest&per_page=100" > /tmp/source-checks.json
-            if python3 -c 'import json,sys; checks=json.load(open("/tmp/source-checks.json"))["check_runs"]; required=[next((c for c in checks if c["name"]==name),None) for name in ("test","diagnostics","msrv","synthetic-correctness")]; failed=any(c and c["status"]=="completed" and c["conclusion"]!="success" for c in required); passed=all(c and c["status"]=="completed" and c["conclusion"]=="success" for c in required); sys.exit(2 if failed else 0 if passed else 1)'; then
+            if python3 -c 'import json,sys; checks=json.load(open("/tmp/source-checks.json"))["check_runs"]; required=[next((c for c in checks if c["name"]==name),None) for name in ("test","diagnostics","msrv","synthetic-correctness","python")]; failed=any(c and c["status"]=="completed" and c["conclusion"]!="success" for c in required); passed=all(c and c["status"]=="completed" and c["conclusion"]=="success" for c in required); sys.exit(2 if failed else 0 if passed else 1)'; then
               break
             else
               state=$?
@@ -138,8 +146,13 @@ jobs:
           done
       - uses: actions/download-artifact@v4
         with:
+          pattern: native-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm
+          path: dist
       - name: Hash and publish all verified packages
         run: |
           test "$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)" = "$SOURCE_COMMIT"
@@ -152,3 +165,30 @@ jobs:
           cd ../readback
           sha256sum -c SHA256SUMS
           echo "Published $TAG from $SOURCE_COMMIT; all seven downloaded packages match SHA256SUMS." >> "$GITHUB_STEP_SUMMARY"
+
+  pypi:
+    needs: [resolve, publish]
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/ournotes-sim/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Check the wheels
+        run: |
+          test "$(find dist -maxdepth 1 -name '*.whl' | wc -l)" -eq 5
+          python -m pip install --upgrade twine
+          python -m twine check --strict dist/*
+      # trusted publishing: PyPI accepts this workflow's OIDC token, no API token is stored
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

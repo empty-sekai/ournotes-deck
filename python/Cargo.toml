@@ -1,0 +1,23 @@
+[package]
+name = "ournotes-sim-py"
+# the workspace version (../Cargo.toml); the wheel takes its version from here
+version = "0.0.8"
+edition = "2024"
+rust-version = "1.88"
+description = "ournotes_sim._native: the chart statistics of ournotes-sim as a Python extension module"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/empty-sekai/ournotes-deck"
+publish = false
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+ournotes-sim = { path = "../crates/ournotes-sim" }
+pyo3 = { version = "0.29", features = ["abi3-py311"] }
+serde_json = { version = "1", features = ["raw_value", "arbitrary_precision"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

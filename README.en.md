@@ -15,8 +15,9 @@ The repository is a Cargo workspace of two crates; the search depends on the mod
 
 Depend on `ournotes-sim` for computation or simulation alone (chart statistics, replay); depend on `ournotes-search`
 to search, and take the model's types from `ournotes-sim`. `wasm/replay` is the replay WASM over `ournotes-sim`,
-`wasm/recommend` the recommendation WASM over `ournotes-search`, and `tools/search-harness` measures the search; these
-three are separate packages outside the workspace, each with its own `Cargo.lock`. Both crates have a
+`wasm/recommend` the recommendation WASM over `ournotes-search`, `python` the Python package `ournotes-sim` (the
+chart statistics of `ournotes-sim`, see [python/README.md](python/README.md)), and `tools/search-harness` measures the
+search; these four are separate packages outside the workspace, each with its own `Cargo.lock`. Both crates have a
 `search-diagnostics` feature; `ournotes-search`'s also enables `ournotes-sim`'s.
 
 ## Recommendation pipeline
@@ -166,6 +167,16 @@ let out = search(&pool, &SearchRequest {
 for deck in &out.results {
     println!("{:?} {} {:?} {:?}", deck.score, deck.power, deck.members, deck.snaps);
 }
+```
+
+From Python, the PyPI package `ournotes-sim` measures the chart statistics of a deck data document with the model of
+the same release:
+
+```python
+import json
+import ournotes_sim
+
+stats = json.loads(ournotes_sim.chart_stats(open("deck-data.json", encoding="utf-8").read()))
 ```
 
 ## Command line
@@ -336,7 +347,8 @@ fn statistics(data: &DeckData) -> Result<serde_json::Value, Error> {
 
 `cargo test` at the repository root runs the unit and integration tests of both crates: it reads synthetic deck data
 files and compares the search with exhaustive enumeration on small synthetic pools. The two WASM packages build with
-`cargo build --manifest-path wasm/<replay|recommend>/Cargo.toml --target wasm32-unknown-unknown --release`. `OURNOTES_DECK_ORACLE_CASES`, `OURNOTES_DECK_ORACLE_SEED0`,
+`cargo build --manifest-path wasm/<replay|recommend>/Cargo.toml --target wasm32-unknown-unknown --release`. The Python
+package builds and installs with `pip install ./python[test]`; `pytest python/tests` tests it. `OURNOTES_DECK_ORACLE_CASES`, `OURNOTES_DECK_ORACLE_SEED0`,
 `OURNOTES_DECK_ORACLE_MEMBERS` and `OURNOTES_DECK_ORACLE_SNAPS` enlarge that comparison. For the live score with snap
 skills, `OURNOTES_DECK_SNAPS_CASES`, `OURNOTES_DECK_SNAPS_SEED0`, `OURNOTES_DECK_SNAPS_MEMBERS`,
 `OURNOTES_DECK_SNAPS_SNAPS`, `OURNOTES_DECK_SNAPS_NOTES` and `OURNOTES_DECK_SNAPS_VARIANTS` do the same.
@@ -344,8 +356,8 @@ skills, `OURNOTES_DECK_SNAPS_CASES`, `OURNOTES_DECK_SNAPS_SEED0`, `OURNOTES_DECK
 ## Changelog
 
 [CHANGELOG.md](CHANGELOG.md) lists the changes, generated from the commits (Conventional Commits) by
-[git-cliff](https://git-cliff.org/). The commit that bumps the version regenerates it with
-`git cliff --tag vX.Y.Z -o CHANGELOG.md`.
+[git-cliff](https://git-cliff.org/). The commit that bumps the version (the workspace, `wasm/*` and `python`
+manifests with their lockfiles) regenerates it with `git cliff --tag vX.Y.Z -o CHANGELOG.md`.
 
 ## Licence
 

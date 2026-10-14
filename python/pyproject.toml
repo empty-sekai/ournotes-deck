@@ -1,0 +1,37 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ournotes-sim"
+description = "The BanG Dream! Our Notes deck model (ournotes-sim) for Python: chart statistics of deck data documents"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/empty-sekai/ournotes-deck"
+Source = "https://github.com/empty-sekai/ournotes-deck"
+Issues = "https://github.com/empty-sekai/ournotes-deck/issues"
+
+[tool.maturin]
+# the package ournotes_sim (next to this file) with the extension module ournotes_sim._native built from Cargo.toml;
+# the version is Cargo.toml's
+module-name = "ournotes_sim._native"
+profile = "release"
+locked = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
