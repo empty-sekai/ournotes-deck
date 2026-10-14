@@ -7,6 +7,13 @@ use ournotes_sim::data::DeckData;
 use std::time::Duration;
 use wasm_bindgen::prelude::*;
 
+#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+mod memory;
+
+#[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+#[global_allocator]
+static HEAP: memory::Heap = memory::Heap::new();
+
 const PROGRESS_INTERVAL_MS: u32 = 250;
 
 #[wasm_bindgen]

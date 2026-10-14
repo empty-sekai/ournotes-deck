@@ -694,7 +694,7 @@ impl Engine<'_, '_> {
     /// The bounds of `domain` under clusters of the laws of the multisets of kinds `multisets` read by `census` (see
     /// [`cluster_laws`]), or None when they form one cluster or the bounds of a cluster do not compile.
     fn law_clusters(
-        &self,
+        &mut self,
         census: &LotteryCensus,
         domain: &CandidateDomain,
         multisets: &[Multiset],
@@ -708,13 +708,17 @@ impl Engine<'_, '_> {
         let (prefixes, teams) = multiset_places(multisets, &cluster)?;
         let (pool, request, metric, event_input, simulation) =
             (self.pool, self.request, self.metric, self.event_input, self.simulation);
-        let bounds = sets
-            .iter()
-            .map(|set| {
+        let mut bounds = Vec::with_capacity(sets.len());
+        for set in &sets {
+            // each cluster's bounds compile as one step of preparation; none begins after the deadline
+            if self.expired() {
+                return None;
+            }
+            bounds.push(
                 JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, set, None)
-            })
-            .collect::<Result<Vec<_>, Error>>()
-            .ok()?;
+                    .ok()?,
+            );
+        }
         let mut kinds = vec![Box::<[u32]>::default(); pool.members.len()];
         for &m in domain.members() {
             let choices = std::iter::once(None).chain(domain.snaps().iter().map(|&s| Some(s)));
