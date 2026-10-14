@@ -294,7 +294,11 @@ fn merge_alts(alts: &mut Vec<Alt>, cells: &mut Vec<Orders>) {
             let alt = alts[index];
             let mut parts = cells.iter().copied().filter(|&cell| cell & alt.orders != 0);
             alts[index].orders = parts.next().expect("an alternative's orders are cells");
-            alts.extend(parts.map(|orders| Alt { orders, ..alt }));
+            for orders in parts {
+                let mut part = alt;
+                part.orders = orders;
+                alts.push(part);
+            }
         }
     }
     alts.sort_unstable_by_key(Alt::key);
