@@ -31,8 +31,8 @@ pub(super) use cache::RecordingCache;
 pub use cache::{LuckDpCache, LuckDpCacheStats};
 use compose::{ComposedLaws, HeldLive};
 pub use compose::{KindCensus, LotteryLive};
-pub(crate) use dp::{ClassResidue, ResiduePlan};
-use dp::{DpResult, Phase, State, StepTables, propagate, propagate_residues, propagate_sharing};
+pub(crate) use dp::{ClassResidue, JointReader, JointView, LotteryFlags, Phase, ResiduePlan};
+use dp::{DpResult, State, StepTables, propagate, propagate_joint, propagate_residues, propagate_sharing};
 use kinds::{Conversions, POSITIONS};
 pub use kinds::{LotteryBreak, LotteryKind, LotteryKindStats, LotteryKinds, LotteryRole};
 use life_recorder::life_recorder;
@@ -430,6 +430,11 @@ impl LotteryRecording {
     /// The certified mass of each residue of `plan`'s sum below its modulus, under the recording's lottery law.
     pub(crate) fn residues(&self, plan: &ResiduePlan) -> Result<Vec<ProbabilityMass>, Error> {
         propagate_residues(&self.transcript, plan)
+    }
+
+    /// Propagates the recording's certified lottery law jointly with the labels of `reader` ([`JointReader`]).
+    pub(crate) fn joint(&self, reader: &mut impl JointReader) -> Result<(), Error> {
+        propagate_joint(&self.transcript, reader)
     }
 }
 

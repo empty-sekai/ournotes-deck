@@ -2,8 +2,10 @@
 
 use super::*;
 
+mod joint;
+pub(super) use joint::propagate_joint;
+pub(crate) use joint::{JointReader, JointView, LotteryFlags};
 mod residues;
-use residues::ResidueReads;
 pub(super) use residues::propagate_residues;
 pub(crate) use residues::{ClassResidue, ResiduePlan};
 
@@ -142,8 +144,8 @@ impl std::hash::Hash for State {
 }
 
 /// The lottery state a note's score reads, relative to its native frame.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Phase {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Phase {
     /// A note before its frame's time, or a note at the frame's time scored before the frame's skill boundary: the
     /// Rush seen by the frame's score queries and the probe class before the frame.
     BeforeFrame,
@@ -640,6 +642,8 @@ pub(super) struct Dp<'t, M: Mass> {
     peak: usize,
     pub(super) transitions: u64,
     pub(super) range_moments: Vec<LuckRangeMoments>,
+    /// The joint distribution with a reader's labels, once begun ([`Dp::begin_joint`]).
+    joint: Option<joint::JointMasses<M>>,
 }
 
 impl<'t, M: Mass> Dp<'t, M> {
@@ -660,6 +664,7 @@ impl<'t, M: Mass> Dp<'t, M> {
             reads: Vec::new(),
             peak: 1,
             transitions: 0,
+            joint: None,
         };
         let block = Block { rest, lo: State::default().chain.gauge, masses: vec![M::ONE], held: 1, total: None };
         dp.dist.push(block);
@@ -907,6 +912,7 @@ impl<'t, M: Mass> Dp<'t, M> {
             }
             spare.push(block.masses);
         }
+        self.step_joint(step)?;
         self.settle()
     }
 
@@ -1098,6 +1104,46 @@ fn block_at<'b, M: Mass>(
     block
 }
 
+/// What a propagation hands its read points to, besides the weights it files. Each hook may end the propagation by
+/// returning true.
+pub(super) trait Hooks<M: Mass> {
+    /// Whether the propagation holds the joint distribution ([`Dp::begin_joint`]).
+    fn joint(&self) -> bool {
+        false
+    }
+
+    /// After the start of play frame `play`, or at a play frame the propagation skips (`quiet`), whose states keep
+    /// their values.
+    fn started(&mut self, _dp: &mut Dp<'_, M>, _play: usize, _quiet: bool) -> Result<bool, Error> {
+        Ok(false)
+    }
+
+    /// Where the score queries of the frame at `time`, repeated `repeat` times, read their weights.
+    fn queries(&mut self, _dp: &mut Dp<'_, M>, _time: i32, _repeat: u32) -> Result<bool, Error> {
+        Ok(false)
+    }
+
+    /// Where the notes at chart time `time` read the class they keep, in `phase`.
+    fn kept(&mut self, _dp: &mut Dp<'_, M>, _time: i32, _phase: Phase) -> Result<bool, Error> {
+        Ok(false)
+    }
+
+    /// Once the lotteries of play frame `play` are drawn, before its end; `quiet` as for [`Self::started`].
+    fn lotteries(&mut self, _dp: &mut Dp<'_, M>, _play: usize, _quiet: bool) -> Result<bool, Error> {
+        Ok(false)
+    }
+
+    /// After the last frame the propagation takes.
+    fn close(&mut self, _dp: &mut Dp<'_, M>) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+/// A propagation with no read points besides its weights.
+struct NoHooks;
+
+impl<M: Mass> Hooks<M> for NoHooks {}
+
 /// Propagate the lottery-state distribution through a transcript.
 pub(super) fn propagate<M: Mass>(transcript: &Transcript<M>) -> Result<DpResult<M::Weights>, Error> {
     Ok(propagate_cancellable(transcript, &mut || false)?.expect("complete propagation"))
@@ -1109,7 +1155,7 @@ pub(super) fn propagate_cancellable<M: Mass>(
 ) -> Result<Option<DpResult<M::Weights>>, Error> {
     let mut tables = StepTables::default();
     tables.enter_transcript(transcript);
-    let result = propagate_frames(transcript, &mut tables, cancelled, None)?;
+    let result = propagate_frames(transcript, &mut tables, cancelled, &mut NoHooks)?;
     finish(transcript, result)
 }
 
@@ -1126,7 +1172,7 @@ pub(super) fn propagate_sharing<M: Mass>(
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<Option<DpResult<M::Weights>>, Error> {
     tables.enter_transcript(transcript);
-    match propagate_frames(transcript, tables, cancelled, None) {
+    match propagate_frames(transcript, tables, cancelled, &mut NoHooks) {
         Ok(result) => finish(transcript, result),
         Err(_) => {
             *tables = StepTables::default();
@@ -1144,17 +1190,19 @@ fn finish<W>(transcript: &Transcript<impl Mass>, result: Option<DpResult<W>>) ->
     }
 }
 
-/// The propagation of `transcript`. With `residues`, the states also carry the residue of a plan's sum, and the
-/// propagation ends once the plan's last read point is met: no later step changes a residue, and every step keeps the
-/// mass of each residue, so the masses by residue are final there. The result then covers the frames up to that point.
+/// The propagation of `transcript`, handing its read points to `hooks`. A hook that ends the propagation ends it
+/// there: the result then covers the frames up to that point.
 fn propagate_frames<M: Mass>(
     transcript: &Transcript<M>,
     tables: &mut StepTables<M>,
     cancelled: &mut impl FnMut() -> bool,
-    mut residues: Option<&mut ResidueReads<'_, M>>,
+    hooks: &mut impl Hooks<M>,
 ) -> Result<Option<DpResult<M::Weights>>, Error> {
     let t = transcript;
     let mut dp = Dp::<M>::new(tables, t.collect_moments);
+    if hooks.joint() {
+        dp.begin_joint()?;
+    }
     // Each note hit and each pending frame consumes at most one result. Critical point commands fire at
     // most once per recorded action. These bounds prove that additive indicators cannot wrap native i32.
     if t.collect_moments {
@@ -1192,6 +1240,8 @@ fn propagate_frames<M: Mass>(
     let mut previous_lot = false;
     let mut queued = vec![false; t.luck.len()];
     let (mut notes_from, mut actions_from, mut pending_from) = (0usize, 0usize, 0usize);
+    // The number of the current play frame.
+    let mut play = 0usize;
     'frames: for frame in &t.frames {
         if cancelled() {
             return Ok(None);
@@ -1217,6 +1267,10 @@ fn propagate_frames<M: Mass>(
                 // frame through the DP for 7021 and previous-frame 7000.
                 probe_transitions.push(identity);
                 rush_transitions.push(kept);
+                if hooks.started(&mut dp, play, true)? || hooks.lotteries(&mut dp, play, true)? {
+                    break 'frames;
+                }
+                play += 1;
                 continue;
             }
             if let Some(range) = frame.start {
@@ -1280,11 +1334,12 @@ fn propagate_frames<M: Mass>(
                     frame.time_ms,
                     [Phase::BeforeFrame, Phase::AtFrame, Phase::BeforeSkills].map(|phase| dp.weights(&t.probes, phase)),
                 ));
-                if let Some(residues) = residues.as_deref_mut()
-                    && residues.queries(&mut dp, frame.time_ms, frame.repeat)?
-                {
+                if hooks.queries(&mut dp, frame.time_ms, frame.repeat)? {
                     break 'frames;
                 }
+            }
+            if hooks.started(&mut dp, play, false)? {
+                break 'frames;
             }
             if gate && frame.target >= 0 {
                 for &action in actions {
@@ -1316,9 +1371,7 @@ fn propagate_frames<M: Mass>(
                     if steps.last().is_none_or(|last| last.1 != values) {
                         steps.push((time, values));
                     }
-                    if let Some(residues) = residues.as_deref_mut()
-                        && residues.kept(&mut dp, time, Phase::BeforeFrame)?
-                    {
+                    if hooks.kept(&mut dp, time, Phase::BeforeFrame)? {
                         break 'frames;
                     }
                 }
@@ -1340,11 +1393,12 @@ fn propagate_frames<M: Mass>(
                 if steps.last().is_none_or(|last| last.1 != values) {
                     steps.push((frame.time_ms, values));
                 }
-                if let Some(residues) = residues.as_deref_mut()
-                    && residues.kept(&mut dp, frame.time_ms, Phase::AtFrame)?
-                {
+                if hooks.kept(&mut dp, frame.time_ms, Phase::AtFrame)? {
                     break 'frames;
                 }
+            }
+            if hooks.lotteries(&mut dp, play, false)? {
+                break 'frames;
             }
             previous_lot = dp.held().any(|state| state.frame_lot);
             dp.map(StepKey::FrameEnd { finish }, |mut state| {
@@ -1369,11 +1423,10 @@ fn propagate_frames<M: Mass>(
             if let Some(range) = dp.active_range {
                 queued[range] = dp.held().any(|state| state.chain.lots > 0);
             }
+            play += 1;
         }
     }
-    if let Some(residues) = residues {
-        residues.close(&mut dp);
-    }
+    hooks.close(&mut dp)?;
     Ok(Some(DpResult {
         probe_transitions,
         rush_transitions,

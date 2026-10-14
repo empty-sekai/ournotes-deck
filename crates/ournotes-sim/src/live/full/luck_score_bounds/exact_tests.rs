@@ -1,5 +1,5 @@
 //! The exact per-class expectation against the complete tree of nominal lottery outcomes.
-use super::exact_paths::{ExactReplay, NoteValue, Orders, first_orders, undo_floors};
+use super::exact_paths::{ExactReplay, NoteValue, Orders, TrackScratch, first_orders, undo_floors};
 use super::*;
 use crate::live::full::combo::ComboCounter;
 use crate::live::full::luck_dp::RUSH_FINISH;
@@ -16,6 +16,18 @@ use serde_json::json;
 /// `spread` ms.
 pub(super) fn fixture(
     probe: Option<i64>,
+    step: i32,
+    spread: i32,
+    times: &[i32],
+    fevers: Vec<(i32, i32)>,
+) -> (Master, Vec<Performer>, Vec<LiveNote>, LiveParams, GekisouSetup, LivePlay, Vec<f32>) {
+    fixture_with_probes(probe.as_slice(), step, spread, times, fevers)
+}
+
+/// [`fixture`] with one performer per entry of `probes`, each with a Gekisou score-up of that value that holds while
+/// Rush runs.
+pub(super) fn fixture_with_probes(
+    probes: &[i64],
     step: i32,
     spread: i32,
     times: &[i32],
@@ -42,18 +54,22 @@ pub(super) fn fixture(
         "MasterLiveGekisouLuckBasePoint":[{"_id":1,"_noteCategory":0,"_noteSimulateJudgement":5,"_weight":1,"_basePoint":60}],
         "MasterLiveGekisouLuckBonusLot":lots,
     });
-    if let Some(value) = probe {
+    if !probes.is_empty() {
+        let skill = |id: usize| json!({"_id":id,"_gekisouMissionType":2});
+        let effect = |id: usize, value: i64| {
+            json!({
+                "_id":id,"_gekisouSkillID":id,"_level":1,"_skillTriggerType":2,
+                "_skillTriggerConditionGroup":1,"_skillConditionGroup":0,"_skillReleaseConditionGroup":0,
+                "_skillTargetIDs":[],"_skillEffectType":2000,"_activationTimeSecond":0.0,"_effectValue":value,
+                "_maxEffectValue":0,"_effectLimitCount":8,"_skillCumulativeConditionID":0,
+                "_effectExecuteLimitCount":0,"_effectExecuteLimitResetConditionGroup":0})
+        };
         let extra = json!({
             "MasterSkillCondition":[{"_id":1,"_conditionType":7021,"_conditionValues":[],"_conditionTargetIDs":[],"_isPositive":true}],
             "MasterSkillConditionSet":[{"_id":1,"_group":1,"_conditionIds":[1]}],
             "MasterSkillEffectSetting":[{"_id":1,"_skillEffectType":2000,"_phase":1}],
-            "MasterGekisouSkill":[{"_id":1,"_gekisouMissionType":2}],
-            "MasterGekisouSkillEffect":[{
-                "_id":1,"_gekisouSkillID":1,"_level":1,"_skillTriggerType":2,
-                "_skillTriggerConditionGroup":1,"_skillConditionGroup":0,"_skillReleaseConditionGroup":0,
-                "_skillTargetIDs":[],"_skillEffectType":2000,"_activationTimeSecond":0.0,"_effectValue":value,
-                "_maxEffectValue":0,"_effectLimitCount":8,"_skillCumulativeConditionID":0,
-                "_effectExecuteLimitCount":0,"_effectExecuteLimitResetConditionGroup":0}]
+            "MasterGekisouSkill":(1..=probes.len()).map(skill).collect::<Vec<_>>(),
+            "MasterGekisouSkillEffect":probes.iter().enumerate().map(|(at, &value)| effect(at + 1, value)).collect::<Vec<_>>(),
         });
         for (name, rows) in extra.as_object().unwrap() {
             tables[name] = rows.clone();
@@ -77,10 +93,8 @@ pub(super) fn fixture(
             score_bonus_percent: 250,
         })
         .collect();
-    let deck = match probe {
-        Some(_) => vec![Performer { gekisou_skill: Some((1, 1)), ..Default::default() }],
-        None => Vec::new(),
-    };
+    let deck =
+        (1..=probes.len() as i64).map(|id| Performer { gekisou_skill: Some((id, 1)), ..Default::default() }).collect();
     let mut note_times: Vec<i32> = times.iter().flat_map(|&t| [0, spread / 2, spread].map(|d| t + d)).collect();
     note_times.sort_unstable();
     let notes: Vec<_> = note_times
@@ -396,53 +410,14 @@ fn replay_schedule(
     rows: &[[(i32, i32); 2]],
     select: impl Fn(Orders) -> Option<Orders>,
 ) -> (ExactReplay, Vec<usize>) {
+    let (mut replay, frame_of) = empty_replay(steps, rows, &select);
     let lanes = rows.len();
-    let mut configs = Vec::<(Orders, Vec<ProbeRow>)>::new();
-    for (order, rows) in rows.iter().enumerate() {
-        let rows: Vec<_> = rows.iter().map(|&(owner, m)| ProbeRow { owner, value: m as f32 / 100000f32 }).collect();
-        let same =
-            |other: &Vec<ProbeRow>| other.iter().zip(&rows).all(|(a, b)| (a.owner, a.value) == (b.owner, b.value));
-        match configs.iter_mut().find(|(_, other)| same(other)) {
-            Some((orders, _)) => *orders |= 1 << order,
-            None => configs.push((1 << order, rows)),
-        }
-    }
-    let frames = calculator().executed_states().0;
-    let frame_of = |time: i32| (get_frame(time).max(0) as usize).min(frames - 1);
     let every = first_orders(lanes);
     let command = |step: &Step| match step {
         Step::Command(command) => Some((*command, every)),
         Step::Partial(command, mask) => select(*mask).map(|orders| (*command, orders)),
         _ => None,
     };
-    let mut events = Vec::new();
-    let mut transitions = Vec::new();
-    let mut finish = false;
-    for step in steps {
-        match step {
-            Step::Note(note) => {
-                events.push(BoundsEvent::Note { frame: frame_of(note.time_ms), index: 0, note: *note });
-            }
-            Step::Command(_) | Step::Partial(..) => {
-                if let Some((command, _)) = command(step) {
-                    events.push(BoundsEvent::Factor { frame: frame_of(command.time_ms), command });
-                }
-            }
-            Step::Finish(t) => {
-                events.push(BoundsEvent::Potential { frame: frame_of(*t), start: true });
-                finish = true;
-            }
-            Step::Probe(t, _) => events.push(BoundsEvent::Probe { frame: frame_of(*t), time_ms: *t }),
-            Step::Lotteries(t, times) => {
-                events.extend(times.iter().map(|&time| BoundsEvent::Potential { frame: frame_of(time), start: false }));
-                events.push(BoundsEvent::ProbabilityReady(*t));
-                transitions.push(0xff | if finish { RUSH_FINISH } else { 0 });
-                finish = false;
-            }
-            Step::Query(t) => events.push(BoundsEvent::Query { time_ms: *t, to: frame_of(*t) as i32 }),
-        }
-    }
-    let mut replay = ExactReplay::new(frames, &configs, undo_floors(&events, &transitions).unwrap(), lanes).unwrap();
     let mut combos = FxHashMap::default();
     let mut index = Vec::new();
     for step in steps {
@@ -469,6 +444,60 @@ fn replay_schedule(
         }
     }
     (replay, index)
+}
+
+/// The exact replay of `steps` before any filing, as [`replay_schedule`] makes it, and the score frame of a chart
+/// time.
+fn empty_replay(
+    steps: &[Step],
+    rows: &[[(i32, i32); 2]],
+    select: &impl Fn(Orders) -> Option<Orders>,
+) -> (ExactReplay, impl Fn(i32) -> usize) {
+    let lanes = rows.len();
+    let mut configs = Vec::<(Orders, Vec<ProbeRow>)>::new();
+    for (order, rows) in rows.iter().enumerate() {
+        let rows: Vec<_> = rows.iter().map(|&(owner, m)| ProbeRow { owner, value: m as f32 / 100000f32 }).collect();
+        let same =
+            |other: &Vec<ProbeRow>| other.iter().zip(&rows).all(|(a, b)| (a.owner, a.value) == (b.owner, b.value));
+        match configs.iter_mut().find(|(_, other)| same(other)) {
+            Some((orders, _)) => *orders |= 1 << order,
+            None => configs.push((1 << order, rows)),
+        }
+    }
+    let frames = calculator().executed_states().0;
+    let frame_of = move |time: i32| (get_frame(time).max(0) as usize).min(frames - 1);
+    let mut events = Vec::new();
+    let mut transitions = Vec::new();
+    let mut finish = false;
+    for step in steps {
+        match step {
+            Step::Note(note) => {
+                events.push(BoundsEvent::Note { frame: frame_of(note.time_ms), index: 0, note: *note });
+            }
+            Step::Command(command) => {
+                events.push(BoundsEvent::Factor { frame: frame_of(command.time_ms), command: *command })
+            }
+            Step::Partial(command, mask) => {
+                if select(*mask).is_some() {
+                    events.push(BoundsEvent::Factor { frame: frame_of(command.time_ms), command: *command });
+                }
+            }
+            Step::Finish(t) => {
+                events.push(BoundsEvent::Potential { frame: frame_of(*t), start: true });
+                finish = true;
+            }
+            Step::Probe(t, _) => events.push(BoundsEvent::Probe { frame: frame_of(*t), time_ms: *t }),
+            Step::Lotteries(t, times) => {
+                events.extend(times.iter().map(|&time| BoundsEvent::Potential { frame: frame_of(time), start: false }));
+                events.push(BoundsEvent::ProbabilityReady(*t));
+                transitions.push(0xff | if finish { RUSH_FINISH } else { 0 });
+                finish = false;
+            }
+            Step::Query(t) => events.push(BoundsEvent::Query { time_ms: *t, to: frame_of(*t) as i32 }),
+        }
+    }
+    let replay = ExactReplay::new(frames, &configs, undo_floors(&events, &transitions).unwrap(), lanes).unwrap();
+    (replay, frame_of)
 }
 
 /// Every native history of a schedule (probe switches, also tied to the Rush; Rush commands at a range FINISH and
@@ -548,6 +577,120 @@ fn exact_replay_bounds_every_native_history_of_random_schedules() {
     assert!(checked > 10_000, "{checked}");
     // Merged histories with different binary32 states occur, so the bounds are exercised beyond single points.
     assert!(spread > 0);
+}
+
+/// One member of a track follows one native history of a random schedule (probe switches, also tied to the Rush;
+/// Rush commands at a range FINISH and at lottery places; rank rewinds) whose probe performers file no other command:
+/// the last execution of every note has the native probe class and exactly the native factor state, which the exact
+/// replay's bounds hold.
+#[test]
+fn a_track_member_follows_its_native_history() {
+    let mut checked = 0;
+    for seed in 1..=12u64 {
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d ^ seed.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        let mut steps = schedule(&mut rng, 1);
+        for step in &mut steps {
+            if let Step::Command(command) = step
+                && ROWS.iter().any(|&(owner, _)| owner == command.owner_id)
+            {
+                command.owner_id += 1;
+            }
+        }
+        let (exact, exact_index) = replay_schedule(&steps, &[ROWS], |_| None);
+        for _ in 0..20 {
+            let (mut replay, frame_of) = empty_replay(&steps, &[ROWS], &|_| None);
+            let (mut track, state) = replay.start_track().unwrap();
+            let (mut lows, mut highs) = (vec![state], vec![state]);
+            let (mut observed, mut scratch) = (Vec::new(), TrackScratch::default());
+            let mut combos = FxHashMap::default();
+            // By note id: the note's chart time and index in the replay's notes; by that index, its last value.
+            let mut notes = Vec::new();
+            let mut last = FxHashMap::<usize, NoteValue>::default();
+            let mut native = calculator();
+            let combo = ComboCounter::new(64);
+            let mut switches = Vec::new();
+            for step in &steps {
+                match step {
+                    Step::Note(note) => {
+                        let key = (frame_of(note.time_ms), note.note_id as usize);
+                        combos.insert(key, (1f32, 1f32));
+                        notes.push((note.time_ms, replay.file_note(key.0, note.time_ms, note.note_id, key).unwrap()));
+                        native.add_note(*note);
+                    }
+                    Step::Command(command) => {
+                        replay.file_command(frame_of(command.time_ms), command, 1).unwrap();
+                        native.add_factor(*command);
+                    }
+                    Step::Partial(..) => unreachable!("one order"),
+                    Step::Finish(t) => {
+                        if track.rush {
+                            native.add_factor(rush_command(*t));
+                        }
+                        track.finish(frame_of(*t));
+                    }
+                    Step::Probe(t, follows) => {
+                        let on = track.now == 1;
+                        let next = if *follows { track.rush } else { on ^ rng.chance(30) };
+                        if next != on {
+                            switches.push(*t);
+                            for &(owner, m) in &ROWS {
+                                let note_mill = if next { m } else { -m };
+                                native.add_factor(FactorCommand {
+                                    time_ms: *t,
+                                    owner_id: owner,
+                                    note_mill,
+                                    ..Default::default()
+                                });
+                            }
+                            track.switch(frame_of(*t), *t);
+                        }
+                    }
+                    Step::Lotteries(_, times) => {
+                        for _ in 0..2 {
+                            if rng.chance(25) {
+                                let place = times[rng.below(times.len() as u64) as usize];
+                                track.rush = !track.rush;
+                                native.add_factor(rush_command(place));
+                                track.file(frame_of(place) as i32);
+                            }
+                        }
+                    }
+                    Step::Query(t) => {
+                        let query = replay.begin_query(frame_of(*t) as i32).unwrap();
+                        observed.clear();
+                        track = replay
+                            .query_track(&query, &track, &mut lows, &mut highs, &combos, &mut observed, &mut scratch)
+                            .unwrap();
+                        replay.end_query(&query);
+                        last.extend(observed.iter().map(|observed| (observed.note, observed.value)));
+                        native.calculate(*t, &combo, None).unwrap();
+                    }
+                }
+            }
+            for (note_id, state) in native.executed_states().1 {
+                let (time, at) = notes[note_id as usize];
+                let value = last.get(&at).expect("an executed note");
+                let class = (switches.iter().filter(|&&t| t <= time).count() % 2) as u8;
+                assert_eq!(value.class, class, "seed {seed} note {note_id}");
+                let bounds = exact.notes[exact_index[note_id as usize]]
+                    .values_of(0)
+                    .find(|bounds| bounds.class == class)
+                    .expect("every path class is reachable");
+                for (field, actual) in state.into_iter().enumerate() {
+                    assert!(
+                        bounds.low[field] <= actual && actual <= bounds.high[field],
+                        "seed {seed} note {note_id} field {field}: {actual} outside {}..={}",
+                        bounds.low[field],
+                        bounds.high[field]
+                    );
+                }
+                assert_eq!(value.low.map(f32::to_bits), state.map(f32::to_bits), "seed {seed} note {note_id}");
+                assert_eq!(value.high.map(f32::to_bits), state.map(f32::to_bits), "seed {seed} note {note_id}");
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 5_000, "{checked}");
 }
 
 /// A replay of several orders, whose schedules differ in commands that belong to some of the orders and in the

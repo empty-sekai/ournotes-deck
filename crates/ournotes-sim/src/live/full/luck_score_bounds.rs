@@ -19,6 +19,9 @@ mod exact_orders_tests;
 mod exact_paths;
 #[cfg(test)]
 mod exact_tests;
+mod joint;
+#[cfg(test)]
+mod joint_tests;
 #[cfg(test)]
 mod owner_order_tests;
 #[cfg(test)]
@@ -40,6 +43,7 @@ pub use exact_orders::{
     LuckExactOrders, LuckExactOrdersProfile, lottery_free_orders, luck_exact_orders, luck_exact_orders_power_twin,
     luck_exact_orders_with_laws, luck_order_laws,
 };
+pub use joint::luck_joint_score;
 #[cfg(feature = "search-diagnostics")]
 pub use profile::{LuckScoreProfile, take_luck_score_profile};
 pub use rank_residues::luck_exact_score_refined;

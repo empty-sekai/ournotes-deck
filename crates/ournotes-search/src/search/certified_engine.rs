@@ -164,6 +164,26 @@ impl CertifiedState<'_> {
             RemainingDomain::Open { upper }
         })
     }
+
+    /// Installs `evaluation`, a certificate of candidate `id`, within every restriction the frontier holds for the
+    /// candidate already (another member of its proven program class may have narrowed it), and keeps the entries of
+    /// the candidates the frontier still holds. A candidate the frontier no longer holds stays out: returns whether
+    /// the candidate took the certificate.
+    fn install(&mut self, id: u64, evaluation: &CertifiedEvaluation) -> Result<bool, Error> {
+        let Some(current) = self.frontier.get(id) else { return Ok(false) };
+        let score = current
+            .score
+            .intersect(evaluation.score)
+            .ok_or_else(|| Error::Domain("conflicting refined score certificates".into()))?;
+        let payoff = current
+            .payoff
+            .intersect(evaluation.payoff)
+            .ok_or_else(|| Error::Domain("conflicting refined payoff certificates".into()))?;
+        self.frontier.refine(id, current.revision, score, payoff, evaluation.exact_score, evaluation.exact_payoff)?;
+        self.entries.retain(|id, _| self.frontier.get(*id).is_some());
+        self.cutoff = self.frontier.grid_cutoff(ORDERS as u128);
+        Ok(true)
+    }
 }
 
 /// Storage policy for eagerly retained order rows. Other charts use boundary materialization.
@@ -293,10 +313,12 @@ impl Engine<'_, '_> {
 
     /// Once the physical domain is exhausted, spend bounded work only on candidates whose ordering still overlaps:
     /// first the complete nominal laws of single orders ([`Self::refine_certified_orders`]), then the equality and
-    /// rank bonus certificates of whole candidates ([`Self::refine_certified_candidates`]).
+    /// rank bonus certificates of whole candidates ([`Self::refine_certified_candidates`]), then the joint
+    /// expectations of single orders ([`Self::refine_joint_orders`]).
     pub(super) fn refine_certified_frontier(&mut self) -> Result<(), Error> {
         self.refine_certified_orders()?;
-        self.refine_certified_candidates()
+        self.refine_certified_candidates()?;
+        self.refine_joint_orders()
     }
 
     /// Every installed order is a complete nominal law; declined/partial trees keep their old bounds.
@@ -462,30 +484,12 @@ impl Engine<'_, '_> {
                     continue;
                 }
                 let evaluation = aggregate_orders(retained.evaluation.orders.clone(), &map)?;
-                // Another member of the same proven program class can already have narrowed the
-                // frontier. Retain that restriction too, never reinstall a wider cached enclosure.
-                let current = state.frontier.get(id).expect("live candidate selected above");
-                let score = current
-                    .score
-                    .intersect(evaluation.score)
-                    .ok_or_else(|| Error::Domain("conflicting refined score certificates".into()))?;
-                let payoff = current
-                    .payoff
-                    .intersect(evaluation.payoff)
-                    .ok_or_else(|| Error::Domain("conflicting refined payoff certificates".into()))?;
-                state.frontier.refine(
-                    id,
-                    current.revision,
-                    score,
-                    payoff,
-                    evaluation.exact_score,
-                    evaluation.exact_payoff,
-                )?;
+                if !state.install(id, &evaluation)? {
+                    continue;
+                }
                 if let Some(entry) = state.entries.get_mut(&id) {
                     entry.refinement.as_mut().expect("admitted candidate").evaluation = evaluation;
                 }
-                state.entries.retain(|id, _| state.frontier.get(*id).is_some());
-                state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
                 self.tel.lottery_refinement.installed_orders += 1;
                 self.report_progress();
             }
@@ -737,23 +741,126 @@ impl Engine<'_, '_> {
             support,
         )?;
         let evaluation = aggregate_orders(orders, &map)?;
-        let state = self.certified.as_mut().expect("certified request");
-        let Some(current) = state.frontier.get(id) else { return Ok(()) };
-        // Every earlier restriction of the candidate holds as well; install the intersection.
-        let score = current
-            .score
-            .intersect(evaluation.score)
-            .ok_or_else(|| Error::Domain("conflicting refined score certificates".into()))?;
-        let payoff = current
-            .payoff
-            .intersect(evaluation.payoff)
-            .ok_or_else(|| Error::Domain("conflicting refined payoff certificates".into()))?;
-        state.frontier.refine(id, current.revision, score, payoff, evaluation.exact_score, evaluation.exact_payoff)?;
-        state.entries.retain(|id, _| state.frontier.get(*id).is_some());
-        state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
+        if !self.certified.as_mut().expect("certified request").install(id, &evaluation)? {
+            return Ok(());
+        }
         self.tel.lottery_refinement.residue_installed += 1;
         self.report_progress();
         Ok(())
+    }
+
+    /// Refines the order enclosures of the candidates whose ordering still overlaps with the joint expectation of
+    /// their note scores and lottery classes ([`ournotes_sim::live::full::luck_joint_score`]): the widest order of
+    /// any such candidate first, each order once. Every such candidate keeps its order enclosures for this.
+    fn refine_joint_orders(&mut self) -> Result<(), Error> {
+        let skills = self.certified_luck_skills()?;
+        let mut attempted = std::collections::BTreeSet::<(u64, usize)>::new();
+        let mut contexts = BTreeMap::<u64, expectation::FiniteSeedContext>::new();
+        loop {
+            let state = self.certified.as_ref().expect("certified request");
+            let proof = state.frontier.proof(RemainingDomain::Exhausted)?;
+            let Some(proof) = pending_refinement(proof, || self.expired()) else {
+                return Ok(());
+            };
+            let state = self.certified.as_ref().expect("certified request");
+            let unkept = proof
+                .ambiguous
+                .iter()
+                .copied()
+                .find(|id| state.entries.get(id).is_some_and(|entry| entry.refinement.is_none()));
+            if let Some(id) = unkept {
+                if !self.materialize_certified_refinement(id)? {
+                    return Ok(());
+                }
+                continue;
+            }
+            // The candidate and competitor the proof names come first, then every overlapping candidate.
+            let named: Vec<u64> = proof
+                .refinement
+                .iter()
+                .flat_map(|request| [Some(request.candidate), request.competitor])
+                .flatten()
+                .collect();
+            let mut widest = None::<(bool, f64, u64, usize)>;
+            for &id in &proof.ambiguous {
+                let Some(retained) = state.entries.get(&id).and_then(|entry| entry.refinement.as_ref()) else {
+                    continue;
+                };
+                if !matches!(retained.map, PayoffMap::Score) {
+                    continue;
+                }
+                let first = named.contains(&id);
+                for (index, order) in retained.evaluation.orders.iter().enumerate() {
+                    if order.exact_mean.is_some() || attempted.contains(&(id, index)) {
+                        continue;
+                    }
+                    let width = refinement_uncertainty(order, &retained.map)?;
+                    if widest.is_none_or(|(named, most, _, _)| (first, width) > (named, most)) {
+                        widest = Some((first, width, id, index));
+                    }
+                }
+            }
+            let Some((_, _, id, index)) = widest else { return Ok(()) };
+            attempted.insert((id, index));
+            if let std::collections::btree_map::Entry::Vacant(vacant) = contexts.entry(id) {
+                let entry = &state.entries[&id];
+                let kept = entry.refinement.as_ref().expect("kept above").program.clone();
+                let (input, program) = self.certified_context(&entry.physical)?;
+                if program != kept {
+                    return Err(Error::Domain("certified refinement changed the performer order basis".into()));
+                }
+                vacant.insert(input);
+            }
+            let input = &contexts[&id];
+            let Some(setup) = input.gekisou.as_ref() else { return Ok(()) };
+            let state = self.certified.as_ref().expect("certified request");
+            let order = state.entries[&id].refinement.as_ref().expect("kept above").evaluation.orders[index].order;
+            let performers = order.map(|slot| input.performers[slot].clone());
+            self.tel.lottery_refinement.joint_orders += 1;
+            let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+            let score = ournotes_sim::live::full::luck_joint_score(
+                self.pool.master,
+                &skills,
+                &performers,
+                &input.notes,
+                &input.events,
+                input.params,
+                setup,
+                &input.play,
+                &input.delta_times,
+                input.rank_confirmations.as_deref(),
+            );
+            self.rec.clock.lap(resume);
+            let score = match score {
+                Ok(score) => score,
+                Err(Error::Unsupported(_) | Error::Capacity(_)) => {
+                    self.tel.lottery_refinement.joint_declined += 1;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let joint = F64Interval::new(score.final_mean.lower, score.final_mean.upper)?;
+            let state = self.certified.as_mut().expect("certified request");
+            let retained = state.entries.get_mut(&id).and_then(|entry| entry.refinement.as_mut()).expect("kept above");
+            let row = &mut retained.evaluation.orders[index];
+            let mean = row
+                .mean
+                .intersect(joint)
+                .ok_or_else(|| Error::Domain("conflicting joint order certificates".into()))?;
+            if mean == row.mean {
+                continue;
+            }
+            row.mean = mean;
+            let evaluation = aggregate_orders(retained.evaluation.orders.clone(), &retained.map)?;
+            if !state.install(id, &evaluation)? {
+                continue;
+            }
+            if let Some(entry) = state.entries.get_mut(&id) {
+                entry.refinement.as_mut().expect("kept above").evaluation = evaluation;
+            }
+            self.tel.lottery_refinement.joint_narrowed += 1;
+            self.report_progress();
+        }
     }
 
     pub(super) fn certified_results(&self, exhausted: bool) -> Result<(Vec<RecommendedDeck>, RankingProof), Error> {

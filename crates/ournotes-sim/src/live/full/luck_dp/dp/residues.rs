@@ -49,7 +49,7 @@ pub(in crate::live::full::luck_dp) fn propagate_residues<M: Mass>(
     let mut tables = StepTables::default();
     tables.enter_transcript(transcript);
     let mut reads = ResidueReads::new(plan);
-    propagate_frames(transcript, &mut tables, &mut || false, Some(&mut reads))?;
+    propagate_frames(transcript, &mut tables, &mut || false, &mut reads)?;
     // The recording's failure after its last frame fails its law, and so its residue law.
     if let Some(failure) = &transcript.failure {
         return Err(failure.clone());
@@ -58,7 +58,10 @@ pub(in crate::live::full::luck_dp) fn propagate_residues<M: Mass>(
 }
 
 /// The read points of a [`ResiduePlan`] met so far, and the masses by residue once the propagation closed them.
-pub(super) struct ResidueReads<'p, M: Mass> {
+///
+/// The propagation ends once the plan's last read point is met: no later step changes a residue, and every step keeps
+/// the mass of each residue, so the masses by residue are final there.
+struct ResidueReads<'p, M: Mass> {
     plan: &'p ResiduePlan,
     kept: std::collections::BTreeSet<i32>,
     queries: std::collections::BTreeSet<i32>,
@@ -82,9 +85,18 @@ impl<'p, M: Mass> ResidueReads<'p, M> {
         Ok(self.complete())
     }
 
+    fn masses(self) -> Result<Vec<M>, Error> {
+        match self.masses {
+            Some(masses) if self.complete() => Ok(masses),
+            _ => Err(Error::Unsupported("LUCK residue law: a read point is not in the transcript".into())),
+        }
+    }
+}
+
+impl<M: Mass> Hooks<M> for ResidueReads<'_, M> {
     /// Reads the notes of the plan that keep their class at chart time `time` from the state of `dp`, in `phase`;
     /// true once every read point of the plan was met.
-    pub(super) fn kept(&mut self, dp: &mut Dp<'_, M>, time: i32, phase: Phase) -> Result<bool, Error> {
+    fn kept(&mut self, dp: &mut Dp<'_, M>, time: i32, phase: Phase) -> Result<bool, Error> {
         let Some(&residues) = self.plan.kept.get(&time) else { return Ok(false) };
         // Every note of the plan reads its class at one point; a time met twice has no single such point.
         if !self.kept.insert(time) {
@@ -95,7 +107,7 @@ impl<'p, M: Mass> ResidueReads<'p, M> {
 
     /// Reads the notes of the plan that the score queries of the frame at `time`, repeated `repeat` times, read from
     /// the state of `dp`; true once every read point of the plan was met.
-    pub(super) fn queries(&mut self, dp: &mut Dp<'_, M>, time: i32, repeat: u32) -> Result<bool, Error> {
+    fn queries(&mut self, dp: &mut Dp<'_, M>, time: i32, repeat: u32) -> Result<bool, Error> {
         let Some(&[before, at, skills]) = self.plan.queries.get(&time) else { return Ok(false) };
         if repeat != 1 || !self.queries.insert(time) {
             return Err(Error::Unsupported("LUCK residue law: a query frame is read twice".into()));
@@ -104,20 +116,14 @@ impl<'p, M: Mass> ResidueReads<'p, M> {
     }
 
     /// Takes the masses by residue of the states of `dp`.
-    pub(super) fn close(&mut self, dp: &mut Dp<'_, M>) {
+    fn close(&mut self, dp: &mut Dp<'_, M>) -> Result<(), Error> {
         let mut masses = vec![M::ZERO; usize::from(self.plan.modulus)];
         for (state, total) in dp.totals() {
             let slot = &mut masses[usize::from(state.residue)];
             *slot = slot.merge(total);
         }
         self.masses = Some(masses);
-    }
-
-    fn masses(self) -> Result<Vec<M>, Error> {
-        match self.masses {
-            Some(masses) if self.complete() => Ok(masses),
-            _ => Err(Error::Unsupported("LUCK residue law: a read point is not in the transcript".into())),
-        }
+        Ok(())
     }
 }
 

@@ -54,6 +54,8 @@ pub(super) const MAX_LANES: usize = 128;
 
 type State = [f32; FIELDS];
 type Bits = [u32; FIELDS];
+/// The binary32 factor state of the native calculator, field by field.
+pub(super) type FactorState = State;
 /// A set of orders: bit k is order k.
 pub(super) type Orders = u128;
 
@@ -1232,5 +1234,314 @@ impl ExactReplay {
         std::mem::swap(subs, &mut next);
         scratch.alternatives = next;
         Ok(())
+    }
+}
+
+/// The schedule ahead of native histories of one order that share it, apart from their factor states: a [`Path`]
+/// without its states. Histories of one track apply the same binary32 additions of constants to their states from
+/// here on, each to its own state.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) struct Track {
+    /// Probe class of the executed state.
+    pub(super) class: u8,
+    /// Probe class after the latest skill boundary.
+    pub(super) now: u8,
+    /// Whether the Rush handle is set.
+    pub(super) rush: bool,
+    filed: Option<i32>,
+    starts: Vec<u8>,
+    sums: Vec<Bits>,
+    switches: Vec<(i32, i32)>,
+}
+
+impl Track {
+    /// A Rush command filed in `frame`.
+    pub(super) fn file(&mut self, frame: i32) {
+        self.filed = Some(self.filed.map_or(frame, |old| old.min(frame)));
+    }
+
+    /// A range FINISH at the start of a play frame, filing in `frame`: a running Rush stops.
+    pub(super) fn finish(&mut self, frame: usize) {
+        if self.rush {
+            self.rush = false;
+            self.file(frame as i32);
+        }
+    }
+
+    /// A probe switch at the skill boundary at `time_ms`, filing in `frame`.
+    pub(super) fn switch(&mut self, frame: usize, time_ms: i32) {
+        self.now = 1 - self.now;
+        self.switches.push((frame as i32, time_ms));
+        self.file(frame as i32);
+    }
+}
+
+/// A note execution of a member of a track: the note's index in [`ExactReplay::notes`], the member and its value.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Observed {
+    pub note: usize,
+    pub member: u32,
+    pub value: NoteValue,
+}
+
+/// A score query of one order's tracks ([`ExactReplay::begin_query`]): the last frame executed before it, its last
+/// frame, the earliest filing of every history since the previous query, and the first frame a later query may
+/// execute again.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct TrackQuery {
+    prev: i32,
+    to: i32,
+    filing: Option<i32>,
+    floor: i32,
+}
+
+/// Buffers of track executions.
+#[derive(Default)]
+pub(super) struct TrackScratch {
+    applied: Vec<Op>,
+    merges: Vec<Step>,
+    steps: [Vec<Step>; 3],
+    states: Vec<(State, State)>,
+}
+
+fn add_op(op: &Op, state: &mut State) {
+    for field in 0..FIELDS {
+        let delta = op.deltas[field];
+        if op.always >> field & 1 != 0 || delta != 0.0 {
+            state[field] += delta;
+        }
+    }
+}
+
+fn add_probe(value: f32, state: &mut State) {
+    if value != 0.0 {
+        state[1] += value;
+    }
+}
+
+impl ExactReplay {
+    /// The track of every history before the first frame, and its factor state.
+    pub(super) fn start_track(&self) -> Result<(Track, FactorState), Error> {
+        if self.lanes != 1 {
+            return Err(Error::Input("tracks follow one order".into()));
+        }
+        let path = &self.paths[0];
+        let track = Track {
+            class: path.class,
+            now: path.now,
+            rush: path.rush,
+            filed: path.filed,
+            starts: path.starts.clone(),
+            sums: path.sums.clone(),
+            switches: path.switches.clone(),
+        };
+        Ok((track, path.low))
+    }
+
+    /// The score query up to score frame `to` of every track, which [`Self::query_track`] executes track by track
+    /// and [`Self::end_query`] completes.
+    pub(super) fn begin_query(&self, to: i32) -> Result<TrackQuery, Error> {
+        if self.lanes != 1 || !self.partial.is_empty() {
+            return Err(Error::Input("tracks follow one order".into()));
+        }
+        let floor = self.floors.get(self.queries).copied().unwrap_or(i32::MAX).min(to + 1).max(self.base);
+        Ok(TrackQuery { prev: self.prev, to, filing: self.mandatory, floor })
+    }
+
+    /// The native `calculate` of `query` for the histories of `track` with the factor states `lows..=highs`, which
+    /// it updates: undoes from the last executed frame down to the track's rewind target, executes up to the query's
+    /// frame and returns the track after it. Every note executed appends each member's value to `observed`. An
+    /// owner-local merge of a probe switch whose order the schedule leaves open is followed in each alternative: they
+    /// must record the same sums, and each member takes the hull of its states over them.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn query_track(
+        &self,
+        query: &TrackQuery,
+        track: &Track,
+        lows: &mut [FactorState],
+        highs: &mut [FactorState],
+        combos: &FxHashMap<(usize, usize), (f32, f32)>,
+        observed: &mut Vec<Observed>,
+        scratch: &mut TrackScratch,
+    ) -> Result<Track, Error> {
+        let TrackQuery { prev, to, filing, floor } = *query;
+        let earliest = match (filing, track.filed) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let u = earliest.map_or(to, |frame| to.min(frame - 1));
+        let first = if u < prev { u + 1 } else { prev + 1 };
+        if first < self.base {
+            return Err(refuse("a query undoes a frame below the retained history"));
+        }
+        let kept = ((first - self.base) as usize).min(track.starts.len());
+        let (mut class, mut starts, mut sums) = (track.class, Vec::new(), Vec::new());
+        if first <= prev || first <= to {
+            for frame in (first..=prev).rev() {
+                let at = (frame - self.base) as usize;
+                let (Some(&start), Some(sum)) = (track.starts.get(at), track.sums.get(at)) else {
+                    return Err(refuse("a query undoes a frame without a retained record"));
+                };
+                for (low, high) in lows.iter_mut().zip(highs.iter_mut()) {
+                    for field in 0..FIELDS {
+                        low[field] -= f32::from_bits(sum[field]);
+                        high[field] -= f32::from_bits(sum[field]);
+                    }
+                    finite([&*low, &*high])?;
+                }
+                class = start;
+            }
+            let mut switches = Vec::new();
+            for frame in first..=to {
+                switches.clear();
+                switches.extend(track.switches.iter().filter(|&&(f, _)| f == frame).map(|&(_, time)| time));
+                switches.sort_unstable();
+                starts.push(class);
+                let sum;
+                (class, sum) =
+                    self.execute_track(frame as usize, class, &switches, lows, highs, combos, observed, scratch)?;
+                sums.push(sum.map(f32::to_bits));
+            }
+        }
+        let drop = ((floor - self.base) as usize).min(kept + starts.len());
+        let skip = drop.saturating_sub(kept);
+        let mut next = Track {
+            class,
+            now: track.now,
+            rush: track.rush,
+            filed: None,
+            starts: track.starts[drop.min(kept)..kept].to_vec(),
+            sums: track.sums[drop.min(kept)..kept].to_vec(),
+            switches: track.switches.iter().copied().filter(|&(frame, _)| frame >= floor).collect(),
+        };
+        next.starts.extend_from_slice(&starts[skip..]);
+        next.sums.extend_from_slice(&sums[skip..]);
+        Ok(next)
+    }
+
+    /// Completes `query` once every track executed it.
+    pub(super) fn end_query(&mut self, query: &TrackQuery) {
+        self.base = query.floor;
+        self.prev = query.to;
+        self.mandatory = None;
+        self.partial.clear();
+        self.queries += 1;
+    }
+
+    /// Executes score frame `frame` for the members `lows..=highs` of a track in probe class `class`, with the probe
+    /// switches at `switches`; returns the probe class after the frame and the frame's recorded sum.
+    #[allow(clippy::too_many_arguments)]
+    fn execute_track(
+        &self,
+        frame: usize,
+        class: u8,
+        switches: &[i32],
+        lows: &mut [FactorState],
+        highs: &mut [FactorState],
+        combos: &FxHashMap<(usize, usize), (f32, f32)>,
+        observed: &mut Vec<Observed>,
+        scratch: &mut TrackScratch,
+    ) -> Result<(u8, State), Error> {
+        let entry = self.frames.get(frame).ok_or_else(|| Error::Input("score frame outside the calculator".into()))?;
+        let (ops, notes) = (&entry.ops, &entry.notes);
+        let (mut class, mut sum) = (class, [0f32; FIELDS]);
+        let (mut op, mut switch, mut note) = (0, 0, 0);
+        loop {
+            let op_time = ops.get(op).map(|o| o.time);
+            let switch_time = switches.get(switch).copied();
+            let factor_time = match (op_time, switch_time) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            let note_time = notes.get(note).map(|&n| self.notes[n].time_ms);
+            match (factor_time, note_time) {
+                (Some(t), n) if n.is_none_or(|n| n >= t) => {
+                    if switch_time == Some(t) {
+                        let end = ops[op..].partition_point(|o| o.time == t);
+                        class = self.switch_track(class, &mut sum, &ops[op..op + end], lows, highs, scratch)?;
+                        op += end;
+                        switch += 1;
+                    } else {
+                        let command = &ops[op];
+                        add_op(command, &mut sum);
+                        for (low, high) in lows.iter_mut().zip(highs.iter_mut()) {
+                            add_op(command, low);
+                            add_op(command, high);
+                            finite([&*low, &*high])?;
+                        }
+                        op += 1;
+                    }
+                }
+                (_, Some(_)) => {
+                    let index = notes[note];
+                    let &(ordinary, gekisou) = combos
+                        .get(&self.notes[index].key)
+                        .ok_or_else(|| refuse("note combo observation is missing"))?;
+                    let combo = (ordinary.to_bits(), gekisou.to_bits());
+                    for (member, (low, high)) in lows.iter().zip(highs.iter()).enumerate() {
+                        let value = NoteValue { orders: 1, class, combo, low: *low, high: *high };
+                        observed.push(Observed { note: index, member: member as u32, value });
+                    }
+                    note += 1;
+                }
+                (None, None) => break,
+                (Some(_), None) => unreachable!("covered by the factor arm"),
+            }
+        }
+        Ok((class, sum))
+    }
+
+    /// A probe switch among the ordinary commands `group` of its time, for the members `lows..=highs` of a track in
+    /// probe class `class`: every owner-local merge of the commands with the probe rows. Returns the flipped class.
+    fn switch_track(
+        &self,
+        class: u8,
+        sum: &mut State,
+        group: &[Op],
+        lows: &mut [FactorState],
+        highs: &mut [FactorState],
+        scratch: &mut TrackScratch,
+    ) -> Result<u8, Error> {
+        let sign = if class == 0 { 1f32 } else { -1f32 };
+        let rows = &self.configs[0].1;
+        let TrackScratch { applied, merges: steps, steps: buffers, states } = scratch;
+        applied.clear();
+        applied.extend_from_slice(group);
+        merges(applied, rows, steps, buffers)?;
+        let width = applied.len() + rows.len();
+        let count = steps.len().checked_div(width).unwrap_or(1);
+        let apply = |state: &mut State, merge: usize| {
+            for &step in &steps[merge * width..(merge + 1) * width] {
+                match step {
+                    Step::Op(i) => add_op(&applied[i], state),
+                    Step::Row(r) => add_probe(sign * rows[r].value, state),
+                }
+            }
+        };
+        let start = *sum;
+        apply(sum, 0);
+        for merge in 1..count {
+            let mut other = start;
+            apply(&mut other, merge);
+            if other.map(f32::to_bits) != sum.map(f32::to_bits) {
+                return Err(refuse("the owner-local merges of a probe switch record different sums"));
+            }
+        }
+        for (low, high) in lows.iter_mut().zip(highs.iter_mut()) {
+            states.clear();
+            for merge in 0..count {
+                let (mut a, mut b) = (*low, *high);
+                apply(&mut a, merge);
+                apply(&mut b, merge);
+                states.push((a, b));
+            }
+            let (mut a, mut b) = states[0];
+            for (other_low, other_high) in &states[1..] {
+                widen(&mut a, &mut b, other_low, other_high);
+            }
+            (*low, *high) = (a, b);
+            finite([&*low, &*high])?;
+        }
+        Ok(1 - class)
     }
 }

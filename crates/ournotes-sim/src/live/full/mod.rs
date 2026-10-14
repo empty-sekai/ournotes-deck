@@ -79,9 +79,9 @@ pub use luck_score_bounds::{
     LuckExactNote, LuckExactOrders, LuckExactOrdersProfile, LuckExactProfile, LuckExactRange, LuckExactScore,
     LuckRangeScoreBounds, LuckScoreBounds, LuckScoreExpectation, LuckScoreSession, LuckScoreSummary, RealBounds,
     lottery_free_orders, luck_exact_orders, luck_exact_orders_power_twin, luck_exact_orders_with_laws,
-    luck_exact_score, luck_exact_score_refined, luck_order_laws, luck_score_bounds, luck_score_bounds_with_ranking,
-    luck_score_expectation, luck_score_expectation_with_curves, luck_score_summary_with_curves,
-    luck_score_summary_with_ranking, prepare_lottery_free,
+    luck_exact_score, luck_exact_score_refined, luck_joint_score, luck_order_laws, luck_score_bounds,
+    luck_score_bounds_with_ranking, luck_score_expectation, luck_score_expectation_with_curves,
+    luck_score_summary_with_curves, luck_score_summary_with_ranking, prepare_lottery_free,
 };
 #[cfg(feature = "search-diagnostics")]
 pub use luck_score_bounds::{LuckScoreProfile, take_luck_score_profile};

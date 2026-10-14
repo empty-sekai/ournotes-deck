@@ -93,6 +93,11 @@ pub struct LotteryRefinement {
     /// every order took them.
     pub residue_candidates: u64,
     pub residue_installed: u64,
+    /// Orders of overlapping candidates evaluated jointly with their lottery classes, those the joint evaluation
+    /// declined, and those whose enclosure it narrowed.
+    pub joint_orders: u64,
+    pub joint_declined: u64,
+    pub joint_narrowed: u64,
 }
 
 /// Orders the exact lottery provider declined, by its reason.

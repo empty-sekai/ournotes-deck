@@ -86,6 +86,7 @@ pub struct LuckExactProfile {
 }
 
 /// Milliseconds between laps in diagnostic builds, zero otherwise.
+#[derive(Clone, Copy)]
 pub(super) struct Stopwatch {
     #[cfg(feature = "search-diagnostics")]
     at: std::time::Instant,
@@ -882,6 +883,60 @@ pub(super) fn exact_score(
     details: bool,
     observers: Observers<'_>,
 ) -> Result<LuckExactScore, Error> {
+    let order = order_schedule(live, deck, law, curves)?;
+    order.evaluate(live, details, observers)
+}
+
+/// The recorded schedule of one formation in its given order, with what its exact evaluation reads besides.
+pub(super) struct OrderSchedule {
+    pub(super) schedule: Schedule,
+    pub(super) calc: LiveScoreCalculator,
+    pub(super) rush_percent: i32,
+    pub(super) law: std::sync::Arc<LuckDpCertifiedResult>,
+    has_luck: bool,
+    probe_phase_bound: bool,
+    /// The score of the recording, the final score of a live without a LUCK range.
+    score: i32,
+    profile: LuckExactProfile,
+    watch: Stopwatch,
+}
+
+impl OrderSchedule {
+    /// The exact evaluation of the schedule ([`exact_schedule`]).
+    pub(super) fn evaluate(
+        &self,
+        live: &LotteryLive<'_>,
+        details: bool,
+        observers: Observers<'_>,
+    ) -> Result<LuckExactScore, Error> {
+        let deterministic = [self.score];
+        let mut scores = exact_schedule(
+            &self.schedule,
+            &self.calc,
+            self.rush_percent,
+            std::slice::from_ref(&self.law),
+            live.play,
+            self.probe_phase_bound,
+            live.setup.fevers.len(),
+            live.ranking.is_none(),
+            (!self.has_luck).then_some(&deterministic[..]),
+            details,
+            self.profile,
+            self.watch,
+            observers,
+        )?;
+        Ok(scores.pop().expect("one order"))
+    }
+}
+
+/// The recorded schedule of `deck` in its given order in `live`, under `law` when given, else the lottery law read
+/// through `curves`.
+pub(super) fn order_schedule(
+    live: &LotteryLive<'_>,
+    deck: &[Performer],
+    law: Option<std::sync::Arc<LuckDpCertifiedResult>>,
+    curves: Option<&mut LuckDpCache>,
+) -> Result<OrderSchedule, Error> {
     let LotteryLive { master, skills, notes, events, params, setup, play, delta_times, ranking } = *live;
     let mut watch = Stopwatch::start();
     let mut profile = LuckExactProfile::default();
@@ -918,23 +973,17 @@ pub(super) fn exact_score(
         final_lives: vec![I32Interval::point(model.current_life()).into()],
     };
     profile.record_ms = watch.lap();
-    let deterministic = [model.score()];
-    let mut scores = exact_schedule(
-        &schedule,
-        &calc,
+    Ok(OrderSchedule {
+        schedule,
+        calc,
         rush_percent,
-        &[probability],
-        play,
+        law: probability,
+        has_luck,
         probe_phase_bound,
-        setup.fevers.len(),
-        ranking.is_none(),
-        (!has_luck).then_some(&deterministic[..]),
-        details,
+        score: model.score(),
         profile,
         watch,
-        observers,
-    )?;
-    Ok(scores.pop().expect("one order"))
+    })
 }
 
 /// The native model of `deck` in its given order, with the external rank timeline when given.
