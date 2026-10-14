@@ -7,6 +7,10 @@ fn mean_table(gains: &[Vec<[f64; 5]>]) -> Vec<Vec<[f64; 5]>> {
     gains.iter().map(|rows| rows.iter().map(crate::search::uniform::mean_row).collect()).collect()
 }
 
+/// The pairs of the choice order whose per-position gains make the position potentials of
+/// [`JointBounds::order_maximum`].
+const POTENTIAL_PAIRS: usize = 64;
+
 /// How far a row's largest per-position gain lies above its position mean (`mean[0]`, every entry the same), rounded
 /// up so that `add_up(mean, spread)` is at least the largest gain.
 pub(super) fn row_spread(row: &[f64; 5], mean: &[f64; 5]) -> f64 {
@@ -286,6 +290,8 @@ impl JointBounds {
             laws: laws.to_vec(),
             law_clusters: None,
             part: None,
+            order_potentials: None,
+            order_offset: 0.0,
         };
         compiled.compile_tables(pool, domain);
         if !compiled.gekisou {
@@ -313,6 +319,66 @@ impl JointBounds {
             compiled.carrier_split = carrier_split::CarrierSplit::compile(&compiled, pool, domain);
         }
         Ok(compiled)
+    }
+
+    /// Turns these bounds into bounds of the payoff of each performance order, for the maximum aggregation. For
+    /// position potentials `v`, a team's gain sum in an order is at most `sum(v)` plus, for each of its slots, the
+    /// largest excess of the slot's gains over `v` (the LP dual of the assignment of slots to positions): each slot
+    /// takes one position and the positions are taken once each. So every node bound reads each row's excess in place
+    /// of its position mean, and its base coefficient holds `sum(v)`: the cheap envelope read at any positions with
+    /// mass 1 bounds the score of every order of every completion, and so does each relaxation of it that reads these
+    /// gains and coefficients (the correlated, character, resource, tail and pair bounds). The per-position gains keep
+    /// their meaning; the per-order caps of complete teams and the placement sums read them with the base coefficient
+    /// less `sum(v)`. The order-step and carrier-split bounds bound sums over the orders: the carrier split is dropped,
+    /// and a traversal under the maximum aggregation reads no order-step bound.
+    ///
+    /// Any potentials keep the bounds valid; these are the mean gains at each position of the first pairs of the
+    /// choice order, the strongest by its estimate, so that a strong team's excesses are small.
+    pub(crate) fn order_maximum(&mut self, pool: &Pool, domain: &CandidateDomain) {
+        let n = self.choices.len().min(POTENTIAL_PAIRS);
+        let mut v = [0.0f64; 5];
+        for &(m, choice) in &self.choices[..n] {
+            for (sum, &g) in v.iter_mut().zip(&self.order_gains[m][choice]) {
+                *sum += g;
+            }
+        }
+        v = v.map(|sum| sum / n.max(1) as f64);
+        self.order_maximum_with(pool, domain, v);
+        if let Some(clusters) = &mut self.law_clusters {
+            for bounds in &mut clusters.bounds {
+                bounds.order_maximum(pool, domain);
+            }
+        }
+    }
+
+    /// [`JointBounds::order_maximum`] with the potentials `v`, for these bounds and their carrier levels.
+    fn order_maximum_with(&mut self, pool: &Pool, domain: &CandidateDomain, v: [f64; 5]) {
+        self.order_offset = v.iter().fold(0.0, |sum, &x| add_up(sum, x));
+        self.order_potentials = Some(v);
+        self.a0 = add_up(self.a0, self.order_offset);
+        self.gains = self.order_gains.iter().map(|rows| rows.iter().map(|row| excess_row(row, &v)).collect()).collect();
+        // the excesses bound every position's gain over the potentials: no spread is left above them
+        self.spread = self.order_gains.iter().map(|rows| vec![0.0; rows.len()]).collect();
+        self.spread_top = [0.0; 6];
+        self.compile_tables(pool, domain);
+        if !self.gekisou {
+            self.composition = composition::CompositionTables::compile(self, pool, domain);
+            self.modules.clear();
+            if let Some(tables) = lambda::LambdaTables::compile(self, pool, domain) {
+                self.modules.push(Box::new(tables));
+            }
+        }
+        self.carrier_split = None;
+        if let Some(levels) = &mut self.carrier_levels {
+            for level in levels.at.iter_mut().flatten() {
+                level.order_maximum_with(pool, domain, v);
+            }
+        }
+        // the forced slots' tables read the relaxation tables
+        if self.rules.is_some() {
+            let rules = self.rules.take();
+            self.set_rules(pool, domain, rules);
+        }
     }
 
     /// These cheap bounds with another linear envelope (per-position `gains`): the same power tables and choice order,
@@ -354,6 +420,8 @@ impl JointBounds {
             laws: Vec::new(),
             law_clusters: None,
             part: None,
+            order_potentials: None,
+            order_offset: 0.0,
         };
         b.compile_tables(pool, domain);
         b

@@ -108,7 +108,7 @@ impl JointBounds {
         let choices = Self::prefix_choices(domain, p, 5);
         let level = self.carrier_level(self.carriers_placed(p, 5, &choices));
         let keyed = self.keyed(p, 5, &choices, 0, 0);
-        let a0 = keyed.as_ref().map_or(level.a0, |k| k.a0);
+        let a0 = level.less_offset(keyed.as_ref().map_or(level.a0, |k| k.a0));
         orders
             .iter()
             .map(|positions| {
@@ -129,7 +129,9 @@ impl JointBounds {
 
     /// A bound of the payoff of every performance order of every completion of this prefix, and of its power. The
     /// order-gain envelope bounds the score of each individual order, and the payoff steps read that score ceiling,
-    /// so no completion's best order exceeds it.
+    /// so no completion's best order exceeds it. It reads the envelope of the Gekisou combo carrier level the
+    /// completions can reach, keyed by the placed carriers, as the node bounds and the per-order caps of a complete
+    /// team do (see [`JointBounds::order_cheap_caps`]).
     pub(crate) fn maximum_upper(
         &self,
         pool: &Pool,
@@ -137,11 +139,16 @@ impl JointBounds {
         p: &PhysicalDeck,
         depth: usize,
     ) -> (i128, i64) {
-        let (power, gain, bonus) = self.relax(pool, domain, p, depth, &SLOTS[depth..], &[0, 1, 2, 3, 4], None);
-        let (spread, best) = self.order_gain_bounds(domain, p, depth, 5 - depth, None);
-        let gain = add_up(gain, spread).min(order_gain_bound(&best, &self.column, 0));
-        let cap = ((power as f64) * add_up(self.a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
-        (self.points.as_ref().map_or(cap, |pt| pt.order_payoff(bonus, cap)), power)
+        let choices = Self::prefix_choices(domain, p, depth);
+        let level = self.carrier_level((self.carriers_placed(p, depth, &choices) + 5 - depth).min(5));
+        let keyed = if depth > 0 { self.keyed(p, depth, &choices, 5 - depth, 5 - depth) } else { None };
+        let keyed = keyed.as_ref();
+        let (power, gain, bonus) = level.relax(pool, domain, p, depth, &SLOTS[depth..], &[0, 1, 2, 3, 4], keyed);
+        let (spread, best) = level.order_gain_bounds(domain, p, depth, 5 - depth, keyed);
+        let gain = add_up(gain, spread).min(level.less_offset(order_gain_bound(&best, &level.column, 0)));
+        let a0 = keyed.map_or(level.a0, |k| k.a0);
+        let cap = ((power as f64) * add_up(a0, gain).min(level.global) * (1.0 + level.eps)).ceil() as i128;
+        (level.points.as_ref().map_or(cap, |pt| pt.order_payoff(bonus, cap)), power)
     }
 
     pub(super) fn payoff_cap(&self, power: i64, gain: f64, bonus: i64) -> i128 {
@@ -150,10 +157,11 @@ impl JointBounds {
 
     /// `payoff_cap` with the `A0` of some envelope at most this one's: a bound of the mean payoff over the orders when
     /// `gain` sums position-mean gains and `max_gain` bounds the gain sum of every order (an infinite `max_gain`
-    /// leaves the global coefficient).
+    /// leaves the global coefficient). Under [`JointBounds::order_maximum`] both bound the gain sum of every order,
+    /// and the score cap reads the smaller.
     pub(super) fn payoff_cap_from(&self, a0: f64, power: i64, gain: f64, bonus: i64, max_gain: f64) -> i128 {
         let cap = |gain: f64| ((power as f64) * add_up(a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
-        let score_cap = cap(gain);
+        let score_cap = cap(if self.is_order_maximum() { gain.min(max_gain) } else { gain });
         self.points.as_ref().map_or(score_cap, |pt| pt.mean_payoff(bonus, score_cap, cap(max_gain)))
     }
 
@@ -175,7 +183,8 @@ impl JointBounds {
             let placed = match keyed {
                 Some(k) => {
                     *row = k.order_placed[slot];
-                    row_spread(&k.order_placed[slot], &k.placed[slot])
+                    // the excess rows of the bounds of each order's payoff leave no spread
+                    if self.is_order_maximum() { 0.0 } else { row_spread(&k.order_placed[slot], &k.placed[slot]) }
                 }
                 None => {
                     let choice = p.snaps[slot]
@@ -190,7 +199,8 @@ impl JointBounds {
     }
 
     /// At least the gain sum of every order of every completion of a prefix whose position-mean gain sum is at most
-    /// `gain` (see `order_gain_bounds`); infinite without points.
+    /// `gain` (see `order_gain_bounds`); infinite without points, unless the bounds are those of each order's payoff
+    /// ([`JointBounds::order_maximum`]).
     pub(super) fn node_order_gain(
         &self,
         domain: &CandidateDomain,
@@ -199,11 +209,11 @@ impl JointBounds {
         gain: f64,
         keyed: Option<&Keyed>,
     ) -> f64 {
-        if self.points.is_none() {
+        if self.points.is_none() && !self.is_order_maximum() {
             return f64::INFINITY;
         }
         let (spread, best) = self.order_gain_bounds(domain, p, depth, 5 - depth, keyed);
-        add_up(gain, spread).min(order_gain_bound(&best, &self.column, 0))
+        add_up(gain, spread).min(self.less_offset(order_gain_bound(&best, &self.column, 0)))
     }
 
     #[allow(clippy::too_many_arguments)]

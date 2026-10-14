@@ -68,6 +68,9 @@ pub(super) fn node_upper(
 /// every part whose members take a lottery kind with each of its Snap choices weigh the lottery laws of its teams (see
 /// `domain_laws`). Only the bounds of a search in one part hold clusters of those laws: the traversals of the clusters
 /// repeat the prefixes their multisets share, once in every part and slot rule.
+///
+/// Certified LUCK score under the maximum aggregation: every part's bounds are turned into bounds of each order's
+/// payoff (`JointBounds::order_maximum`) and traversed with one pseudo-order of mass 1.
 pub(super) fn joint_regimes(
     p: &mut PhysicalDeck,
     plan: &crate::handler::ExecutionPlan,
@@ -93,8 +96,22 @@ pub(super) fn joint_regimes(
         }
     };
     if converting.is_empty() {
-        let weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &plan.domain, true));
+        // Under the maximum aggregation one traversal of the whole domain's bounds, whose teams' leaves read the
+        // bounds of their own laws, outruns the traversals of law clusters, which repeat the shared prefixes.
+        let clusters = !certified_maximum(e);
+        let mut weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &plan.domain, clusters));
+        if certified_maximum(e) {
+            // bounds of each order's payoff, weighing no law when the census reads none
+            if weighed.is_none() {
+                weighed =
+                    JointBounds::compile(e.pool, e.request, &plan.domain, e.metric, e.event_input, e.simulation).ok();
+            }
+            if let Some(weighed) = &mut weighed {
+                weighed.order_maximum(e.pool, &plan.domain);
+            }
+        }
         let bounds = weighed.as_ref().unwrap_or(bounds);
+        let orders = masses(e, bounds, orders);
         if weighed.is_some() {
             e.correlated = bounds.correlation_worthwhile(e.pool, &plan.domain, orders)?;
             e.resource = !bounds.prefers_compositions()
@@ -169,7 +186,11 @@ pub(super) fn joint_regimes(
     let bound_pending = |e: &mut Engine<'_, '_>| -> Result<(), Error> {
         // The pool-wide bound covers the active group and every group still awaiting compilation.
         let started = e.bound_start();
-        let upper = joint_root_upper(e.pool, &plan.domain, bounds, orders, 0)?;
+        let upper = if certified_maximum(e) {
+            maximum_root_upper(e.pool, &plan.domain, bounds)
+        } else {
+            joint_root_upper(e.pool, &plan.domain, bounds, orders, 0)?
+        };
         e.fold_unexplored(upper, started);
         Ok(())
     };
@@ -189,6 +210,12 @@ pub(super) fn joint_regimes(
             Some(weighed) => Ok(weighed),
             None => JointBounds::compile(e.pool, e.request, &domain, e.metric, e.event_input, e.simulation),
         };
+        let result = result.map(|mut part| {
+            if certified_maximum(e) {
+                part.order_maximum(e.pool, &domain);
+            }
+            part
+        });
         e.tel.environment.bounds.conversion.as_mut().expect("conversion context").compile_ms +=
             prepare.elapsed().as_secs_f64() * 1000.0;
         e.rec.end(&mut e.tel);
@@ -216,8 +243,9 @@ pub(super) fn joint_regimes(
             bound_pending(e)?;
             return Ok(());
         }
-        e.correlated = part.correlation_worthwhile(e.pool, &domain, orders)?;
-        e.resource = part.resource_worthwhile(e.pool, &domain, orders, e.correlated)?;
+        let part_orders = masses(e, &part, orders);
+        e.correlated = part.correlation_worthwhile(e.pool, &domain, part_orders)?;
+        e.resource = part.resource_worthwhile(e.pool, &domain, part_orders, e.correlated)?;
         let mut rule_order: Vec<_> = (0..rules.len()).collect();
         rule_order.sort_by_key(|&j| std::cmp::Reverse(priority.get(&(i, j)).copied()));
         for j in rule_order {
@@ -230,7 +258,7 @@ pub(super) fn joint_regimes(
             part.set_rules(e.pool, &domain, r.clone());
             *p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
             e.rec.begin(&mut e.tel, "search", Some(label.clone()));
-            let more = traverse(p, &domain, &part, orders, e)?;
+            let more = traverse(p, &domain, &part, part_orders, e)?;
             e.rec.end(&mut e.tel);
             if !more {
                 if e.rec.parts_done + 1 < total {
@@ -399,6 +427,8 @@ pub(super) fn joint_rec(
     let level = (placed + 5 - depth).min(5);
     let node_bounds = bounds.carrier_level(level);
     let keyed = if depth > 0 { bounds.keyed(p, depth, &choices, 5 - depth, 5 - depth) } else { None };
+    // The order-step bounds bound sums over the orders, which bounds of each order's payoff compare with no sum.
+    let sums = !bounds.is_order_maximum();
     e.order_steps[depth].reset();
     // At a complete team, the power of the node's bound: at least the team's power.
     let mut power_upper = None;
@@ -421,6 +451,7 @@ pub(super) fn joint_rec(
         }
         // The open slots take ascending candidate indices from `start` on.
         if depth < 5
+            && sums
             && node_bounds.order_steps_prepare(
                 e.pool,
                 domain,
@@ -594,6 +625,7 @@ pub(super) fn joint_rec(
         // Below the leader every child and its completions take candidates from `offset` on: their order steps bound
         // all the children left (the node's own check covered `start`).
         if depth > 0
+            && sums
             && offset > start
             && offset % if depth < 4 { 4 } else { 16 } == 0
             && let Some((threshold, cutoff_power)) = e.safe_cutoff()
@@ -722,6 +754,7 @@ pub(super) fn joint_rec(
         // The order steps of the child's completions: it takes this slot, the slots after it take pairs from
         // `offset + 1` on (the node's suffix summaries).
         if (1..4).contains(&depth)
+            && sums
             && let Some((threshold, cutoff_power)) = e.safe_cutoff()
             && node_bounds.order_steps_prepare(
                 e.pool,
@@ -756,4 +789,50 @@ pub(super) fn joint_rec(
         }
     }
     Ok(true)
+}
+
+/// Whether the search is certified and values a team by its best performance order.
+fn certified_maximum(e: &Engine<'_, '_>) -> bool {
+    e.certified.as_ref().is_some_and(|state| state.reduction == crate::search::certified_search::Reduction::Maximum)
+}
+
+/// The order masses of a traversal of `bounds`: one pseudo-order of mass 1 for bounds of each order's payoff (see
+/// `JointBounds::order_maximum`), otherwise the position-mean pseudo-order of the search.
+fn masses<'o>(
+    e: &Engine<'_, '_>,
+    bounds: &crate::search::joint::JointBounds,
+    orders: &'o [([usize; 5], u128)],
+) -> &'o [([usize; 5], u128)] {
+    if certified_maximum(e) && bounds.is_order_maximum() { &ORDER_MAXIMUM } else { orders }
+}
+
+/// The pseudo-order of bounds of each order's payoff: any positions, mass 1.
+static ORDER_MAXIMUM: [([usize; 5], u128); 1] = [([0, 1, 2, 3, 4], 1)];
+
+/// The best payoff of any order of any completion through the legal depth-0 choices of `bounds`: the largest
+/// depth-1 [`JointBounds::maximum_upper`]. None when no legal choice remains.
+///
+/// [`JointBounds::maximum_upper`]: crate::search::joint::JointBounds::maximum_upper
+fn maximum_root_upper(
+    pool: &Pool,
+    domain: &crate::domain::CandidateDomain,
+    bounds: &crate::search::joint::JointBounds,
+) -> Option<i128> {
+    use crate::search::joint::SLOTS;
+    let mut p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
+    let mut upper = None;
+    for &(m, choice) in &bounds.choices {
+        let character = pool.members[m].character_id;
+        if domain.leader().is_some_and(|l| l != m)
+            || domain.required().iter().any(|&r| r != m && pool.members[r].character_id == character)
+            || !bounds.allows(SLOTS[0], choice)
+        {
+            continue;
+        }
+        p.members[SLOTS[0]] = m;
+        p.snaps[SLOTS[0]] = if choice == 0 { None } else { Some(domain.snaps()[choice - 1]) };
+        let (cap, _) = bounds.maximum_upper(pool, domain, &p, 1);
+        upper = Some(upper.map_or(cap, |u: i128| u.max(cap)));
+    }
+    upper
 }

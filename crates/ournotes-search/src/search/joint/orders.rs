@@ -83,6 +83,37 @@ impl JointBounds {
         .then_some(TeamCaps::Fine)
     }
 
+    /// Whether a complete team's best performance order is below a cutoff by `below`, for the maximum aggregation:
+    /// its cheap cap in every order (`orders` holds the positions of each), then the fine cap of each order whose
+    /// cheap cap is not below, until one is not below either. `computed` counts the orders whose fine caps were read.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn best_order_below(
+        &self,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        power: i64,
+        orders: &[[usize; 5]],
+        scratch: &mut JointScratch,
+        below: impl Fn(i128) -> bool,
+        computed: &mut u64,
+    ) -> Option<TeamCaps> {
+        let caps = self.order_cheap_caps(domain, p, power, orders);
+        if caps.iter().all(|&cap| below(cap)) {
+            return Some(TeamCaps::Cheap);
+        }
+        self.fine.as_ref()?;
+        for (positions, &cap) in orders.iter().zip(&caps) {
+            if below(cap) {
+                continue;
+            }
+            *computed += 1;
+            if !self.fine_upper(domain, p, power, positions, scratch).is_some_and(&below) {
+                return None;
+            }
+        }
+        Some(TeamCaps::Fine)
+    }
+
     /// The event bonus of a complete deck (0 without a PT objective).
     pub(super) fn bonus_of(&self, p: &PhysicalDeck, choices: &[usize; 5]) -> i64 {
         self.points.as_ref().map_or(0, |pt| {
@@ -176,7 +207,7 @@ impl JointBounds {
         let choices = Self::prefix_choices(domain, p, 5);
         let level = self.carrier_level(self.carriers_placed(p, 5, &choices));
         let keyed = self.keyed(p, 5, &choices, 0, 0);
-        let a0 = keyed.as_ref().map_or(level.a0, |k| k.a0);
+        let a0 = level.less_offset(keyed.as_ref().map_or(level.a0, |k| k.a0));
         let bonus = self.bonus_of(p, &choices);
         orders
             .iter()

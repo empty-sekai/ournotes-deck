@@ -142,6 +142,11 @@ pub(crate) struct JointBounds {
     law_clusters: Option<Box<LawClusters>>,
     /// With bounds of one such cluster: the cluster, whose traversal visits the teams of its multisets of kinds.
     part: Option<LawPart>,
+    /// With the node bounds of each order's payoff (see [`JointBounds::order_maximum`]): the position potentials whose
+    /// sum the base coefficients hold.
+    order_potentials: Option<[f64; 5]>,
+    /// The sum of those potentials, rounded up (0 otherwise), which per-order quantities leave out.
+    order_offset: f64,
 }
 
 /// The cheap bounds of decks with at most `n < 5` Gekisou combo carriers (a slot whose member and Snap bring combo
@@ -172,6 +177,12 @@ fn unavailable(message: &str) -> Error {
 
 fn add_up(a: f64, b: f64) -> f64 {
     (a + b).next_up()
+}
+
+/// A gain row with every position replaced by the row's largest excess over the position potentials `v`, at least 0
+/// (see [`JointBounds::order_maximum`]).
+fn excess_row(g: &[f64; 5], v: &[f64; 5]) -> [f64; 5] {
+    [(0..5).map(|p| (g[p] - v[p]).next_up()).fold(0.0, f64::max); 5]
 }
 
 impl JointBounds {
@@ -208,6 +219,17 @@ impl JointBounds {
     /// The lottery laws the bounds weigh; empty when every note takes its largest luck factor.
     pub(crate) fn laws(&self) -> &[std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>] {
         &self.laws
+    }
+
+    /// Whether the node bounds bound the payoff of each performance order (see [`JointBounds::order_maximum`]).
+    pub(crate) fn is_order_maximum(&self) -> bool {
+        self.order_potentials.is_some()
+    }
+
+    /// `x` less the potential sum the base coefficients hold (see [`JointBounds::order_maximum`]): a node bound's base
+    /// coefficient as the per-order caps read it, or a per-order gain sum in the units of the node bounds.
+    fn less_offset(&self, x: f64) -> f64 {
+        if self.order_offset == 0.0 { x } else { (x - self.order_offset).next_up() }
     }
 
     /// The bounds of the domain under clusters of the laws these weigh, when they are split.
@@ -270,8 +292,12 @@ impl JointBounds {
         for &slot in &SLOTS[..depth] {
             order_placed[slot] = keys.gains(&env, p.members[slot], choices[slot]);
         }
-        let placed = order_placed.map(|g| super::uniform::mean_row(&g));
+        let placed = order_placed.map(|g| match &self.order_potentials {
+            Some(v) => excess_row(&g, v),
+            None => super::uniform::mean_row(&g),
+        });
         let a0 = keys.a0(&env, SLOTS[..depth].iter().map(|&slot| (p.members[slot], choices[slot])), free);
+        let a0 = if self.order_offset == 0.0 { a0 } else { add_up(a0, self.order_offset) };
         Some(Keyed { a0, placed, order_placed })
     }
 
