@@ -36,11 +36,11 @@ use dp::{DpResult, State, StepTables, propagate, propagate_joint, propagate_resi
 use kinds::{Conversions, POSITIONS};
 pub use kinds::{LotteryBreak, LotteryKind, LotteryKindStats, LotteryKinds, LotteryRole};
 use life_recorder::life_recorder;
-pub use life_recorder::luck_has_judgement_conversion;
 pub(crate) use life_recorder::luck_play_converts;
 use life_recorder::{
     PlayConversions, leaves_life_range, life_range, play_conversions, play_life_range, quiet_conversions,
 };
+pub use life_recorder::{luck_has_judgement_conversion, luck_play_changes_judgements};
 use mass::{Draws, Mass};
 pub(super) use plan::fixed_condition;
 use plan::{Action, Plan, chance, compile, fold_life_conditions, reads_life, unsupported};
@@ -432,9 +432,14 @@ impl LotteryRecording {
         propagate_residues(&self.transcript, plan)
     }
 
-    /// Propagates the recording's certified lottery law jointly with the labels of `reader` ([`JointReader`]).
-    pub(crate) fn joint(&self, reader: &mut impl JointReader) -> Result<(), Error> {
-        propagate_joint(&self.transcript, reader)
+    /// Propagates the recording's certified lottery law jointly with the labels of `reader` ([`JointReader`]). False
+    /// when `cancelled` stops it before its end.
+    pub(crate) fn joint(
+        &self,
+        reader: &mut impl JointReader,
+        cancelled: &mut impl FnMut() -> bool,
+    ) -> Result<bool, Error> {
+        propagate_joint(&self.transcript, reader, cancelled)
     }
 }
 

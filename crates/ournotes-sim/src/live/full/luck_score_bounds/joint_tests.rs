@@ -21,7 +21,11 @@ fn joint_expectations_contain_the_complete_nominal_law() {
                 luck_exact_score(master, &skills, deck, notes, &[], *params, setup, play, delta, ranking, None, false)
                     .unwrap();
             let score =
-                luck_joint_score(master, &skills, deck, notes, &[], *params, setup, play, delta, ranking).unwrap();
+                luck_joint_score(master, &skills, deck, notes, &[], *params, setup, play, delta, ranking, &mut || {
+                    false
+                })
+                .unwrap()
+                .expect("an uncancelled joint evaluation");
             let (expected, _) = nominal(name, &case, ranking);
             let slack = 1e-9 * (1.0 + expected.abs());
             let label = format!("{name} network={}", ranking.is_some());
@@ -75,7 +79,11 @@ fn joint_expectations_narrow_notes_whose_factor_histories_drift() {
                 luck_exact_score(master, &skills, deck, notes, &[], *params, setup, play, delta, ranking, None, false)
                     .unwrap();
             let score =
-                luck_joint_score(master, &skills, deck, notes, &[], *params, setup, play, delta, ranking).unwrap();
+                luck_joint_score(master, &skills, deck, notes, &[], *params, setup, play, delta, ranking, &mut || {
+                    false
+                })
+                .unwrap()
+                .expect("an uncancelled joint evaluation");
             let (expected, _) = nominal(name, &case, ranking);
             let slack = 1e-9 * (1.0 + expected.abs());
             let label = format!("{name} network={}", ranking.is_some());

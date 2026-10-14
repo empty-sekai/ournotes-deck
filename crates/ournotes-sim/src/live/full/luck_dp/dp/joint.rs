@@ -319,16 +319,21 @@ impl<R: JointReader> Hooks<ProbabilityMass> for JointHooks<'_, R> {
 }
 
 /// Propagate the certified lottery law of `transcript` jointly with the labels of `reader`, on its own step tables.
+/// False when `cancelled` stops it before its end.
 pub(in crate::live::full::luck_dp) fn propagate_joint(
     transcript: &Transcript<ProbabilityMass>,
     reader: &mut impl JointReader,
-) -> Result<(), Error> {
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<bool, Error> {
     let mut tables = StepTables::default();
     tables.enter_transcript(transcript);
-    propagate_frames(transcript, &mut tables, &mut || false, &mut JointHooks(reader))?;
+    // The joint hooks never end the propagation, so only the cancellation leaves it without a result.
+    if propagate_frames(transcript, &mut tables, cancelled, &mut JointHooks(reader))?.is_none() {
+        return Ok(false);
+    }
     // The recording's failure after its last frame fails its law, and so the joint law.
     if let Some(failure) = &transcript.failure {
         return Err(failure.clone());
     }
-    Ok(())
+    Ok(true)
 }

@@ -145,6 +145,10 @@ This mapping describes the verified challenge-song route. It does not infer the 
 `isMusicRankingDisabled` / `isTotalMusicRankingDisabled` fields absent from the verified native MasterEvent schema.
 Accuracy is a deterministic declared play: Greats are spread evenly over judged notes, then the Just fraction is
 applied to remaining Just-eligible notes. It is not a distribution of human errors. Gekisou-off goals require Just 0.
+In a live with an active LUCK range, a play with Great judgements (a Great accuracy, pattern or stream) returns
+`Unsupported` when a team of the candidate domain holds a judgement conversion that can change those Greats, and
+`capabilities().luckGreatConversions` is false. Plays without Greats, and Great plays whose candidates hold no such
+conversion, are supported.
 
 Event requests accept `eventContext.resultClock` with `kind: played|skip`, `serverNowJstTicks`, and nullable
 `liveStartJstTicks` for a played live. Ticks remain 64-bit integers in the raw JSON text.

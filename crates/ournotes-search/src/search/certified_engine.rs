@@ -76,6 +76,48 @@ pub(super) fn lottery_mode(
     })
 }
 
+/// The Great note judgement of a judgement stream (`NoteSimulateJudgement`).
+const GREAT_JUDGEMENT: i32 = 4;
+
+/// The milliseconds since `started` on the search clock.
+fn elapsed_ms(started: crate::clock::Instant) -> f64 {
+    crate::search::budget::now().saturating_duration_since(started).as_secs_f64() * 1000.0
+}
+
+/// Whether a judgement conversion that some team of `domain` holds can change a Great judgement of the objective's
+/// play. Certified lottery evaluation does not support such plays yet.
+///
+/// Each member performs alone, and each Snap beside a member with a Gekisou skill when the domain has one: a
+/// performer holds its member's skills, its Snap's support skills, and its Snap's Gekisou support skills beside a
+/// Gekisou skill, so every conversion a team of the domain holds is held here, and each one held here is held by some
+/// team.
+pub(super) fn converts_great(
+    pool: &Pool,
+    objective: &Objective,
+    domain: &crate::domain::CandidateDomain,
+) -> Result<bool, Error> {
+    let Some(setup) = crate::search::full_setup(pool, objective)? else { return Ok(false) };
+    let mut play = setup.play.clone();
+    for frame in &mut play.frames {
+        frame.judged.retain(|note| note.judgement == GREAT_JUDGEMENT);
+    }
+    if play.frames.iter().all(|frame| frame.judged.is_empty()) {
+        return Ok(false);
+    }
+    let members = domain.members();
+    let beside = members.iter().find(|&&m| pool.members[m].gekisou_skill_id != 0).or(members.first());
+    let mut performers = Vec::with_capacity(members.len() + domain.snaps().len());
+    for &m in members {
+        performers.push(crate::search::snaps::performer(&pool.members[m], None)?);
+    }
+    if let Some(&m) = beside {
+        for &s in domain.snaps() {
+            performers.push(crate::search::snaps::performer(&pool.members[m], Some(&pool.snaps[s]))?);
+        }
+    }
+    Ok(ournotes_sim::live::full::luck_play_changes_judgements(pool.master, &performers, &setup.notes, &play))
+}
+
 pub(super) struct CertifiedEntry {
     physical: PhysicalDeck,
     members: [i64; 5],
@@ -450,7 +492,9 @@ impl Engine<'_, '_> {
                 let performers = order.map(|slot| input.performers[slot].clone());
                 self.tel.lottery_refinement.attempted_orders += 1;
                 let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+                let started = crate::search::budget::now();
                 let result = session.law(&performers, &mut work, || self.expired());
+                self.tel.lottery_refinement.exact_ms += elapsed_ms(started);
                 self.rec.clock.lap(resume);
                 let result = result?;
                 let telemetry = &mut self.tel.lottery_refinement;
@@ -466,6 +510,12 @@ impl Engine<'_, '_> {
                     if result.decline == Some(LuckExactDecline::Domain) {
                         // Every physical candidate has the same declared notes/frame schedule. Do not
                         // rebuild all live candidates just to rediscover this request-wide refusal.
+                        return Ok(());
+                    }
+                    if result.decline == Some(LuckExactDecline::BranchDepth) {
+                        // The chart's lotteries branch along the paths of every formation: once one order nests
+                        // more branch points than the provider follows, the request's other orders are left to the
+                        // later refinements. This only schedules work; the frontier certifies every rank.
                         return Ok(());
                     }
                     continue;
@@ -640,6 +690,7 @@ impl Engine<'_, '_> {
                 self.tel.lottery_refinement.power_pairs += 1;
                 let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
                 let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+                let started = crate::search::budget::now();
                 let equal = ournotes_sim::live::full::luck_exact_orders_power_twin(
                     self.pool.master,
                     &skills,
@@ -656,6 +707,7 @@ impl Engine<'_, '_> {
                     Some(&mut curves),
                     b.1,
                 );
+                self.tel.lottery_refinement.twin_ms += elapsed_ms(started);
                 self.rec.clock.lap(resume);
                 self.tel.caches.luck_curves.record(curves.stats());
                 let state = self.certified.as_mut().expect("certified request");
@@ -694,6 +746,7 @@ impl Engine<'_, '_> {
             }
             let performers = order.map(|slot| input.performers[slot].clone());
             let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+            let started = crate::search::budget::now();
             let score = ournotes_sim::live::full::luck_exact_score_refined(
                 self.pool.master,
                 &skills,
@@ -706,6 +759,7 @@ impl Engine<'_, '_> {
                 &input.delta_times,
                 input.rank_confirmations.as_deref(),
             );
+            self.tel.lottery_refinement.residue_ms += elapsed_ms(started);
             self.rec.clock.lap(resume);
             let score = match score {
                 Ok(score) if score.wide_notes == 0 => score,
@@ -818,6 +872,7 @@ impl Engine<'_, '_> {
             let performers = order.map(|slot| input.performers[slot].clone());
             self.tel.lottery_refinement.joint_orders += 1;
             let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
+            let started = crate::search::budget::now();
             let score = ournotes_sim::live::full::luck_joint_score(
                 self.pool.master,
                 &skills,
@@ -829,10 +884,14 @@ impl Engine<'_, '_> {
                 &input.play,
                 &input.delta_times,
                 input.rank_confirmations.as_deref(),
+                &mut || self.expired(),
             );
+            self.tel.lottery_refinement.joint_ms += elapsed_ms(started);
             self.rec.clock.lap(resume);
             let score = match score {
-                Ok(score) => score,
+                Ok(Some(score)) => score,
+                // The deadline stopped it: the proof stays pending.
+                Ok(None) => return Ok(()),
                 Err(Error::Unsupported(_) | Error::Capacity(_)) => {
                     self.tel.lottery_refinement.joint_declined += 1;
                     continue;

@@ -98,6 +98,12 @@ pub struct LotteryRefinement {
     pub joint_orders: u64,
     pub joint_declined: u64,
     pub joint_narrowed: u64,
+    /// Wall time of the exact order laws, the power twin checks, the residue laws and the joint evaluations, in
+    /// milliseconds.
+    pub exact_ms: f64,
+    pub twin_ms: f64,
+    pub residue_ms: f64,
+    pub joint_ms: f64,
 }
 
 /// Orders the exact lottery provider declined, by its reason.

@@ -134,8 +134,17 @@ pub(crate) fn solve_physical_impl(
         env.bounds.choices = b.members.len();
     }
     let lottery = certified_engine::lottery_mode(pool, request, &plan.domain)?;
-    if matches!(metric, Metric::Combined { .. }) && lottery == certified_engine::LotteryMode::Certified {
-        return Err(Error::Unsupported("combined metrics require lottery-free terminal outcomes".into()));
+    if lottery == certified_engine::LotteryMode::Certified {
+        if matches!(metric, Metric::Combined { .. }) {
+            return Err(Error::Unsupported("combined metrics require lottery-free terminal outcomes".into()));
+        }
+        if certified_engine::converts_great(pool, &request.objective, &plan.domain)? {
+            return Err(Error::Unsupported(
+                "plays with Great judgements that a held judgement conversion can change are not supported with LUCK \
+                 lotteries"
+                    .into(),
+            ));
+        }
     }
     let mut engine = Engine {
         pool,

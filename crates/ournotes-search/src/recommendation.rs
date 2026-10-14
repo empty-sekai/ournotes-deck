@@ -211,6 +211,7 @@ pub fn capabilities() -> Value {
         "rankAssumption": "player-declared rank 1 for each completed Battle/Arena range; native network frame snapshots",
         "eventIds": event_ids,
         "luckMissions": true,
+        "luckGreatConversions": false,
         "provenGoals": goals.iter().map(|k| k.name()).collect::<Vec<_>>(),
         "support": support_by_goal,
         "memoryBudgetBytes": null,

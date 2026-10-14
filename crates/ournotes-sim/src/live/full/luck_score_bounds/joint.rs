@@ -40,6 +40,7 @@ const UNREAD: u8 = u8::MAX;
 
 /// [`luck_exact_score`] of `deck` in its order with every note's score read jointly with its lottery class: the final
 /// note mean and the range scores are the expectations of the joint law, enclosed by those of [`luck_exact_score`].
+/// None when `cancelled` stops the joint propagation before its end.
 #[allow(clippy::too_many_arguments)]
 pub fn luck_joint_score(
     master: &Master,
@@ -52,7 +53,8 @@ pub fn luck_joint_score(
     play: &LivePlay,
     delta_times: &[f32],
     ranking: Option<&[crate::replay::RankConfirmation]>,
-) -> Result<LuckExactScore, Error> {
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<Option<LuckExactScore>, Error> {
     if !super::exact::has_luck(setup) {
         return Err(refuse("the live has no LUCK range"));
     }
@@ -62,7 +64,9 @@ pub fn luck_joint_score(
     let order = order_schedule(&live, deck, Some(recording.law()), None)?;
     let mut score = order.evaluate(&live, false, Observers::default())?;
     let mut joint = Joint::new(&order, &score.ranges)?;
-    recording.joint(&mut joint)?;
+    if !recording.joint(&mut joint, cancelled)? {
+        return Ok(None);
+    }
     let refined = joint.result()?;
     let old = |bounds: RealBounds| F64Interval::new(bounds.lower, bounds.upper);
     for (range, &(mean, bonus)) in score.ranges.iter_mut().zip(&refined.ranges) {
@@ -78,7 +82,7 @@ pub fn luck_joint_score(
         .and_then(|mean| mean.intersect(support))
         .ok_or_else(disagree)?;
     (score.final_note_mean, score.final_rank_mean, score.final_mean) = (note.into(), rank.into(), mean.into());
-    Ok(score)
+    Ok(Some(score))
 }
 
 fn misread() -> Error {

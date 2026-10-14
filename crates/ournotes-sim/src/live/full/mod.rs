@@ -63,9 +63,9 @@ mod luck_exact;
 pub use luck_dp::{
     KindCensus, LotteryBreak, LotteryKind, LotteryKindStats, LotteryKinds, LotteryLive, LotteryRole, LuckDpCache,
     LuckDpCacheStats, LuckDpCertifiedResult, LuckDpResult, LuckRangeMoments, LuckRecordProfile,
-    luck_has_judgement_conversion, luck_rush_dp, luck_rush_dp_certified, luck_rush_dp_certified_with_events,
-    luck_rush_dp_certified_with_moments, luck_rush_dp_certified_with_ranking, luck_rush_dp_with_events,
-    luck_rush_dp_with_ranking, take_luck_record_profile,
+    luck_has_judgement_conversion, luck_play_changes_judgements, luck_rush_dp, luck_rush_dp_certified,
+    luck_rush_dp_certified_with_events, luck_rush_dp_certified_with_moments, luck_rush_dp_certified_with_ranking,
+    luck_rush_dp_with_events, luck_rush_dp_with_ranking, take_luck_record_profile,
 };
 pub use luck_exact::{
     LuckExactAtom, LuckExactAttempt, LuckExactBudget, LuckExactDecline, LuckExactLaw, LuckExactMass, LuckExactSession,

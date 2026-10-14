@@ -382,6 +382,30 @@ fn active_luck_ranges_reject_combined_metrics() {
     }
 }
 
+#[test]
+fn active_luck_ranges_reject_great_plays_that_held_conversions_change() {
+    let mut request = super::joint_request_json("mission", true, json!({"kind":"score"}));
+    request["execution"]["play"] = json!({"kind":"accuracy","greatFraction":0.5,"justFraction":1.0});
+    let request: RecommendationRequest = serde_json::from_value(request).unwrap();
+    // The even Snap of the synthetic master turns Greats and Goods into Perfects; the members hold no conversion.
+    for snaps in [0, 2] {
+        let mut synth = synthetic_master(5, snaps, 5);
+        set_column(&mut synth, "MasterLiveMusic", &mut |row| row["_gekisouMission1"] = json!(2));
+        let mut document = data_document(&synth, 5, snaps, 5);
+        document["charts"][0]["fevers"] = json!({"startMs":[150],"endMs":[400]});
+        let data = DeckData::from_json(&document.to_string()).unwrap();
+        let roster = Roster::from_json(&roster_document(5, snaps, 5).to_string()).unwrap();
+        let outcome = engine::recommend(&data, &roster, &request);
+        if snaps == 0 {
+            assert_eq!(outcome.unwrap().completion, Completion::Complete);
+            continue;
+        }
+        let error = outcome.unwrap_err();
+        assert!(matches!(error, ournotes_sim::Error::Unsupported(_)), "{error}");
+        assert!(error.to_string().contains("Great judgements"), "{error}");
+    }
+}
+
 fn account_leveled(levels: Value) -> Value {
     let mut request = account_request(json!({"kind":"freeLive","musicId":10,"difficulty":"expert"}));
     request["metric"] = json!({"kind":"combined","consumption":1,"levels":levels});

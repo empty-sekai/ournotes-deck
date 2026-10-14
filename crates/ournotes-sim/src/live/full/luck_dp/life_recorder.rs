@@ -340,6 +340,13 @@ pub(crate) fn play_conversions(
     out
 }
 
+/// Whether a conversion effect the performers hold can change a judgement of `play` beyond turning Perfects and Justs
+/// into one another ([`play_conversions`]).
+#[doc(hidden)]
+pub fn luck_play_changes_judgements(master: &Master, deck: &[Performer], notes: &[LiveNote], play: &LivePlay) -> bool {
+    play_conversions(master, deck, notes, play) == PlayConversions::Change
+}
+
 /// Whether a conversion effect the performers hold can change a judgement of `play` ([`play_conversions`]).
 pub(crate) fn luck_play_converts(master: &Master, deck: &[Performer], notes: &[LiveNote], play: &LivePlay) -> bool {
     play_conversions(master, deck, notes, play) != PlayConversions::None
