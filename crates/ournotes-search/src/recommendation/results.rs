@@ -30,6 +30,12 @@ pub(super) fn ceil_div(n: i128, d: u128) -> i128 {
     floor_div(n, d) + i128::from(!n.unsigned_abs().is_multiple_of(d))
 }
 
+/// Whether the teams are valued by the greatest of their performance orders: Maximum aggregation of a played live.
+/// Other executions have one outcome, which the two aggregations value alike.
+pub(super) fn maximum_valued(parsed: &Parsed) -> bool {
+    parsed.search.aggregation == Aggregation::Maximum && parsed.kind.live()
+}
+
 /// Whether a metric's value is a probability.
 pub(super) fn probability(metric: &Metric) -> bool {
     matches!(metric, Metric::ScoreAtLeast { .. } | Metric::ScoreAndLifeAtLeast { .. })
@@ -115,6 +121,7 @@ pub(super) fn orders(
 pub(super) fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_orders: bool) -> Result<Vec<Team>, Error> {
     let metric = &parsed.search.metric;
     let score_metric = matches!(metric, Metric::Score);
+    let maximum = maximum_valued(parsed);
     let mut seen = BTreeSet::new();
     let mut rows = Vec::new();
     for deck in &outcome.results {
@@ -129,6 +136,29 @@ pub(super) fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_order
         }
         let value = if parsed.kind == GoalKind::Power {
             None
+        } else if maximum {
+            // The team's value is that of its best order, in which the score is that order's expected score.
+            let payoff = if score_metric {
+                None
+            } else {
+                deck.objective_value
+                    .as_ref()
+                    .map(|value| {
+                        let (n, d) = exact(value)?;
+                        Ok::<_, Error>(PayoffValue {
+                            score: n as f64 / d as f64,
+                            exact: Some(value.clone()),
+                            interval: None,
+                        })
+                    })
+                    .transpose()?
+            };
+            deck.best_order.as_ref().map(|best| TeamValue {
+                score: i64::from(best.score),
+                exact: Some(Fraction { numerator: best.score.to_string(), denominator: "1".into() }),
+                interval: None,
+                payoff,
+            })
         } else {
             let score = match (&deck.expected_score, &deck.score_interval) {
                 (Some(score), _) => {
@@ -201,6 +231,25 @@ pub(super) fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_order
             }
             _ => None,
         };
+        let best_order = if maximum {
+            deck.best_order
+                .as_ref()
+                .map(|best| {
+                    let payoff = if score_metric {
+                        None
+                    } else {
+                        Some(
+                            best.payoff
+                                .parse::<i64>()
+                                .map_err(|_| Error::Domain("result payoff exceeds i64".into()))?,
+                        )
+                    };
+                    Ok::<_, Error>(BestOrder { score: i64::from(best.score), payoff, order: best.members })
+                })
+                .transpose()?
+        } else {
+            None
+        };
         rows.push(Team {
             rank: 0,
             leader,
@@ -208,6 +257,7 @@ pub(super) fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_order
             power: deck.power,
             value,
             orders,
+            best_order,
             layout,
             rank_certified: deck.rank_certified,
             event_rewards,
@@ -253,7 +303,8 @@ pub(super) fn result_of(
     let proof = &outcome.telemetry.proof;
     let proven = outcome.optimality == Optimality::Proven;
     let best_deck = outcome.results.first();
-    let best = best_deck.and_then(|d| d.expected_payoff.as_ref()).map(exact).transpose()?;
+    let best =
+        best_deck.and_then(|d| d.objective_value.as_ref().or(d.expected_payoff.as_ref())).map(exact).transpose()?;
     let lower_bound = best.map(|(n, d)| bound(metric, n, d, false)).or_else(|| {
         best_deck
             .and_then(|d| d.payoff_interval.as_ref())
@@ -270,7 +321,7 @@ pub(super) fn result_of(
         // upper_bound covers only unexplored branches. It cannot replace a missing global bound: retained
         // interval candidates can exceed it, and a displayed Top-K does not certify the rest of that frontier.
         let target = outcome.telemetry.environment.target.as_ref().and_then(|t| t.denominator.parse::<u128>().ok());
-        let denominator = target.unwrap_or(if live { ORDERS as u128 } else { 1 });
+        let denominator = target.unwrap_or(if live && !maximum_valued(parsed) { ORDERS as u128 } else { 1 });
         proof
             .global_upper_bound
             .as_deref()
@@ -288,6 +339,9 @@ pub(super) fn result_of(
     Ok(AnswerResult {
         goal: parsed.goal.clone(),
         metric: parsed.metric.clone(),
+        aggregation: parsed.search.aggregation,
+        maximum_model: (parsed.search.aggregation == Aggregation::Maximum)
+            .then(|| MaximumModel::for_execution(parsed.kind.live())),
         phase: if is_final { "done" } else { "search" },
         elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
         optimality: OptimalityReport {

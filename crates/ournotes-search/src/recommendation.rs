@@ -3,16 +3,17 @@
 //! the deck power) and what to maximize; the answer ranks teams (a leader and four other members, each with a Snap)
 //! by their value and reports every input problem with its JSON path. See `docs/recommendation.md`.
 //!
-//! A played live is valued by the mean over its 120 equally likely performance orders. Each goal and metric is
+//! A played live is valued by the mean over its 120 equally likely performance orders, or by its best order
+//! (`aggregation`). Each goal and metric is
 //! supported with a proof, supported without a guaranteed proof, or not supported yet ([`capabilities`]).
 
 use crate::clock::Instant;
 use crate::search::Constraints;
 use crate::search::physical::ProgressHook;
 use crate::types::{
-    Execution, Fraction, FractionInterval, Limits, MAX_K, MAX_METRIC_LEVELS, MAX_METRIC_TERMS, MAX_TERM_WEIGHT, Metric,
-    MetricLevel, MetricTerm, Optimality, PlayPolicy, RecommendationOutcome, RecommendationRequest, RecommendedDeck,
-    Scene, SimulationInput, Strategy,
+    Aggregation, Execution, Fraction, FractionInterval, Limits, MAX_K, MAX_METRIC_LEVELS, MAX_METRIC_TERMS,
+    MAX_TERM_WEIGHT, MaximumModel, Metric, MetricLevel, MetricTerm, Optimality, PlayPolicy, RecommendationOutcome,
+    RecommendationRequest, RecommendedDeck, Scene, SimulationInput, Strategy,
 };
 use ournotes_sim::Error;
 use ournotes_sim::account::{AccountInput, Exclusions, Issue};
@@ -193,6 +194,22 @@ pub fn capabilities() -> Value {
         "accountFormat": ournotes_sim::account::FORMAT,
         "goals": goals.iter().map(|k| k.name()).collect::<Vec<_>>(),
         "metrics": metrics,
+        "defaultAggregation": "expected",
+        "aggregations": {
+            "expected": {
+                "goals": goals.iter().map(|k| k.name()).collect::<Vec<_>>(),
+                "law": "mean payoff over the 120 equally likely performance orders and the declared lottery law",
+                "tieBreak": ["expectedPayoff", "power", "canonicalTeamKey"],
+            },
+            "maximum": {
+                "goals": goals.iter().map(|k| k.name()).collect::<Vec<_>>(),
+                "law": "maximum over the 120 performance orders of the expected payoff over the random draws of the order",
+                "model": MaximumModel::for_execution(true),
+                "tieBreak": ["maximumPayoff", "power", "canonicalTeamKey"],
+                "bestOrder": "the first performance order, in lexicographic order, with the greatest value",
+                "luckMissions": false,
+            },
+        },
         "accuracy": {"great": true, "just": true},
         "play": {"completeStream":true,"field":"goal.play","mutuallyExclusiveWith":"goal.accuracy",
             "judgements":"NoteSimulateJudgement: 1 Miss, 2 Bad, 3 Good, 4 Great, 5 Perfect, 6 Just"},

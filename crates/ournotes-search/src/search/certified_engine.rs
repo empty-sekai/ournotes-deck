@@ -948,6 +948,7 @@ impl Engine<'_, '_> {
                     members: entry.members,
                     snaps: entry.snaps,
                     power: entry.power,
+                    objective_value: None,
                     expected_score: value.exact_score.map(Into::into),
                     expected_payoff: value.exact_payoff.map(Into::into),
                     term_payoffs: None,

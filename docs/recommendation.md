@@ -110,6 +110,22 @@ order. Every entry has `score`, an exact numerator/denominator and `interval:nul
 term is null. `value.payoff` is the first level's value, and reported upper bounds and gaps describe the first
 level.
 
+## Aggregation over performance orders
+
+`aggregation` is `"expected"` (the default) or `"maximum"`. With `"expected"` a team is worth the mean of its
+payoff over the 120 equally likely performance orders. With `"maximum"` a team is worth the greatest value among the
+120 orders, where each order is valued by the expectation of its own terminal payoff over the random draws that order
+contains. Orders are not weighted, and the payoff of a draw is valued by its true probability.
+
+The value is an exact integer over denominator one in `expectedPayoff`. Each team reports `bestOrder`, the first
+order, in the canonical enumeration, that attains the value, and `objectiveValue`. The outcome echoes `aggregation`
+and a `maximumModel` that states the order count and how an order is valued. `capabilities()` lists both
+aggregations. A Gekisou live is accepted. A live whose lottery effects need certified probability intervals is
+refused as unsupported under `"maximum"`.
+
+For every team the maximum value is at least its expected value.
+
+
 ## Event-item rewards
 
 `metric:{"kind":"eventItems","eventId":7,"resourceType":4,"resourceId":88,"consumption":1}` maximizes

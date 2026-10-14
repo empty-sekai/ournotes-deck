@@ -24,7 +24,11 @@ pub(super) fn compare(a: &Entry, b: &Entry) -> Ordering {
 }
 
 impl Entry {
-    pub(super) fn wire(self, metric: &Metric) -> Result<RecommendedDeck, Error> {
+    /// The wire result. Maximum aggregation of a played live reports the greatest order value as `objective_value`
+    /// and the order that attains it; the mean-based fields belong to Expected aggregation. A deterministic execution
+    /// has one outcome that both aggregations report alike.
+    pub(super) fn wire(self, metric: &Metric, aggregation: Aggregation, live: bool) -> Result<RecommendedDeck, Error> {
+        let maximum = aggregation == Aggregation::Maximum && live;
         let denominator = self.evaluation.expected_payoff.denominator;
         // A combined metric reports its levels' own expectations; the payoff of the deck and of each order is that
         // of the first level.
@@ -49,6 +53,7 @@ impl Entry {
                 members: self.members,
                 snaps: self.snaps,
                 power: self.power,
+                objective_value: None,
                 expected_score: None,
                 expected_payoff: Some(expected_payoff),
                 term_payoffs,
@@ -62,11 +67,18 @@ impl Entry {
             });
         }
         let score_summary = score_summary(&self.evaluation.score_mass, metric.target())?;
-        // The first order with the highest payoff, then the highest score (orders in lexicographic order).
-        let best_order = (self.evaluation.outcomes.len() == ORDERS)
+        // Expected aggregation: the first order with the highest payoff, then the highest score (orders in
+        // lexicographic order). Maximum aggregation: the first order with the highest payoff; orders omitted by a
+        // strict bound cannot tie it.
+        let best_order = (self.evaluation.outcomes.len() == ORDERS || maximum)
             .then(|| {
                 self.evaluation.outcomes.iter().reduce(|best, o| {
-                    if (o.terminal_payoff, o.final_score) > (best.terminal_payoff, best.final_score) { o } else { best }
+                    let better = if maximum {
+                        o.terminal_payoff > best.terminal_payoff
+                    } else {
+                        (o.terminal_payoff, o.final_score) > (best.terminal_payoff, best.final_score)
+                    };
+                    if better { o } else { best }
                 })
             })
             .flatten()
@@ -80,16 +92,17 @@ impl Entry {
             members: self.members,
             snaps: self.snaps,
             power: self.power,
-            expected_score: Some(self.evaluation.expected_score.into()),
-            expected_payoff: Some(expected_payoff),
+            objective_value: maximum.then(|| expected_payoff.clone()),
+            expected_score: (!maximum).then(|| self.evaluation.expected_score.into()),
+            expected_payoff: (!maximum).then_some(expected_payoff),
             term_payoffs,
             level_payoffs,
             score_interval: None,
             payoff_interval: None,
             rank_certified: None,
-            score_summary: Some(score_summary),
+            score_summary: (!maximum).then_some(score_summary),
             best_order,
-            order_outcomes: if self.evaluation.outcomes.len() == ORDERS {
+            order_outcomes: if !maximum && self.evaluation.outcomes.len() == ORDERS {
                 self.evaluation
                     .outcomes
                     .iter()

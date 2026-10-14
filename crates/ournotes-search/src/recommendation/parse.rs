@@ -104,6 +104,14 @@ pub(super) fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues
     if w.format != REQUEST_FORMAT {
         issues.add("format", "unsupported_format", format!("expected {REQUEST_FORMAT}"));
     }
+    let aggregation = match w.aggregation.as_deref().unwrap_or("expected") {
+        "expected" => Aggregation::Expected,
+        "maximum" => Aggregation::Maximum,
+        other => {
+            issues.add("aggregation", "input", format!("{other} is not one of expected, maximum"));
+            return None;
+        }
+    };
     let g = &w.goal;
     let Some(kind) = GoalKind::ALL.into_iter().find(|k| k.name() == g.kind) else {
         let names: Vec<&str> = GoalKind::ALL.iter().map(|k| k.name()).collect();
@@ -571,6 +579,7 @@ pub(super) fn parse_request(data: &DeckData, w: RequestWire, issues: &mut Issues
             event_payoff,
         }),
         metric,
+        aggregation,
         goal: None,
         constraints: Constraints {
             leader: c.leader,

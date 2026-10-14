@@ -34,6 +34,7 @@ mod entry;
 mod enumeration;
 mod evaluation;
 mod joint_search;
+mod maximum;
 #[path = "program_cache.rs"]
 mod program_cache;
 #[path = "progress.rs"]
@@ -60,8 +61,8 @@ pub use session::{
     GOAL_SPEC_VERSION, GoalSpec, SESSION_FORMAT, SearchSession, SessionBinding, SessionProgress, SessionStatus,
     StepBudget,
 };
-pub use solve::solve_physical;
 pub(crate) use solve::solve_physical_impl;
+pub use solve::{solve_physical, solve_physical_with_aggregation};
 
 pub(crate) fn session_start_clock() -> Instant {
     super::budget::now()

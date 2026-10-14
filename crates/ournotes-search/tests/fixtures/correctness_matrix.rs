@@ -20,7 +20,7 @@ use std::{cmp::Ordering, collections::BTreeSet};
 type Key = ([i64; 5], [Option<i64>; 5]);
 
 /// Enumerate member combinations, every eligible leader, and injective optional Snap bindings.
-fn domain(pool: &Pool<'_>, request: &RecommendationRequest) -> Vec<Key> {
+pub(super) fn domain(pool: &Pool<'_>, request: &RecommendationRequest) -> Vec<Key> {
     let constraints = &request.constraints;
     let mut members: Vec<_> = pool
         .members
@@ -100,7 +100,7 @@ fn compare(a: &RecommendedDeck, b: &RecommendedDeck) -> Ordering {
     right.cmp(&left).then_with(|| b.power.cmp(&a.power)).then_with(|| key(a).cmp(&key(b)))
 }
 
-fn fixture(members: i64, snaps: i64, characters: i64, luck: bool) -> (DeckData, Roster) {
+pub(super) fn fixture(members: i64, snaps: i64, characters: i64, luck: bool) -> (DeckData, Roster) {
     fixture_with(members, snaps, characters, luck, |_| {})
 }
 
@@ -157,7 +157,7 @@ fn fixture_with(
     (data, roster)
 }
 
-fn request(data: &DeckData, scene: &str, stream: bool, metric: Value) -> RecommendationRequest {
+pub(super) fn request(data: &DeckData, scene: &str, stream: bool, metric: Value) -> RecommendationRequest {
     let gekisou = scene != "free";
     let mut wire = joint_request_json(scene, gekisou, metric);
     if scene == "arena" {

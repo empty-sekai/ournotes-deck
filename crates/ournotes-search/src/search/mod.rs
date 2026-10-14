@@ -18,7 +18,7 @@ pub(crate) mod physical;
 pub(crate) use physical::session_start_clock;
 pub use physical::{
     GOAL_SPEC_VERSION, GoalSpec, SESSION_FORMAT, SearchSession, SessionBinding, SessionProgress, SessionStatus,
-    StepBudget, evaluate_declared_context, score_summary, solve_physical,
+    StepBudget, evaluate_declared_context, score_summary, solve_physical, solve_physical_with_aggregation,
 };
 
 mod budget;

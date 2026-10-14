@@ -632,7 +632,7 @@ impl Engine<'_, '_> {
     /// its five rotations ([`ournotes_sim::live::full::lottery_free_orders`]). None when the live has no Gekisou or a
     /// LUCK range, when the metric reads the final life (the splice follows scores only), or when the splice does not
     /// cover the orders; they are then simulated.
-    fn spliced_scores(
+    pub(super) fn spliced_scores(
         &mut self,
         input: &expectation::FiniteSeedContext,
         orders: &[[usize; 5]],

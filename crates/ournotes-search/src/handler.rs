@@ -71,6 +71,7 @@ impl<'m> BuiltProblem<'m> {
 }
 
 pub(crate) struct ExecutionPlan {
+    pub(crate) aggregation: Aggregation,
     pub(crate) joint: Option<crate::search::joint::JointBounds>,
     pub(crate) deck_payoff: Option<crate::search::deck_payoff::DeckPayoffBounds>,
     pub(crate) team_power: Option<crate::search::team_power::TeamPowerBounds>,
@@ -97,6 +98,7 @@ pub(crate) fn compile_execution(
     network: Option<&[RankConfirmation]>,
     simulation: &SimulationInput,
     strategy: &Strategy,
+    aggregation: Aggregation,
 ) -> Result<ExecutionPlan, Error> {
     reject_unsupported_lifecycle(network, simulation.live_finished_from_frame)?;
     let (song, event, skip) = crate::search::objective_song(pool, &request.objective)?;
@@ -197,6 +199,7 @@ pub(crate) fn compile_execution(
     let bound_compile_ms =
         if matches!(strategy, Strategy::BranchAndBound) { started.elapsed().as_secs_f64() * 1000.0 } else { 0.0 };
     Ok(ExecutionPlan {
+        aggregation,
         joint,
         deck_payoff,
         team_power,
@@ -306,6 +309,7 @@ pub fn build_card_pool<'m>(
         r.network_confirmations.as_deref(),
         &r.simulation,
         &r.strategy,
+        r.aggregation,
     )?;
     let route = match &r.strategy {
         Strategy::Exhaustive => SolverRoute::PhysicalExhaustive,

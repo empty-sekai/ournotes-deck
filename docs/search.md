@@ -1164,6 +1164,22 @@ scalar remains unavailable.
 Theorem obligations concern the actual arithmetic and domain checks used by each route. The accompanying
 finite-oracle tests check instances of these obligations; they do not replace the universal arguments.
 
+## Maximum aggregation
+
+Under `aggregation: "maximum"` the value of a team is `max` over the 120 performance orders of the order's expected
+terminal payoff. The leaf evaluation simulates the orders as one prefix-sharing tree and combines node bounds by
+maximum instead of by sum. An order is omitted only when its bound is strictly below a payoff already attained by
+another order of the same team, so every order tying the maximum is evaluated and the reported best order is the
+smallest tying one.
+
+A prefix bound is the payoff step function read at the order-gain envelope score ceiling: the position-mean
+relaxation bounds the power and bonus, and `order_gain_bound` bounds the gain of any single order, so no completion
+has an order above it. A team enters the Top-K when its value exceeds the K-th value, or equals it with a power at
+least the K-th power. The score-threshold metrics use the upper-only payoff curve, whose single term is capped at one
+(or at the threshold), to close the search from the power frontier. The route stays single-order: its denominator is
+one, and the probability law of the result is `maximumOverMemberOrders`.
+
+
 ## Prefix bounds
 
 Bounds are evaluated from cheap to expensive. Each row names a point where the search relaxes the problem, the

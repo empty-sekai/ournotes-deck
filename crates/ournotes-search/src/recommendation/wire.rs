@@ -8,6 +8,8 @@ pub(super) struct RequestWire {
     pub(super) format: String,
     pub(super) goal: GoalWire,
     #[serde(default)]
+    pub(super) aggregation: Option<String>,
+    #[serde(default)]
     pub(super) metric: Option<MetricWire>,
     #[serde(default)]
     pub(super) event_ids: Option<Vec<i64>>,

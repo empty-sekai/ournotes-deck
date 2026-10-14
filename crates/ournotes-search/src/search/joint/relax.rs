@@ -127,6 +127,23 @@ impl JointBounds {
             .collect()
     }
 
+    /// A bound of the payoff of every performance order of every completion of this prefix, and of its power. The
+    /// order-gain envelope bounds the score of each individual order, and the payoff steps read that score ceiling,
+    /// so no completion's best order exceeds it.
+    pub(crate) fn maximum_upper(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+    ) -> (i128, i64) {
+        let (power, gain, bonus) = self.relax(pool, domain, p, depth, &SLOTS[depth..], &[0, 1, 2, 3, 4], None);
+        let (spread, best) = self.order_gain_bounds(domain, p, depth, 5 - depth, None);
+        let gain = add_up(gain, spread).min(order_gain_bound(&best, &self.column, 0));
+        let cap = ((power as f64) * add_up(self.a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
+        (self.points.as_ref().map_or(cap, |pt| pt.order_payoff(bonus, cap)), power)
+    }
+
     pub(super) fn payoff_cap(&self, power: i64, gain: f64, bonus: i64) -> i128 {
         self.payoff_cap_from(self.a0, power, gain, bonus, f64::INFINITY)
     }

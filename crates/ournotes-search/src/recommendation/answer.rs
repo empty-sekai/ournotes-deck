@@ -39,6 +39,11 @@ pub struct AnswerResult {
     pub goal: Value,
     /// The metric as computed (null for the power goal).
     pub metric: Option<Value>,
+    /// How the values of the performance orders combine into a team's value.
+    pub aggregation: Aggregation,
+    /// The value model of Maximum aggregation; absent under Expected aggregation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum_model: Option<MaximumModel>,
     /// `search` in progress reports, `done` in the final answer.
     pub phase: &'static str,
     pub elapsed_ms: f64,
@@ -85,6 +90,10 @@ pub struct Team {
     pub value: Option<TeamValue>,
     /// A played live's order results; null for skip, power and progress reports.
     pub orders: Option<Orders>,
+    /// Maximum aggregation of a played live: the first performance order, in lexicographic order, whose value is the
+    /// team's value. Null otherwise; `orders.best` serves Expected aggregation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_order: Option<BestOrder>,
     /// The canonical layout: the leader in slot 2, the others in slots 0, 1, 3, 4.
     pub layout: Layout,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -120,12 +129,12 @@ pub struct TeamEventRewards {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TeamValue {
-    /// The expected score, rounded down.
+    /// The expected score, rounded down; under Maximum aggregation the score of the best order.
     pub score: i64,
     pub exact: Option<Fraction>,
     /// Bounds of the expected score when it is only known within them.
     pub interval: Option<Interval>,
-    /// The expected metric value when the metric is not the score.
+    /// The expected (Maximum aggregation: the greatest order) metric value when the metric is not the score.
     pub payoff: Option<PayoffValue>,
 }
 

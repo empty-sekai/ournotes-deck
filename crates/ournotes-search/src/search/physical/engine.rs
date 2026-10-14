@@ -3,6 +3,8 @@
 use super::*;
 
 pub(super) struct Engine<'a, 'm> {
+    /// How the payoffs of a team's performance orders combine into the team's value.
+    pub(super) aggregation: Aggregation,
     pub(super) pool: &'a Pool<'m>,
     pub(super) request: &'a SearchRequest,
     pub(super) metric: &'a Metric,
@@ -136,15 +138,25 @@ impl Engine<'_, '_> {
         let Some(terms) = self.metric.terms() else {
             return Ok(None);
         };
+        // Maximum aggregation values a team by its best order alone: each term pays what that order scores.
+        let masses: Vec<(i32, u128)> = if self.aggregation == Aggregation::Maximum && self.live {
+            evaluation
+                .outcomes
+                .iter()
+                .reduce(|best, o| if o.terminal_payoff > best.terminal_payoff { o } else { best })
+                .map(|o| vec![(o.final_score, 1)])
+                .unwrap_or_default()
+        } else {
+            evaluation.score_mass.iter().map(|(&score, &mass)| (score, mass)).collect()
+        };
         terms
             .map(|term| {
                 if matches!(term.metric, Metric::ScoreAndLifeAtLeast { .. }) {
                     return Ok(None);
                 }
-                evaluation
-                    .score_mass
+                masses
                     .iter()
-                    .try_fold(0i128, |sum, (&score, &mass)| {
+                    .try_fold(0i128, |sum, &(score, mass)| {
                         let payoff =
                             payoff_of(self.pool, self.request, &term.metric, self.event_input, p, score, power, None)?;
                         let mass = i128::try_from(mass).map_err(|_| arithmetic())?;
@@ -208,7 +220,12 @@ impl Engine<'_, '_> {
         }
         let power = self.pool.deck_power(&physical.as_deck(), self.song, self.event)?.power();
         let evaluation = if self.live {
-            match self.evaluate_orders(&physical, power, cut)? {
+            let leaf = if self.aggregation == Aggregation::Maximum {
+                self.evaluate_maximum(&physical, power, cut)?
+            } else {
+                self.evaluate_orders(&physical, power, cut)?
+            };
+            match leaf {
                 Leaf::Evaluated(evaluation) => evaluation,
                 Leaf::Certified(evaluation, program, payoff) => {
                     self.offer_certified(physical, power, evaluation, program, payoff)?;
@@ -477,7 +494,10 @@ impl Engine<'_, '_> {
             Optimality::Unproven
         };
         let live = matches!(self.request.objective.inner(), Objective::LiveScore { .. });
-        let probability_law = if live {
+        let maximum = self.aggregation == Aggregation::Maximum;
+        let probability_law = if live && maximum {
+            serde_json::json!({"kind":"maximumOverMemberOrders","orders":ORDERS,"orderValue":"expectedTerminalPayoffOverRandomDraws"})
+        } else if live {
             let lottery = if self.certified.is_some() {
                 "certifiedNativeLotteryIntervals"
             } else if self.lottery_free.is_some() {
@@ -507,10 +527,16 @@ impl Engine<'_, '_> {
                 (false, false) => "physicalDeck",
             },
             metric: self.metric.clone(),
+            aggregation: self.aggregation,
+            maximum_model: maximum.then(|| MaximumModel::for_execution(live)),
             player_goal: None,
             strategy: strategy.clone(),
             probability_law,
-            proof_scope: "conditional on declared master, roster and complete judgement/clock inputs, with the five members performing in a uniformly random order; client counters are not server reward authority",
+            proof_scope: if live && maximum {
+                "conditional on declared master, roster and complete judgement/clock inputs, with the value of a team its best performance order, each order valued by the expectation of its terminal payoff over random draws; client counters are not server reward authority"
+            } else {
+                "conditional on declared master, roster and complete judgement/clock inputs, with the five members performing in a uniformly random order; client counters are not server reward authority"
+            },
             resolved_context: serde_json::Value::Null,
             results,
             telemetry,
@@ -535,7 +561,11 @@ impl Engine<'_, '_> {
         let results = if self.certified.is_some() {
             self.certified_results(false)?.0
         } else {
-            self.top.iter().cloned().map(|e| e.wire(self.metric)).collect::<Result<Vec<_>, _>>()?
+            self.top
+                .iter()
+                .cloned()
+                .map(|e| e.wire(self.metric, self.aggregation, self.live))
+                .collect::<Result<Vec<_>, _>>()?
         };
         let elapsed = now.saturating_duration_since(start);
         Ok(self.outcome(strategy, ExitReason::TimeLimit, false, results, tel, elapsed))

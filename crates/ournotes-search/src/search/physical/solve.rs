@@ -16,6 +16,34 @@ pub fn solve_physical(
     network: Option<&[RankConfirmation]>,
     simulation: &SimulationInput,
 ) -> Result<RecommendationOutcome, Error> {
+    solve_physical_with_aggregation(
+        pool,
+        request,
+        metric,
+        event_input,
+        limits,
+        strategy,
+        network,
+        simulation,
+        Aggregation::Expected,
+    )
+}
+
+/// [`solve_physical`] with an explicit aggregation of the performance orders of a played live: their mean
+/// (`Expected`) or their greatest value (`Maximum`), each order valued by the expectation of its terminal payoff over
+/// its random draws.
+#[allow(clippy::too_many_arguments)]
+pub fn solve_physical_with_aggregation(
+    pool: &Pool,
+    request: &SearchRequest,
+    metric: &Metric,
+    event_input: Option<&EventPayoffInput>,
+    limits: &Limits,
+    strategy: &Strategy,
+    network: Option<&[RankConfirmation]>,
+    simulation: &SimulationInput,
+    aggregation: Aggregation,
+) -> Result<RecommendationOutcome, Error> {
     let origin = Instant::now();
     solve_physical_impl(
         pool,
@@ -26,6 +54,7 @@ pub fn solve_physical(
         strategy,
         network,
         simulation,
+        aggregation,
         None,
         &[],
         None,
@@ -46,6 +75,7 @@ pub(crate) fn solve_physical_impl(
     strategy: &Strategy,
     network: Option<&[RankConfirmation]>,
     simulation: &SimulationInput,
+    aggregation: Aggregation,
     fixed: Option<PhysicalDeck>,
     initial: &[PhysicalDeck],
     compiled: Option<&crate::handler::ExecutionPlan>,
@@ -78,8 +108,16 @@ pub(crate) fn solve_physical_impl(
     let plan = match compiled {
         Some(plan) => plan,
         None => {
-            owned_plan =
-                crate::handler::compile_execution(pool, request, metric, event_input, network, simulation, strategy)?;
+            owned_plan = crate::handler::compile_execution(
+                pool,
+                request,
+                metric,
+                event_input,
+                network,
+                simulation,
+                strategy,
+                aggregation,
+            )?;
             &owned_plan
         }
     };
@@ -103,7 +141,10 @@ pub(crate) fn solve_physical_impl(
     env.cache_entries = limits.cache_entries;
     let live = matches!(request.objective.inner(), Objective::LiveScore { .. });
     let orders = if live { ORDERS } else { 1 };
-    env.target = Some(telemetry::Target { orders, denominator: orders.to_string() });
+    env.target = Some(telemetry::Target {
+        orders,
+        denominator: if plan.aggregation == Aggregation::Maximum { "1".into() } else { orders.to_string() },
+    });
     env.domain = Some(telemetry::Domain {
         members: candidates.len(),
         snaps: snaps.len(),
@@ -134,6 +175,9 @@ pub(crate) fn solve_physical_impl(
         env.bounds.choices = b.members.len();
     }
     let lottery = certified_engine::lottery_mode(pool, request, &plan.domain)?;
+    if lottery == certified_engine::LotteryMode::Certified && plan.aggregation == Aggregation::Maximum {
+        return Err(Error::Unsupported("maximum aggregation with LUCK lotteries is not supported yet".into()));
+    }
     if lottery == certified_engine::LotteryMode::Certified {
         if matches!(metric, Metric::Combined { .. }) {
             return Err(Error::Unsupported("combined metrics require lottery-free terminal outcomes".into()));
@@ -147,6 +191,7 @@ pub(crate) fn solve_physical_impl(
         }
     }
     let mut engine = Engine {
+        aggregation: plan.aggregation,
         pool,
         request,
         metric,
@@ -220,6 +265,53 @@ pub(crate) fn solve_physical_impl(
             engine.rec.end(&mut engine.tel);
         }
         match strategy {
+            Strategy::Exhaustive | Strategy::BranchAndBound if live && plan.aggregation == Aggregation::Maximum => {
+                // A payoff that the deck alone determines ranks the same teams under either aggregation. Each
+                // retained team still passes through the maximum evaluation, which materializes its best order.
+                let mut ranked = if let Some(bounds) = plan.deck_payoff.as_ref().filter(|bounds| !bounds.bounded_only())
+                {
+                    engine.tel.environment.traversal = Traversal::Joint;
+                    engine.rec.begin(&mut engine.tel, "search", Some("deckPayoff".into()));
+                    let closed = deck_payoff_search::solve(&plan.domain, bounds, &mut engine, false)?;
+                    engine.rec.end(&mut engine.tel);
+                    closed
+                } else {
+                    false
+                };
+                // A target or cap bounds every order's payoff by one common value: teams ranked by power then
+                // settle the search as soon as K of them attain it.
+                if !ranked
+                    && matches!(strategy, Strategy::BranchAndBound)
+                    && matches!(
+                        metric,
+                        Metric::ScoreAtLeast { .. } | Metric::ScoreAndLifeAtLeast { .. } | Metric::CappedScore { .. }
+                    )
+                    && !engine.expired()
+                {
+                    engine.rec.begin(&mut engine.tel, "setup", Some("maximumPowerCap".into()));
+                    let bounds = crate::search::deck_payoff::DeckPayoffBounds::compile_upper_only(
+                        pool,
+                        request,
+                        &plan.domain,
+                        metric,
+                    );
+                    engine.rec.end(&mut engine.tel);
+                    if let Ok(bounds) = bounds {
+                        engine.tel.environment.traversal = Traversal::Joint;
+                        engine.rec.begin(&mut engine.tel, "search", Some("maximumPowerCap".into()));
+                        ranked = deck_payoff_search::solve_upper_only(&plan.domain, &bounds, &mut engine)?;
+                        engine.rec.end(&mut engine.tel);
+                    }
+                }
+                if !ranked {
+                    engine.rec.frontier.clear();
+                    engine.tel.environment.traversal =
+                        if plan.joint.is_some() { Traversal::Joint } else { Traversal::Exhaustive };
+                    engine.rec.begin(&mut engine.tel, "search", None);
+                    maximum::search(&mut engine, &plan.domain, plan.joint.as_ref())?;
+                    engine.rec.end(&mut engine.tel);
+                }
+            }
             Strategy::Exhaustive | Strategy::BranchAndBound => {
                 let mut physical = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
                 // The deck payoff ranking either settles the Top-K or hands the search to the joint traversal.
@@ -456,7 +548,10 @@ pub(crate) fn solve_physical_impl(
         }
         results
     } else {
-        std::mem::take(&mut engine.top).into_iter().map(|e| e.wire(metric)).collect::<Result<Vec<_>, _>>()?
+        std::mem::take(&mut engine.top)
+            .into_iter()
+            .map(|e| e.wire(metric, plan.aggregation, live))
+            .collect::<Result<Vec<_>, _>>()?
     };
     let exit_reason = engine.stop.unwrap_or(ExitReason::Exhausted);
     engine.rec.end(&mut engine.tel);

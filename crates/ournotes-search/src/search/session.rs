@@ -89,6 +89,9 @@ pub struct SessionProgress {
     pub completion: Option<Completion>,
     pub optimality: Optimality,
     pub metric: Metric,
+    pub aggregation: Aggregation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum_model: Option<MaximumModel>,
     pub player_goal: GoalDescription,
     pub resolved_context: serde_json::Value,
     pub proof_scope: &'static str,
@@ -391,6 +394,7 @@ impl<'m> SearchSession<'m> {
         }
         let before = (self.tel.nodes, self.tel.leaves.visited, self.tel.leaves.simulations);
         let mut engine = Engine {
+            aggregation: self.request.aggregation,
             pool: &self.prepared.pool,
             request: &self.prepared.context.request,
             metric: &self.request.metric,
@@ -507,6 +511,9 @@ impl<'m> SearchSession<'m> {
             completion: complete.then_some(Completion::Complete),
             optimality: if complete { Optimality::Proven } else { Optimality::Unproven },
             metric: self.request.metric.clone(),
+            aggregation: self.request.aggregation,
+            maximum_model: (self.request.aggregation == Aggregation::Maximum)
+                .then(|| MaximumModel::for_execution(false)),
             player_goal: self.prepared.context.player_goal.clone(),
             resolved_context: self.prepared.context.resolved_context.clone(),
             proof_scope: "conditional exhaustive physical Top-K under the declared deterministic model, fixed eligible cultivation and v1 tie; no full-account, current-native or browser performance certificate",
@@ -514,7 +521,7 @@ impl<'m> SearchSession<'m> {
                 .top
                 .iter()
                 .cloned()
-                .map(|entry| entry.wire(&self.request.metric))
+                .map(|entry| entry.wire(&self.request.metric, self.request.aggregation, false))
                 .collect::<Result<_, _>>()?,
             telemetry,
             last_step_work_units: self.last_step_work_units,
