@@ -211,6 +211,9 @@ fn capabilities_report_missing_domains_without_calling_them_complete() {
     assert_eq!(value["rankConfirmation"], "onCompletion");
     assert_eq!(value["support"]["freeLive"]["score"], "proven");
     assert_eq!(value["luckMissions"], true);
+    assert_eq!(value["aggregations"]["expected"], value["metrics"]);
+    assert_eq!(value["aggregations"]["maximum"], value["metrics"]);
+    assert_eq!(value["aggregationTieBreak"]["maximum"][0], "maximumPayoff");
     assert_eq!(value["luckGreatConversions"], false);
     assert_eq!(value["requestFormat"], REQUEST_FORMAT);
     assert_eq!(value["support"]["freeLive"]["scoreAndLife"], "proven");

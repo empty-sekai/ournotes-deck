@@ -126,6 +126,25 @@ pub(super) struct CertifiedEntry {
     /// The identity of the candidate's terminal payoff mapping.
     payoff: Vec<u8>,
     refinement: Option<Box<RetainedRefinement>>,
+    /// Under [`Reduction::Maximum`], the order proved to attain the candidate's payoff.
+    best: Option<CertifiedBest>,
+}
+
+/// The order a candidate's payoff is proved to be attained by under [`Reduction::Maximum`], in the canonical performer
+/// basis of the candidate's program ([`canonicalize_performers`]), with the order's expected score.
+#[derive(Clone, Copy)]
+struct CertifiedBest {
+    order: [usize; 5],
+    score: F64Interval,
+    exact_score: Option<super::expectation::ExactExpectation>,
+}
+
+impl CertifiedBest {
+    fn of(evaluation: &CertifiedEvaluation) -> Option<Self> {
+        let order = evaluation.best_order?;
+        let row = evaluation.orders.iter().find(|row| row.order == order)?;
+        Some(Self { order, score: row.mean, exact_score: row.exact_mean })
+    }
 }
 
 struct RetainedRefinement {
@@ -234,6 +253,9 @@ impl CertifiedState<'_> {
             .ok_or_else(|| Error::Domain("conflicting refined payoff certificates".into()))?;
         self.frontier.refine(id, current.revision, score, payoff, evaluation.exact_score, evaluation.exact_payoff)?;
         self.entries.retain(|id, _| self.frontier.get(*id).is_some());
+        if let (Some(best), Some(entry)) = (CertifiedBest::of(evaluation), self.entries.get_mut(&id)) {
+            entry.best = Some(best);
+        }
         self.cutoff = self.frontier.grid_cutoff(self.denominator());
         Ok(true)
     }
@@ -346,6 +368,7 @@ impl Engine<'_, '_> {
         // Its equality class may already have settled the payoff further.
         let exact = state.frontier.get(id).map_or(evaluation.exact_payoff, |c| c.exact_payoff);
         self.offered = Some(super::Offered { payoff: exact.map(|x| (x.numerator, x.denominator)), power, score: None });
+        let best = CertifiedBest::of(&evaluation);
         let refinement = RetainedRefinement::new(
             state.retain_refinement == Some(true) && state.frontier.get(id).is_some(),
             evaluation,
@@ -354,7 +377,7 @@ impl Engine<'_, '_> {
         );
         state
             .entries
-            .insert(id, CertifiedEntry { physical, members, snaps, power, payoff: payoff_identity, refinement });
+            .insert(id, CertifiedEntry { physical, members, snaps, power, payoff: payoff_identity, refinement, best });
         state.entries.retain(|id, _| state.frontier.get(*id).is_some());
         state.cutoff = state.frontier.grid_cutoff(state.denominator());
         self.tel.leaves.peak_retained = self.tel.leaves.peak_retained.max(state.entries.len());
@@ -953,6 +976,8 @@ impl Engine<'_, '_> {
             None
         };
         let proof = state.proof(exhausted, upper)?;
+        let maximum = state.reduction == Reduction::Maximum;
+        let interval = |value: F64Interval| FractionInterval::from_f64(value.lower(), value.upper());
         let results = proof
             .ordered_prefix
             .iter()
@@ -962,6 +987,26 @@ impl Engine<'_, '_> {
                 let entry = &state.entries[&id];
                 // Equality classes may have narrowed since this candidate's original evaluation.
                 let value = state.frontier.get(id).expect("live candidate");
+                if maximum {
+                    // The payoff is the best order's; its score is that order's when the order is proved.
+                    let best = entry.best.map(|best| self.certified_best_order(entry, best, value)).transpose()?;
+                    return Ok(RecommendedDeck {
+                        members: entry.members,
+                        snaps: entry.snaps,
+                        power: entry.power,
+                        objective_value: value.exact_payoff.map(Into::into),
+                        expected_score: None,
+                        expected_payoff: None,
+                        term_payoffs: None,
+                        level_payoffs: None,
+                        score_interval: Some(interval(entry.best.map_or(value.score, |best| best.score))?),
+                        payoff_interval: Some(interval(value.payoff)?),
+                        rank_certified: Some(ranked),
+                        score_summary: None,
+                        best_order: best,
+                        order_outcomes: Vec::new(),
+                    });
+                }
                 Ok(RecommendedDeck {
                     members: entry.members,
                     snaps: entry.snaps,
@@ -971,8 +1016,8 @@ impl Engine<'_, '_> {
                     expected_payoff: value.exact_payoff.map(Into::into),
                     term_payoffs: None,
                     level_payoffs: None,
-                    score_interval: Some(FractionInterval::from_f64(value.score.lower(), value.score.upper())?),
-                    payoff_interval: Some(FractionInterval::from_f64(value.payoff.lower(), value.payoff.upper())?),
+                    score_interval: Some(interval(value.score)?),
+                    payoff_interval: Some(interval(value.payoff)?),
                     rank_certified: Some(ranked),
                     score_summary: None,
                     best_order: None,
@@ -981,6 +1026,38 @@ impl Engine<'_, '_> {
             })
             .collect::<Result<Vec<_>, Error>>()?;
         Ok((results, proof))
+    }
+
+    /// The wire form of a candidate's proved best order ([`CertifiedBest`]): its canonical performer slots mapped back
+    /// to the candidate's physical slots by the same stable sort [`canonicalize_performers`] applies. The score and
+    /// payoff are the order's expected values rounded down, from their exact values or their proved lower bounds.
+    fn certified_best_order(
+        &self,
+        entry: &CertifiedEntry,
+        best: CertifiedBest,
+        value: &CandidateInterval,
+    ) -> Result<OrderResult, Error> {
+        let input = expectation::context(self.pool, &entry.physical, &self.request.objective)?;
+        let keys: Vec<String> = input.performers.iter().map(|performer| format!("{performer:?}")).collect();
+        let mut slots: Vec<usize> = (0..keys.len()).collect();
+        slots.sort_by(|&a, &b| keys[a].cmp(&keys[b]));
+        let performance_order = best.order.map(|canonical| slots[canonical]);
+        let floor = |exact: Option<super::expectation::ExactExpectation>, lower: f64| -> Result<i128, Error> {
+            match exact {
+                Some(x) => Ok(x.numerator.div_euclid(
+                    i128::try_from(x.denominator).map_err(|_| Error::Domain("best order value overflow".into()))?,
+                )),
+                None => Ok(lower.floor() as i128),
+            }
+        };
+        let score = i32::try_from(floor(best.exact_score, best.score.lower())?)
+            .map_err(|_| Error::Domain("best order score exceeds i32".into()))?;
+        Ok(OrderResult {
+            performance_order,
+            members: performance_order.map(|slot| entry.members[slot]),
+            score,
+            payoff: floor(value.exact_payoff, value.payoff.lower())?.to_string(),
+        })
     }
 }
 
@@ -1052,6 +1129,7 @@ mod refinement_tests {
                     PayoffMap::Score,
                     vec![1, 2, 3],
                 ),
+                best: None,
             };
             assert!(LuckExactBudget::admits_chart(notes, frames));
             assert_eq!(entry.refinement.is_some(), expected);

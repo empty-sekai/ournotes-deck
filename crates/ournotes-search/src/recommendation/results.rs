@@ -136,6 +136,32 @@ pub(super) fn teams(outcome: &RecommendationOutcome, parsed: &Parsed, with_order
         }
         let value = if parsed.kind == GoalKind::Power {
             None
+        } else if maximum && deck.rank_certified.is_some() {
+            // A certified team: its value is that of its best order, known exactly or within the proved interval;
+            // the score is the best order's expected score once that order is proved.
+            let payoff = if score_metric {
+                None
+            } else {
+                let value = match (&deck.objective_value, &deck.payoff_interval) {
+                    (Some(value), _) => {
+                        let (n, d) = exact(value)?;
+                        Some(n as f64 / d as f64)
+                    }
+                    (None, Some(interval)) => Some(interval.lower_f64()),
+                    (None, None) => None,
+                };
+                value.map(|score| PayoffValue {
+                    score,
+                    exact: deck.objective_value.clone(),
+                    interval: deck.payoff_interval.clone(),
+                })
+            };
+            let score = match (&deck.best_order, &deck.score_interval) {
+                (Some(best), _) => Some(i64::from(best.score)),
+                (None, Some(interval)) => Some(interval.lower_f64().floor() as i64),
+                (None, None) => None,
+            };
+            score.map(|score| TeamValue { score, exact: None, interval: deck.score_interval.clone(), payoff })
         } else if maximum {
             // The team's value is that of its best order, in which the score is that order's expected score.
             let payoff = if score_metric {

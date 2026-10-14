@@ -220,7 +220,8 @@ impl Engine<'_, '_> {
         }
         let power = self.pool.deck_power(&physical.as_deck(), self.song, self.event)?.power();
         let evaluation = if self.live {
-            let leaf = if self.aggregation == Aggregation::Maximum {
+            // A certified frontier reduces the orders by its own reduction ([`CertifiedState::reduction`]).
+            let leaf = if self.aggregation == Aggregation::Maximum && self.certified.is_none() {
                 self.evaluate_maximum(&physical, power, cut)?
             } else {
                 self.evaluate_orders(&physical, power, cut)?
@@ -495,16 +496,17 @@ impl Engine<'_, '_> {
         };
         let live = matches!(self.request.objective.inner(), Objective::LiveScore { .. });
         let maximum = self.aggregation == Aggregation::Maximum;
+        let lottery = if self.certified.is_some() {
+            "certifiedNativeLotteryIntervals"
+        } else if self.lottery_free.is_some() {
+            "noLuckRange"
+        } else {
+            "none"
+        };
         let probability_law = if live && maximum {
-            serde_json::json!({"kind":"maximumOverMemberOrders","orders":ORDERS,"orderValue":"expectedTerminalPayoffOverRandomDraws"})
+            serde_json::json!({"kind":"maximumOverMemberOrders","orders":ORDERS,
+                "orderValue":"expectedTerminalPayoffOverRandomDraws","lottery":lottery})
         } else if live {
-            let lottery = if self.certified.is_some() {
-                "certifiedNativeLotteryIntervals"
-            } else if self.lottery_free.is_some() {
-                "noLuckRange"
-            } else {
-                "none"
-            };
             serde_json::json!({"kind":"uniformMemberOrder","orders":ORDERS,"lottery":lottery})
         } else {
             serde_json::json!({"kind":"deterministic"})

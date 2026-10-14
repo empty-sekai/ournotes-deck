@@ -175,9 +175,6 @@ pub(crate) fn solve_physical_impl(
         env.bounds.choices = b.members.len();
     }
     let lottery = certified_engine::lottery_mode(pool, request, &plan.domain)?;
-    if lottery == certified_engine::LotteryMode::Certified && plan.aggregation == Aggregation::Maximum {
-        return Err(Error::Unsupported("maximum aggregation with LUCK lotteries is not supported yet".into()));
-    }
     if lottery == certified_engine::LotteryMode::Certified {
         if matches!(metric, Metric::Combined { .. }) {
             return Err(Error::Unsupported("combined metrics require lottery-free terminal outcomes".into()));
@@ -212,7 +209,10 @@ pub(crate) fn solve_physical_impl(
             Some(CertifiedState::new(
                 request.k,
                 if limits.cache_entries == 0 { 0 } else { certified_engine::LUCK_CURVE_CACHE_BYTES },
-                crate::search::certified_search::Reduction::Mean,
+                match plan.aggregation {
+                    Aggregation::Expected => crate::search::certified_search::Reduction::Mean,
+                    Aggregation::Maximum => crate::search::certified_search::Reduction::Maximum,
+                },
             )?)
         } else {
             None
@@ -266,7 +266,10 @@ pub(crate) fn solve_physical_impl(
             engine.rec.end(&mut engine.tel);
         }
         match strategy {
-            Strategy::Exhaustive | Strategy::BranchAndBound if live && plan.aggregation == Aggregation::Maximum => {
+            // A certified frontier ranks by the best order through its own reduction.
+            Strategy::Exhaustive | Strategy::BranchAndBound
+                if live && plan.aggregation == Aggregation::Maximum && engine.certified.is_none() =>
+            {
                 // A payoff that the deck alone determines ranks the same teams under either aggregation. Each
                 // retained team still passes through the maximum evaluation, which materializes its best order.
                 let mut ranked = if let Some(bounds) = plan.deck_payoff.as_ref().filter(|bounds| !bounds.bounded_only())

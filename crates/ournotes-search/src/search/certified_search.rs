@@ -81,8 +81,8 @@ pub struct CertifiedEvaluation {
     /// [`Reduction::Mean`]; under [`Reduction::Maximum`] an order whose payoff upper bound lies strictly below the
     /// payoff of another order cannot be the maximum.
     pub contending: Vec<bool>,
-    /// The first order of `orders` whose exact payoff is the proved maximum. Only [`Reduction::Maximum`] with an exact
-    /// aggregate payoff has one.
+    /// The order of `orders` proved to attain the maximum: the first whose exact payoff is the maximum, or the only
+    /// order that can still attain it. Only [`Reduction::Maximum`] has one.
     pub best_order: Option<[usize; 5]>,
 }
 
@@ -585,6 +585,13 @@ pub fn aggregate_orders(
                 };
                 *flag = !(bounds.upper() < floor || below_exact);
             }
+            // Every other order lies strictly below the maximum, so the only order that can attain it does.
+            if best_order.is_none() {
+                let mut open = contending.iter().enumerate().filter(|(_, flag)| **flag);
+                if let (Some((index, _)), None) = (open.next(), open.next()) {
+                    best_order = Some(orders[index].order);
+                }
+            }
         }
     }
     let mut refinements = Vec::new();
@@ -988,6 +995,9 @@ mod tests {
         let value = maximum(orders(), &map);
         assert_eq!(value.contending.iter().filter(|&&c| c).count(), 1);
         assert!(value.contending[3]);
+        // The only order that can attain the maximum is proved to attain it, its value still an interval.
+        assert_eq!(value.best_order, Some(uniform::all_orders()[3]));
+        assert!(value.exact_payoff.is_none());
         assert_eq!(value.refinements.iter().map(|r| r.order_index).collect::<Vec<_>>(), [3]);
         assert!(value.payoff.lower() >= 0.8 && value.payoff.upper() <= 1.0);
         let mean = aggregate_orders(orders(), &map, Reduction::Mean).unwrap();
