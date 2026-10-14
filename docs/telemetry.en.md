@@ -161,8 +161,9 @@ Exclusive time (milliseconds) by activity from the start of solving to its end; 
 | `started` | Teams whose performance orders started to run |
 | `orderBoundPruned` | Teams dropped after some orders: their exact payoffs plus the caps of the other orders stay below the K-th |
 | `simulations` | Whole-live simulations (one performance order each) run to the end |
-| `exactTeams`, `exactDeclined` | LUCK teams whose performance orders were evaluated jointly, and those the joint evaluation does not cover, whose orders the all-path bounds evaluated one by one |
+| `exactTeams`, `exactDeclined` | LUCK teams whose performance orders were evaluated jointly; and those the joint evaluation does not cover, by why, whose orders the all-path bounds evaluated one by one |
 | `spliced`, `unspliced` | LUCK teams evaluated jointly whose orders were spliced from the recordings of their five rotations; and the others by why the splice does not cover them, whose orders were evaluated one by one under their lottery laws |
+| `relaxed` | LUCK teams evaluated jointly whose lottery paths in some order exceeded their exact budget, so that relaxed bounds of the paths' factor histories gave that order's score |
 | `freeSpliced`, `freeUnspliced` | Gekisou teams in a live without a LUCK range whose performance orders were spliced from the recordings of their five rotations, and the others by why the splice does not cover them, whose orders were simulated |
 | `exact.replays`, `exact.setupMs`, `exact.lawMs`, `exact.recordMs`, `exact.evaluateMs` | The joint evaluations of LUCK teams: replays run, and the time their models, lottery laws, rotation recordings and evaluations took (diagnostic builds) |
 | `lawPruned`, `lawBounds`, `kindLaws` | LUCK teams dropped before their evaluation: the sum of their raw and fine caps weighted by the lottery laws of their own orders stays below the K-th; the bounds compiled for such laws; and the teams whose own laws were read from the multiset of their performers' lottery kinds, checked before the caps under the laws of their whole domain |

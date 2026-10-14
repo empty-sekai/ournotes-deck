@@ -325,8 +325,8 @@ impl Engine<'_, '_> {
                             evaluation
                         }))
                     }
-                    Err(_) => {
-                        self.tel.leaves.exact_declined += 1;
+                    Err(error) => {
+                        *self.tel.leaves.exact_declined.entry(error.to_string()).or_default() += 1;
                         crate::search::certified_search::evaluate_luck_context(
                             master,
                             &skills,

@@ -202,6 +202,8 @@ fn joint(
 ) -> LuckExactOrders {
     let (master, deck, notes, events, params, setup, play, delta) = formation;
     let skills = luck_skills(master).unwrap();
+    // The joint replay of these formations follows more path groups than a search affords; each order alone does not.
+    super::exact_paths::LIFT_BUDGETS.with(|lift| lift.set(true));
     luck_exact_orders(
         master,
         &skills,

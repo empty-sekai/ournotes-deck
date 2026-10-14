@@ -45,14 +45,33 @@ use crate::num::FxHashMap;
 use std::cmp::Ordering;
 use std::ops::Range;
 
-/// Per order of a replay, the most path groups and note values.
-const MAX_PATHS: usize = 4096;
+/// The most path groups of a replay, and the most frame records they retain together, beyond which
+/// [`super::relaxed_paths::RelaxedReplay`] follows the histories.
+const MAX_PATHS: usize = 16384;
+const MAX_RECORDS: usize = 1 << 20;
+
+#[cfg(test)]
+thread_local! {
+    /// Whether the replays of a test thread go beyond the budgets: tests that compare the joint replay of many orders
+    /// with each order alone lift them.
+    pub(super) static LIFT_BUDGETS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// [`MAX_PATHS`] and [`MAX_RECORDS`].
+fn budgets() -> (usize, usize) {
+    #[cfg(test)]
+    if LIFT_BUDGETS.with(std::cell::Cell::get) {
+        return (usize::MAX, usize::MAX);
+    }
+    (MAX_PATHS, MAX_RECORDS)
+}
 const MAX_MERGES: usize = 4096;
-const MAX_NOTE_VALUES: usize = 4096;
+/// Per order of a replay, the most values of a note.
+pub(super) const MAX_NOTE_VALUES: usize = 4096;
 /// The most orders one replay follows.
 pub(super) const MAX_LANES: usize = 128;
 
-type State = [f32; FIELDS];
+pub(super) type State = [f32; FIELDS];
 type Bits = [u32; FIELDS];
 /// The binary32 factor state of the native calculator, field by field.
 pub(super) type FactorState = State;
@@ -86,7 +105,7 @@ pub(super) fn refine(cells: &mut Vec<Orders>, by: Orders) {
     }
 }
 
-fn refuse(why: &str) -> Error {
+pub(super) fn refuse(why: &str) -> Error {
     Error::Unsupported(format!("native LUCK exact score: {why}"))
 }
 
@@ -97,17 +116,17 @@ fn capacity() -> Error {
 /// An ordinary factor command: the changes native apply adds, in field order. The combo and note fields change
 /// only for a nonzero value; a judgement field (`always`) is added even when its value is zero.
 #[derive(Clone, Copy, Debug)]
-struct Op {
-    time: i32,
-    owner: i32,
+pub(super) struct Op {
+    pub(super) time: i32,
+    pub(super) owner: i32,
     deltas: [f32; FIELDS],
     always: u8,
     /// The orders whose schedule holds the command.
-    orders: Orders,
+    pub(super) orders: Orders,
 }
 
 impl Op {
-    fn of(command: &FactorCommand, orders: Orders) -> Self {
+    pub(super) fn of(command: &FactorCommand, orders: Orders) -> Self {
         let mill = |m: i32| if m != 0 { m as f32 / 100000f32 } else { 0f32 };
         let mut deltas = [0f32; FIELDS];
         deltas[0] = mill(command.combo_mill);
@@ -121,7 +140,7 @@ impl Op {
         Self { time: command.time_ms, owner: command.owner_id, deltas, always, orders }
     }
 
-    fn changes(&self) -> bool {
+    pub(super) fn changes(&self) -> bool {
         self.always != 0 || self.deltas.iter().any(|&delta| delta != 0.0)
     }
 
@@ -146,7 +165,7 @@ fn apply_probe(value: f32, sub: &mut Sub) {
 }
 
 /// Widens `low..=high` to cover `other_low..=other_high`, field by field.
-fn widen(low: &mut State, high: &mut State, other_low: &State, other_high: &State) {
+pub(super) fn widen(low: &mut State, high: &mut State, other_low: &State, other_high: &State) {
     for field in 0..FIELDS {
         if other_low[field] < low[field] {
             low[field] = other_low[field];
@@ -161,7 +180,7 @@ fn same(a: &State, b: &State) -> bool {
     a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits())
 }
 
-fn finite(states: [&State; 2]) -> Result<(), Error> {
+pub(super) fn finite(states: [&State; 2]) -> Result<(), Error> {
     if states.iter().all(|state| state.iter().all(|value| value.is_finite())) {
         Ok(())
     } else {
@@ -170,7 +189,7 @@ fn finite(states: [&State; 2]) -> Result<(), Error> {
 }
 
 /// A group of orders whose histories share the least and the greatest state.
-trait Bounded: Clone {
+pub(super) trait Bounded: Clone {
     fn orders(&self) -> Orders;
     fn set_orders(&mut self, orders: Orders);
     fn low(&self) -> &State;
@@ -206,6 +225,34 @@ bounded!(Path, Lane, Sub, NoteValue);
 /// items takes the widest states of its items, and orders with bitwise equal states share one item.
 fn cover<T: Bounded>(items: impl IntoIterator<Item = T>, out: &mut Vec<T>) {
     let start = out.len();
+    out.extend(items);
+    let (mut union, mut overlap) = (0 as Orders, false);
+    for item in &out[start..] {
+        overlap |= union & item.orders() != 0;
+        union |= item.orders();
+    }
+    if overlap {
+        let items: Vec<T> = out.drain(start..).collect();
+        widest(items, out);
+    }
+    let key = |item: &T| (item.low().map(f32::to_bits), item.high().map(f32::to_bits));
+    out[start..].sort_unstable_by_key(key);
+    let mut kept = start;
+    for index in start..out.len() {
+        if kept > start && key(&out[kept - 1]) == key(&out[index]) {
+            let orders = out[kept - 1].orders() | out[index].orders();
+            out[kept - 1].set_orders(orders);
+        } else {
+            out.swap(kept, index);
+            kept += 1;
+        }
+    }
+    out.truncate(kept);
+}
+
+/// Appends `items` to `out` with each order in one item, whose states are the widest of the order's items.
+fn widest<T: Bounded>(items: Vec<T>, out: &mut Vec<T>) {
+    let start = out.len();
     for mut item in items {
         let mut rest = item.orders();
         let end = out.len();
@@ -236,23 +283,10 @@ fn cover<T: Bounded>(items: impl IntoIterator<Item = T>, out: &mut Vec<T>) {
             out.push(item);
         }
     }
-    let mut index = start;
-    while index < out.len() {
-        let mut other = index + 1;
-        while other < out.len() {
-            if same(out[other].low(), out[index].low()) && same(out[other].high(), out[index].high()) {
-                let orders = out.swap_remove(other).orders() | out[index].orders();
-                out[index].set_orders(orders);
-            } else {
-                other += 1;
-            }
-        }
-        index += 1;
-    }
 }
 
 /// Merges the items of `items` that `order` ranks equal, see [`cover`]. `spare` is a buffer to merge into.
-fn merge_equal<T: Bounded>(items: &mut Vec<T>, spare: &mut Vec<T>, order: impl Fn(&T, &T) -> Ordering) {
+pub(super) fn merge_equal<T: Bounded>(items: &mut Vec<T>, spare: &mut Vec<T>, order: impl Fn(&T, &T) -> Ordering) {
     if items.len() < 2 {
         return;
     }
@@ -279,17 +313,205 @@ fn merge_equal<T: Bounded>(items: &mut Vec<T>, spare: &mut Vec<T>, order: impl F
 
 /// One element of a probe switch: an ordinary command of the switch's time or a probe row, by index.
 #[derive(Clone, Copy)]
-enum Step {
+pub(super) enum Step {
     Op(usize),
     Row(usize),
 }
 
 #[derive(Clone, Default)]
-struct Frame {
+pub(super) struct Frame {
     /// Ordinary commands by (time, owner), equal keys in filing order (the native stable sort).
-    ops: Vec<Op>,
+    pub(super) ops: Vec<Op>,
     /// Notes by (time, note id).
-    notes: Vec<usize>,
+    pub(super) notes: Vec<usize>,
+}
+
+/// The notes and ordinary factor commands filed in the score frames of a replay of one or more orders, and the
+/// filings since the previous query.
+pub(super) struct Filings {
+    frames: Vec<Frame>,
+    pub(super) notes: Vec<ExactNote>,
+    lanes: usize,
+    /// Earliest frame of a filing every order makes since the previous query, and the frames of the commands only
+    /// some orders filed since then, with those orders.
+    mandatory: Option<i32>,
+    partial: Vec<(i32, Orders)>,
+}
+
+impl Filings {
+    pub(super) fn new(frames: usize, lanes: usize) -> Self {
+        Self { frames: vec![Frame::default(); frames], notes: Vec::new(), lanes, mandatory: None, partial: Vec::new() }
+    }
+
+    pub(super) fn frame(&self, frame: usize) -> Result<&Frame, Error> {
+        self.frames.get(frame).ok_or_else(|| Error::Input("score frame outside the calculator".into()))
+    }
+
+    fn mandatory(&mut self, frame: usize) {
+        self.mandatory = Some(self.mandatory.map_or(frame as i32, |old| old.min(frame as i32)));
+    }
+
+    /// A note filing; returns the note's index in [`Self::notes`].
+    pub(super) fn file_note(
+        &mut self,
+        frame: usize,
+        time_ms: i32,
+        note_id: i32,
+        key: (usize, usize),
+    ) -> Result<usize, Error> {
+        let index = self.notes.len();
+        self.notes.push(ExactNote { time_ms, note_id, frame, key, values: Vec::new(), revision: 0 });
+        let notes = &self.notes;
+        let entry =
+            self.frames.get_mut(frame).ok_or_else(|| Error::Input("note frame outside the calculator".into()))?;
+        let at = entry.notes.partition_point(|&n| (notes[n].time_ms, notes[n].note_id) <= (time_ms, note_id));
+        entry.notes.insert(at, index);
+        self.mandatory(frame);
+        Ok(index)
+    }
+
+    /// A factor command filing in the schedules of `orders`. A Rush command changes no float field and differs
+    /// between lottery paths: it only moves the rewind target, and a replay files it with the lotteries. Every other
+    /// command is filed by every path.
+    pub(super) fn file_command(&mut self, frame: usize, command: &FactorCommand, orders: Orders) -> Result<(), Error> {
+        let every = first_orders(self.lanes);
+        let orders = orders & every;
+        let op = Op::of(command, orders);
+        if command.luck != 0 {
+            if op.changes() {
+                return Err(refuse("a Rush command changes a float factor"));
+            }
+            if orders != every {
+                return Err(refuse("a Rush command belongs to some orders only"));
+            }
+            return Ok(());
+        }
+        if orders == 0 {
+            return Ok(());
+        }
+        let entry =
+            self.frames.get_mut(frame).ok_or_else(|| Error::Input("score frame outside the calculator".into()))?;
+        if op.changes() {
+            let key = (op.time, op.owner);
+            let at = entry.ops.partition_point(|o| (o.time, o.owner) <= key);
+            entry.ops.insert(at, op);
+        }
+        if orders == every {
+            self.mandatory(frame);
+        } else {
+            match self.partial.iter_mut().find(|(other, _)| *other == frame as i32) {
+                Some((_, filed)) => *filed |= orders,
+                None => self.partial.push((frame as i32, orders)),
+            }
+        }
+        Ok(())
+    }
+
+    /// The orders of each distinct earliest filing since the previous query, None for the orders without one; every
+    /// order has an entry.
+    pub(super) fn earliest(&mut self) -> Vec<(Option<i32>, Orders)> {
+        let mut filings = Vec::<(Option<i32>, Orders)>::with_capacity(self.partial.len() + 1);
+        self.partial.sort_unstable_by_key(|&(frame, _)| frame);
+        let mut rest = first_orders(self.lanes);
+        for &(frame, orders) in &self.partial {
+            let orders = orders & rest;
+            if orders == 0 {
+                continue;
+            }
+            rest &= !orders;
+            let filing = Some(self.mandatory.map_or(frame, |mandatory| mandatory.min(frame)));
+            match filings.iter_mut().find(|(other, _)| *other == filing) {
+                Some((_, all)) => *all |= orders,
+                None => filings.push((filing, orders)),
+            }
+        }
+        if rest != 0 {
+            match filings.iter_mut().find(|(other, _)| *other == self.mandatory) {
+                Some((_, all)) => *all |= rest,
+                None => filings.push((self.mandatory, rest)),
+            }
+        }
+        filings
+    }
+
+    /// Forgets the filings a query took in.
+    pub(super) fn clear(&mut self) {
+        self.mandatory = None;
+        self.partial.clear();
+    }
+
+    /// Takes in the note executions of a query, given each first frame it executed with its orders: the executions of
+    /// each note replace the values of its executing orders. An order with a history that started after the note's
+    /// frame keeps the values of its previous execution too. `values` and `merged` are buffers.
+    pub(super) fn observe(
+        &mut self,
+        observed: &mut [(usize, NoteValue)],
+        firsts: &[(i32, Orders)],
+        values: &mut Vec<NoteValue>,
+        merged: &mut Vec<NoteValue>,
+    ) -> Result<(), Error> {
+        observed.sort_unstable_by_key(|&(note, _)| note);
+        let mut at = 0;
+        while at < observed.len() {
+            let index = observed[at].0;
+            let end = at + observed[at..].partition_point(|&(note, _)| note == index);
+            let note = &mut self.notes[index];
+            let seen = observed[at..end].iter().fold(0, |orders, (_, value)| orders | value.orders);
+            let keep = firsts
+                .iter()
+                .filter(|&&(first, _)| first > note.frame as i32)
+                .fold(0, |orders: Orders, &(_, firsts)| orders | firsts);
+            let carried = !seen | (seen & keep);
+            values.clear();
+            values.extend(observed[at..end].iter().map(|&(_, value)| value));
+            values.extend(
+                note.values
+                    .iter()
+                    .filter(|old| old.orders & carried != 0)
+                    .map(|old| NoteValue { orders: old.orders & carried, ..*old }),
+            );
+            merge_equal(values, merged, |a, b| (a.class, a.combo).cmp(&(b.class, b.combo)));
+            if values.len() > MAX_NOTE_VALUES * self.lanes {
+                return Err(capacity());
+            }
+            let same = values.len() == note.values.len()
+                && values.iter().zip(&note.values).all(|(new, old)| new.bits() == old.bits());
+            if !same {
+                note.values.clone_from(values);
+                note.revision += 1;
+            }
+            at = end;
+        }
+        Ok(())
+    }
+}
+
+/// Probe row configurations: each set of orders with its probe rows.
+pub(super) type Configs = Vec<(Orders, Vec<ProbeRow>)>;
+
+/// The probe rows of a replay of `lanes` orders by the orders that have them, each configuration by owner and in
+/// filing order on equal owners, and whether the orders have probe rows.
+pub(super) fn sorted_configs(configs: &[(Orders, Vec<ProbeRow>)], lanes: usize) -> Result<(Configs, bool), Error> {
+    if !(1..=MAX_LANES).contains(&lanes) {
+        return Err(Error::Input(format!("a replay follows 1..={MAX_LANES} orders")));
+    }
+    let every = first_orders(lanes);
+    let mut covered = 0;
+    let mut sorted = Vec::with_capacity(configs.len());
+    for (orders, rows) in configs {
+        if *orders == 0 || orders & (covered | !every) != 0 {
+            return Err(Error::Input("probe row configurations partition the replay's orders".into()));
+        }
+        covered |= orders;
+        let mut rows = rows.clone();
+        rows.sort_by_key(|row| row.owner);
+        sorted.push((*orders, rows));
+    }
+    let rows = sorted.iter().any(|(_, rows)| !rows.is_empty());
+    if covered != every || sorted.iter().any(|(_, config)| config.is_empty() == rows) {
+        return Err(Error::Input("every order of a replay or none has probe rows".into()));
+    }
+    Ok((sorted, rows))
 }
 
 /// A group of native histories with the same schedule ahead in each of its orders; see the module documentation.
@@ -365,9 +587,9 @@ impl Sub {
 pub(super) struct ExactNote {
     pub time_ms: i32,
     pub note_id: i32,
-    frame: usize,
+    pub(super) frame: usize,
     /// The recorder's (frame, index in the frame) of the note, which keys its combo observations.
-    key: (usize, usize),
+    pub(super) key: (usize, usize),
     /// The values by (class, combo inputs); those of one key cover disjoint orders.
     pub values: Vec<NoteValue>,
     /// How many times a query changed `values`.
@@ -488,7 +710,12 @@ pub(super) fn undo_floors<'a>(
 /// Every owner-local merge of the commands of one time with the probe rows that preserves the filing order of each,
 /// into `out` as consecutive merges of `group.len() + rows.len()` steps. Owners stay in native score order; their
 /// independent interleavings form a Cartesian product.
-fn merges(group: &[Op], rows: &[ProbeRow], out: &mut Vec<Step>, buffers: &mut [Vec<Step>; 3]) -> Result<(), Error> {
+pub(super) fn merges(
+    group: &[Op],
+    rows: &[ProbeRow],
+    out: &mut Vec<Step>,
+    buffers: &mut [Vec<Step>; 3],
+) -> Result<(), Error> {
     fn interleavings(ops: Range<usize>, rows: Range<usize>, out: &mut Vec<Step>, prefix: &mut Vec<Step>) {
         if ops.is_empty() || rows.is_empty() {
             out.extend_from_slice(prefix);
@@ -549,10 +776,9 @@ fn merges(group: &[Op], rows: &[ProbeRow], out: &mut Vec<Step>, buffers: &mut [V
 /// The native factor histories of every lottery path through the recorder's command and query schedule, in each of
 /// one or more orders.
 pub(super) struct ExactReplay {
-    frames: Vec<Frame>,
-    pub notes: Vec<ExactNote>,
+    filed: Filings,
     /// The orders of each probe row configuration and its rows by owner, filing order on equal owners.
-    configs: Vec<(Orders, Vec<ProbeRow>)>,
+    configs: Configs,
     /// Whether the orders have probe rows.
     rows: bool,
     paths: Vec<Path>,
@@ -560,10 +786,6 @@ pub(super) struct ExactReplay {
     /// First frame whose record the paths retain.
     base: i32,
     prev: i32,
-    /// Earliest frame of a filing every path makes in every order since the previous query, and the frames of the
-    /// commands only some orders filed since then, with those orders.
-    mandatory: Option<i32>,
-    partial: Vec<(i32, Orders)>,
     /// [`undo_floors`] of the schedule.
     floors: Vec<i32>,
     queries: usize,
@@ -572,13 +794,24 @@ pub(super) struct ExactReplay {
     /// The note executions of the current query.
     observed: Vec<(usize, NoteValue)>,
     scratch: Scratch,
+    pub work: ReplayWork,
+}
+
+/// The work of a replay: the most groups of histories it held at once, the histories executed by queries, the score
+/// frames they undid and executed, and the queries that executed no frame.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ReplayWork {
     pub peak_paths: usize,
-    /// Histories executed by queries, the score frames they undid and executed, and the queries that executed no
-    /// frame.
     pub runs: u64,
     pub undone_frames: u64,
     pub executed_frames: u64,
     pub idle_queries: u64,
+}
+
+impl Default for ReplayWork {
+    fn default() -> Self {
+        Self { peak_paths: 1, runs: 0, undone_frames: 0, executed_frames: 0, idle_queries: 0 }
+    }
 }
 
 impl ExactReplay {
@@ -589,25 +822,8 @@ impl ExactReplay {
         floors: Vec<i32>,
         lanes: usize,
     ) -> Result<Self, Error> {
-        if !(1..=MAX_LANES).contains(&lanes) {
-            return Err(Error::Input(format!("an exact replay follows 1..={MAX_LANES} orders")));
-        }
+        let (configs, rows) = sorted_configs(configs, lanes)?;
         let every = first_orders(lanes);
-        let mut covered = 0;
-        let mut sorted = Vec::with_capacity(configs.len());
-        for (orders, rows) in configs {
-            if *orders == 0 || orders & (covered | !every) != 0 {
-                return Err(Error::Input("probe row configurations partition the replay's orders".into()));
-            }
-            covered |= orders;
-            let mut rows = rows.clone();
-            rows.sort_by_key(|row| row.owner);
-            sorted.push((*orders, rows));
-        }
-        let rows = sorted.iter().any(|(_, rows)| !rows.is_empty());
-        if covered != every || sorted.iter().any(|(_, config)| config.is_empty() == rows) {
-            return Err(Error::Input("every order of a replay or none has probe rows".into()));
-        }
         let mut state = [0f32; FIELDS];
         state[1] = 1.0;
         let path = Path {
@@ -623,26 +839,19 @@ impl ExactReplay {
             switches: Vec::new(),
         };
         Ok(Self {
-            frames: vec![Frame::default(); frames],
-            notes: Vec::new(),
-            configs: sorted,
+            filed: Filings::new(frames, lanes),
+            configs,
             rows,
             paths: vec![path],
             lanes,
             base: 0,
             prev: -1,
-            mandatory: None,
-            partial: Vec::new(),
             floors,
             queries: 0,
             firsts: Vec::new(),
             observed: Vec::new(),
             scratch: Scratch::default(),
-            peak_paths: 1,
-            runs: 0,
-            undone_frames: 0,
-            executed_frames: 0,
-            idle_queries: 0,
+            work: ReplayWork::default(),
         })
     }
 
@@ -656,8 +865,9 @@ impl ExactReplay {
         self.base
     }
 
-    fn mandatory(&mut self, frame: usize) {
-        self.mandatory = Some(self.mandatory.map_or(frame as i32, |old| old.min(frame as i32)));
+    /// The filed notes and the values of their last executions.
+    pub(super) fn notes(&self) -> &[ExactNote] {
+        &self.filed.notes
     }
 
     /// A note filing; returns the note's index in [`Self::notes`].
@@ -668,52 +878,13 @@ impl ExactReplay {
         note_id: i32,
         key: (usize, usize),
     ) -> Result<usize, Error> {
-        let index = self.notes.len();
-        self.notes.push(ExactNote { time_ms, note_id, frame, key, values: Vec::new(), revision: 0 });
-        let notes = &self.notes;
-        let entry =
-            self.frames.get_mut(frame).ok_or_else(|| Error::Input("note frame outside the calculator".into()))?;
-        let at = entry.notes.partition_point(|&n| (notes[n].time_ms, notes[n].note_id) <= (time_ms, note_id));
-        entry.notes.insert(at, index);
-        self.mandatory(frame);
-        Ok(index)
+        self.filed.file_note(frame, time_ms, note_id, key)
     }
 
-    /// A factor command filing in the schedules of `orders`. A Rush command changes no float field and differs
-    /// between paths: it only moves the rewind target, and the paths file it through [`Self::finish`] and
-    /// [`Self::lotteries`]. Every other command is filed by every path.
+    /// A factor command filing in the schedules of `orders` ([`Filings::file_command`]); the paths file the Rush
+    /// commands through [`Self::finish`] and [`Self::lotteries`].
     pub(super) fn file_command(&mut self, frame: usize, command: &FactorCommand, orders: Orders) -> Result<(), Error> {
-        let every = first_orders(self.lanes);
-        let orders = orders & every;
-        let op = Op::of(command, orders);
-        if command.luck != 0 {
-            if op.changes() {
-                return Err(refuse("a Rush command changes a float factor"));
-            }
-            if orders != every {
-                return Err(refuse("a Rush command belongs to some orders only"));
-            }
-            return Ok(());
-        }
-        if orders == 0 {
-            return Ok(());
-        }
-        let entry =
-            self.frames.get_mut(frame).ok_or_else(|| Error::Input("score frame outside the calculator".into()))?;
-        if op.changes() {
-            let key = (op.time, op.owner);
-            let at = entry.ops.partition_point(|o| (o.time, o.owner) <= key);
-            entry.ops.insert(at, op);
-        }
-        if orders == every {
-            self.mandatory(frame);
-        } else {
-            match self.partial.iter_mut().find(|(other, _)| *other == frame as i32) {
-                Some((_, filed)) => *filed |= orders,
-                None => self.partial.push((frame as i32, orders)),
-            }
-        }
-        Ok(())
+        self.filed.file_command(frame, command, orders)
     }
 
     /// A range FINISH at the start of a play frame, filing in `frame`: every path whose Rush runs disables it.
@@ -807,10 +978,11 @@ impl ExactReplay {
     /// Paths with the same schedule ahead merge.
     fn settle(&mut self) -> Result<(), Error> {
         merge_equal(&mut self.paths, &mut self.scratch.merged_paths, Path::schedule);
-        if self.paths.len() > MAX_PATHS * self.lanes {
+        let (paths, records) = budgets();
+        if self.paths.len() > paths || self.paths.iter().map(|path| path.starts.len()).sum::<usize>() > records {
             return Err(capacity());
         }
-        self.peak_paths = self.peak_paths.max(self.paths.len());
+        self.work.peak_paths = self.work.peak_paths.max(self.paths.len());
         Ok(())
     }
 
@@ -823,38 +995,13 @@ impl ExactReplay {
     ) -> Result<&[(i32, Orders)], Error> {
         let prev = self.prev;
         let every = first_orders(self.lanes);
-        let earliest = |a: Option<i32>, b: Option<i32>| match (a, b) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
-        // The orders of each distinct earliest filing since the previous query.
-        let mut filings = Vec::<(Option<i32>, Orders)>::with_capacity(self.partial.len() + 1);
-        self.partial.sort_unstable_by_key(|&(frame, _)| frame);
-        let mut rest = every;
-        for &(frame, orders) in &self.partial {
-            let orders = orders & rest;
-            if orders == 0 {
-                continue;
-            }
-            rest &= !orders;
-            let filing = earliest(self.mandatory, Some(frame));
-            match filings.iter_mut().find(|(other, _)| *other == filing) {
-                Some((_, all)) => *all |= orders,
-                None => filings.push((filing, orders)),
-            }
-        }
-        if rest != 0 {
-            match filings.iter_mut().find(|(other, _)| *other == self.mandatory) {
-                Some((_, all)) => *all |= rest,
-                None => filings.push((self.mandatory, rest)),
-            }
-        }
+        let filings = self.filed.earliest();
         let floor = self.floors.get(self.queries).copied().unwrap_or(i32::MAX).min(to + 1).max(self.base);
         let later = |filing: Option<i32>| filing.is_none_or(|frame| frame > prev);
         self.firsts.clear();
         if to == prev && filings.iter().all(|&(filing, _)| later(filing)) && self.paths.iter().all(|p| later(p.filed)) {
             // Nothing to undo or execute.
-            self.idle_queries += 1;
+            self.work.idle_queries += 1;
             let drop = (floor - self.base) as usize;
             let filed = self.paths.iter().any(|path| path.filed.is_some());
             for path in &mut self.paths {
@@ -873,8 +1020,7 @@ impl ExactReplay {
         }
         self.base = floor;
         self.prev = to;
-        self.mandatory = None;
-        self.partial.clear();
+        self.filed.clear();
         self.queries += 1;
         Ok(&self.firsts)
     }
@@ -917,7 +1063,7 @@ impl ExactReplay {
             }
         }
         if self.firsts.iter().all(|&(first, _)| first > to) {
-            self.idle_queries += 1;
+            self.work.idle_queries += 1;
         }
         let mut observed = std::mem::take(&mut self.observed);
         observed.clear();
@@ -935,9 +1081,9 @@ impl ExactReplay {
                     return Err(refuse("a query undoes a frame below the retained history"));
                 }
                 let kept = ((first - self.base) as usize).min(path.starts.len());
-                self.runs += 1;
-                self.undone_frames += (prev + 1 - first).max(0) as u64;
-                self.executed_frames += (to + 1 - first).max(0) as u64;
+                self.work.runs += 1;
+                self.work.undone_frames += (prev + 1 - first).max(0) as u64;
+                self.work.executed_frames += (to + 1 - first).max(0) as u64;
                 if first > prev && first > to {
                     lanes.push(Lane {
                         orders,
@@ -988,43 +1134,7 @@ impl ExactReplay {
                 }
             }
         }
-        // The executions of each note replace the values of its executing orders. An order with a path that
-        // started after the note's frame keeps the values of its previous execution too.
-        observed.sort_unstable_by_key(|&(note, _)| note);
-        let mut values = std::mem::take(&mut scratch.values);
-        let mut at = 0;
-        while at < observed.len() {
-            let index = observed[at].0;
-            let end = at + observed[at..].partition_point(|&(note, _)| note == index);
-            let note = &mut self.notes[index];
-            let seen = observed[at..end].iter().fold(0, |orders, (_, value)| orders | value.orders);
-            let keep = self
-                .firsts
-                .iter()
-                .filter(|&&(first, _)| first > note.frame as i32)
-                .fold(0, |orders: Orders, &(_, firsts)| orders | firsts);
-            let carried = !seen | (seen & keep);
-            values.clear();
-            values.extend(observed[at..end].iter().map(|&(_, value)| value));
-            values.extend(
-                note.values
-                    .iter()
-                    .filter(|old| old.orders & carried != 0)
-                    .map(|old| NoteValue { orders: old.orders & carried, ..*old }),
-            );
-            merge_equal(&mut values, &mut scratch.merged_values, |a, b| (a.class, a.combo).cmp(&(b.class, b.combo)));
-            if values.len() > MAX_NOTE_VALUES * self.lanes {
-                return Err(capacity());
-            }
-            let same = values.len() == note.values.len()
-                && values.iter().zip(&note.values).all(|(new, old)| new.bits() == old.bits());
-            if !same {
-                note.values.clone_from(&values);
-                note.revision += 1;
-            }
-            at = end;
-        }
-        scratch.values = values;
+        self.filed.observe(&mut observed, &self.firsts, &mut scratch.values, &mut scratch.merged_values)?;
         scratch.forks = forks;
         scratch.out = lanes;
         scratch.paths = old;
@@ -1082,7 +1192,7 @@ impl ExactReplay {
                 self.execute(frame as usize, lane, combos, observed, &mut next, scratch)?;
             }
             merge_equal(&mut next, &mut scratch.merged_lanes, Lane::order);
-            if next.len() > MAX_PATHS * self.lanes {
+            if next.len() > budgets().0 {
                 return Err(capacity());
             }
             std::mem::swap(&mut lanes, &mut next);
@@ -1102,7 +1212,7 @@ impl ExactReplay {
         out: &mut Vec<Lane>,
         scratch: &mut Scratch,
     ) -> Result<(), Error> {
-        let entry = self.frames.get(frame).ok_or_else(|| Error::Input("score frame outside the calculator".into()))?;
+        let entry = self.filed.frame(frame)?;
         let (ops, notes) = (&entry.ops, &entry.notes);
         let start = lane.class;
         let mut subs = std::mem::take(&mut scratch.subs);
@@ -1116,7 +1226,7 @@ impl ExactReplay {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),
             };
-            let note_time = notes.get(note).map(|&n| self.notes[n].time_ms);
+            let note_time = notes.get(note).map(|&n| self.filed.notes[n].time_ms);
             match (factor_time, note_time) {
                 (Some(t), n) if n.is_none_or(|n| n >= t) => {
                     if switch_time == Some(t) {
@@ -1154,7 +1264,7 @@ impl ExactReplay {
                 (_, Some(_)) => {
                     let index = notes[note];
                     let &(ordinary, gekisou) = combos
-                        .get(&self.notes[index].key)
+                        .get(&self.filed.notes[index].key)
                         .ok_or_else(|| refuse("note combo observation is missing"))?;
                     let combo = (ordinary.to_bits(), gekisou.to_bits());
                     for sub in &subs {
@@ -1228,7 +1338,7 @@ impl ExactReplay {
             }
         }
         merge_equal(&mut next, &mut scratch.merged_subs, Sub::order);
-        if next.len() > MAX_PATHS * self.lanes {
+        if next.len() > budgets().0 {
             return Err(capacity());
         }
         std::mem::swap(subs, &mut next);
@@ -1304,7 +1414,7 @@ pub(super) struct TrackScratch {
     states: Vec<(State, State)>,
 }
 
-fn add_op(op: &Op, state: &mut State) {
+pub(super) fn add_op(op: &Op, state: &mut State) {
     for field in 0..FIELDS {
         let delta = op.deltas[field];
         if op.always >> field & 1 != 0 || delta != 0.0 {
@@ -1313,7 +1423,7 @@ fn add_op(op: &Op, state: &mut State) {
     }
 }
 
-fn add_probe(value: f32, state: &mut State) {
+pub(super) fn add_probe(value: f32, state: &mut State) {
     if value != 0.0 {
         state[1] += value;
     }
@@ -1341,11 +1451,11 @@ impl ExactReplay {
     /// The score query up to score frame `to` of every track, which [`Self::query_track`] executes track by track
     /// and [`Self::end_query`] completes.
     pub(super) fn begin_query(&self, to: i32) -> Result<TrackQuery, Error> {
-        if self.lanes != 1 || !self.partial.is_empty() {
+        if self.lanes != 1 || !self.filed.partial.is_empty() {
             return Err(Error::Input("tracks follow one order".into()));
         }
         let floor = self.floors.get(self.queries).copied().unwrap_or(i32::MAX).min(to + 1).max(self.base);
-        Ok(TrackQuery { prev: self.prev, to, filing: self.mandatory, floor })
+        Ok(TrackQuery { prev: self.prev, to, filing: self.filed.mandatory, floor })
     }
 
     /// The native `calculate` of `query` for the histories of `track` with the factor states `lows..=highs`, which
@@ -1423,8 +1533,7 @@ impl ExactReplay {
     pub(super) fn end_query(&mut self, query: &TrackQuery) {
         self.base = query.floor;
         self.prev = query.to;
-        self.mandatory = None;
-        self.partial.clear();
+        self.filed.clear();
         self.queries += 1;
     }
 
@@ -1442,7 +1551,7 @@ impl ExactReplay {
         observed: &mut Vec<Observed>,
         scratch: &mut TrackScratch,
     ) -> Result<(u8, State), Error> {
-        let entry = self.frames.get(frame).ok_or_else(|| Error::Input("score frame outside the calculator".into()))?;
+        let entry = self.filed.frame(frame)?;
         let (ops, notes) = (&entry.ops, &entry.notes);
         let (mut class, mut sum) = (class, [0f32; FIELDS]);
         let (mut op, mut switch, mut note) = (0, 0, 0);
@@ -1453,7 +1562,7 @@ impl ExactReplay {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),
             };
-            let note_time = notes.get(note).map(|&n| self.notes[n].time_ms);
+            let note_time = notes.get(note).map(|&n| self.filed.notes[n].time_ms);
             match (factor_time, note_time) {
                 (Some(t), n) if n.is_none_or(|n| n >= t) => {
                     if switch_time == Some(t) {
@@ -1475,7 +1584,7 @@ impl ExactReplay {
                 (_, Some(_)) => {
                     let index = notes[note];
                     let &(ordinary, gekisou) = combos
-                        .get(&self.notes[index].key)
+                        .get(&self.filed.notes[index].key)
                         .ok_or_else(|| refuse("note combo observation is missing"))?;
                     let combo = (ordinary.to_bits(), gekisou.to_bits());
                     for (member, (low, high)) in lows.iter().zip(highs.iter()).enumerate() {

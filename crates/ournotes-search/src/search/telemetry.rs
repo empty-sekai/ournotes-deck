@@ -491,14 +491,17 @@ pub struct Leaves {
     pub order_bound_pruned: u64,
     /// Whole-live simulations (one performance order each) run to the end.
     pub simulations: u64,
-    /// LUCK teams whose performance orders were evaluated jointly, and those whose joint evaluation declined and
+    /// LUCK teams whose performance orders were evaluated jointly, and those whose joint evaluation declined, by why,
     /// whose orders the all-path bounds evaluated instead.
     pub exact_teams: u64,
-    pub exact_declined: u64,
+    pub exact_declined: BTreeMap<String, u64>,
     /// LUCK teams evaluated jointly whose orders were spliced from the recordings of their rotations, and the others
     /// by why the splice does not cover them (their orders then evaluated one by one under their laws).
     pub spliced: u64,
     pub unspliced: BTreeMap<String, u64>,
+    /// LUCK teams evaluated jointly whose lottery paths in some order exceeded their exact budget, so that relaxed
+    /// bounds of the paths' factor histories gave that order's score.
+    pub relaxed: u64,
     /// Gekisou teams in a live without a LUCK range whose performance orders were spliced from the recordings of their
     /// rotations, and the others by why the splice does not cover them (their orders then simulated).
     pub free_spliced: u64,
@@ -541,6 +544,7 @@ impl Leaves {
             None => self.spliced += 1,
             Some(why) => *self.unspliced.entry(why).or_default() += 1,
         }
+        self.relaxed += u64::from(report.relaxed);
         let ExactWork { replays, setup_ms, law_ms, record_ms, evaluate_ms } = &mut self.exact;
         *replays += report.replays as u64;
         *setup_ms += report.profile.setup_ms;

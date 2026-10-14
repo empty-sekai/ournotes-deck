@@ -32,6 +32,9 @@ mod rank_residues;
 #[cfg(test)]
 mod rank_residues_tests;
 mod recorder_checks;
+mod relaxed_paths;
+#[cfg(test)]
+mod relaxed_tests;
 mod replay;
 #[cfg(test)]
 mod tests;

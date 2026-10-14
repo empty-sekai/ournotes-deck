@@ -610,6 +610,7 @@ pub fn evaluate_luck_exact(
             false,
         ),
     }?;
+    let relaxed = joint.scores.iter().any(|score| score.relaxed);
     let orders = orders
         .into_iter()
         .zip(joint.scores)
@@ -629,15 +630,17 @@ pub fn evaluate_luck_exact(
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    let report = LuckExactReport { alone: joint.alone, replays: joint.replays, profile: joint.profile };
+    let report = LuckExactReport { alone: joint.alone, replays: joint.replays, relaxed, profile: joint.profile };
     Ok(Some((aggregate_orders(orders, map)?, report)))
 }
 
 /// How a joint evaluation of the orders of a formation went: why its orders were not spliced from the recordings of
-/// the rotations (None when they were), the replays it ran, and its work.
+/// the rotations (None when they were), the replays it ran, whether the lottery paths of some order exceeded their
+/// exact budget and relaxed bounds of their histories gave its score, and its work.
 pub struct LuckExactReport {
     pub alone: Option<String>,
     pub replays: usize,
+    pub relaxed: bool,
     pub profile: ournotes_sim::live::full::LuckExactOrdersProfile,
 }
 

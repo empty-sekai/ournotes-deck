@@ -2,10 +2,10 @@
 //! exact factor histories of every lottery path.
 //!
 //! The recorder plays the formation once and files every lottery-dependent command at each of its possible
-//! places. [`ExactReplay`] follows every native factor history these filings admit. A note's native score is a
-//! function of its last execution's factor state and combo inputs, of its probe class and of whether Rush is
-//! running when it is scored, so each of the four lottery classes has an integer support over those histories
-//! (usually a single value). The certified lottery law gives the probability of each class in the phase in which
+//! places. [`ExactReplay`] follows every native factor history these filings admit, and [`RelaxedReplay`] bounds them
+//! where the exact path groups exceed their budget. A note's native score is a function of its last execution's factor
+//! state and combo inputs, of its probe class and of whether Rush is running when it is scored, so each of the four
+//! lottery classes has an integer support over those histories (usually a single value). The certified lottery law gives the probability of each class in the phase in which
 //! the note is scored: a query at a play frame scores the notes before the frame's time with the classes they
 //! keep, and the notes at the frame's own time with the Rush the frame's queries see and the probe class before
 //! or after the frame's skill boundary. A score's expectation is linear in these. A rank bonus truncates the
@@ -15,8 +15,9 @@
 //! order of its terms and the orders of a joint replay sum exactly as each order alone.
 
 use super::exact_paths::{
-    ExactNote, ExactReplay, NoteValue, Orders, each, first_orders, refine, rush_mask, undo_floors,
+    ExactNote, ExactReplay, NoteValue, Orders, ReplayWork, each, first_orders, refine, rush_mask, undo_floors,
 };
+use super::relaxed_paths::RelaxedReplay;
 use super::*;
 use crate::live::full::luck_dp::{RUSH_FINISH, RUSH_PROBE};
 
@@ -58,6 +59,9 @@ pub struct LuckExactScore {
     pub wide_notes: usize,
     /// The largest such spread.
     pub widest_note: i32,
+    /// Whether the exact path groups exceeded their budget, so that the bounds of [`RelaxedReplay`] gave the note
+    /// values; `peak_paths` then counts its sets of orders.
+    pub relaxed: bool,
     pub peak_paths: usize,
     pub queries: usize,
     pub probability_peak_states: usize,
@@ -894,7 +898,7 @@ pub(super) struct OrderSchedule {
     pub(super) rush_percent: i32,
     pub(super) law: std::sync::Arc<LuckDpCertifiedResult>,
     has_luck: bool,
-    probe_phase_bound: bool,
+    pub(super) probe_phase_bound: bool,
     /// The score of the recording, the final score of a live without a LUCK range.
     score: i32,
     profile: LuckExactProfile,
@@ -1107,10 +1111,78 @@ pub(super) fn rush_percent(master: &Master, calc: &LiveScoreCalculator) -> Resul
     Ok(rush_percent)
 }
 
+/// The histories an evaluation follows: their exact path groups, or the bounds of [`RelaxedReplay`].
+pub(super) enum Histories {
+    Exact(ExactReplay),
+    Relaxed(RelaxedReplay),
+}
+
+macro_rules! histories {
+    ($histories:expr, $replay:ident => $body:expr) => {
+        match $histories {
+            Histories::Exact($replay) => $body,
+            Histories::Relaxed($replay) => $body,
+        }
+    };
+}
+
+impl Histories {
+    pub(super) fn notes(&self) -> &[ExactNote] {
+        histories!(self, replay => replay.notes())
+    }
+
+    pub(super) fn work(&self) -> ReplayWork {
+        histories!(self, replay => replay.work)
+    }
+
+    pub(super) fn base(&self) -> i32 {
+        histories!(self, replay => replay.base())
+    }
+
+    pub(super) fn shared_classes(&self) -> bool {
+        histories!(self, replay => replay.shared_classes())
+    }
+
+    pub(super) fn file_note(
+        &mut self,
+        frame: usize,
+        time_ms: i32,
+        note_id: i32,
+        key: (usize, usize),
+    ) -> Result<usize, Error> {
+        histories!(self, replay => replay.file_note(frame, time_ms, note_id, key))
+    }
+
+    pub(super) fn file_command(&mut self, frame: usize, command: &FactorCommand, orders: Orders) -> Result<(), Error> {
+        histories!(self, replay => replay.file_command(frame, command, orders))
+    }
+
+    pub(super) fn finish(&mut self, frame: usize) -> Result<(), Error> {
+        histories!(self, replay => replay.finish(frame))
+    }
+
+    pub(super) fn lotteries(&mut self, frames: &[i32], mask: u16) -> Result<(), Error> {
+        histories!(self, replay => replay.lotteries(frames, mask))
+    }
+
+    pub(super) fn probe(&mut self, frame: usize, time_ms: i32, mask: u8, follows: bool) -> Result<(), Error> {
+        histories!(self, replay => replay.probe(frame, time_ms, mask, follows))
+    }
+
+    pub(super) fn query(
+        &mut self,
+        to: i32,
+        combos: &FxHashMap<(usize, usize), (f32, f32)>,
+    ) -> Result<&[(i32, Orders)], Error> {
+        histories!(self, replay => replay.query(to, combos))
+    }
+}
+
 /// The exact expectation of every order of `schedule`, each under its own lottery law in `laws`. The laws share
 /// their possible probe and Rush transitions, which shape the paths. `deterministic` gives the constant final score
 /// of each order of a live without a LUCK range. `observers` record what the rank snapshots read, which needs a
-/// one-order schedule, and compare the note scores with those at another power.
+/// one-order schedule, and compare the note scores with those at another power. Where the exact path groups exceed
+/// their budget, the evaluation starts again with the bounds of [`RelaxedReplay`].
 #[allow(clippy::too_many_arguments)]
 pub(super) fn exact_schedule(
     schedule: &Schedule,
@@ -1123,8 +1195,58 @@ pub(super) fn exact_schedule(
     rank_queries: bool,
     deterministic: Option<&[i32]>,
     details: bool,
+    profile: LuckExactProfile,
+    watch: Stopwatch,
+    observers: Observers<'_>,
+) -> Result<Vec<LuckExactScore>, Error> {
+    let Observers { mut reads, mut twin } = observers;
+    let evaluate = |relaxed: bool, reads: Option<&mut RankReads>, twin: Option<&mut PowerTwin>| {
+        evaluate_schedule(
+            schedule,
+            calc,
+            rush_percent,
+            laws,
+            play,
+            probe_phase_bound,
+            ranges_len,
+            rank_queries,
+            deterministic,
+            details,
+            profile,
+            watch,
+            relaxed,
+            Observers { reads, twin },
+        )
+    };
+    match evaluate(false, reads.as_deref_mut(), twin.as_deref_mut()) {
+        Err(Error::Capacity(_)) => {}
+        result => return result,
+    }
+    if let Some(reads) = reads.as_deref_mut() {
+        *reads = RankReads::default();
+    }
+    if let Some(twin) = twin.as_deref_mut() {
+        twin.restart();
+    }
+    evaluate(true, reads, twin)
+}
+
+/// [`exact_schedule`] with the histories of [`RelaxedReplay`] when `relaxed`, else those of [`ExactReplay`].
+#[allow(clippy::too_many_arguments)]
+pub(super) fn evaluate_schedule(
+    schedule: &Schedule,
+    calc: &LiveScoreCalculator,
+    rush_percent: i32,
+    laws: &[std::sync::Arc<LuckDpCertifiedResult>],
+    play: &LivePlay,
+    probe_phase_bound: bool,
+    ranges_len: usize,
+    rank_queries: bool,
+    deterministic: Option<&[i32]>,
+    details: bool,
     mut profile: LuckExactProfile,
     mut watch: Stopwatch,
+    relaxed: bool,
     observers: Observers<'_>,
 ) -> Result<Vec<LuckExactScore>, Error> {
     let lanes = schedule.lanes;
@@ -1185,7 +1307,11 @@ pub(super) fn exact_schedule(
         return Err(refuse("unaccounted native calculate entry point"));
     }
     let floors = undo_floors(events(), &probability.rush_transitions)?;
-    let mut replay = ExactReplay::new(schedule.frames, &schedule.configs, floors, lanes)?;
+    let mut replay = if relaxed {
+        Histories::Relaxed(RelaxedReplay::new(schedule.frames, &schedule.configs, floors, lanes)?)
+    } else {
+        Histories::Exact(ExactReplay::new(schedule.frames, &schedule.configs, floors, lanes)?)
+    };
     // (frame, note, index in `replay.notes`)
     let mut filed = Vec::<(usize, NoteCommand, usize)>::new();
     let mut combos = FxHashMap::<(usize, usize), (f32, f32)>::default();
@@ -1354,7 +1480,7 @@ pub(super) fn exact_schedule(
                     if !settled {
                         unsettled = unsettled.min(frame as i32);
                     }
-                    if entry.current(&replay.notes[at]) {
+                    if entry.current(&replay.notes()[at]) {
                         continue;
                     }
                     masses.clear();
@@ -1371,7 +1497,7 @@ pub(super) fn exact_schedule(
                     entry.measure(
                         calc,
                         note,
-                        &replay.notes[at],
+                        &replay.notes()[at],
                         rush_percent,
                         replay.shared_classes(),
                         every,
@@ -1445,11 +1571,11 @@ pub(super) fn exact_schedule(
         }
         masses.clear();
         masses.extend(distinct_laws.iter().map(|law| kept_mass(law, note.time_ms)));
-        if !entry.current(&replay.notes[at]) {
+        if !entry.current(&replay.notes()[at]) {
             entry.measure(
                 calc,
                 note,
-                &replay.notes[at],
+                &replay.notes()[at],
                 rush_percent,
                 replay.shared_classes(),
                 every,
@@ -1490,10 +1616,11 @@ pub(super) fn exact_schedule(
         }
     }
     profile.measure_ms = watch.lap() - profile.replay_ms;
-    profile.runs = replay.runs;
-    profile.undone_frames = replay.undone_frames;
-    profile.executed_frames = replay.executed_frames;
-    profile.idle_queries = replay.idle_queries;
+    let work = replay.work();
+    profile.runs = work.runs;
+    profile.undone_frames = work.undone_frames;
+    profile.executed_frames = work.executed_frames;
+    profile.idle_queries = work.idle_queries;
     if let Some(reads) = reads {
         reads.coefficients =
             fixed.iter().map(|&(frame, offset, _)| i64::from(offset) + i64::from(frame <= prev)).collect();
@@ -1527,7 +1654,8 @@ pub(super) fn exact_schedule(
             scored_notes,
             wide_notes,
             widest_note,
-            peak_paths: replay.peak_paths,
+            relaxed,
+            peak_paths: work.peak_paths,
             queries: schedule.queries,
             probability_peak_states: laws[order].peak_states,
             probability_transitions: laws[order].transitions,
