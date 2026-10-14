@@ -2,6 +2,12 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.9](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.8...v0.0.9) - 2026-10-14
+
+### Features
+
+- **search:** Prove LUCK Gekisou rankings and add the best-order maximum ([40ec84a](https://github.com/empty-sekai/ournotes-deck/commit/40ec84a6df6bed5260b761410efb9950f5bc54ad))
+
 ## [0.0.8](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.7...v0.0.8) - 2026-10-13
 
 ### Bug fixes
