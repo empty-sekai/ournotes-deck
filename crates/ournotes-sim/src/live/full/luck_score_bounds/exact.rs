@@ -1182,7 +1182,9 @@ impl Histories {
 /// their possible probe and Rush transitions, which shape the paths. `deterministic` gives the constant final score
 /// of each order of a live without a LUCK range. `observers` record what the rank snapshots read, which needs a
 /// one-order schedule, and compare the note scores with those at another power. Where the exact path groups exceed
-/// their budget, the evaluation starts again with the bounds of [`RelaxedReplay`].
+/// their budget, the evaluation starts again with the bounds of [`RelaxedReplay`]. Solo rank queries rewind to the
+/// snapshots of their ranges and keep the histories of whole ranges, so each probe switch filed in a range splits the
+/// exact path groups once more: a schedule with both takes the bounds of [`RelaxedReplay`] at once.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn exact_schedule(
     schedule: &Schedule,
@@ -1218,15 +1220,17 @@ pub(super) fn exact_schedule(
             Observers { reads, twin },
         )
     };
-    match evaluate(false, reads.as_deref_mut(), twin.as_deref_mut()) {
-        Err(Error::Capacity(_)) => {}
-        result => return result,
-    }
-    if let Some(reads) = reads.as_deref_mut() {
-        *reads = RankReads::default();
-    }
-    if let Some(twin) = twin.as_deref_mut() {
-        twin.restart();
+    if !(rank_queries && schedule.configs.iter().any(|(_, rows)| !rows.is_empty())) {
+        match evaluate(false, reads.as_deref_mut(), twin.as_deref_mut()) {
+            Err(Error::Capacity(_)) => {}
+            result => return result,
+        }
+        if let Some(reads) = reads.as_deref_mut() {
+            *reads = RankReads::default();
+        }
+        if let Some(twin) = twin.as_deref_mut() {
+            twin.restart();
+        }
     }
     evaluate(true, reads, twin)
 }
