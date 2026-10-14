@@ -81,7 +81,7 @@ fn finite(value: F64Interval) -> bool {
 }
 
 /// Exact comparison against a binary64 endpoint, using binary long division without a cross product.
-fn compare_exact_real(value: ExactExpectation, endpoint: f64) -> Result<Ordering, Error> {
+pub(super) fn compare_exact_real(value: ExactExpectation, endpoint: f64) -> Result<Ordering, Error> {
     if value.denominator == 0 || !endpoint.is_finite() {
         return Err(invalid("invalid exact comparison"));
     }
@@ -666,6 +666,18 @@ mod tests {
         f.insert(candidate(2, 1.0, 1.5)).unwrap();
         assert_eq!(f.grid_cutoff(120), Some((120, 90)));
         assert!(f.grid_cutoff(0).is_none());
+    }
+    #[test]
+    fn a_unit_denominator_grid_cutoff_is_the_least_integer_at_or_above_the_lower_bound() {
+        let mut f = IntervalTopK::new(1).unwrap();
+        f.insert(candidate(1, 0.5, 0.6)).unwrap();
+        assert_eq!(f.grid_cutoff(1), Some((1, i32::MIN)));
+        let mut f = IntervalTopK::new(1).unwrap();
+        f.insert(candidate(1, 2.5, 7.0)).unwrap();
+        assert_eq!(f.grid_cutoff(1), Some((3, i32::MIN)));
+        let mut f = IntervalTopK::new(1).unwrap();
+        f.insert(exact(1, 7, 90)).unwrap();
+        assert_eq!(f.grid_cutoff(1), Some((90, 7)));
     }
     #[test]
     fn exact_fraction_comparison_does_not_cross_multiply() {

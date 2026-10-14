@@ -84,7 +84,7 @@ fn probability_result_bounds_enclose_exact_rationals() {
 #[test]
 fn uniform_lottery_average_keeps_an_unsigned_result_denominator() {
     use crate::search::{
-        certified_search::{OrderScoreInterval, PayoffMap, aggregate_orders},
+        certified_search::{OrderScoreInterval, PayoffMap, Reduction, aggregate_orders},
         expectation::ExactExpectation,
         uniform,
     };
@@ -105,7 +105,7 @@ fn uniform_lottery_average_keeps_an_unsigned_result_denominator() {
             refined_payoff: None,
         })
         .collect();
-    let evaluation = aggregate_orders(orders, &PayoffMap::Score).unwrap();
+    let evaluation = aggregate_orders(orders, &PayoffMap::Score, Reduction::Mean).unwrap();
     let fraction = evaluation.exact_score.unwrap();
     assert_eq!(fraction.numerator, 1);
     assert_eq!(fraction.denominator, 120u128 << 121);

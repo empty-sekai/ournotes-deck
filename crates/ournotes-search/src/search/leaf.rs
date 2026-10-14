@@ -12,7 +12,7 @@
 //! orders, of the order's cap and of its cutoff table at the node's settled prefix: until a member of an open
 //! position acts, the node's live is the live of each of its orders, so each table applies to the shared prefix.
 use super::*;
-use crate::search::certified_search::LuckLaw;
+use crate::search::certified_search::{LuckLaw, Reduction};
 use crate::search::joint::{JointBounds, TeamCaps};
 use ournotes_sim::live::full::{LiveModel, OrdersOutcome, Settled};
 use ournotes_sim::live::random::LiveRandom;
@@ -144,7 +144,10 @@ impl Engine<'_, '_> {
         upper: i64,
         (bounds, domain): (&JointBounds, &crate::domain::CandidateDomain),
     ) -> bool {
-        if self.certified.is_none() || !self.live || !bounds.has_fine() {
+        if self.certified.as_ref().is_none_or(|state| state.reduction == Reduction::Maximum)
+            || !self.live
+            || !bounds.has_fine()
+        {
             return false;
         }
         let Some((threshold, _)) = self.safe_cutoff() else { return false };
@@ -221,30 +224,41 @@ impl Engine<'_, '_> {
     ) -> Result<Leaf, Error> {
         if self.certified.is_some() {
             // The caps prove a team below the K-th whether or not its scores are cached.
+            let maximum = self.certified.as_ref().is_some_and(|state| state.reduction == Reduction::Maximum);
             if let (Some((bounds, domain)), Some((threshold, kth_power))) = (cut, self.safe_cutoff()) {
                 let below = |total: i128| total < threshold || (total == threshold && power < kth_power);
-                let (_, resume) = self.rec.clock.lap(slot::FINE);
-                let pruned = bounds.team_below(
-                    domain,
-                    physical,
-                    i64::from(power),
-                    &self.positions,
-                    &mut self.bound_scratch,
-                    below,
-                    (&mut self.tel.leaves.order_sums, &mut self.tel.leaves.fine_orders),
-                );
-                self.rec.clock.lap(resume);
-                match pruned {
-                    Some(TeamCaps::Cheap) => self.tel.leaves.cheap_pruned += 1,
-                    Some(TeamCaps::Fine) => self.tel.leaves.fine_pruned += 1,
-                    None => {}
-                }
-                if pruned.is_some() {
-                    return Ok(Leaf::Pruned);
-                }
-                if self.below_under_kind_laws(domain, bounds, physical, power, (threshold, kth_power)) {
-                    self.tel.leaves.law_pruned += 1;
-                    return Ok(Leaf::Pruned);
+                if maximum {
+                    // The team's payoff is its best order's: the greatest per-order cap bounds it, and no sum over
+                    // the orders applies.
+                    let caps = bounds.order_cheap_caps(domain, physical, i64::from(power), &self.positions);
+                    if below(caps.iter().copied().max().unwrap_or(i128::MIN)) {
+                        self.tel.leaves.cheap_pruned += 1;
+                        return Ok(Leaf::Pruned);
+                    }
+                } else {
+                    let (_, resume) = self.rec.clock.lap(slot::FINE);
+                    let pruned = bounds.team_below(
+                        domain,
+                        physical,
+                        i64::from(power),
+                        &self.positions,
+                        &mut self.bound_scratch,
+                        below,
+                        (&mut self.tel.leaves.order_sums, &mut self.tel.leaves.fine_orders),
+                    );
+                    self.rec.clock.lap(resume);
+                    match pruned {
+                        Some(TeamCaps::Cheap) => self.tel.leaves.cheap_pruned += 1,
+                        Some(TeamCaps::Fine) => self.tel.leaves.fine_pruned += 1,
+                        None => {}
+                    }
+                    if pruned.is_some() {
+                        return Ok(Leaf::Pruned);
+                    }
+                    if self.below_under_kind_laws(domain, bounds, physical, power, (threshold, kth_power)) {
+                        self.tel.leaves.law_pruned += 1;
+                        return Ok(Leaf::Pruned);
+                    }
                 }
             }
             let mut input = expectation::context(self.pool, physical, &self.request.objective)?;
@@ -299,6 +313,7 @@ impl Engine<'_, '_> {
                     self.audit_kind_laws(bounds, physical, &found)?;
                     laws = found.ok();
                     if let (Some(laws), Some(cutoff)) = (&laws, cutoff)
+                        && !maximum
                         && self.below_under_laws(domain, physical, power, laws, cutoff)
                     {
                         self.tel.caches.luck_curves.record(curves.stats());
@@ -361,7 +376,8 @@ impl Engine<'_, '_> {
                 power,
                 support,
             )?;
-            let evaluation = crate::search::certified_search::aggregate_orders(score.orders, &map)?;
+            let reduction = self.certified.as_ref().expect("certified request").reduction;
+            let evaluation = crate::search::certified_search::aggregate_orders(score.orders, &map, reduction)?;
             return Ok(Leaf::Certified(evaluation, program, map));
         }
         if let Some(threshold) = crate::search::snaps::census() {

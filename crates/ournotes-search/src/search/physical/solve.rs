@@ -212,6 +212,7 @@ pub(crate) fn solve_physical_impl(
             Some(CertifiedState::new(
                 request.k,
                 if limits.cache_entries == 0 { 0 } else { certified_engine::LUCK_CURVE_CACHE_BYTES },
+                crate::search::certified_search::Reduction::Mean,
             )?)
         } else {
             None

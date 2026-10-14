@@ -2,7 +2,7 @@
 use super::*;
 use crate::search::{
     certified_search::{
-        CertifiedEvaluation, OrderScoreInterval, PayoffMap, aggregate_orders, canonicalize_performers,
+        CertifiedEvaluation, OrderScoreInterval, PayoffMap, Reduction, aggregate_orders, canonicalize_performers,
         refine_order_with_exact_law, refinement_uncertainty,
     },
     interval_topk::{CandidateInterval, CanonicalTie, IntervalTopK, RankingProof, RemainingDomain},
@@ -162,6 +162,8 @@ pub(super) struct CertifiedState<'m> {
     /// The lottery census of the domain the traversal searches, whose multisets of kinds give the laws of its teams
     /// (see [`super::domain_laws::LotteryCensus::team_laws`]).
     pub(super) census: Option<super::domain_laws::LotteryCensus>,
+    /// How the payoffs of a team's performance orders make its payoff.
+    pub(super) reduction: Reduction,
 }
 
 /// Key bytes the request's lottery-curve cache may hold.
@@ -174,7 +176,7 @@ const LOTTERY_LAW_CACHE_BYTES: usize = 1024 * 1024 * 1024;
 impl CertifiedState<'_> {
     /// `cache_bytes` bounds the keys of the lottery curves; the composed lottery laws with their keys take at most
     /// [`LOTTERY_LAW_CACHE_BYTES`], and none when `cache_bytes` is zero.
-    pub(super) fn new(k: usize, cache_bytes: usize) -> Result<Self, Error> {
+    pub(super) fn new(k: usize, cache_bytes: usize, reduction: Reduction) -> Result<Self, Error> {
         Ok(Self {
             frontier: IntervalTopK::new(k)?,
             entries: BTreeMap::new(),
@@ -188,7 +190,16 @@ impl CertifiedState<'_> {
             kind_bytes: if cache_bytes == 0 { 0 } else { LOTTERY_LAW_CACHE_BYTES },
             law_bounds: super::leaf::LawBounds::default(),
             census: None,
+            reduction,
         })
+    }
+    /// The denominator of the payoff numerators of the frontier's grid: a mean over the performance orders is a sum
+    /// of order payoffs over their count, a maximum is the payoff of one order.
+    pub(super) fn denominator(&self) -> u128 {
+        match self.reduction {
+            Reduction::Mean => ORDERS as u128,
+            Reduction::Maximum => 1,
+        }
     }
     pub(super) fn contains(&self, p: &PhysicalDeck) -> bool {
         self.entries.values().any(|e| e.physical == *p)
@@ -223,7 +234,7 @@ impl CertifiedState<'_> {
             .ok_or_else(|| Error::Domain("conflicting refined payoff certificates".into()))?;
         self.frontier.refine(id, current.revision, score, payoff, evaluation.exact_score, evaluation.exact_payoff)?;
         self.entries.retain(|id, _| self.frontier.get(*id).is_some());
-        self.cutoff = self.frontier.grid_cutoff(ORDERS as u128);
+        self.cutoff = self.frontier.grid_cutoff(self.denominator());
         Ok(true)
     }
 }
@@ -283,7 +294,7 @@ impl Engine<'_, '_> {
         }
         cache.insert((key, power), value.clone());
     }
-    /// Integer node threshold over 120 orders. On the certified frontier an equal node upper is closed only below
+    /// Integer node threshold on the grid of the reduction's denominator ([`CertifiedState::denominator`]). On the certified frontier an equal node upper is closed only below
     /// the returned power (i32::MIN when no K candidates prove that tie); public-ID ties are not used.
     pub(super) fn safe_cutoff(&self) -> Option<(i128, i32)> {
         // A census prunes against its fixed threshold, without a power tie-break.
@@ -345,7 +356,7 @@ impl Engine<'_, '_> {
             .entries
             .insert(id, CertifiedEntry { physical, members, snaps, power, payoff: payoff_identity, refinement });
         state.entries.retain(|id, _| state.frontier.get(*id).is_some());
-        state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
+        state.cutoff = state.frontier.grid_cutoff(state.denominator());
         self.tel.leaves.peak_retained = self.tel.leaves.peak_retained.max(state.entries.len());
         self.tel.leaves.evaluated += 1;
         self.remember(physical);
@@ -401,7 +412,10 @@ impl Engine<'_, '_> {
                         .iter()
                         .enumerate()
                         .filter_map(|(index, order)| {
-                            (order.exact_mean.is_none() && !attempted.contains(&(id, index))).then_some(index)
+                            (order.exact_mean.is_none()
+                                && retained.evaluation.contending[index]
+                                && !attempted.contains(&(id, index)))
+                            .then_some(index)
                         })
                         .collect()
                 } else {
@@ -533,7 +547,7 @@ impl Engine<'_, '_> {
                     self.tel.lottery_refinement.arithmetic_declines += 1;
                     continue;
                 }
-                let evaluation = aggregate_orders(retained.evaluation.orders.clone(), &map)?;
+                let evaluation = aggregate_orders(retained.evaluation.orders.clone(), &map, state.reduction)?;
                 if !state.install(id, &evaluation)? {
                     continue;
                 }
@@ -596,7 +610,8 @@ impl Engine<'_, '_> {
             power,
             support,
         )?;
-        let evaluation = aggregate_orders(score.orders, &map)?;
+        let evaluation =
+            aggregate_orders(score.orders, &map, self.certified.as_ref().expect("certified request").reduction)?;
         self.certified
             .as_mut()
             .expect("certified request")
@@ -716,7 +731,7 @@ impl Engine<'_, '_> {
                     Ok(true) => {
                         state.frontier.certify_equal_candidates(a.0, b.0)?;
                         state.entries.retain(|id, _| state.frontier.get(*id).is_some());
-                        state.cutoff = state.frontier.grid_cutoff(ORDERS as u128);
+                        state.cutoff = state.frontier.grid_cutoff(state.denominator());
                         self.tel.lottery_refinement.power_twins += 1;
                         self.report_progress();
                     }
@@ -794,7 +809,7 @@ impl Engine<'_, '_> {
             power,
             support,
         )?;
-        let evaluation = aggregate_orders(orders, &map)?;
+        let evaluation = aggregate_orders(orders, &map, self.certified.as_ref().expect("certified request").reduction)?;
         if !self.certified.as_mut().expect("certified request").install(id, &evaluation)? {
             return Ok(());
         }
@@ -845,7 +860,10 @@ impl Engine<'_, '_> {
                 }
                 let first = named.contains(&id);
                 for (index, order) in retained.evaluation.orders.iter().enumerate() {
-                    if order.exact_mean.is_some() || attempted.contains(&(id, index)) {
+                    if order.exact_mean.is_some()
+                        || !retained.evaluation.contending[index]
+                        || attempted.contains(&(id, index))
+                    {
                         continue;
                     }
                     let width = refinement_uncertainty(order, &retained.map)?;
@@ -910,7 +928,7 @@ impl Engine<'_, '_> {
                 continue;
             }
             row.mean = mean;
-            let evaluation = aggregate_orders(retained.evaluation.orders.clone(), &retained.map)?;
+            let evaluation = aggregate_orders(retained.evaluation.orders.clone(), &retained.map, state.reduction)?;
             if !state.install(id, &evaluation)? {
                 continue;
             }
@@ -927,7 +945,7 @@ impl Engine<'_, '_> {
         let upper = if self.rec.bounded {
             self.rec.unexplored.map(|upper| {
                 F64Interval::integer(upper)
-                    .divide(F64Interval::integer(ORDERS as i128))
+                    .divide(F64Interval::integer(state.denominator() as i128))
                     .expect("positive divisor")
                     .upper()
             })
@@ -984,7 +1002,7 @@ mod refinement_tests {
     use super::*;
 
     fn frontier(k: usize) -> CertifiedState<'static> {
-        let mut state = CertifiedState::new(k, 0).unwrap();
+        let mut state = CertifiedState::new(k, 0, Reduction::Mean).unwrap();
         for (id, lo, hi) in [(1, 10.0, 11.0), (2, 3.0, 5.0), (3, 4.0, 6.0)] {
             let bounds = F64Interval::new(lo, hi).unwrap();
             state
@@ -1021,7 +1039,7 @@ mod refinement_tests {
                     refined_payoff: None,
                 })
                 .collect();
-            let evaluation = aggregate_orders(orders, &PayoffMap::Score).unwrap();
+            let evaluation = aggregate_orders(orders, &PayoffMap::Score, Reduction::Mean).unwrap();
             let entry = CertifiedEntry {
                 physical: PhysicalDeck { members: [0, 1, 2, 3, 4], snaps: [None; 5] },
                 members: [1, 2, 3, 4, 5],
