@@ -1179,6 +1179,18 @@ least the K-th power. The score-threshold metrics use the upper-only payoff curv
 (or at the threshold), to close the search from the power frontier. The route stays single-order: its denominator is
 one, and the probability law of the result is `maximumOverMemberOrders`.
 
+With a LUCK range, the certified search bounds the expected payoff of each order under the lottery laws of the
+domain's teams. For position potentials `v`, the gain sum of a team in any order is at most `sum(v)` plus, for each
+of its slots, the largest excess of the slot's per-position gains over `v`: each slot takes one position and every
+position is taken once, so this is the dual of the assignment of slots to positions. The joint bounds are recompiled
+with each pair's excess in place of its position-mean gain and with `sum(v)` added to the base coefficient; read with
+one order of mass one, every node bound that relaxes these gains (cheap, correlated, character, resource, suffix and
+pair bounds) then bounds every order of every completion. The potentials are the mean per-position gains of the
+strongest pairs of the choice order; any potentials keep the bounds valid. Bounds that sum over the orders (order
+steps and carrier splits) are not used. A complete team is pruned when its cheap cap in every order, and then its fine
+cap in each order the cheap cap leaves open, lies below the K-th value, first under the domain's laws and then under
+the laws of the team's own multiset of lottery kinds.
+
 
 ## Prefix bounds
 

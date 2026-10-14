@@ -104,9 +104,9 @@ impl JointBounds {
         if self.tails.is_none() || !(1..5).contains(&depth) {
             return None;
         }
-        let (spread, beside) = if self.points.is_some() {
+        let (spread, beside) = if self.points.is_some() || self.is_order_maximum() {
             let (spread, best) = self.order_gain_bounds(domain, p, depth, 4 - depth, keyed);
-            (spread, std::array::from_fn(|pos| order_gain_bound(&best, &self.column, 1 << pos)))
+            (spread, std::array::from_fn(|pos| self.less_offset(order_gain_bound(&best, &self.column, 1 << pos))))
         } else {
             (f64::INFINITY, [f64::INFINITY; 5])
         };

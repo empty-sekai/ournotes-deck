@@ -94,6 +94,32 @@ fn maximum_gekisou_with_a_lottery_range_ranks_by_the_best_certified_order() {
 }
 
 #[test]
+fn maximum_gekisou_with_a_lottery_range_keeps_the_exhaustive_ranking_with_two_members_per_character() {
+    let (data, roster) = correctness_matrix::fixture(10, 0, 5, true);
+    for metric in [json!({"kind":"score"}), json!({"kind":"scoreAtLeast","threshold":450000})] {
+        let mut request = maximum_matrix::request(&data, "mission", metric.clone());
+        request.constraints.leader = None;
+        request.constraints.no_snaps = true;
+        request.limits.cache_entries = 64;
+        for k in [1, 4, 12] {
+            request.k = k;
+            request.strategy = Strategy::Exhaustive;
+            let oracle = engine::recommend(&data, &roster, &request).unwrap();
+            request.strategy = Strategy::BranchAndBound;
+            let bounded = engine::recommend(&data, &roster, &request).unwrap();
+            assert_eq!((oracle.completion, bounded.completion), (Completion::Complete, Completion::Complete));
+            assert_eq!(rows(&bounded.results), rows(&oracle.results), "{metric} k={k}");
+            assert!(oracle.results.iter().all(|deck| deck.rank_certified == Some(true)));
+            // The joint traversal of the score weighs the lottery laws of its domain.
+            if metric["kind"] == "score" {
+                let laws = bounded.telemetry.environment.bounds.domain_laws.as_ref().expect("domain laws");
+                assert_eq!(laws.weighed, 1, "k={k}");
+            }
+        }
+    }
+}
+
+#[test]
 fn maximum_gekisou_with_a_certain_threshold_is_exact_in_the_first_order() {
     let (data, roster) = correctness_matrix::fixture(5, 0, 5, true);
     for (threshold, value) in [(1, 1), (2147483647, 0)] {
