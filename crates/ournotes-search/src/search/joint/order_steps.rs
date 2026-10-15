@@ -31,7 +31,14 @@ pub(crate) struct OrderSteps {
     sums: Vec<(i64, i64)>,
     factors: Vec<f64>,
     steps: Vec<(f64, i128)>,
+    /// The open pairs' (gain, bonus) Pareto frontier, each gain the pair's largest at any position in
+    /// [`GAIN_UNIT`]s rounded up, and the frontier of their sums.
+    gain_singles: Vec<(i64, i64)>,
+    gain_sums: Vec<(i64, i64)>,
 }
+
+/// The fixed-point unit of the gains the (gain, bonus) frontier sums.
+const GAIN_UNIT: f64 = 4_294_967_296.0;
 
 /// The empty path of `OrderSteps::stack`.
 const NO_PAIR: u32 = u32::MAX;
@@ -150,6 +157,7 @@ impl JointBounds {
         let (mut ordered, mut any) = (true, false);
         let mut run = i64::MIN;
         steps.singles.clear();
+        steps.gain_singles.clear();
         for &(m, choice) in open {
             if !steps.open(pool, m, choice) {
                 continue;
@@ -158,6 +166,8 @@ impl JointBounds {
             for (position, g) in free.iter_mut().enumerate() {
                 *g = g.max(self.order_gains[m][choice][position]);
             }
+            let gain = self.order_gains[m][choice].iter().fold(0f64, |a, &g| a.max(g));
+            steps.gain_singles.push(((gain * GAIN_UNIT).ceil() as i64, pt.pair_bonus(m, choice)));
             let pair = (self.pair_power(steps.profile, m, choice), pt.pair_bonus(m, choice));
             let single = &mut steps.singles;
             if !ordered {
@@ -181,7 +191,35 @@ impl JointBounds {
         if !ordered {
             steps.singles = pareto_pairs(std::mem::take(&mut steps.singles));
         }
-        self.order_steps_total(pt, positions, steps, &free, None)
+        steps.gain_singles = pareto_pairs(std::mem::take(&mut steps.gain_singles));
+        let (paired, power) = self.order_steps_total(pt, positions, steps, &free, None)?;
+        Some((paired.min(self.order_steps_gained(pt, positions, steps)?), power))
+    }
+
+    /// The order-step bound with gain and event bonus paired instead of power and bonus: a completion's open slots
+    /// add at most the gain and bonus of a point of the (gain, bonus) frontier of sums of open pairs, each pair's gain
+    /// its largest at any position, and its power is at most the relaxed maximum.
+    fn order_steps_gained(&self, pt: &PointBound, positions: &[[usize; 5]], steps: &mut OrderSteps) -> Option<i128> {
+        let (power, bonus) = steps.caps;
+        steps.gain_sums.clear();
+        steps.gain_sums.push((0, steps.placed.1));
+        for _ in steps.depth..5 {
+            let singles = &steps.gain_singles;
+            let cross = steps.gain_sums.iter().flat_map(|&(a, b)| singles.iter().map(move |&(c, d)| (a + c, b + d)));
+            steps.gain_sums = pareto_pairs(cross.collect());
+        }
+        let (a0, global, eps) = (steps.a0, self.global, self.eps);
+        positions.iter().zip(&steps.gains).try_fold(0i128, |total, (_, &placed_gain)| {
+            let best = steps
+                .gain_sums
+                .iter()
+                .map(|&(gain, b)| {
+                    let factor = add_up(a0, add_up(placed_gain, gain as f64 / GAIN_UNIT)).min(global) * (1.0 + eps);
+                    pt.order_payoff(b.min(bonus), ((power as f64) * factor).ceil() as i128)
+                })
+                .max()?;
+            total.checked_add(best)
+        })
     }
 
     /// The order-step bound of the prepared node's completions whose open slots take pairs from candidate `offset`

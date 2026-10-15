@@ -81,7 +81,7 @@ impl LawBounds {
 pub(super) enum Leaf {
     Evaluated(FiniteEvaluation),
     Certified(
-        crate::search::certified_search::CertifiedEvaluation,
+        Box<crate::search::certified_search::CertifiedEvaluation>,
         Vec<u8>,
         crate::search::certified_search::PayoffMap,
     ),
@@ -411,7 +411,7 @@ impl Engine<'_, '_> {
             )?;
             let reduction = self.certified.as_ref().expect("certified request").reduction;
             let evaluation = crate::search::certified_search::aggregate_orders(score.orders, &map, reduction)?;
-            return Ok(Leaf::Certified(evaluation, program, map));
+            return Ok(Leaf::Certified(Box::new(evaluation), program, map));
         }
         if let Some(threshold) = crate::search::snaps::census() {
             return self.census_leaf(physical, power, cut, threshold);

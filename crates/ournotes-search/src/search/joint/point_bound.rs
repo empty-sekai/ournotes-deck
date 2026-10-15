@@ -172,8 +172,8 @@ impl PointBound {
     }
 
     /// This bound for the ranking values of the orders of a certified LUCK live
-    /// ([`crate::search::certified_search::REWARD_WEIGHT`]): an order earns its reward at its expected score and
-    /// ranks by `reward * REWARD_WEIGHT + expected score`, a capped score by its reward alone. The score caps
+    /// ([`crate::search::certified_search::REWARD_WEIGHT`]): an order earns its reward at the integer part of its
+    /// expected score and ranks by `reward * REWARD_WEIGHT + expected score`. The score caps
     /// then bound expected scores (every lottery path's score bounds its expectation too), so the reward at a cap
     /// bounds the reward of each order as a deterministic score would, and the cap bounds the expected score. The
     /// ranking value steps nowhere, so each order reads its own cap.
@@ -185,9 +185,6 @@ impl PointBound {
     /// itself unless the bound is [`PointBound::ranked`].
     fn rank(&self, reward: i128, score_cap: i128) -> i128 {
         if !self.ranked {
-            return reward;
-        }
-        if !self.is_combined() && matches!(self.target, Some(ScoreTarget::Capped(_))) {
             return reward;
         }
         reward.saturating_mul(crate::search::certified_search::REWARD_WEIGHT).saturating_add(score_cap)

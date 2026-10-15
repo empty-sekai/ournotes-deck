@@ -113,12 +113,8 @@ fn ranked_bounds_cover_the_ranking_value_of_every_expected_score() {
         PointBound::score_target(0, 0, ScoreTarget::Capped(12_000_000)),
     ];
     let ranked: Vec<_> = plain.iter().map(PointBound::ranked).collect();
-    // An order earns its reward at its expected score and ranks by it, then by that score; a capped score ranks by its
-    // reward alone.
-    let rank = |plain: &PointBound, bonus: i64, mean: i128| match plain.target {
-        Some(ScoreTarget::Capped(_)) => plain.order_payoff(bonus, mean),
-        _ => plain.order_payoff(bonus, mean) * REWARD_WEIGHT + mean,
-    };
+    // An order earns its reward at its expected score and ranks by it, then by that score.
+    let rank = |plain: &PointBound, bonus: i64, mean: i128| plain.order_payoff(bonus, mean) * REWARD_WEIGHT + mean;
     let mut x = 0x5851_f42d_4c95_7f2du64;
     let mut next = || {
         x ^= x << 13;
@@ -146,7 +142,7 @@ fn ranked_bounds_cover_the_ranking_value_of_every_expected_score() {
     // Equal rewards rank by the expected score, and a larger reward ranks above any score.
     assert!(ranked[0].order_payoff(0, 11_300_000) > ranked[0].order_payoff(0, 11_290_000));
     assert!(ranked[0].order_payoff(0, 11_281_724) > ranked[0].order_payoff(0, 11_281_723) + i128::from(i32::MAX));
-    assert_eq!(ranked[2].order_payoff(0, 13_000_000), 12_000_000);
+    assert_eq!(ranked[2].order_payoff(0, 13_000_000), 12_000_000 * REWARD_WEIGHT + 13_000_000);
 }
 
 #[test]

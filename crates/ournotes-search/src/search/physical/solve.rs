@@ -367,7 +367,23 @@ pub(crate) fn solve_physical_impl(
                                 None
                             };
                             let mut regime = telemetry::PtRegime::default();
-                            let compiled = if let Some(domain) = &restricted {
+                            // A certified LUCK live searches the bounds that weigh the lottery laws of its domain, and
+                            // its leaves read the laws of their own teams from the census.
+                            let weighed = if engine.certified.is_some() {
+                                let domain = restricted.as_ref().unwrap_or(&plan.domain);
+                                let mut census = engine.lottery_census(domain);
+                                let weighed =
+                                    census.as_mut().and_then(|census| engine.weighed_bounds(census, domain, false));
+                                if let Some(state) = engine.certified.as_mut() {
+                                    state.census = census;
+                                }
+                                weighed
+                            } else {
+                                None
+                            };
+                            let compiled = if weighed.is_some() {
+                                weighed
+                            } else if let Some(domain) = &restricted {
                                 let prepare = Instant::now();
                                 let result = crate::search::joint::JointBounds::compile(
                                     pool,
@@ -393,7 +409,8 @@ pub(crate) fn solve_physical_impl(
                             engine.rec.frontier.clear();
                             (engine.rec.tracked, engine.rec.bounded, engine.rec.unexplored) = (true, true, None);
                             searched = true;
-                            if let (Some(domain), Some(refined)) = (&restricted, &compiled) {
+                            if let Some(refined) = &compiled {
+                                let domain = restricted.as_ref().unwrap_or(&plan.domain);
                                 regime.members_removed = plan.domain.members().len() - domain.members().len();
                                 engine.correlated = refined.correlation_worthwhile(pool, domain, &orders)?;
                                 engine.tel.environment.bounds.pt_regime = Some(regime);

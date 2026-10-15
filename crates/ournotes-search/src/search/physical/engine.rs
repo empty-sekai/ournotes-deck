@@ -229,7 +229,7 @@ impl Engine<'_, '_> {
             match leaf {
                 Leaf::Evaluated(evaluation) => evaluation,
                 Leaf::Certified(evaluation, program, payoff) => {
-                    self.offer_certified(physical, power, evaluation, program, payoff)?;
+                    self.offer_certified(physical, power, *evaluation, program, payoff)?;
                     return Ok(true);
                 }
                 Leaf::Pruned => {

@@ -1873,23 +1873,26 @@ expected score
 
     m(t,pi) = E_{h ~ Q(t,pi)}[score(t, pi, h)],
 
-and earns the reward `r(t,pi)` of the declared payoff mapping at that score: the reward step that holds
-`floor(m)`, the indicator of `floor(m) >= threshold` for a score target (for a score-and-life target, also of an
-expected final life whose integer part reaches the minimum), `min(m, threshold)` for a capped score and `m` itself
-for the score. The team's reward is
+and earns the reward `r(t,pi)` of the declared payoff mapping at the integer part of that score: the reward step
+that holds `floor(m)`, the indicator of `floor(m) >= threshold` for a score target (for a score-and-life target, also
+of an expected final life whose integer part reaches the minimum) and `min(floor(m), threshold)` for a capped score.
+The score itself pays `m`. The team's reward is
 
     R(t) = (1/120) * sum_{pi in S5} r(t,pi),
 
-and teams rank by their ranking value `V(t)`, then by power and canonical IDs. For reward steps and score targets,
+and teams rank by their ranking value `V(t)`, then by power and canonical IDs. For every mapping but the score,
 whose rewards are integers,
 
     V(t) = W * R(t) + M(t),   M(t) = (1/120) * sum_{pi in S5} m(t,pi),   W = 2^39.
 
 Two different rewards differ by at least `1/120`, and `W / 120` exceeds the span of 32-bit scores, so `V` orders
-teams by their reward first and teams with equal rewards by their mean expected score. For the score and the capped
-score, `V(t) = R(t)`. Under `aggregation: "maximum"`, `V(t)` is the greatest ranking value `W * r(t,pi) + m(t,pi)`
-(or `r(t,pi)`) over the orders. With one outcome per order, `m` is the order's score and `R(t)` is the payoff of
-the deterministic route.
+teams by their reward first and teams with equal rewards by their mean expected score. For the score, `V(t) = R(t)`.
+Under `aggregation: "maximum"`, `V(t)` is the greatest ranking value `W * r(t,pi) + m(t,pi)` (or `m(t,pi)`) over the
+orders. With one outcome per order, `m` is the order's score and `R(t)` is the payoff of the deterministic route.
+
+Rewards can be large, so each evaluation also carries a rational enclosure of `V(t)`: the integer rewards' bounds
+weighted by `W` plus the expected score's enclosure rounded outward to multiples of `2^-20`. The ranking certificate
+reads the tighter of this and the binary64 enclosure.
 
 `payoffInterval` and the exact payoff fields report the reward `R(t)` (under `"maximum"`, the greatest order
 reward), and under `"expected"` `scoreInterval` and `expectedScore` report `M(t)`.

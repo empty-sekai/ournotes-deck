@@ -254,7 +254,15 @@ impl CertifiedState<'_> {
             .payoff
             .intersect(evaluation.payoff)
             .ok_or_else(|| Error::Domain("conflicting refined payoff certificates".into()))?;
-        self.frontier.refine(id, current.revision, score, payoff, evaluation.exact_score, evaluation.exact_payoff)?;
+        self.frontier.refine(
+            id,
+            current.revision,
+            score,
+            payoff,
+            evaluation.exact_score,
+            evaluation.exact_payoff,
+            evaluation.payoff_bounds,
+        )?;
         self.entries.retain(|id, _| self.frontier.get(*id).is_some());
         if let Some(entry) = self.entries.get_mut(&id) {
             entry.reward = entry
@@ -372,6 +380,7 @@ impl Engine<'_, '_> {
             payoff: evaluation.payoff,
             exact_score: evaluation.exact_score,
             exact_payoff: evaluation.exact_payoff,
+            payoff_bounds: evaluation.payoff_bounds,
             equality: Some(equality),
             revision: 0,
         })?;
@@ -1095,6 +1104,7 @@ mod refinement_tests {
                     payoff: bounds,
                     exact_score: None,
                     exact_payoff: None,
+                    payoff_bounds: None,
                     equality: None,
                     revision: 0,
                 })

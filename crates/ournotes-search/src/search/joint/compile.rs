@@ -171,12 +171,9 @@ impl JointBounds {
                     )?)
                 }
                 Metric::RankedEventItems { event_id, resource_type, resource_id } => {
-                    // Under laws the envelope caps an expected score, which bounds no single score.
-                    let cap = if laws.is_empty() {
-                        ((maximum_slot * 5) as f64 * global * (1.0 + eps)).ceil()
-                    } else {
-                        f64::from(i32::MAX)
-                    };
+                    // Under laws the envelope caps an expected score, which is the score a certified LUCK live reads
+                    // its grade at.
+                    let cap = ((maximum_slot * 5) as f64 * global * (1.0 + eps)).ceil();
                     if !cap.is_finite() {
                         return Err(unavailable("ranked-item score support is not finite"));
                     }
