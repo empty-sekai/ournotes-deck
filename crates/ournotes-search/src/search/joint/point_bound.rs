@@ -15,6 +15,9 @@ pub(super) struct PointBound {
     pub(super) target: Option<ScoreTarget>,
     /// The scores at which an order's payoff may step, when it is constant between them and zero below all of them.
     step_scores: Option<Vec<i64>>,
+    /// Of a [`PointBound::ranked`] bound: the scores at which the reward of an order at a fixed event bonus may change
+    /// with its score cap (see [`PointBound::reward_breaks`]); None when the reward is not piecewise constant.
+    reward_breaks: Option<Vec<i64>>,
     /// A combined metric: the weight of the payoff the fields above bound, and the other terms as (weight, the largest
     /// event bonus of a team under the term, the term's bound). A term's payoff is nondecreasing in its event bonus,
     /// so every deck's payoff is at most the weighted sum of the first term at the deck's bonus and of the others at
@@ -31,6 +34,15 @@ pub(super) enum ScoreTarget {
     AtLeast(i32),
     Capped(i32),
 }
+
+/// The most (power, bonus) pairs [`PointBound::ranked_payoff_sum`] reads at once; more read each order's payoffs.
+const RANKED_PAIRS: usize = 32;
+/// The score caps [`PointBound::ranked_payoff_sum`] compares by reward first lie within this distance of zero, so two
+/// of them differ by less than [`crate::search::certified_search::REWARD_WEIGHT`].
+const RANKED_CAPS: f64 = (1u64 << 38) as f64;
+/// The rewards [`PointBound::ranked_payoff_sum`] reads lie within this distance of zero, so no ranking value or sum
+/// of 120 of them saturates.
+const RANKED_REWARDS: i128 = 1 << 80;
 
 /// At least the payoff of one terminal result of any team of the domain under a term of a combined metric: one for
 /// a score target met or missed, the threshold of a capped score, the largest row of an event reward table, else
@@ -165,6 +177,7 @@ impl PointBound {
             hulls,
             target,
             step_scores,
+            reward_breaks: None,
             weight: 1,
             others: Vec::new(),
             ranked: false,
@@ -202,7 +215,26 @@ impl PointBound {
     /// bounds the reward of each order as a deterministic score would, and the cap bounds the expected score. The
     /// ranking value steps nowhere, so each order reads its own cap.
     pub(super) fn ranked(&self) -> Self {
-        Self { step_scores: None, ranked: true, ..self.clone() }
+        Self { step_scores: None, reward_breaks: self.reward_breaks(), ranked: true, ..self.clone() }
+    }
+
+    /// The scores at which the reward of an order at a fixed event bonus may change with its score cap: the reward
+    /// is constant from each one up to the next, below the first and from the last on. A score target steps at its
+    /// threshold, a tiered payoff at its tiers' scores and a term without tiers nowhere. None with a capped score
+    /// term, whose reward grows with the cap. Dropping tiers ([`PointBound::cap_scores`]) only removes changes, so
+    /// the breaks of the bound before it still hold.
+    fn reward_breaks(&self) -> Option<Vec<i64>> {
+        let mut breaks = match self.target {
+            Some(ScoreTarget::AtLeast(threshold)) => vec![i64::from(threshold)],
+            Some(ScoreTarget::Capped(_)) => return None,
+            None => self.score_tiers.iter().flatten().map(|&(score, _)| score).collect(),
+        };
+        for (_, _, part) in &self.others {
+            breaks.extend(part.reward_breaks()?);
+        }
+        breaks.sort_unstable();
+        breaks.dedup();
+        Some(breaks)
     }
 
     /// The ranking value of an order with reward `reward` whose (expected) score is at most `score_cap`: the reward
@@ -306,7 +338,8 @@ impl PointBound {
     /// cap reaches `score` only when the rounded product exceeds `score - 1`, which needs the factor above
     /// `(score - 1) / power` less a relative rounding error, so each step starts no later than the threshold taken a
     /// few ulps low (`steps` holds the steps between the smallest and the largest factor). Without tiers, or with a
-    /// score target, each order reads the pairs.
+    /// score target, each order reads the pairs. A ranked bound reads each pair's rewards over its range of caps once
+    /// ([`PointBound::ranked_payoff_sum`]).
     pub(super) fn order_payoff_sum(
         &self,
         pairs: &[(i64, i64)],
@@ -317,6 +350,12 @@ impl PointBound {
             pairs.iter().map(|&(power, bonus)| self.order_payoff(bonus, ((power as f64) * factor).ceil() as i128)).max()
         };
         let Some(scores) = &self.step_scores else {
+            if self.ranked
+                && let Some(breaks) = &self.reward_breaks
+                && let Some(sum) = self.ranked_payoff_sum(breaks, pairs, factors, steps)
+            {
+                return Some(sum);
+            }
             return factors.iter().try_fold(0i128, |total, &factor| total.checked_add(best(factor)?));
         };
         let (low, high) = factors.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), &f| (l.min(f), h.max(f)));
@@ -350,6 +389,88 @@ impl PointBound {
             let at = steps.partition_point(|&(from, _)| from <= factor);
             total.checked_add(if at == 0 { base } else { steps[at - 1].1 })
         })
+    }
+
+    /// [`PointBound::order_payoff_sum`] of a ranked bound whose rewards change only at `breaks`, or None when it
+    /// reads each order's payoffs instead. The caps of a pair over the factors lie between its caps at the smallest
+    /// and the largest factor, `ceil(power * factor)` being monotone in the factor; across that range its reward
+    /// changes only at the breaks inside it, so its segments (from the lower cap and from each such break on) hold
+    /// its rewards, read once. The ranking value `reward * REWARD_WEIGHT + cap` of an order is then largest at the
+    /// pair with the largest reward, and among those at the largest cap, as long as two caps differ by less than
+    /// the weight ([`RANKED_CAPS`]) and nothing saturates ([`RANKED_REWARDS`]); `ceil` keeps the order of the
+    /// products, so the pairs compare by the rounded product and only the best one's is converted. A pair whose
+    /// largest reward is below another's smallest never ranks first. Without pairs, with a factor that is not a
+    /// number, with more pairs than [`RANKED_PAIRS`] or outside those limits each order reads its payoffs. `segments`
+    /// is scratch space.
+    fn ranked_payoff_sum(
+        &self,
+        breaks: &[i64],
+        pairs: &[(i64, i64)],
+        factors: &[f64],
+        segments: &mut Vec<(f64, i128)>,
+    ) -> Option<i128> {
+        if pairs.is_empty() || pairs.len() > RANKED_PAIRS {
+            return None;
+        }
+        let (mut low, mut high) = (f64::INFINITY, f64::NEG_INFINITY);
+        for &factor in factors {
+            if factor.is_nan() {
+                return None;
+            }
+            (low, high) = (low.min(factor), high.max(factor));
+        }
+        // Per pair: its power, its segments as (the first rounded product, the reward) in `segments[start..end]` and
+        // its largest reward.
+        let mut read = [(0.0, 0, 0, 0); RANKED_PAIRS];
+        let mut floor = i128::MIN;
+        segments.clear();
+        for (slot, &(power, bonus)) in read.iter_mut().zip(pairs) {
+            let power = power as f64;
+            let (a, b) = ((power * low).ceil(), (power * high).ceil());
+            if !(a.abs() < RANKED_CAPS && b.abs() < RANKED_CAPS) {
+                return None;
+            }
+            let (lo, hi) = (a.min(b) as i64, a.max(b) as i64);
+            let start = segments.len();
+            segments.push((f64::NEG_INFINITY, self.order_reward(bonus, i128::from(lo))));
+            let next = breaks.partition_point(|&score| score <= lo);
+            for &score in breaks[next..].iter().take_while(|&&score| score <= hi) {
+                segments.push((score as f64, self.order_reward(bonus, i128::from(score))));
+            }
+            let rewards = segments[start..].iter().map(|&(_, reward)| reward);
+            let (least, most) = rewards.fold((i128::MAX, i128::MIN), |(l, m), r| (l.min(r), m.max(r)));
+            if least <= -RANKED_REWARDS || most >= RANKED_REWARDS {
+                return None;
+            }
+            floor = floor.max(least);
+            *slot = (power, start, segments.len(), most);
+        }
+        // The pairs that may rank first.
+        let mut count = 0;
+        for at in 0..pairs.len() {
+            if read[at].3 >= floor {
+                read[count] = read[at];
+                count += 1;
+            }
+        }
+        let read = &read[..count];
+        let mut total = 0i128;
+        for &factor in factors {
+            let (mut reward, mut product) = (i128::MIN, f64::NEG_INFINITY);
+            for &(power, start, end, _) in read {
+                let x = (power * factor).ceil();
+                let mut at = start;
+                while at + 1 < end && segments[at + 1].0 <= x {
+                    at += 1;
+                }
+                let r = segments[at].1;
+                if r > reward || (r == reward && x > product) {
+                    (reward, product) = (r, x);
+                }
+            }
+            total += reward * crate::search::certified_search::REWARD_WEIGHT + i128::from(product as i64);
+        }
+        Some(total)
     }
 
     /// The payoff of one performance order of a deck with this event bonus whose score is at most `score_cap`.

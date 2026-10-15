@@ -146,6 +146,74 @@ fn ranked_bounds_cover_the_ranking_value_of_every_expected_score() {
 }
 
 #[test]
+fn ranked_payoff_sums_are_the_sums_of_each_orders_best_ranking_value() {
+    let tiers = vec![(0, 15), (935_655, 25), (2_076_590, 35), (4_741_282, 50), (6_360_627, 75), (8_551_127, 100)];
+    let tiered = PointBound::plain(Vec::new(), Vec::new(), 100, Some(tiers.clone()), None, None);
+    let mut combined = tiered.clone();
+    combined.weight = 2;
+    let other =
+        PointBound::plain(Vec::new(), Vec::new(), 7, Some(vec![(0, 1), (3_000_000, 4), (7_000_000, 7)]), None, None);
+    combined.others = vec![(35, 4_000, other)];
+    let mut truncated = tiered.ranked();
+    truncated.cap_scores(4_741_282);
+    // A reward that falls at its only tier.
+    let falling = PointBound::plain(Vec::new(), Vec::new(), -3, Some(vec![(2_000_000, -3)]), None, None);
+    let mut bounds: Vec<PointBound> = [
+        tiered,
+        combined,
+        falling,
+        PointBound::plain(Vec::new(), Vec::new(), 40, None, None, None),
+        PointBound::score_target(0, 0, ScoreTarget::AtLeast(5_000_000)),
+        PointBound::score_target(0, 0, ScoreTarget::Capped(5_000_000)),
+    ]
+    .iter()
+    .map(PointBound::ranked)
+    .collect();
+    bounds.push(truncated);
+    let exact = |bound: &PointBound, pairs: &[(i64, i64)], factors: &[f64]| -> i128 {
+        factors
+            .iter()
+            .map(|&f| pairs.iter().map(|&(p, b)| bound.order_payoff(b, ((p as f64) * f).ceil() as i128)).max().unwrap())
+            .sum()
+    };
+    let mut x = 0x9fb2_1c65_1e98_df25u64;
+    let mut next = || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    let mut steps = Vec::new();
+    for _ in 0..3000 {
+        // Up to 40 pairs, beyond the ones read at once; narrow spans of factors keep one reward per pair, wide ones
+        // cross the breaks, and negative factors give negative caps.
+        let pairs: Vec<(i64, i64)> =
+            (0..1 + next() % 40).map(|_| ((next() % 400_000) as i64, (next() % 30_000) as i64)).collect();
+        let sign = if next() % 8 == 0 { -1.0 } else { 1.0 };
+        let centre = sign * (5.0 + (next() % 1_000_000) as f64 / 25_000.0);
+        let span = if next() % 2 == 0 { 1e-4 } else { 0.3 };
+        let factors: Vec<f64> = (0..120).map(|_| centre * (1.0 + span * (next() % 1000) as f64 / 1000.0)).collect();
+        for bound in &bounds {
+            assert_eq!(bound.order_payoff_sum(&pairs, &factors, &mut steps), Some(exact(bound, &pairs, &factors)));
+        }
+    }
+    // Factors whose caps meet each break.
+    for &(score, _) in &tiers[1..] {
+        for power in [1, 3, 997, 123_457, 399_989] {
+            let mut factors = vec![(score - 1) as f64 / power as f64, score as f64 / power as f64];
+            for _ in 0..4 {
+                factors.push(factors.last().unwrap().next_up());
+                factors.insert(0, factors[0].next_down());
+            }
+            let pairs = [(power, 8500), (power / 2, 9000)];
+            for bound in &bounds {
+                assert_eq!(bound.order_payoff_sum(&pairs, &factors, &mut steps), Some(exact(bound, &pairs, &factors)));
+            }
+        }
+    }
+}
+
+#[test]
 fn pareto_pairs_keep_exactly_the_undominated_pairs() {
     let pairs = vec![(5, 1), (3, 4), (5, 2), (1, 9), (3, 3), (2, 4), (1, 9), (0, 10)];
     assert_eq!(pareto_pairs(pairs), vec![(5, 2), (3, 4), (1, 9), (0, 10)]);
