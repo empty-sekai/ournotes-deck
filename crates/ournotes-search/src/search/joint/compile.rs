@@ -508,8 +508,11 @@ impl JointBounds {
             TailTables { suffix, blocks }
         });
         self.relax_tables = relax_tables::RelaxTables::compile(self, pool, domain);
-        if self.gekisou && self.points.is_none() {
-            (self.prefix_resource, self.prefix_character) = prefix_character::compile_prefix_tables(self, pool, domain);
+        if self.gekisou {
+            let (resource, character) = prefix_character::compile_prefix_tables(self, pool, domain);
+            // The resource caps bound a score payoff; the character caps also bound the mean score a points bound reads.
+            self.prefix_resource = resource.filter(|_| self.points.is_none());
+            self.prefix_character = character;
         }
     }
 }

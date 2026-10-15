@@ -251,13 +251,18 @@ pub(crate) struct CharacterPairs {
     profile: usize,
     /// The total mass of the performance orders.
     weight: i128,
+    /// For a point bound, what reads a mean score cap of the children: the prefix's event bonus bound, its other
+    /// terms' bonus bounds and its score cap of every order (see [`JointBounds::correlated_expected_upper_keyed`]).
+    points: Option<(i64, Vec<i64>, i128)>,
 }
 
 impl JointBounds {
     /// With the character prefix tables: what bounds each child of the prefix `p` of one to four slots in the way
     /// [`JointBounds::correlated_expected_upper_keyed`] bounds the prefix itself (see
     /// [`JointBounds::character_pair_upper`]). A child of four slots is a complete team, whose bound has no
-    /// characters left: `P * (A0 + G)` is at most `(P + r * (A0 + G))^2 / (4 * r)` for a team as for a prefix.
+    /// characters left: `P * (A0 + G)` is at most `(P + r * (A0 + G))^2 / (4 * r)` for a team as for a prefix. A
+    /// point bound reads its payoff at a child's mean score cap and the prefix's bonuses and per-order score cap,
+    /// which bound every completion of the child as well.
     pub(crate) fn character_pairs(
         &self,
         pool: &Pool,
@@ -276,7 +281,23 @@ impl JointBounds {
             let (n, sum) = edges.fold((0, Some(0i64)), |(n, sum), e| (n + 1, sum.and_then(|s| s.checked_add(e.value))));
             sum.filter(|_| n == 4 - depth)
         });
-        Some(CharacterPairs { scales, rest, depth, profile: self.profile[p.members[2]], weight })
+        let points = self.points.as_ref().map(|_| {
+            let (power, gain, bonus) = self.relax(pool, domain, p, depth, &SLOTS[depth..], positions, keyed);
+            let max_gain = self.node_order_gain(domain, p, depth, gain, keyed);
+            let a0 = keyed.map_or(self.a0, |k| k.a0);
+            let max_cap = ((power as f64) * add_up(a0, max_gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
+            (bonus, self.other_bonuses(pool, domain, p, depth), max_cap)
+        });
+        Some(CharacterPairs { scales, rest, depth, profile: self.profile[p.members[2]], weight, points })
+    }
+
+    /// The payoff of the children of `pairs` whose mean score is at most `score`, summed over the orders.
+    fn pairs_payoff(&self, pairs: &CharacterPairs, score: i128) -> Option<i128> {
+        let payoff = match (&self.points, &pairs.points) {
+            (Some(pt), Some((bonus, others, max_cap))) => pt.mean_payoff_with(*bonus, others, score, *max_cap),
+            _ => score,
+        };
+        payoff.checked_mul(pairs.weight)
     }
 
     /// At least [`JointBounds::character_pair_upper`] of every child whose pair lies at or after `offset` in the
@@ -297,7 +318,7 @@ impl JointBounds {
             let upper = add_up(fixed.checked_add(q)?.checked_add((*rest)?)? as f64, *a0r);
             best = best.min(self.correlated_cap(upper, r));
         }
-        best.checked_mul(pairs.weight)
+        self.pairs_payoff(pairs, best)
     }
 
     /// The correlated score cap of the sum `upper` of a team's edges and `r * A0` at scale `r`.
@@ -336,7 +357,7 @@ impl JointBounds {
             let upper = add_up(fixed.checked_add(q)?.checked_add(extra)? as f64, *a0r);
             best = best.min(self.correlated_cap(upper, r));
         }
-        best.checked_mul(pairs.weight)
+        self.pairs_payoff(pairs, best)
     }
 }
 
@@ -386,6 +407,8 @@ pub(super) fn compile_prefix_tables(
 }
 
 impl JointBounds {
+    /// The character tables' payoff cap of a prefix: their mean score cap for a score metric, the correlated bound
+    /// that reads it for a point metric.
     #[cfg(feature = "search-diagnostics")]
     pub(crate) fn character_prefix_upper(
         &self,
@@ -395,7 +418,8 @@ impl JointBounds {
         depth: usize,
         positions: &[usize; 5],
     ) -> Option<i128> {
-        self.prefix_character.as_ref()?.upper(self, pool, domain, p, depth, positions, None)
+        let cap = self.prefix_character.as_ref()?.upper(self, pool, domain, p, depth, positions, None)?;
+        Some(if self.points.is_some() { self.correlated_upper(pool, domain, p, depth, positions) } else { cap })
     }
 }
 

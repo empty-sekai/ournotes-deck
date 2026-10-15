@@ -1234,7 +1234,8 @@ windows, and cutoff tables keep the full cap while ranking uses the retained sna
 
 Correlation preparation probes at most 16 leader/pair prefixes, independently of traversal order. Unless the
 correlated bound tightens the cheap expected upper bound there by more than 3%, the solver skips that optional
-bound and keeps the ordinary complete traversal. The probe is a cost policy, not a proof, and never removes
+bound and keeps the ordinary complete traversal. A ranked PT bound tightens by a lower reward or, at an equal reward,
+by more than 3% of its expected score. The probe is a cost policy, not a proof, and never removes
 candidates; diagnostics still audit the correlated bound when the policy skips it.
 
 The coefficient, correlated and node bound checks read position-mean gains; the per-order caps of a complete team
@@ -1972,7 +1973,10 @@ expected score, so the reward at `C` (the prefix maximum of the reachable steps)
 bounds its expected score. Their ranking value `W * reward(C) + C` bounds the order's ranking value, and the mean
 bounds read the mean expected score's cap through the same concave majorants as a deterministic score. A
 score-and-life target relaxes its life requirement at nodes: an order short of the final life still ranks by its
-expected score. Every ranking value reads its own order's cap.
+expected score. Every ranking value reads its own order's cap. The Gekisou character prefix tables bound the mean
+score of every completion of a prefix and of each of its children; a PT bound reads its reward and ranking value at
+the least of that cap and its other mean caps, with the prefix's event bonuses and its cap of every order's score,
+which bound every completion of a child as well.
 
 A cap reads every outcome's score, so it can lie above every order's expected score and reach a tier no order
 earns. Before its search, a PT request asks of the tier thresholds above the greatest expected score evaluated so

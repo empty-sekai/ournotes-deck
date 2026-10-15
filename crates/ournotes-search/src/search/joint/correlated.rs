@@ -21,7 +21,7 @@ impl JointBounds {
             p.snaps[2] = if choice == 0 { None } else { Some(domain.snaps()[choice - 1]) };
             let cheap = self.expected_upper(pool, domain, &p, 1, orders)?.0;
             let joint = self.correlated_expected_upper(pool, domain, &p, 1, orders)?;
-            if (joint as f64) < (cheap as f64) * 0.97 {
+            if self.tightens(joint, cheap, orders) {
                 return Ok(true);
             }
             probes += 1;
@@ -30,6 +30,22 @@ impl JointBounds {
             }
         }
         Ok(false)
+    }
+
+    /// Whether a bound `cap` of a probe's payoff sum over `orders` is enough below the bound `preceding` to spend a
+    /// stage on it: by 3%, or for a ranked point bound, whose reward weight dwarfs any score gap, by a lower reward or
+    /// by 3% of the expected score at an equal reward.
+    pub(super) fn tightens(&self, cap: i128, preceding: i128, orders: &[([usize; 5], u128)]) -> bool {
+        if self.points.as_ref().is_some_and(|pt| pt.ranked) {
+            let mass = orders.iter().map(|&(_, w)| w).sum::<u128>();
+            let unit =
+                crate::search::certified_search::REWARD_WEIGHT.saturating_mul(mass.try_into().unwrap_or(i128::MAX));
+            return match cap.div_euclid(unit).cmp(&preceding.div_euclid(unit)) {
+                std::cmp::Ordering::Equal => (cap.rem_euclid(unit) as f64) < preceding.rem_euclid(unit) as f64 * 0.97,
+                order => order.is_lt(),
+            };
+        }
+        (cap as f64) < preceding as f64 * 0.97
     }
 
     /// Power and skill from a remaining pair are coupled before maximizing. For any r>0,
@@ -57,9 +73,11 @@ impl JointBounds {
         positions: &[usize; 5],
         keyed: Option<&Keyed>,
     ) -> i128 {
-        if let Some(cap) =
-            self.prefix_character.as_ref().and_then(|t| t.upper(self, pool, domain, p, depth, positions, keyed))
-        {
+        // The character tables bound the mean score of every completion: a score payoff reads it, a point bound
+        // reads its rewards at the least of it and the scale caps below.
+        let prefix =
+            self.prefix_character.as_ref().and_then(|t| t.upper(self, pool, domain, p, depth, positions, keyed));
+        if let Some(cap) = prefix.filter(|_| self.points.is_none()) {
             return cap;
         }
         let profile = self.profile[p.members[2]];
@@ -129,7 +147,8 @@ impl JointBounds {
                 (((w * w).next_up() / (4.0 * r)).next_up() * (1.0 + self.eps).next_up()).next_up().ceil() as i128
             })
             .min()
-            .expect("three scales");
+            .expect("three scales")
+            .min(prefix.unwrap_or(i128::MAX));
         self.points.as_ref().map_or(score_cap, |pt| {
             let mut powers: Vec<_> = remaining.values().map(|r| r.2).collect();
             powers.sort_unstable_by(|a, b| b.cmp(a));
@@ -139,7 +158,7 @@ impl JointBounds {
             gain_sum = gains.iter().take(5 - depth).fold(gain_sum, |sum, &g| add_up(sum, g));
             let gain = self.node_order_gain(domain, p, depth, gain_sum, keyed);
             let max_cap = ((power_sum as f64) * add_up(a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
-            pt.mean_payoff(bonus, score_cap, max_cap)
+            pt.mean_payoff_with(bonus, &self.other_bonuses(pool, domain, p, depth), score_cap, max_cap)
         })
     }
 
