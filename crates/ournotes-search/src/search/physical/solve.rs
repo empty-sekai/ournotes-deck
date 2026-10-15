@@ -376,13 +376,14 @@ pub(crate) fn solve_physical_impl(
                                 None
                             };
                             let mut regime = telemetry::PtRegime::default();
-                            // A certified LUCK live searches the bounds that weigh the lottery laws of its domain, and
-                            // its leaves read the laws of their own teams from the census.
+                            // A certified LUCK live searches the bounds that weigh the lottery laws of its domain,
+                            // cluster by cluster of those laws, and its leaves read the laws of their own teams from
+                            // the census.
                             let weighed = if engine.certified.is_some() {
                                 let domain = restricted.as_ref().unwrap_or(&plan.domain);
                                 let mut census = engine.lottery_census(domain);
                                 let weighed =
-                                    census.as_mut().and_then(|census| engine.weighed_bounds(census, domain, false));
+                                    census.as_mut().and_then(|census| engine.weighed_bounds(census, domain, true));
                                 if let Some(state) = engine.certified.as_mut() {
                                     state.census = census;
                                 }
@@ -423,7 +424,7 @@ pub(crate) fn solve_physical_impl(
                                 regime.members_removed = plan.domain.members().len() - domain.members().len();
                                 engine.correlated = refined.correlation_worthwhile(pool, domain, &orders)?;
                                 engine.tel.environment.bounds.pt_regime = Some(regime);
-                                ordered_root(&mut physical, domain, refined, &orders, &mut engine)?;
+                                traverse(&mut physical, domain, refined, &orders, &mut engine)?;
                             } else {
                                 engine.tel.environment.bounds.pt_regime = Some(regime);
                                 ordered_root(&mut physical, &plan.domain, bounds, &orders, &mut engine)?;

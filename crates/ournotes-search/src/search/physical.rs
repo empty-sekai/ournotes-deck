@@ -55,7 +55,7 @@ use entry::{Entry, compare};
 use enumeration::{ProposalRandom, members_rec, random_deck};
 pub(crate) use evaluation::{arithmetic, payoff_of};
 pub use evaluation::{evaluate_declared_context, score_summary};
-use joint_search::{joint_rec, joint_regimes, joint_root_upper, node_upper, ordered_root};
+use joint_search::{joint_rec, joint_regimes, joint_root_upper, node_upper, ordered_root, traverse};
 pub(crate) use progress::ProgressHook;
 pub use session::{
     GOAL_SPEC_VERSION, GoalSpec, SESSION_FORMAT, SearchSession, SessionBinding, SessionProgress, SessionStatus,

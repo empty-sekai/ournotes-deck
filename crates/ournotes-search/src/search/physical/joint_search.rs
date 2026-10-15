@@ -277,7 +277,7 @@ pub(super) fn joint_regimes(
 /// under their own cluster's bounds, largest first, each one's subtree under its cluster's bounds, so that the best
 /// teams of every cluster raise the cutoff as soon as the bound order meets them. Under the validation ablation
 /// `STATIC_ORDER` the clusters are traversed one after another.
-fn traverse(
+pub(super) fn traverse(
     p: &mut PhysicalDeck,
     domain: &crate::domain::CandidateDomain,
     bounds: &crate::search::joint::JointBounds,
