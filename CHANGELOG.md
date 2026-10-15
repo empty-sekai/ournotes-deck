@@ -2,7 +2,7 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [0.0.11](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.10...v0.0.11) - 2026-10-15
+## [0.0.11](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.10...v0.0.11) - 2026-10-16
 
 ### Features
 
