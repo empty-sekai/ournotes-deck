@@ -176,8 +176,16 @@ pub(crate) fn solve_physical_impl(
     }
     let lottery = certified_engine::lottery_mode(pool, request, &plan.domain)?;
     if lottery == certified_engine::LotteryMode::Certified {
-        if matches!(metric, Metric::Combined { .. }) {
-            return Err(Error::Unsupported("combined metrics require lottery-free terminal outcomes".into()));
+        // The ranking value of an order weighs its folded reward by the reward weight, and the rational enclosures
+        // of the ranking values sum it over the performance orders.
+        let cap = metric.levels().and_then(|levels| levels.first()).map_or(0, |level| level.scale.cap);
+        let room = (crate::search::certified_search::REWARD_WEIGHT * ORDERS as i128) << 8;
+        if cap > i128::MAX / room {
+            return Err(Error::Input(
+                "the weights and payoff ranges of the combined metric's levels exceed the exact integer range of a \
+                 LUCK live"
+                    .into(),
+            ));
         }
         if certified_engine::converts_great(pool, &request.objective, &plan.domain)? {
             return Err(Error::Unsupported(
@@ -217,9 +225,10 @@ pub(crate) fn solve_physical_impl(
         } else {
             None
         },
-        // A combined metric settles every term on one terminal result, so its lives play lottery-free too.
+        // A combined metric settles every term on one terminal result, so its lives without a LUCK range play
+        // lottery-free too.
         lottery_free: if lottery == certified_engine::LotteryMode::Free
-            || (live && matches!(metric, Metric::Combined { .. }))
+            || (live && lottery == certified_engine::LotteryMode::Absent && matches!(metric, Metric::Combined { .. }))
         {
             Some(std::sync::Arc::new(ournotes_sim::live::full::luck_skills(pool.master)?))
         } else {

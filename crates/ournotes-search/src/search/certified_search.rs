@@ -50,6 +50,9 @@ pub enum PayoffMap {
     /// The adapter establishes the exact native payoff on each closed integer interval. Steps must be ordered,
     /// disjoint and cover every score in the candidate's support. EP, CP and item tables may be nonmonotonic.
     NativeSteps(Vec<PayoffStep>),
+    /// The terms of a combined metric in their order, each with its positive weight in the folded payoff
+    /// (`search::levels`). A score term pays the integer part of the expected score.
+    Combined(Vec<(i128, PayoffMap)>),
 }
 
 #[derive(Clone, Debug)]
@@ -73,6 +76,9 @@ pub struct CertifiedEvaluation {
     /// The order of `orders` proved to attain the maximum: the first whose exact ranking value is the maximum, or the
     /// only order that can still attain it. Only [`Reduction::Maximum`] has one.
     pub best_order: Option<[usize; 5]>,
+    /// A combined mapping: the aggregate of each term's rewards, unweighted, in the order of the terms. Under
+    /// [`Reduction::Maximum`] these are the rewards of the best order, and empty until that order is proved.
+    pub terms: Vec<(F64Interval, Option<ExactExpectation>)>,
 }
 
 /// How the rankings of the 120 performance orders become the ranking of a team.
@@ -243,8 +249,8 @@ type Reward = (F64Interval, Option<ExactExpectation>, Option<(i128, i128)>);
 
 /// The reward of `order` at its expected score `m` under `map`, which every score of the order's support pays into:
 /// `m` itself for the score, and otherwise the mapping at the integer part of `m`: the step that holds `floor(m)`, the
-/// indicator of `floor(m) >= threshold` (and of an expected terminal life whose integer part reaches the minimum), or
-/// `min(floor(m), threshold)`.
+/// indicator of `floor(m) >= threshold` (and of an expected terminal life whose integer part reaches the minimum),
+/// `min(floor(m), threshold)`, or the weighted sum of a combined mapping's terms.
 fn order_reward(order: &OrderScoreInterval, map: &PayoffMap) -> Result<Reward, Error> {
     let exact = |value: i128| (F64Interval::integer(value), Some(fraction(value)), Some((value, value)));
     let range = |lower: i128, upper: i128| -> Result<Reward, Error> {
@@ -318,7 +324,34 @@ fn order_reward(order: &OrderScoreInterval, map: &PayoffMap) -> Result<Reward, E
             }
             range(minimum, maximum)
         }
+        PayoffMap::Combined(terms) => {
+            let overflow = || invalid("combined reward overflow");
+            let (mut lower, mut upper) = (0i128, 0i128);
+            for (&(weight, _), (low, high)) in terms.iter().zip(term_rewards(order, terms)?) {
+                lower = weight.checked_mul(low).and_then(|v| lower.checked_add(v)).ok_or_else(overflow)?;
+                upper = weight.checked_mul(high).and_then(|v| upper.checked_add(v)).ok_or_else(overflow)?;
+            }
+            range(lower, upper)
+        }
     }
+}
+
+/// The least and greatest reward of each term of a combined mapping at `order`'s expected score. A score term pays
+/// the integer part of the expected score, its capped score at the largest score.
+fn term_rewards(order: &OrderScoreInterval, terms: &[(i128, PayoffMap)]) -> Result<Vec<(i128, i128)>, Error> {
+    terms
+        .iter()
+        .map(|(weight, term)| {
+            if *weight <= 0 || matches!(term, PayoffMap::Combined(_)) {
+                return Err(invalid("combined terms need positive weights and their own mappings"));
+            }
+            let term = match term {
+                PayoffMap::Score => &PayoffMap::CappedScore { threshold: i32::MAX },
+                term => term,
+            };
+            order_reward(order, term)?.2.ok_or_else(|| invalid("combined term without an integer reward"))
+        })
+        .collect()
 }
 
 fn order_payoff(order: &OrderScoreInterval, map: &PayoffMap) -> Result<OrderPayoff, Error> {
@@ -359,25 +392,56 @@ fn rank_numerators(orders: &[OrderScoreInterval], values: &[OrderPayoff], bits: 
         .collect()
 }
 
-/// A rational enclosure of the team's ranking value under `reduction` from the orders' numerators over `2^bits`.
+/// A rational enclosure of the team's ranking value under `reduction` from the orders' numerators over `2^bits`, on
+/// the finest grid whose sums fit.
 fn rank_bounds(
     orders: &[OrderScoreInterval],
     values: &[OrderPayoff],
     reduction: Reduction,
 ) -> Option<(ExactExpectation, ExactExpectation)> {
-    let (numerators, bits) =
-        [20, 0].into_iter().find_map(|bits| Some((rank_numerators(orders, values, bits)?, bits)))?;
-    let scale = 1u128 << bits;
-    let (lower, upper, denominator) = match reduction {
-        Reduction::Mean => {
-            let (lower, upper) = numerators
-                .iter()
-                .try_fold((0i128, 0i128), |(a, b), &(lo, hi)| Some((a.checked_add(lo)?, b.checked_add(hi)?)))?;
-            (lower, upper, scale.checked_mul(uniform::ORDERS as u128)?)
-        }
-        Reduction::Maximum => (numerators.iter().map(|v| v.0).max()?, numerators.iter().map(|v| v.1).max()?, scale),
-    };
-    Some((ExactExpectation { numerator: lower, denominator }, ExactExpectation { numerator: upper, denominator }))
+    [20, 0].into_iter().find_map(|bits| {
+        let numerators = rank_numerators(orders, values, bits)?;
+        let scale = 1u128 << bits;
+        let (lower, upper, denominator) = match reduction {
+            Reduction::Mean => {
+                let (lower, upper) = numerators
+                    .iter()
+                    .try_fold((0i128, 0i128), |(a, b), &(lo, hi)| Some((a.checked_add(lo)?, b.checked_add(hi)?)))?;
+                (lower, upper, scale.checked_mul(uniform::ORDERS as u128)?)
+            }
+            Reduction::Maximum => (numerators.iter().map(|v| v.0).max()?, numerators.iter().map(|v| v.1).max()?, scale),
+        };
+        Some((ExactExpectation { numerator: lower, denominator }, ExactExpectation { numerator: upper, denominator }))
+    })
+}
+
+/// The weighted sums of a combined mapping's term aggregates ([`CertifiedEvaluation::terms`]), level by level, each
+/// level given as the weights of its terms. None unless the terms are those of the levels.
+pub(super) fn level_values(
+    weights: &[Vec<i128>],
+    terms: &[(F64Interval, Option<ExactExpectation>)],
+) -> Option<Vec<(F64Interval, Option<ExactExpectation>)>> {
+    if weights.iter().map(Vec::len).sum::<usize>() != terms.len() {
+        return None;
+    }
+    let mut terms = terms.iter();
+    Some(
+        weights
+            .iter()
+            .map(|level| {
+                level.iter().zip(terms.by_ref()).fold(
+                    (F64Interval::ZERO, Some(fraction(0))),
+                    |(sum, exact), (&weight, &(bounds, value))| {
+                        let weighted = value.and_then(|value| scale_exact(value, weight));
+                        (
+                            sum.add(bounds.scale_integer(weight)),
+                            exact.and_then(|a| weighted.and_then(|b| add_exact(a, b))),
+                        )
+                    },
+                )
+            })
+            .collect(),
+    )
 }
 
 /// Whether the ranking value of `order` under `map` is not yet exact, so its complete law may still decide a rank.
@@ -438,20 +502,17 @@ pub fn aggregate_orders(
     let payoff_bounds = rank_bounds(&orders, &values, reduction);
     let mut contending = vec![true; orders.len()];
     let mut best_order = None;
+    let mean = |items: &mut dyn Iterator<Item = (F64Interval, Option<ExactExpectation>)>| {
+        let (mut sum, mut exact) = (F64Interval::ZERO, Some(fraction(0)));
+        for (bounds, value) in items {
+            sum = sum.add(bounds);
+            exact = exact.and_then(|a| value.and_then(|b| add_exact(a, b)));
+        }
+        Ok::<_, Error>((sum.divide(F64Interval::integer(uniform::ORDERS as i128))?, exact.and_then(average_exact)))
+    };
     let (score, mut payoff, exact_score, exact_payoff, mut reward, exact_reward);
     match reduction {
         Reduction::Mean => {
-            let mean = |items: &mut dyn Iterator<Item = (F64Interval, Option<ExactExpectation>)>| {
-                let (mut sum, mut exact) = (F64Interval::ZERO, Some(fraction(0)));
-                for (bounds, value) in items {
-                    sum = sum.add(bounds);
-                    exact = exact.and_then(|a| value.and_then(|b| add_exact(a, b)));
-                }
-                Ok::<_, Error>((
-                    sum.divide(F64Interval::integer(uniform::ORDERS as i128))?,
-                    exact.and_then(average_exact),
-                ))
-            };
             (score, exact_score) = mean(&mut orders.iter().map(|o| (o.mean, o.exact_mean)))?;
             (payoff, exact_payoff) = mean(&mut values.iter().map(|v| (v.rank, v.exact_rank)))?;
             (reward, exact_reward) = mean(&mut values.iter().map(|v| (v.reward, v.exact_reward)))?;
@@ -533,6 +594,28 @@ pub fn aggregate_orders(
             .intersect(F64Interval::new(0.0, 1.0)?)
             .ok_or_else(|| invalid("indicator expectation outside probability range"))?;
     }
+    let terms = match map {
+        PayoffMap::Combined(terms) => {
+            let rows = orders.iter().map(|order| term_rewards(order, terms)).collect::<Result<Vec<_>, Error>>()?;
+            let value = |(low, high): (i128, i128)| {
+                let bounds = F64Interval::new(F64Interval::integer(low).lower(), F64Interval::integer(high).upper())?;
+                Ok::<_, Error>((bounds, (low == high).then(|| fraction(low))))
+            };
+            match reduction {
+                Reduction::Mean => (0..terms.len())
+                    .map(|term| {
+                        let values = rows.iter().map(|row| value(row[term])).collect::<Result<Vec<_>, Error>>()?;
+                        mean(&mut values.into_iter())
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?,
+                Reduction::Maximum => match orders.iter().position(|order| Some(order.order) == best_order) {
+                    Some(index) => rows[index].iter().map(|&row| value(row)).collect::<Result<Vec<_>, Error>>()?,
+                    None => Vec::new(),
+                },
+            }
+        }
+        _ => Vec::new(),
+    };
     Ok(CertifiedEvaluation {
         score,
         payoff,
@@ -544,6 +627,7 @@ pub fn aggregate_orders(
         orders,
         contending,
         best_order,
+        terms,
     })
 }
 

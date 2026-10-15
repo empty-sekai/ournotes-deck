@@ -175,7 +175,7 @@ fn account_priority_contract_echoes_exact_rewards_and_rejects_incomplete_fields(
         capabilities["challengePointPriorities"],
         json!({
             "priorities":["eventPointsFirst","eventItemsFirst"],"objective":"lexicographicExpected",
-            "primary":"challengePoints","lotteryFree":true
+            "primary":"challengePoints"
         })
     );
     for priority in ["eventPointsFirst", "eventItemsFirst"] {
@@ -290,17 +290,39 @@ fn played_priorities_require_proven_lottery_free_conditions() {
     assert!(error.to_string().contains("ordinary skill conditions"), "{error}");
 }
 
+/// Under a LUCK range the challenge points of the best teams are the best expected challenge points of the domain,
+/// with the event points and items of each team at the expected scores of its orders.
 #[test]
-fn active_luck_ranges_reject_reward_priorities() {
-    let mut synth = synthetic_master(5, 0, 5);
+fn active_luck_ranges_rank_reward_priorities() {
+    let mut synth = synthetic_master(5, 2, 5);
     set_column(&mut synth, "MasterLiveMusic", &mut |row| row["_gekisouMission1"] = json!(2));
-    let mut document = data_document(&synth, 5, 0, 5);
+    let mut document = data_document(&synth, 5, 2, 5);
     document["charts"][0]["fevers"] = json!({"startMs":[150],"endMs":[400]});
     let data = DeckData::from_json(&document.to_string()).unwrap();
-    let roster = Roster::from_json(&roster_document(5, 0, 5).to_string()).unwrap();
-    let mut request = super::joint_request("mission", true, json!({"kind":"clientChallengePoints","eventId":EVENT_ID}));
-    request.metric = priority_metric(true);
-    let error = engine::recommend(&data, &roster, &request).unwrap_err();
-    assert!(matches!(error, ournotes_sim::Error::Unsupported(_)), "{error}");
-    assert!(error.to_string().contains("lottery-free terminal outcomes"), "{error}");
+    let roster = Roster::from_json(&roster_document(5, 2, 5).to_string()).unwrap();
+    let request = |metric: Option<Metric>| {
+        let mut request =
+            super::joint_request("mission", true, json!({"kind":"clientChallengePoints","eventId":EVENT_ID}));
+        if let Some(metric) = metric {
+            request.metric = metric;
+        }
+        let outcome = engine::recommend(&data, &roster, &request).unwrap();
+        assert_eq!(outcome.completion, Completion::Complete);
+        outcome.results
+    };
+    let challenge = request(None);
+    for points_first in [true, false] {
+        let priority = request(Some(priority_metric(points_first)));
+        assert!(!priority.is_empty());
+        for deck in &priority {
+            assert_eq!(deck.rank_certified, Some(true));
+            if let Some(levels) = &deck.level_payoffs {
+                assert_eq!(levels.len(), 3);
+                assert_eq!(deck.expected_payoff.as_ref(), Some(&levels[0]));
+            }
+        }
+        if let (Some(best), Some(levels)) = (&challenge[0].expected_payoff, &priority[0].level_payoffs) {
+            assert_eq!(best, &levels[0]);
+        }
+    }
 }

@@ -128,6 +128,9 @@ pub(super) struct CertifiedEntry {
     /// The candidate's reward ([`CertifiedEvaluation::reward`]), within every certificate it took.
     reward: F64Interval,
     exact_reward: Option<super::expectation::ExactExpectation>,
+    /// A combined metric: the candidate's term rewards ([`CertifiedEvaluation::terms`]), within every certificate it
+    /// took.
+    terms: Vec<(F64Interval, Option<super::expectation::ExactExpectation>)>,
     refinement: Option<Box<RetainedRefinement>>,
     /// Under [`Reduction::Maximum`], the order proved to attain the candidate's payoff.
     best: Option<CertifiedBest>,
@@ -270,6 +273,17 @@ impl CertifiedState<'_> {
                 .intersect(evaluation.reward)
                 .ok_or_else(|| Error::Domain("conflicting refined reward certificates".into()))?;
             entry.exact_reward = entry.exact_reward.or(evaluation.exact_reward);
+            if entry.terms.is_empty() {
+                entry.terms = evaluation.terms.clone();
+            } else if evaluation.terms.len() == entry.terms.len() {
+                for (term, refined) in entry.terms.iter_mut().zip(&evaluation.terms) {
+                    term.0 = term
+                        .0
+                        .intersect(refined.0)
+                        .ok_or_else(|| Error::Domain("conflicting refined term certificates".into()))?;
+                    term.1 = term.1.or(refined.1);
+                }
+            }
             if let Some(best) = CertifiedBest::of(evaluation) {
                 entry.best = Some(best);
             }
@@ -388,7 +402,7 @@ impl Engine<'_, '_> {
         let exact = state.frontier.get(id).map_or(evaluation.exact_payoff, |c| c.exact_payoff);
         self.offered = Some(super::Offered { payoff: exact.map(|x| (x.numerator, x.denominator)), power, score: None });
         let best = CertifiedBest::of(&evaluation);
-        let (reward, exact_reward) = (evaluation.reward, evaluation.exact_reward);
+        let (reward, exact_reward, terms) = (evaluation.reward, evaluation.exact_reward, evaluation.terms.clone());
         let refinement = RetainedRefinement::new(
             state.retain_refinement == Some(true) && state.frontier.get(id).is_some(),
             evaluation,
@@ -405,6 +419,7 @@ impl Engine<'_, '_> {
                 payoff: payoff_identity,
                 reward,
                 exact_reward,
+                terms,
                 refinement,
                 best,
             },
@@ -895,9 +910,6 @@ impl Engine<'_, '_> {
                 let Some(retained) = state.entries.get(&id).and_then(|entry| entry.refinement.as_ref()) else {
                     continue;
                 };
-                if !matches!(retained.map, PayoffMap::Score) {
-                    continue;
-                }
                 let first = named.contains(&id);
                 for (index, order) in retained.evaluation.orders.iter().enumerate() {
                     if order.exact_mean.is_some()
@@ -995,6 +1007,30 @@ impl Engine<'_, '_> {
         let proof = state.proof(exhausted, upper)?;
         let maximum = state.reduction == Reduction::Maximum;
         let interval = |value: F64Interval| FractionInterval::from_f64(value.lower(), value.upper());
+        // A combined metric reports its levels' weighted sums and its terms' rewards; the payoff is the first level.
+        let weights: Option<Vec<Vec<i128>>> = self.metric.levels().map(|levels| {
+            levels.iter().map(|level| level.terms.iter().map(|term| i128::from(term.weight)).collect()).collect()
+        });
+        let reads_life: Vec<bool> = self
+            .metric
+            .terms()
+            .map(|terms| terms.map(|term| matches!(term.metric, Metric::ScoreAndLifeAtLeast { .. })).collect())
+            .unwrap_or_default();
+        let combined = |entry: &CertifiedEntry| {
+            let weights = weights.as_ref()?;
+            let levels = crate::search::certified_search::level_values(weights, &entry.terms)?;
+            let first = levels.first().copied()?;
+            let level_payoffs = levels.iter().map(|level| level.1.map(Into::into)).collect::<Option<Vec<Fraction>>>();
+            let term_payoffs = level_payoffs.as_ref().map(|_| {
+                entry
+                    .terms
+                    .iter()
+                    .zip(&reads_life)
+                    .map(|(term, &life)| if life { None } else { term.1.map(Into::into) })
+                    .collect::<Vec<Option<Fraction>>>()
+            });
+            Some((first, level_payoffs, term_payoffs))
+        };
         let results = proof
             .ordered_prefix
             .iter()
@@ -1004,7 +1040,11 @@ impl Engine<'_, '_> {
                 let entry = &state.entries[&id];
                 // Equality classes may have narrowed since this candidate's original evaluation.
                 let value = state.frontier.get(id).expect("live candidate");
-                let reward = interval(entry.reward)?;
+                let (reward, exact_reward, level_payoffs, term_payoffs) = match combined(entry) {
+                    Some(((bounds, exact), levels, terms)) => (Some(interval(bounds)?), exact, levels, terms),
+                    None if weights.is_some() => (None, None, None, None),
+                    None => (Some(interval(entry.reward)?), entry.exact_reward, None, None),
+                };
                 if maximum {
                     // The payoff is the best order's; its score is that order's when the order is proved.
                     let best = entry.best.map(|best| self.certified_best_order(entry, best)).transpose()?;
@@ -1012,13 +1052,13 @@ impl Engine<'_, '_> {
                         members: entry.members,
                         snaps: entry.snaps,
                         power: entry.power,
-                        objective_value: entry.exact_reward.map(Into::into),
+                        objective_value: exact_reward.map(Into::into),
                         expected_score: None,
                         expected_payoff: None,
-                        term_payoffs: None,
-                        level_payoffs: None,
+                        term_payoffs,
+                        level_payoffs,
                         score_interval: Some(interval(entry.best.map_or(value.score, |best| best.score))?),
-                        payoff_interval: Some(reward),
+                        payoff_interval: reward,
                         rank_certified: Some(ranked),
                         score_summary: None,
                         best_order: best,
@@ -1031,11 +1071,11 @@ impl Engine<'_, '_> {
                     power: entry.power,
                     objective_value: None,
                     expected_score: value.exact_score.map(Into::into),
-                    expected_payoff: entry.exact_reward.map(Into::into),
-                    term_payoffs: None,
-                    level_payoffs: None,
+                    expected_payoff: exact_reward.map(Into::into),
+                    term_payoffs,
+                    level_payoffs,
                     score_interval: Some(interval(value.score)?),
-                    payoff_interval: Some(reward),
+                    payoff_interval: reward,
                     rank_certified: Some(ranked),
                     score_summary: None,
                     best_order: None,
@@ -1065,11 +1105,13 @@ impl Engine<'_, '_> {
         };
         let score = i32::try_from(floor(best.exact_score, best.score.lower())?)
             .map_err(|_| Error::Domain("best order score exceeds i32".into()))?;
+        // A combined metric's order pays its first level, the folded reward counted in units of that level.
+        let payoff = floor(entry.exact_reward, entry.reward.lower())?.div_euclid(self.metric.primary_unit());
         Ok(OrderResult {
             performance_order,
             members: performance_order.map(|slot| entry.members[slot]),
             score,
-            payoff: floor(entry.exact_reward, entry.reward.lower())?.to_string(),
+            payoff: payoff.to_string(),
         })
     }
 }
@@ -1138,6 +1180,7 @@ mod refinement_tests {
                 payoff: Vec::new(),
                 reward: evaluation.reward,
                 exact_reward: evaluation.exact_reward,
+                terms: Vec::new(),
                 refinement: RetainedRefinement::new(
                     retain_order_state(notes, frames),
                     evaluation,

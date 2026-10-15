@@ -10,7 +10,7 @@ use ournotes_search::{
     handler::build_card_pool,
     recommendation::{Status, capabilities},
     search::Completion,
-    types::{Fraction, Optimality, RecommendationRequest, Strategy},
+    types::{Fraction, Optimality, RecommendationRequest, RecommendedDeck, Strategy},
 };
 use ournotes_sim::{cards::Roster, data::DeckData};
 use serde_json::{Value, json};
@@ -363,22 +363,68 @@ fn combined_metric_inputs_are_validated() {
     }
 }
 
+/// Two fractions in their numeric order.
+fn compare(a: &Fraction, b: &Fraction) -> std::cmp::Ordering {
+    let denominator = |value: &Fraction| value.denominator.parse::<i128>().unwrap();
+    (numerator(a) * denominator(b)).cmp(&(numerator(b) * denominator(a)))
+}
+
+/// Under a LUCK range each order pays every term at the integer part of its expected score: the teams rank by the
+/// levels of their expected rewards, then by their expected scores.
 #[test]
-fn active_luck_ranges_reject_combined_metrics() {
-    let mut synth = synthetic_master(5, 0, 5);
+fn active_luck_ranges_rank_combined_metrics_level_by_level() {
+    let mut synth = synthetic_master(5, 2, 5);
     set_column(&mut synth, "MasterLiveMusic", &mut |row| row["_gekisouMission1"] = json!(2));
-    let mut document = data_document(&synth, 5, 0, 5);
+    let mut document = data_document(&synth, 5, 2, 5);
     document["charts"][0]["fevers"] = json!({"startMs":[150],"endMs":[400]});
     let data = DeckData::from_json(&document.to_string()).unwrap();
-    let roster = Roster::from_json(&roster_document(5, 0, 5).to_string()).unwrap();
-    for metric in [
-        combined(&[(points(), 1), (challenge_points(), 1)]),
-        leveled(&[vec![(challenge_points(), 1)], vec![(points(), 1)]]),
+    let roster = Roster::from_json(&roster_document(5, 2, 5).to_string()).unwrap();
+    let run = |metric: &Value, strategy: Strategy| {
+        let mut request = super::joint_request("mission", true, metric.clone());
+        request.strategy = strategy;
+        let outcome = engine::recommend(&data, &roster, &request).unwrap();
+        assert_eq!(outcome.completion, Completion::Complete, "{metric}");
+        outcome.results
+    };
+    let teams = |decks: &[RecommendedDeck]| decks.iter().map(|d| (d.members, d.snaps, d.power)).collect::<Vec<_>>();
+    // A single term ranks and pays as its own metric does.
+    let plain = run(&points(), Strategy::Exhaustive);
+    let single = run(&combined(&[(points(), 1)]), Strategy::Exhaustive);
+    assert_eq!(teams(&plain), teams(&single));
+    for (a, b) in plain.iter().zip(&single) {
+        assert_eq!(a.expected_payoff, b.expected_payoff);
+        if let Some(levels) = &b.level_payoffs {
+            assert_eq!(b.expected_payoff.as_ref(), Some(&levels[0]));
+            assert_eq!(b.term_payoffs.as_ref().unwrap(), &vec![Some(levels[0].clone())]);
+        }
+    }
+    for (metric, terms) in [
+        (combined(&[(points(), 2), (challenge_points(), 35)]), 2),
+        (leveled(&[vec![(challenge_points(), 1)], vec![(points(), 1)], vec![(items(), 1)]]), 3),
+        (leveled(&[vec![(json!({"kind":"score"}), 1)], vec![(items(), 3), (points(), 1)]]), 3),
     ] {
-        let request = super::joint_request("mission", true, metric);
-        let error = engine::recommend(&data, &roster, &request).unwrap_err();
-        assert!(matches!(error, ournotes_sim::Error::Unsupported(_)), "{error}");
-        assert!(error.to_string().contains("lottery-free terminal outcomes"), "{error}");
+        let bounded = run(&metric, Strategy::BranchAndBound);
+        assert_eq!(teams(&run(&metric, Strategy::Exhaustive)), teams(&bounded), "{metric}");
+        assert!(bounded.iter().any(|deck| deck.level_payoffs.is_some()), "{metric}");
+        for deck in &bounded {
+            assert_eq!(deck.rank_certified, Some(true));
+            if let Some(levels) = &deck.level_payoffs {
+                assert_eq!(deck.expected_payoff.as_ref(), Some(&levels[0]));
+                assert_eq!(deck.term_payoffs.as_ref().unwrap().len(), terms);
+            }
+        }
+        for pair in bounded.windows(2) {
+            let (Some(a), Some(b)) = (&pair[0].level_payoffs, &pair[1].level_payoffs) else { continue };
+            let order = a.iter().zip(b).map(|(x, y)| compare(x, y)).find(|o| o.is_ne());
+            assert!(order.is_none_or(|o| o.is_gt()), "{metric}: a lower level ranks first");
+            if order.is_none() {
+                let score = |deck: &RecommendedDeck| deck.score_interval.clone().unwrap();
+                assert!(
+                    score(&pair[0]).upper_f64() >= score(&pair[1]).lower_f64(),
+                    "{metric}: a lower score ranks first"
+                );
+            }
+        }
     }
 }
 
@@ -434,7 +480,7 @@ fn account_combined_metric_contract_echoes_levels_and_rejects_incomplete_fields(
         json!({
             "kind":"combined","field":"metric.levels","objective":"lexicographicWeightedExpectedSums",
             "termMetrics":"metrics","weights":"integer","maxLevels":4,"maxTerms":8,"maxWeight":1_000_000_000,
-            "consumption":"metric.consumption","lotteryFree":true
+            "consumption":"metric.consumption"
         })
     );
     let levels = json!([

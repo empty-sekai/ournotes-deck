@@ -23,7 +23,7 @@ result, and the complete tie order. The following contracts use different identi
 | `search::search_best_order_diagnostic` | Best performance order for the declared diagnostic objective | One best representative per member set | After every Snap ID |
 | Recommendation facade, Power and deterministic Skip metrics | Declared deterministic payoff, then power | Leader and five member/Snap pairs; nonleader pairs in canonical layout | Before every Snap ID |
 | Recommendation facade, deterministic played Live | Mean terminal payoff over all 120 orders, then power | The same canonical team | Before every Snap ID |
-| Recommendation facade, LUCK | Mean payoff at each order's expected score under the declared lottery law, then (for steps and targets) the mean expected score, then power | Canonical team, with certified interval ranking | Before every Snap ID |
+| Recommendation facade, LUCK | Mean payoff at each order's expected score under the declared lottery law, then (for every payoff but the score) the mean expected score, then power | Canonical team, with certified interval ranking | Before every Snap ID |
 | Deterministic `SearchSession` v1 | Its supported deterministic payoff, then power | Five physical member slots and their Snap bindings | Before every Snap ID |
 
 `search::search` accepts Power and Skip; best-order Live optimization is exposed through the explicitly named
@@ -1405,7 +1405,9 @@ with the bound of the sections above under the same conditions as a single metri
 without score steps, such as a raw score, uses that traversal from the start. A Skip with a term the deck does
 not determine uses complete legal team enumeration.
 
-A request with an active LUCK range is reported as unsupported.
+Under an active LUCK range each order pays every term at the integer part of its expected score, and the folded
+payoff ranks as a single reward does ([LUCK](#luck)). A metric whose folded cap, with room for the reward weight and
+the sums over orders, leaves the 128-bit integer range is an input error.
 
 Reproduce the folding arithmetic, the synthetic complete-domain comparison between exhaustive enumeration and
 branch-and-bound on one and several levels, the independent per-term settlement, validation and the account
@@ -1876,7 +1878,8 @@ expected score
 and earns the reward `r(t,pi)` of the declared payoff mapping at the integer part of that score: the reward step
 that holds `floor(m)`, the indicator of `floor(m) >= threshold` for a score target (for a score-and-life target, also
 of an expected final life whose integer part reaches the minimum) and `min(floor(m), threshold)` for a capped score.
-The score itself pays `m`. The team's reward is
+The score itself pays `m`. A [combined metric](#combined-metrics) pays each term so at the same expected score, a
+score term `floor(m)`, and `r(t,pi)` is the folded payoff of these term rewards. The team's reward is
 
     R(t) = (1/120) * sum_{pi in S5} r(t,pi),
 
@@ -1895,7 +1898,9 @@ weighted by `W` plus the expected score's enclosure rounded outward to multiples
 reads the tighter of this and the binary64 enclosure.
 
 `payoffInterval` and the exact payoff fields report the reward `R(t)` (under `"maximum"`, the greatest order
-reward), and under `"expected"` `scoreInterval` and `expectedScore` report `M(t)`.
+reward), and under `"expected"` `scoreInterval` and `expectedScore` report `M(t)`. For a combined metric they report
+the first level, and the levels and terms report the mean of each term's rewards (under `"maximum"`, those of the
+best order) once every one of them is exact.
 
 `Q` is the independent nominal draw law implemented by
 [the lottery DP](../crates/ournotes-sim/src/live/full/luck_dp.rs) and

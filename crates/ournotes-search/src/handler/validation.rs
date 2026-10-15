@@ -196,13 +196,9 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
         } else {
             assumptions.push("the five members perform in a uniformly random order; paired snaps follow their members");
         }
-        if matches!(r.metric, Metric::Combined { .. }) {
-            assumptions.push("lottery-free terminal outcomes");
-        } else {
-            assumptions.push(
-                "native lottery probability law; certified intervals remain explicit until sufficient to prove ranking",
-            );
-        }
+        assumptions.push(
+            "native lottery probability law; certified intervals remain explicit until sufficient to prove ranking",
+        );
     }
     if r.metric.any(|m| matches!(m, Metric::RankedEventItems { .. })) {
         assumptions.push("one reward row per exact grade with probability marker 10000; quantities include EventItem effects and the declared item multiplier");

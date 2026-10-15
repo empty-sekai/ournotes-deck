@@ -234,13 +234,12 @@ pub fn capabilities() -> Value {
         "challengePointPriorities": {
             "priorities": ["eventPointsFirst", "eventItemsFirst"],
             "objective": "lexicographicExpected", "primary": "challengePoints",
-            "lotteryFree": true,
         },
         "combinedMetric": {
             "kind": "combined", "field": "metric.levels", "objective": "lexicographicWeightedExpectedSums",
             "termMetrics": "metrics", "weights": "integer",
             "maxLevels": MAX_METRIC_LEVELS, "maxTerms": MAX_METRIC_TERMS, "maxWeight": MAX_TERM_WEIGHT,
-            "consumption": "metric.consumption", "lotteryFree": true,
+            "consumption": "metric.consumption",
         },
         "eventItemRewards": {
             "selection": "exactResultGrade", "eventGroupField": "eventGroup",
