@@ -102,13 +102,23 @@ fn payoff_steps_sum_the_best_order_payoffs_and_never_fall_below_at_tier_edges() 
 }
 
 #[test]
-fn weighed_bounds_cover_the_expected_payoff_of_every_score_law() {
+fn ranked_bounds_cover_the_ranking_value_of_every_expected_score() {
+    use crate::search::certified_search::REWARD_WEIGHT;
     let tiers = vec![(0, 15), (2_104_068, 25), (5_025_129, 35), (11_281_724, 50), (15_052_045, 75), (20_496_573, 100)];
     let hulls = (1..=tiers.len()).map(|k| super::super::uniform::concave_majorant(&tiers[..k])).collect();
     let points = PointBound::plain(Vec::new(), Vec::new(), 100, Some(tiers), Some(hulls), None);
-    let capped = PointBound::score_target(0, 0, ScoreTarget::Capped(12_000_000));
-    let weighed = [points.weighed().unwrap(), capped.weighed().unwrap()];
-    assert!(PointBound::score_target(0, 0, ScoreTarget::AtLeast(1)).weighed().is_none());
+    let plain = [
+        points,
+        PointBound::score_target(0, 0, ScoreTarget::AtLeast(12_000_000)),
+        PointBound::score_target(0, 0, ScoreTarget::Capped(12_000_000)),
+    ];
+    let ranked: Vec<_> = plain.iter().map(PointBound::ranked).collect();
+    // An order earns its reward at its expected score and ranks by it, then by that score; a capped score ranks by its
+    // reward alone.
+    let rank = |plain: &PointBound, bonus: i64, mean: i128| match plain.target {
+        Some(ScoreTarget::Capped(_)) => plain.order_payoff(bonus, mean),
+        _ => plain.order_payoff(bonus, mean) * REWARD_WEIGHT + mean,
+    };
     let mut x = 0x5851_f42d_4c95_7f2du64;
     let mut next = || {
         x ^= x << 13;
@@ -117,26 +127,26 @@ fn weighed_bounds_cover_the_expected_payoff_of_every_score_law() {
         x
     };
     for _ in 0..2000 {
-        // The lottery paths of one order: scores with rational masses, the cap at least their expectation.
-        let centre = (next() % 22_000_000) as i128;
-        let width = (next() % 6_000_000) as i128;
-        let paths: Vec<(i128, i128)> = (0..1 + next() % 8)
-            .map(|_| ((centre + (next() % (width as u64 + 1)) as i128).max(0), 1 + (next() % 16) as i128))
-            .collect();
-        let mass: i128 = paths.iter().map(|&(_, w)| w).sum();
-        let mean_ceiling = (paths.iter().map(|&(s, w)| s * w).sum::<i128>() + mass - 1) / mass;
-        let cap = mean_ceiling + (next() % 1000) as i128;
+        // The expected scores of a team's orders and caps at least their mean and their maximum.
+        let means: Vec<i128> = (0..1 + next() % 8).map(|_| (next() % 22_000_000) as i128).collect();
+        let n = means.len() as i128;
+        let mean_cap = (means.iter().sum::<i128>() + n - 1) / n + (next() % 1000) as i128;
+        let max_cap = *means.iter().max().unwrap() + (next() % 1000) as i128;
         let bonus = (next() % 20_000) as i64;
-        for (plain, weighed) in [&points, &capped].into_iter().zip(&weighed) {
-            let expected: i128 = paths.iter().map(|&(s, w)| plain.order_payoff(bonus, s) * w).sum();
-            assert!(expected <= mass * weighed.order_payoff(bonus, cap), "{centre} {width}");
-            assert!(expected <= mass * weighed.mean_payoff(bonus, cap, 0), "{centre} {width}");
-            assert!(expected <= mass * weighed.cutoff_payoff(bonus, cap) || plain.target.is_some());
+        for (plain, ranked) in plain.iter().zip(&ranked) {
+            let values: Vec<i128> = means.iter().map(|&m| rank(plain, bonus, m)).collect();
+            assert!(values.iter().all(|&v| v <= ranked.order_payoff(bonus, max_cap)));
+            assert!(values.iter().all(|&v| v <= ranked.maximum(bonus)));
+            assert!(values.iter().sum::<i128>() <= n * ranked.mean_payoff(bonus, mean_cap, max_cap));
+            if plain.target.is_none() {
+                assert!(values.iter().all(|&v| v <= ranked.cutoff_payoff(bonus, max_cap)));
+            }
         }
     }
-    // A cap between tiers reads the whole majorant, above the step there.
-    assert!(weighed[0].order_payoff(8500, 12_105_470) > points.order_payoff(8500, 12_105_470));
-    assert_eq!(weighed[0].order_payoff(8500, 12_105_470), points.mean_payoff(8500, 12_105_470, i128::MAX));
+    // Equal rewards rank by the expected score, and a larger reward ranks above any score.
+    assert!(ranked[0].order_payoff(0, 11_300_000) > ranked[0].order_payoff(0, 11_290_000));
+    assert!(ranked[0].order_payoff(0, 11_281_724) > ranked[0].order_payoff(0, 11_281_723) + i128::from(i32::MAX));
+    assert_eq!(ranked[2].order_payoff(0, 13_000_000), 12_000_000);
 }
 
 #[test]

@@ -505,7 +505,7 @@ impl Engine<'_, '_> {
         };
         let probability_law = if live && maximum {
             serde_json::json!({"kind":"maximumOverMemberOrders","orders":ORDERS,
-                "orderValue":"expectedTerminalPayoffOverRandomDraws","lottery":lottery})
+                "orderValue":"terminalPayoffAtExpectedScore","lottery":lottery})
         } else if live {
             serde_json::json!({"kind":"uniformMemberOrder","orders":ORDERS,"lottery":lottery})
         } else {
@@ -535,7 +535,7 @@ impl Engine<'_, '_> {
             strategy: strategy.clone(),
             probability_law,
             proof_scope: if live && maximum {
-                "conditional on declared master, roster and complete judgement/clock inputs, with the value of a team its best performance order, each order valued by the expectation of its terminal payoff over random draws; client counters are not server reward authority"
+                "conditional on declared master, roster and complete judgement/clock inputs, with the value of a team its best performance order, each order worth the terminal payoff at its expected score over random draws; client counters are not server reward authority"
             } else {
                 "conditional on declared master, roster and complete judgement/clock inputs, with the five members performing in a uniformly random order; client counters are not server reward authority"
             },

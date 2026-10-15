@@ -197,8 +197,8 @@ pub fn capabilities() -> Value {
         "defaultAggregation": "expected",
         "aggregations": {"expected": metrics.clone(), "maximum": metrics},
         "aggregationLaw": {
-            "expected": "mean payoff over the 120 equally likely performance orders and the declared lottery law",
-            "maximum": "maximum over the 120 performance orders of the expected payoff over the random draws of the order",
+            "expected": "mean over the 120 equally likely performance orders of the payoff at the order's expected score under the declared lottery law",
+            "maximum": "maximum over the 120 performance orders of the payoff at the order's expected score over its random draws",
         },
         "aggregationTieBreak": {
             "expected": ["expectedPayoff", "power", "canonicalTeamKey"],
@@ -228,7 +228,7 @@ pub fn capabilities() -> Value {
         "provenGoals": goals.iter().map(|k| k.name()).collect::<Vec<_>>(),
         "support": support_by_goal,
         "memoryBudgetBytes": null,
-        "lottery": "certified expectations; only proved rank separation or equality certifies TopK",
+        "lottery": "certified expected scores; each order earns its payoff at its expected score, equal step and target payoffs rank by expected score, and only proved rank separation or equality certifies TopK",
         "accuracyLaw": "deterministic evenly spread Greats; Just share of remaining eligible notes",
         "tieBreak": ["expectedPayoff", "power", "canonicalTeamKey"],
         "challengePointPriorities": {

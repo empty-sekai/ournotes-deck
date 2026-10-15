@@ -23,7 +23,7 @@ mod composition;
 mod leaf;
 use leaf::Leaf;
 #[path = "certified_engine.rs"]
-mod certified_engine;
+pub(in crate::search) mod certified_engine;
 use certified_engine::CertifiedState;
 #[path = "deck_payoff_search.rs"]
 mod deck_payoff_search;

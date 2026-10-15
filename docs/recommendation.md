@@ -122,12 +122,13 @@ order, in the canonical enumeration, that attains the value, and `objectiveValue
 and a `maximumModel` that states the order count and how an order is valued. `capabilities()` lists both
 aggregations, their laws and their tie breaks.
 
-A live with LUCK lotteries values each order by its certified lottery law, as under `"expected"`. A team's payoff
-interval then runs from the greatest lower bound to the greatest upper bound over its orders, and is exact once an
-order's exact value reaches the upper bound of every other order. `bestOrder` appears once one order is proved to
-attain the maximum: the first order with the exact maximum, or the only order whose upper bound reaches the others'
-lower bounds. Its score is that order's expected score rounded down, and `payoffInterval` and `scoreInterval` keep the
-proved bounds while the value is not exact.
+A live with LUCK lotteries values each order by the payoff at its expected score under its certified lottery
+law, as under `"expected"`, and orders with equal step or target payoffs rank by their expected scores. A team's
+payoff interval then runs from the greatest lower bound to the greatest upper bound over its orders, and is exact
+once an order's exact payoff reaches the upper bound of every other order. `bestOrder` appears once one order is
+proved to attain the greatest ranking value: the first order with the exact maximum, or the only order whose upper
+bound reaches the others' lower bounds. Its score is that order's expected score rounded down, and `payoffInterval`
+and `scoreInterval` keep the proved bounds while the value is not exact.
 
 For every team the maximum value is at least its expected value.
 

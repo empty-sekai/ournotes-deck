@@ -192,7 +192,7 @@ pub(crate) fn goal_description(r: &RecommendationRequest) -> Result<GoalDescript
             }
         });
         if r.aggregation == Aggregation::Maximum {
-            assumptions.push("the value of a team is the greatest value among its 120 performance orders, each order valued by the expectation of its terminal payoff over its random draws; paired snaps follow their members");
+            assumptions.push("the value of a team is the greatest value among its 120 performance orders, each order worth the terminal payoff at its expected score over its random draws; paired snaps follow their members");
         } else {
             assumptions.push("the five members perform in a uniformly random order; paired snaps follow their members");
         }

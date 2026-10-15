@@ -101,8 +101,7 @@ fn uniform_lottery_average_keeps_an_unsigned_result_denominator() {
                 denominator: if index == 0 { 1u128 << 121 } else { 1 },
             }),
             final_life: None,
-            tails: Default::default(),
-            refined_payoff: None,
+            exact_life: None,
         })
         .collect();
     let evaluation = aggregate_orders(orders, &PayoffMap::Score, Reduction::Mean).unwrap();

@@ -21,9 +21,9 @@ pub(super) struct PointBound {
     /// their largest bonuses.
     pub(super) weight: i128,
     pub(super) others: Vec<(i128, i64, PointBound)>,
-    /// Whether the score caps this bound reads bound the expected score of an order over its lottery paths rather
-    /// than each of its scores (see [`PointBound::weighed`]).
-    pub(super) expected: bool,
+    /// Whether the payoff this bound gives is the ranking value of an order of a certified LUCK live
+    /// ([`PointBound::ranked`]).
+    pub(super) ranked: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -167,45 +167,36 @@ impl PointBound {
             step_scores,
             weight: 1,
             others: Vec::new(),
-            expected: false,
+            ranked: false,
         }
     }
 
-    /// This bound for score caps that bound the expected score of an order over its lottery paths, as the bounds
-    /// compiled under lottery laws give. Every payoff it reads then is concave and nondecreasing in the score: a
-    /// capped score is, and point tiers read the concave majorant of their whole step function, so its value at a cap
-    /// of the expected score bounds the expected payoff (Jensen). None when a term is a score target, whose indicator
-    /// has no such majorant below one.
-    pub(super) fn weighed(&self) -> Option<Self> {
-        if matches!(self.target, Some(ScoreTarget::AtLeast(_))) {
-            return None;
+    /// This bound for the ranking values of the orders of a certified LUCK live
+    /// ([`crate::search::certified_search::REWARD_WEIGHT`]): an order earns its reward at its expected score and
+    /// ranks by `reward * REWARD_WEIGHT + expected score`, a capped score by its reward alone. The score caps
+    /// then bound expected scores (every lottery path's score bounds its expectation too), so the reward at a cap
+    /// bounds the reward of each order as a deterministic score would, and the cap bounds the expected score. The
+    /// ranking value steps nowhere, so each order reads its own cap.
+    pub(super) fn ranked(&self) -> Self {
+        Self { step_scores: None, ranked: true, ..self.clone() }
+    }
+
+    /// The ranking value of an order with reward `reward` whose (expected) score is at most `score_cap`: the reward
+    /// itself unless the bound is [`PointBound::ranked`].
+    fn rank(&self, reward: i128, score_cap: i128) -> i128 {
+        if !self.ranked {
+            return reward;
         }
-        let others = self
-            .others
-            .iter()
-            .map(|(weight, bonus, part)| Some((*weight, *bonus, part.weighed()?)))
-            .collect::<Option<_>>()?;
-        Some(Self { step_scores: None, others, expected: true, ..self.clone() })
+        if !self.is_combined() && matches!(self.target, Some(ScoreTarget::Capped(_))) {
+            return reward;
+        }
+        reward.saturating_mul(crate::search::certified_search::REWARD_WEIGHT).saturating_add(score_cap)
     }
 
     /// The point payoff of an order of a deck with this event bonus at a score cap without a score target: the step
-    /// multiplier at the cap, or, for expected-score caps, the concave majorant of the whole step function there.
+    /// multiplier at the cap.
     fn tier_payoff(&self, bonus: i64, score_cap: i128) -> i128 {
-        if !self.expected {
-            return ((bonus + 10000) * self.multiplier_at(score_cap) / 10000) as i128;
-        }
-        match (&self.hulls, &self.score_tiers) {
-            (Some(hulls), Some(_)) => crate::search::uniform::concave_value_ceil(
-                hulls.last().expect("a hull per tier"),
-                score_cap,
-                i128::from(bonus + 10000),
-                10000,
-            )
-            .expect("PT values in the nonwrapping domain"),
-            // A step function without hulls is bounded by its largest step.
-            (None, Some(_)) => ((bonus + 10000) * self.multiplier_at(i128::MAX) / 10000) as i128,
-            _ => ((bonus + 10000) * self.multiplier / 10000) as i128,
-        }
+        ((bonus + 10000) * self.multiplier_at(score_cap) / 10000) as i128
     }
 
     /// The bound of a combined metric's payoff from its terms' weights and bounds. The first term whose payoff
@@ -268,12 +259,17 @@ impl PointBound {
 
     /// The largest payoff of an order of a deck with this event bonus.
     pub(super) fn maximum(&self, bonus: i64) -> i128 {
+        self.rank(self.maximum_reward(bonus), i128::from(i32::MAX))
+    }
+
+    /// The largest reward of an order of a deck with this event bonus.
+    fn maximum_reward(&self, bonus: i64) -> i128 {
         let own = match self.target {
             Some(_) => i128::from(self.multiplier),
             None => ((bonus + 10000) * self.multiplier / 10000) as i128,
         };
         self.others.iter().fold(self.weight.saturating_mul(own), |sum, (weight, bonus, part)| {
-            sum.saturating_add(weight.saturating_mul(part.maximum(*bonus)))
+            sum.saturating_add(weight.saturating_mul(part.maximum_reward(*bonus)))
         })
     }
     /// The event bonus of a member and choice.
@@ -335,12 +331,17 @@ impl PointBound {
 
     /// The payoff of one performance order of a deck with this event bonus whose score is at most `score_cap`.
     pub(super) fn order_payoff(&self, bonus: i64, score_cap: i128) -> i128 {
+        self.rank(self.order_reward(bonus, score_cap), score_cap)
+    }
+
+    /// The reward of one performance order of a deck with this event bonus whose score is at most `score_cap`.
+    fn order_reward(&self, bonus: i64, score_cap: i128) -> i128 {
         let own = self.own_order_payoff(bonus, score_cap);
         if !self.is_combined() {
             return own;
         }
         self.others.iter().fold(self.weight.saturating_mul(own), |sum, (weight, bonus, part)| {
-            sum.saturating_add(weight.saturating_mul(part.order_payoff(*bonus, score_cap)))
+            sum.saturating_add(weight.saturating_mul(part.order_reward(*bonus, score_cap)))
         })
     }
 
@@ -361,16 +362,21 @@ impl PointBound {
     /// `max_cap`, where `m` equals the step of the tiers at or below `max_cap`; the concave majorant `M` of that
     /// truncated step gives `E[m(S)] <= E[M(S)] <= M(E[S]) <= M(score_cap)` (Jensen, `M` non-decreasing), and the
     /// rounding goes up. The PT of every order is also at most the PT at `max_cap`. Without score tiers the multiplier
-    /// is constant. A combined payoff sums the bounds of its terms, each a bound of the term's mean. For
-    /// expected-score caps ([`PointBound::weighed`]) `max_cap` bounds an expectation too, and the whole step's majorant
-    /// applies.
+    /// is constant. A combined payoff sums the bounds of its terms, each a bound of the term's mean. A
+    /// [`PointBound::ranked`] bound reads expected scores as scores and adds the mean expected score's cap, so it
+    /// bounds the mean ranking value.
     pub(super) fn mean_payoff(&self, bonus: i64, score_cap: i128, max_cap: i128) -> i128 {
+        self.rank(self.mean_reward(bonus, score_cap, max_cap), score_cap)
+    }
+
+    /// [`PointBound::mean_payoff`] of the rewards.
+    fn mean_reward(&self, bonus: i64, score_cap: i128, max_cap: i128) -> i128 {
         let own = self.own_mean_payoff(bonus, score_cap, max_cap);
         if !self.is_combined() {
             return own;
         }
         self.others.iter().fold(self.weight.saturating_mul(own), |sum, (weight, bonus, part)| {
-            sum.saturating_add(weight.saturating_mul(part.mean_payoff(*bonus, score_cap, max_cap)))
+            sum.saturating_add(weight.saturating_mul(part.mean_reward(*bonus, score_cap, max_cap)))
         })
     }
 
@@ -384,9 +390,6 @@ impl PointBound {
                 // min(S,t) is nondecreasing and concave on the entire signed score domain.
                 ScoreTarget::Capped(threshold) => score_cap.min(i128::from(threshold)),
             };
-        }
-        if self.expected {
-            return self.tier_payoff(bonus, score_cap);
         }
         match (&self.hulls, &self.score_tiers) {
             (Some(hulls), Some(tiers)) => {
@@ -403,12 +406,14 @@ impl PointBound {
     /// term's multiplier at the cap, without its score target, plus the other terms.
     pub(crate) fn cutoff_payoff(&self, bonus: i64, score_cap: i128) -> i128 {
         let own = self.tier_payoff(bonus, score_cap);
-        if !self.is_combined() {
-            return own;
-        }
-        self.others.iter().fold(self.weight.saturating_mul(own), |sum, (weight, bonus, part)| {
-            sum.saturating_add(weight.saturating_mul(part.order_payoff(*bonus, score_cap)))
-        })
+        let reward = if !self.is_combined() {
+            own
+        } else {
+            self.others.iter().fold(self.weight.saturating_mul(own), |sum, (weight, bonus, part)| {
+                sum.saturating_add(weight.saturating_mul(part.order_reward(*bonus, score_cap)))
+            })
+        };
+        self.rank(reward, score_cap)
     }
 
     pub(super) fn multiplier_at(&self, score_cap: i128) -> i64 {

@@ -23,7 +23,7 @@ result, and the complete tie order. The following contracts use different identi
 | `search::search_best_order_diagnostic` | Best performance order for the declared diagnostic objective | One best representative per member set | After every Snap ID |
 | Recommendation facade, Power and deterministic Skip metrics | Declared deterministic payoff, then power | Leader and five member/Snap pairs; nonleader pairs in canonical layout | Before every Snap ID |
 | Recommendation facade, deterministic played Live | Mean terminal payoff over all 120 orders, then power | The same canonical team | Before every Snap ID |
-| Recommendation facade, LUCK | Expected terminal payoff under the declared order and lottery law | Canonical team, with certified interval ranking | Before every Snap ID |
+| Recommendation facade, LUCK | Mean payoff at each order's expected score under the declared lottery law, then (for steps and targets) the mean expected score, then power | Canonical team, with certified interval ranking | Before every Snap ID |
 | Deterministic `SearchSession` v1 | Its supported deterministic payoff, then power | Five physical member slots and their Snap bindings | Before every Snap ID |
 
 `search::search` accepts Power and Skip; best-order Live optimization is exposed through the explicitly named
@@ -818,7 +818,8 @@ For ranked items, each reachable grade selects the unique row of the route's eve
 10000. Native-product checks cover that row before resource filtering. Prefix maxima are only upper bounds: actual
 settlement selects exactly one grade, without accumulating lower grades or substituting their larger rewards. A target
 uses the indicator that `C(P)` reaches its threshold; a score-and-life target may relax the life requirement.
-Thus each order's payoff, and its lottery expectation when applicable, is at most `F(B,P)`. Multiplying by 120
+Thus each order's payoff, and under a LUCK lottery its payoff at its expected score, is at most `F(B,P)`: the cap
+bounds every outcome's score and therefore their expectation. Multiplying by 120
 bounds the uniform-order payoff numerator. This conversion requires an orderwise score cap; a bound on mean score
 alone would not justify applying a discontinuous target or reward step in this way.
 
@@ -1166,8 +1167,8 @@ finite-oracle tests check instances of these obligations; they do not replace th
 
 ## Maximum aggregation
 
-Under `aggregation: "maximum"` the value of a team is `max` over the 120 performance orders of the order's expected
-terminal payoff. The leaf evaluation simulates the orders as one prefix-sharing tree and combines node bounds by
+Under `aggregation: "maximum"` the value of a team is `max` over the 120 performance orders of the order's terminal
+payoff, or under a LUCK lottery of the order's ranking value ([LUCK](#luck)). The leaf evaluation simulates the orders as one prefix-sharing tree and combines node bounds by
 maximum instead of by sum. An order is omitted only when its bound is strictly below a payoff already attained by
 another order of the same team, so every order tying the maximum is evaluated and the reported best order is the
 smallest tying one.
@@ -1179,7 +1180,7 @@ least the K-th power. The score-threshold metrics use the upper-only payoff curv
 (or at the threshold), to close the search from the power frontier. The route stays single-order: its denominator is
 one, and the probability law of the result is `maximumOverMemberOrders`.
 
-With a LUCK range, the certified search bounds the expected payoff of each order under the lottery laws of the
+With a LUCK range, the certified search bounds the ranking value of each order under the lottery laws of the
 domain's teams. For position potentials `v`, the gain sum of a team in any order is at most `sum(v)` plus, for each
 of its slots, the largest excess of the slot's per-position gains over `v`: each slot takes one position and every
 position is taken once, so this is the dual of the assignment of slots to positions. The joint bounds are recompiled
@@ -1867,9 +1868,31 @@ trigger at their frame's time.
 ### LUCK
 
 A LUCK mission decides its lottery with random numbers, so a LUCK chart's outcome is a distribution over draws
-rather than one integer payoff per performance order. Its declared value is
+rather than one integer score per performance order. Each performance order `pi` of team `t` is valued at its
+expected score
 
-    U(t) = (1/120) * sum_{pi in S5} E_{h ~ Q(t,pi)}[payoff(t, pi, h)].
+    m(t,pi) = E_{h ~ Q(t,pi)}[score(t, pi, h)],
+
+and earns the reward `r(t,pi)` of the declared payoff mapping at that score: the reward step that holds
+`floor(m)`, the indicator of `floor(m) >= threshold` for a score target (for a score-and-life target, also of an
+expected final life whose integer part reaches the minimum), `min(m, threshold)` for a capped score and `m` itself
+for the score. The team's reward is
+
+    R(t) = (1/120) * sum_{pi in S5} r(t,pi),
+
+and teams rank by their ranking value `V(t)`, then by power and canonical IDs. For reward steps and score targets,
+whose rewards are integers,
+
+    V(t) = W * R(t) + M(t),   M(t) = (1/120) * sum_{pi in S5} m(t,pi),   W = 2^39.
+
+Two different rewards differ by at least `1/120`, and `W / 120` exceeds the span of 32-bit scores, so `V` orders
+teams by their reward first and teams with equal rewards by their mean expected score. For the score and the capped
+score, `V(t) = R(t)`. Under `aggregation: "maximum"`, `V(t)` is the greatest ranking value `W * r(t,pi) + m(t,pi)`
+(or `r(t,pi)`) over the orders. With one outcome per order, `m` is the order's score and `R(t)` is the payoff of
+the deterministic route.
+
+`payoffInterval` and the exact payoff fields report the reward `R(t)` (under `"maximum"`, the greatest order
+reward), and under `"expected"` `scoreInterval` and `expectedScore` report `M(t)`.
 
 `Q` is the independent nominal draw law implemented by
 [the lottery DP](../crates/ournotes-sim/src/live/full/luck_dp.rs) and
@@ -1925,15 +1948,19 @@ premises of the enclosure. If `L_sigma <= E[Q_sigma] <= H_sigma`, then
 Aggregation checks that the input contains 120 distinct permutations and rounds outward. An unrepresentable exact
 rational aggregate can omit its exact metadata while keeping that interval certificate.
 
-For a step payoff starting at value `v0`, with thresholds `t_i` and signed value changes `delta_i`,
+The reward of an order reads its expected score: with `L <= m <= H`, every integer part of `m` lies in
+`[floor(L), floor(H)]`, intersected with the score support, so the order's reward lies between the least and the
+greatest reward the mapping pays on that range. A reward step that holds the whole range, or a target that the
+whole range meets or misses, makes the reward exact before the expected score is. The reward tiers need not be
+monotone. A score-and-life target reads the support of the final life, and an exact law its expected final life.
+These transforms are in [`certified_search.rs`](../crates/ournotes-search/src/search/certified_search.rs).
 
-    E[f(S)] = v0 + sum_i delta_i * Pr(S >= t_i).
-
-The identity follows by writing the step function as a sum of threshold indicators and taking expectations; it
-does not require reward tiers to be monotone. Score targets consume tail probabilities, capped scores consume
-truncated expectations, and score/life conjunctions require a joint-event certificate. Support and first-moment
-inequalities retain conservative bounds where refined tails are unavailable. These transforms are in
-[`certified_search.rs`](../crates/ournotes-search/src/search/certified_search.rs).
+Node bounds read the same caps. A score cap `C` bounds every outcome's score in an order and therefore the order's
+expected score, so the reward at `C` (the prefix maximum of the reachable steps) bounds the order's reward and `C`
+bounds its expected score. Their ranking value `W * reward(C) + C` bounds the order's ranking value, and the mean
+bounds read the mean expected score's cap through the same concave majorants as a deterministic score. A
+score-and-life target relaxes its life requirement at nodes: an order short of the final life still ranks by its
+expected score. Every ranking value reads its own order's cap.
 
 #### Complete-law replay and reuse
 
@@ -1971,9 +1998,9 @@ Implementation: [checkpoint replay and initialized-state identity](../crates/our
 
 #### LUCK ranking certificate
 
-For every retained team `t`, maintain a certified payoff interval
+For every retained team `t`, maintain a certified interval of its ranking value
 
-    L(t) <= U(t) <= H(t).
+    L(t) <= V(t) <= H(t).
 
 The [interval frontier](../crates/ournotes-search/src/search/interval_topk.rs) proves that `t` precedes `s` when:
 

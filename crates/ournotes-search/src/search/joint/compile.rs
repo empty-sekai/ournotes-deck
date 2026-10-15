@@ -63,9 +63,8 @@ impl JointBounds {
     /// per-note bounds then weigh the Rush factor and the direct-Rush score ups by their certified class masses
     /// (see `LuckLaws`). No law: every note takes its largest luck factor.
     ///
-    /// A weighted bound caps the expected score of an order, and the payoff reads it through a concave nondecreasing
-    /// majorant ([`PointBound::weighed`]), so laws compile for every metric without a score target. The luck weights
-    /// are read from `memo` when it holds those of the same laws and notes.
+    /// A weighted bound caps the expected score of an order, which a certified LUCK live ranks its orders by
+    /// ([`PointBound::ranked`]). The luck weights are read from `memo` when it holds those of the same laws and notes.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn compile_with_laws(
         pool: &Pool,
@@ -221,11 +220,11 @@ impl JointBounds {
             }
             None => term_points(metric)?,
         };
-        // Under laws every score cap bounds an expected score.
+        // A certified LUCK live ranks its orders by their rewards at their expected scores and then by those scores.
+        use crate::search::physical::certified_engine::{LotteryMode, lottery_mode};
+        let certified = lottery_mode(pool, request, domain)? == LotteryMode::Certified;
         let points = match points {
-            Some(pt) if !laws.is_empty() => {
-                Some(pt.weighed().ok_or_else(|| unavailable("lottery laws weigh no score target"))?)
-            }
+            Some(pt) if certified => Some(pt.ranked()),
             points => points,
         };
         // Per-note caps of complete teams: one per performance order, and the cutoff tables of the simulations.
@@ -267,8 +266,9 @@ impl JointBounds {
             global,
             eps,
             points,
+            // An order short of the least final life pays nothing, but under LUCK it still ranks by its expected score.
             min_final_life: match metric {
-                Metric::ScoreAndLifeAtLeast { min_final_life, .. } => Some(i64::from(*min_final_life)),
+                Metric::ScoreAndLifeAtLeast { min_final_life, .. } if !certified => Some(i64::from(*min_final_life)),
                 _ => None,
             },
             fine,

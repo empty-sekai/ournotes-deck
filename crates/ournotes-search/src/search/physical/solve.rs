@@ -30,7 +30,7 @@ pub fn solve_physical(
 }
 
 /// [`solve_physical`] with an explicit aggregation of the performance orders of a played live: their mean
-/// (`Expected`) or their greatest value (`Maximum`), each order valued by the expectation of its terminal payoff over
+/// (`Expected`) or their greatest value (`Maximum`), each order worth the terminal payoff at its expected score over
 /// its random draws.
 #[allow(clippy::too_many_arguments)]
 pub fn solve_physical_with_aggregation(

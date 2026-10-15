@@ -1,6 +1,6 @@
 //! Maximum aggregation of a played live: a team is worth its best performance order.
 //!
-//! The value of one order is the expectation of its terminal payoff over the random draws it contains. Orders that
+//! One order is worth the terminal payoff at its expected score over the random draws it contains. Orders that
 //! draw no lottery have one outcome, so their value is that outcome's payoff. [`Engine::evaluate_maximum`] simulates
 //! the orders as one prefix-sharing tree whose node bounds combine by maximum, and omits the orders whose bound lies
 //! strictly below a payoff already attained, so every order that ties the maximum is evaluated. [`search`] walks the

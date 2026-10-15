@@ -66,7 +66,9 @@ fn maximum_gekisou_with_a_lottery_range_ranks_by_the_best_certified_order() {
                 if let Some(value) = &deck.objective_value {
                     let (n, d) = fraction(value);
                     assert!(interval.lower_f64() <= n as f64 / d as f64 && n as f64 / d as f64 <= interval.upper_f64());
-                    assert!(deck.best_order.is_some(), "an exact maximum names the order that attains it");
+                    if let Some(best) = &deck.best_order {
+                        assert_eq!(best.payoff, n.div_euclid(d).to_string(), "the best order earns the team's value");
+                    }
                 }
                 if let Some(best) = &deck.best_order {
                     let mut members = best.members;
@@ -120,7 +122,7 @@ fn maximum_gekisou_with_a_lottery_range_keeps_the_exhaustive_ranking_with_two_me
 }
 
 #[test]
-fn maximum_gekisou_with_a_certain_threshold_is_exact_in_the_first_order() {
+fn maximum_gekisou_with_a_certain_threshold_is_exact_in_every_order() {
     let (data, roster) = correctness_matrix::fixture(5, 0, 5, true);
     for (threshold, value) in [(1, 1), (2147483647, 0)] {
         let mut request =
@@ -133,8 +135,10 @@ fn maximum_gekisou_with_a_certain_threshold_is_exact_in_the_first_order() {
         assert_eq!(result.results.len(), 5);
         for deck in &result.results {
             assert_eq!(fraction(deck.objective_value.as_ref().unwrap()), (value, 1));
-            let best = deck.best_order.as_ref().unwrap();
-            assert_eq!(best.payoff, value.to_string());
+            // Every order earns the same reward; the best order is the one proved to have the greatest expected score.
+            if let Some(best) = &deck.best_order {
+                assert_eq!(best.payoff, value.to_string());
+            }
         }
     }
 }
