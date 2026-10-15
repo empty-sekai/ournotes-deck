@@ -373,6 +373,36 @@ pub(super) fn ordered_root(
     joint_rec(0, 0, p, domain, bounds, orders, e, None)
 }
 
+/// The recent checks of the correlated node bound at a depth: its counts there halve at this many checks.
+const CORRELATED_WINDOW: u64 = 2048;
+/// A check of the correlated node bound costs about this fraction of a node of the traversal.
+const CORRELATED_COST: u64 = 4;
+/// While it does not pay, the correlated node bound checks every this many nodes of a depth.
+const CORRELATED_SAMPLE: u64 = 16;
+
+/// Whether the node at a depth checks the correlated node bound, `recent` its recent checks and prunes there and
+/// `nodes` the traversal's node counts by depth. The bound costs more than the other node bounds and, after the
+/// order-step bounds, may seldom prune; it runs for its first checks at the depth, then while the nodes its recent
+/// prunes cut off (a mean subtree below the depth each, read from the node counts) are at least a
+/// [`CORRELATED_COST`]th of its recent checks, and at every [`CORRELATED_SAMPLE`]th node otherwise, so its yield
+/// stays measured as the traversal moves to weaker prefixes. Skipping a valid bound changes no result.
+fn correlated_due(recent: [u64; 2], nodes: &[u64; telemetry::DEPTHS], depth: usize) -> bool {
+    let [checks, pruned] = recent;
+    let below: u64 = nodes[depth + 1..].iter().sum();
+    checks < CORRELATED_WINDOW / 2
+        || pruned.saturating_mul(below).saturating_mul(CORRELATED_COST) >= checks.saturating_mul(nodes[depth])
+        || nodes[depth].is_multiple_of(CORRELATED_SAMPLE)
+}
+
+/// Counts a check of the correlated node bound in `recent`, halving the counts at [`CORRELATED_WINDOW`] checks.
+fn correlated_count(recent: &mut [u64; 2], pruned: bool) {
+    recent[0] += 1;
+    recent[1] += u64::from(pruned);
+    if recent[0] >= CORRELATED_WINDOW {
+        *recent = recent.map(|count| count / 2);
+    }
+}
+
 /// One node of the joint member/Snap traversal: the leader pair at depth 0, then the other slots in `SLOTS` order.
 /// The pairs of the other slots take ascending indices of the choice order (`start` is the first index left to the
 /// next one), so every team is visited once, in one layout; its canonical layout is the one evaluated.
@@ -486,11 +516,14 @@ pub(super) fn joint_rec(
                 return Ok(true);
             }
         }
-        if depth < 5 && e.correlated {
+        if depth < 5 && e.correlated && correlated_due(e.correlated_recent[depth], &joint.nodes, depth) {
             joint.correlated.check(depth);
             let correlated =
                 node_bounds.correlated_expected_upper_keyed(e.pool, domain, p, depth, orders, keyed.as_ref())?;
-            if correlated < threshold || (exact_ties && correlated == threshold && power < i64::from(cutoff_power)) {
+            let pruned =
+                correlated < threshold || (exact_ties && correlated == threshold && power < i64::from(cutoff_power));
+            correlated_count(&mut e.correlated_recent[depth], pruned);
+            if pruned {
                 joint.correlated.prune(depth);
                 return Ok(true);
             }

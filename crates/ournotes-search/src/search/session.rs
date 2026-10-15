@@ -406,6 +406,7 @@ impl<'m> SearchSession<'m> {
             tel: std::mem::take(&mut self.tel),
             rec: Recorder::new(self.started),
             correlated: false,
+            correlated_recent: [[0; 2]; 5],
             resource: false,
             bound_scratch: super::super::snaps::JointScratch::default(),
             bonus_scratch: super::super::joint::BonusScratch::default(),

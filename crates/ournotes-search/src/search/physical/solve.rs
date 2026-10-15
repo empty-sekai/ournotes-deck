@@ -210,6 +210,7 @@ pub(crate) fn solve_physical_impl(
         tel,
         rec: Recorder::new(origin),
         correlated: false,
+        correlated_recent: [[0; 2]; 5],
         resource: false,
         bound_scratch: crate::search::snaps::JointScratch::default(),
         bonus_scratch: crate::search::joint::BonusScratch::default(),

@@ -17,6 +17,8 @@ pub(super) struct Engine<'a, 'm> {
     pub(super) rec: Recorder,
     /// Correlated and resource node bounds are worth their cost for the current search part.
     pub(super) correlated: bool,
+    /// Per depth, the recent checks and prunes of the correlated node bound (see `joint_search::correlated_due`).
+    pub(super) correlated_recent: [[u64; 2]; 5],
     pub(super) resource: bool,
     pub(super) bound_scratch: crate::search::snaps::JointScratch,
     pub(super) bonus_scratch: crate::search::joint::BonusScratch,
