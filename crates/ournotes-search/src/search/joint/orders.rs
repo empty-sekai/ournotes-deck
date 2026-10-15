@@ -24,7 +24,11 @@ impl JointBounds {
         let fine = self.fine.as_ref()?;
         let choices = Self::prefix_choices(domain, p, 5);
         let score_cap = fine.upper(power, p.members, choices, positions, scratch, None) as i128;
-        Some(self.points.as_ref().map_or(score_cap, |pt| pt.order_payoff(self.bonus_of(p, &choices), score_cap)))
+        Some(
+            self.points
+                .as_ref()
+                .map_or(score_cap, |pt| pt.team_order_payoff(&Self::team_pairs(p, &choices), score_cap)),
+        )
     }
 
     /// At least the sum of [`JointBounds::fine_upper`] over the performance orders `orders` of a complete deck, as one
@@ -114,6 +118,11 @@ impl JointBounds {
         Some(TeamCaps::Fine)
     }
 
+    /// The member and choice pairs of a complete deck by slot.
+    fn team_pairs(p: &PhysicalDeck, choices: &[usize; 5]) -> [(usize, usize); 5] {
+        std::array::from_fn(|s| (p.members[s], choices[s]))
+    }
+
     /// The event bonus of a complete deck (0 without a PT objective).
     pub(super) fn bonus_of(&self, p: &PhysicalDeck, choices: &[usize; 5]) -> i64 {
         self.points.as_ref().map_or(0, |pt| {
@@ -190,7 +199,7 @@ impl JointBounds {
     ) -> Option<i128> {
         let choices = Self::prefix_choices(domain, p, 5);
         let cap = self.fine.as_ref()?.raw_upper(power, p.members, choices, positions)?;
-        Some(self.points.as_ref().map_or(cap, |pt| pt.order_payoff(self.bonus_of(p, &choices), cap)))
+        Some(self.points.as_ref().map_or(cap, |pt| pt.team_order_payoff(&Self::team_pairs(p, &choices), cap)))
     }
 
     /// The cheap payoff cap of a complete team in each performance order (`orders` holds the positions of each), at
@@ -208,7 +217,7 @@ impl JointBounds {
         let level = self.carrier_level(self.carriers_placed(p, 5, &choices));
         let keyed = self.keyed(p, 5, &choices, 0, 0);
         let a0 = level.less_offset(keyed.as_ref().map_or(level.a0, |k| k.a0));
-        let bonus = self.bonus_of(p, &choices);
+        let pairs = Self::team_pairs(p, &choices);
         orders
             .iter()
             .map(|positions| {
@@ -226,7 +235,7 @@ impl JointBounds {
                 if self.short_of_final_life(p, &choices, positions) {
                     return 0;
                 }
-                level.points.as_ref().map_or(score_cap, |pt| pt.order_payoff(bonus, score_cap))
+                level.points.as_ref().map_or(score_cap, |pt| pt.team_order_payoff(&pairs, score_cap))
             })
             .collect()
     }
@@ -345,10 +354,26 @@ impl JointBounds {
         orders: &[([usize; 5], u128)],
         keyed: Option<&Keyed>,
     ) -> Result<(i128, i64), Error> {
+        self.expected_upper_reading(pool, domain, p, depth, orders, keyed, true)
+    }
+
+    /// `expected_upper_keyed`, the other terms of a combined metric at their bonus bounds of the node (`per_term`) or
+    /// at their largest bonuses of a team.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn expected_upper_reading(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        orders: &[([usize; 5], u128)],
+        keyed: Option<&Keyed>,
+        per_term: bool,
+    ) -> Result<(i128, i64), Error> {
         let mut total = 0i128;
         let mut power = 0;
         for (positions, weight) in orders {
-            let (payoff, p) = self.upper_keyed(pool, domain, p, depth, positions, keyed);
+            let (payoff, p) = self.upper_reading(pool, domain, p, depth, positions, keyed, per_term);
             power = p;
             total = total
                 .checked_add(

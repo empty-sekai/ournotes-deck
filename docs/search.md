@@ -23,7 +23,7 @@ result, and the complete tie order. The following contracts use different identi
 | `search::search_best_order_diagnostic` | Best performance order for the declared diagnostic objective | One best representative per member set | After every Snap ID |
 | Recommendation facade, Power and deterministic Skip metrics | Declared deterministic payoff, then power | Leader and five member/Snap pairs; nonleader pairs in canonical layout | Before every Snap ID |
 | Recommendation facade, deterministic played Live | Mean terminal payoff over all 120 orders, then power | The same canonical team | Before every Snap ID |
-| Recommendation facade, LUCK | Expected terminal payoff under the declared order and lottery law | Canonical team, with certified interval ranking | Before every Snap ID |
+| Recommendation facade, LUCK | Mean payoff at each order's expected score under the declared lottery law, then (for every payoff but the score) the mean expected score, then power | Canonical team, with certified interval ranking | Before every Snap ID |
 | Deterministic `SearchSession` v1 | Its supported deterministic payoff, then power | Five physical member slots and their Snap bindings | Before every Snap ID |
 
 `search::search` accepts Power and Skip; best-order Live optimization is exposed through the explicitly named
@@ -818,7 +818,8 @@ For ranked items, each reachable grade selects the unique row of the route's eve
 10000. Native-product checks cover that row before resource filtering. Prefix maxima are only upper bounds: actual
 settlement selects exactly one grade, without accumulating lower grades or substituting their larger rewards. A target
 uses the indicator that `C(P)` reaches its threshold; a score-and-life target may relax the life requirement.
-Thus each order's payoff, and its lottery expectation when applicable, is at most `F(B,P)`. Multiplying by 120
+Thus each order's payoff, and under a LUCK lottery its payoff at its expected score, is at most `F(B,P)`: the cap
+bounds every outcome's score and therefore their expectation. Multiplying by 120
 bounds the uniform-order payoff numerator. This conversion requires an orderwise score cap; a bound on mean score
 alone would not justify applying a discontinuous target or reward step in this way.
 
@@ -1166,8 +1167,8 @@ finite-oracle tests check instances of these obligations; they do not replace th
 
 ## Maximum aggregation
 
-Under `aggregation: "maximum"` the value of a team is `max` over the 120 performance orders of the order's expected
-terminal payoff. The leaf evaluation simulates the orders as one prefix-sharing tree and combines node bounds by
+Under `aggregation: "maximum"` the value of a team is `max` over the 120 performance orders of the order's terminal
+payoff, or under a LUCK lottery of the order's ranking value ([LUCK](#luck)). The leaf evaluation simulates the orders as one prefix-sharing tree and combines node bounds by
 maximum instead of by sum. An order is omitted only when its bound is strictly below a payoff already attained by
 another order of the same team, so every order tying the maximum is evaluated and the reported best order is the
 smallest tying one.
@@ -1179,7 +1180,7 @@ least the K-th power. The score-threshold metrics use the upper-only payoff curv
 (or at the threshold), to close the search from the power frontier. The route stays single-order: its denominator is
 one, and the probability law of the result is `maximumOverMemberOrders`.
 
-With a LUCK range, the certified search bounds the expected payoff of each order under the lottery laws of the
+With a LUCK range, the certified search bounds the ranking value of each order under the lottery laws of the
 domain's teams. For position potentials `v`, the gain sum of a team in any order is at most `sum(v)` plus, for each
 of its slots, the largest excess of the slot's per-position gains over `v`: each slot takes one position and every
 position is taken once, so this is the dual of the assignment of slots to positions. The joint bounds are recompiled
@@ -1233,7 +1234,8 @@ windows, and cutoff tables keep the full cap while ranking uses the retained sna
 
 Correlation preparation probes at most 16 leader/pair prefixes, independently of traversal order. Unless the
 correlated bound tightens the cheap expected upper bound there by more than 3%, the solver skips that optional
-bound and keeps the ordinary complete traversal. The probe is a cost policy, not a proof, and never removes
+bound and keeps the ordinary complete traversal. A ranked PT bound tightens by a lower reward or, at an equal reward,
+by more than 3% of its expected score. The probe is a cost policy, not a proof, and never removes
 candidates; diagnostics still audit the correlated bound when the policy skips it.
 
 The coefficient, correlated and node bound checks read position-mean gains; the per-order caps of a complete team
@@ -1353,11 +1355,19 @@ per-term expectations are computed from the same score distribution when it ente
 The upper bound is the weighted sum of the terms' own bounds. For a node, every term bound `U_i` covers the
 term's expected payoff over the node's completions, the weights are nonnegative and the term rewards are
 nonnegative, so `sum_i w_i * U_i` covers the expected combined payoff. One term keeps its member and Snap event
-bonuses in the bound's additive tables. Every other term's payoff is nondecreasing in its event bonus and is
-evaluated at the largest bonus of a legal team, which no team exceeds. Where the single-metric bound reads the
-payoff of one order from a score cap, the combined bound adds the terms' order payoffs at that cap; where it
-reads a mean from a mean score cap, it adds the terms' mean bounds. When every term is a step function of the
-score, the union of the terms' step scores partitions the score axis for the per-interval order bound.
+bonuses in the bound's additive tables. Every other term's payoff is nondecreasing in its event bonus. A node's
+cheap, bonus and correlated bounds evaluate it at the term's bonus of the placed pairs plus, for the slots to fill,
+the largest member bonuses of as many distinct characters not placed and the largest positive bonuses of as many
+Snaps not placed, at most the largest bonus of a legal team: a completion takes distinct characters and distinct
+Snaps (or none) for those slots, so no completion exceeds it. The suffix, block and pair bounds of a node's
+children add the next pair's bonus under each term, the other node bounds read the largest bonus of a legal team,
+and the caps of a complete team read every term at the team's own bonus. The root loop orders the leader pairs by
+their depth-1 bound with every other term at its largest bonus: when the best teams' rewards agree, their expected
+scores rank them, and that order ranks first the leaders whose teams reach the higher scores. Where the
+single-metric bound reads the payoff of one order from a score cap, the combined bound adds the terms' order
+payoffs at that cap; where it reads a mean from a mean score cap, it adds the terms' mean bounds. When every term is
+a step function of the score, the union of the terms' step scores partitions the score axis for the per-interval
+order bound.
 A term without a bound of its own pays its score, which the score cap covers.
 
 ### Several levels
@@ -1404,7 +1414,9 @@ with the bound of the sections above under the same conditions as a single metri
 without score steps, such as a raw score, uses that traversal from the start. A Skip with a term the deck does
 not determine uses complete legal team enumeration.
 
-A request with an active LUCK range is reported as unsupported.
+Under an active LUCK range each order pays every term at the integer part of its expected score, and the folded
+payoff ranks as a single reward does ([LUCK](#luck)). A metric whose folded cap, with room for the reward weight and
+the sums over orders, leaves the 128-bit integer range is an input error.
 
 Reproduce the folding arithmetic, the synthetic complete-domain comparison between exhaustive enumeration and
 branch-and-bound on one and several levels, the independent per-term settlement, validation and the account
@@ -1867,9 +1879,37 @@ trigger at their frame's time.
 ### LUCK
 
 A LUCK mission decides its lottery with random numbers, so a LUCK chart's outcome is a distribution over draws
-rather than one integer payoff per performance order. Its declared value is
+rather than one integer score per performance order. Each performance order `pi` of team `t` is valued at its
+expected score
 
-    U(t) = (1/120) * sum_{pi in S5} E_{h ~ Q(t,pi)}[payoff(t, pi, h)].
+    m(t,pi) = E_{h ~ Q(t,pi)}[score(t, pi, h)],
+
+and earns the reward `r(t,pi)` of the declared payoff mapping at the integer part of that score: the reward step
+that holds `floor(m)`, the indicator of `floor(m) >= threshold` for a score target (for a score-and-life target, also
+of an expected final life whose integer part reaches the minimum) and `min(floor(m), threshold)` for a capped score.
+The score itself pays `m`. A [combined metric](#combined-metrics) pays each term so at the same expected score, a
+score term `floor(m)`, and `r(t,pi)` is the folded payoff of these term rewards. The team's reward is
+
+    R(t) = (1/120) * sum_{pi in S5} r(t,pi),
+
+and teams rank by their ranking value `V(t)`, then by power and canonical IDs. For every mapping but the score,
+whose rewards are integers,
+
+    V(t) = W * R(t) + M(t),   M(t) = (1/120) * sum_{pi in S5} m(t,pi),   W = 2^39.
+
+Two different rewards differ by at least `1/120`, and `W / 120` exceeds the span of 32-bit scores, so `V` orders
+teams by their reward first and teams with equal rewards by their mean expected score. For the score, `V(t) = R(t)`.
+Under `aggregation: "maximum"`, `V(t)` is the greatest ranking value `W * r(t,pi) + m(t,pi)` (or `m(t,pi)`) over the
+orders. With one outcome per order, `m` is the order's score and `R(t)` is the payoff of the deterministic route.
+
+Rewards can be large, so each evaluation also carries a rational enclosure of `V(t)`: the integer rewards' bounds
+weighted by `W` plus the expected score's enclosure rounded outward to multiples of `2^-20`. The ranking certificate
+reads the tighter of this and the binary64 enclosure.
+
+`payoffInterval` and the exact payoff fields report the reward `R(t)` (under `"maximum"`, the greatest order
+reward), and under `"expected"` `scoreInterval` and `expectedScore` report `M(t)`. For a combined metric they report
+the first level, and the levels and terms report the mean of each term's rewards (under `"maximum"`, those of the
+best order) once every one of them is exact.
 
 `Q` is the independent nominal draw law implemented by
 [the lottery DP](../crates/ournotes-sim/src/live/full/luck_dp.rs) and
@@ -1925,15 +1965,36 @@ premises of the enclosure. If `L_sigma <= E[Q_sigma] <= H_sigma`, then
 Aggregation checks that the input contains 120 distinct permutations and rounds outward. An unrepresentable exact
 rational aggregate can omit its exact metadata while keeping that interval certificate.
 
-For a step payoff starting at value `v0`, with thresholds `t_i` and signed value changes `delta_i`,
+The reward of an order reads its expected score: with `L <= m <= H`, every integer part of `m` lies in
+`[floor(L), floor(H)]`, intersected with the score support, so the order's reward lies between the least and the
+greatest reward the mapping pays on that range. A reward step that holds the whole range, or a target that the
+whole range meets or misses, makes the reward exact before the expected score is. The reward tiers need not be
+monotone. A score-and-life target reads the support of the final life, and an exact law its expected final life.
+These transforms are in [`certified_search.rs`](../crates/ournotes-search/src/search/certified_search.rs).
 
-    E[f(S)] = v0 + sum_i delta_i * Pr(S >= t_i).
+Node bounds read the same caps. A score cap `C` bounds every outcome's score in an order and therefore the order's
+expected score, so the reward at `C` (the prefix maximum of the reachable steps) bounds the order's reward and `C`
+bounds its expected score. Their ranking value `W * reward(C) + C` bounds the order's ranking value, and the mean
+bounds read the mean expected score's cap through the same concave majorants as a deterministic score. A
+score-and-life target relaxes its life requirement at nodes: an order short of the final life still ranks by its
+expected score. Every ranking value reads its own order's cap. The Gekisou character prefix tables bound the mean
+score of every completion of a prefix and of each of its children; a PT bound reads its reward and ranking value at
+the least of that cap and its other mean caps, with the prefix's event bonuses and its cap of every order's score,
+which bound every completion of a child as well.
 
-The identity follows by writing the step function as a sum of threshold indicators and taking expectations; it
-does not require reward tiers to be monotone. Score targets consume tail probabilities, capped scores consume
-truncated expectations, and score/life conjunctions require a joint-event certificate. Support and first-moment
-inequalities retain conservative bounds where refined tails are unavailable. These transforms are in
-[`certified_search.rs`](../crates/ournotes-search/src/search/certified_search.rs).
+A cap reads every outcome's score, so it can lie above every order's expected score and reach a tier no order
+earns. Before its search, a PT request asks of the tier thresholds above the greatest expected score evaluated so
+far, in ascending order until one is not reached, whether any order of a team of the domain reaches them. Each
+question is a nested certified
+search of the teams' best orders by expected score: it closes every node whose cap lies below the threshold `T`
+and stops at the first team whose best order reaches `T`. When it exhausts the domain and every team it retains
+lies below `T`, every other team lies below a retained one or was closed below `T`, so no order has an expected
+score of `T` or more and every order's reward reads only the tiers below `T`. The bounds then drop the tiers from
+`T` on: the reward at any cap, the concave majorants and the largest multiplier read the remaining tiers, in the
+qualifying-domain restriction and the leaf bounds as well. The root loop still visits the leader pairs in the order
+of their bounds before the drop, which rank first the leaders whose teams reach the higher scores: it skips a pair
+whose own bound lies below the cutoff and stops once the largest bound of the pairs left does. Each question takes at
+most a quarter of the time left; one that does not finish drops nothing.
 
 #### Complete-law replay and reuse
 
@@ -1971,9 +2032,9 @@ Implementation: [checkpoint replay and initialized-state identity](../crates/our
 
 #### LUCK ranking certificate
 
-For every retained team `t`, maintain a certified payoff interval
+For every retained team `t`, maintain a certified interval of its ranking value
 
-    L(t) <= U(t) <= H(t).
+    L(t) <= V(t) <= H(t).
 
 The [interval frontier](../crates/ournotes-search/src/search/interval_topk.rs) proves that `t` precedes `s` when:
 

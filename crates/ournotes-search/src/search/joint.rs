@@ -129,6 +129,8 @@ pub(crate) struct JointBounds {
     relax_tables: Option<relax_tables::RelaxTables>,
     /// Table form of each forced slot's term for the current rules.
     forced_tables: [Option<relax_tables::ForcedTable>; 5],
+    /// With a point bound: the candidates as the passes of the order-step bound read them.
+    step_pairs: Option<order_steps::StepPairs>,
     /// (pool member, choice index: 0=None, j+1=domain.snaps[j]). Ordering only.
     pub(crate) choices: Vec<(usize, usize)>,
     /// With a Gekisou combo range: the cheap bounds of decks with few combo carriers (see `CarrierLevels`).
@@ -147,6 +149,9 @@ pub(crate) struct JointBounds {
     order_potentials: Option<[f64; 5]>,
     /// The sum of those potentials, rounded up (0 otherwise), which per-order quantities leave out.
     order_offset: f64,
+    /// After [`JointBounds::cap_scores`]: the root key ([`JointBounds::root_key`]) of each pair of `choices` in the
+    /// leader slot before the cap (None where it did not compute), which orders the root loop (see `warm::RootOrder`).
+    root_keys: Option<Vec<Option<(i128, i64)>>>,
 }
 
 /// The cheap bounds of decks with at most `n < 5` Gekisou combo carriers (a slot whose member and Snap bring combo
@@ -206,6 +211,80 @@ impl JointBounds {
             "marginDiagnostic":self.fine.as_ref().map(|fine| fine.margin_diagnostic(power, deck.members,
                 deck.snaps.map(|s| s.map_or(0, |snap| domain.snaps().iter().position(|&v| v == snap).expect("compiled Snap") + 1)), positions, None)),
             "finePayoffUpper":self.fine_upper(domain,deck,power,positions,&mut JointScratch::default()).map(|v|v.to_string()),"globalCoefficient":self.global,"relativeMargin":self.eps,"pairGains":gains,"positions":positions})
+    }
+
+    /// The bound every joint node checks first: the cheap bound of the carrier level of the completions of the first
+    /// `depth` search slots of `p`, keyed by the performers placed.
+    pub(crate) fn node_bound(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        orders: &[([usize; 5], u128)],
+    ) -> Result<(i128, i64), Error> {
+        self.node_bound_reading(pool, domain, p, depth, orders, true)
+    }
+
+    /// [`JointBounds::node_bound`], the other terms of a combined metric at their bonus bounds of the node
+    /// (`per_term`) or at their largest bonuses of a team.
+    fn node_bound_reading(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        orders: &[([usize; 5], u128)],
+        per_term: bool,
+    ) -> Result<(i128, i64), Error> {
+        let choices = Self::prefix_choices(domain, p, depth);
+        let placed = self.carriers_placed(p, depth, &choices);
+        let keyed = self.keyed(p, depth, &choices, 5 - depth, 5 - depth);
+        self.carrier_level((placed + 5 - depth).min(5)).expected_upper_reading(
+            pool,
+            domain,
+            p,
+            depth,
+            orders,
+            keyed.as_ref(),
+            per_term,
+        )
+    }
+
+    /// The key the root loop orders the leader pair `choices[index]` by, the depth-1 prefix `p` holding it: the one
+    /// [`JointBounds::cap_scores`] kept, or else the node bound with the other terms of a combined metric at their
+    /// largest bonuses of a team. When the rewards of the best teams agree, their expected scores rank them, and the
+    /// bonus bounds of the other terms would rank first the leaders with the largest bonuses rather than those whose
+    /// teams reach the higher scores. None for the node bound itself.
+    pub(crate) fn root_key(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        index: usize,
+        orders: &[([usize; 5], u128)],
+    ) -> Result<Option<(i128, i64)>, Error> {
+        if let Some(key) = self.root_keys.as_ref().and_then(|keys| keys.get(index).copied().flatten()) {
+            return Ok(Some(key));
+        }
+        if !self.points.as_ref().is_some_and(|pt| !pt.others.is_empty()) {
+            return Ok(None);
+        }
+        self.node_bound_reading(pool, domain, p, 1, orders, false).map(Some)
+    }
+
+    /// The bound the warm start ranks prefixes and teams by: [`JointBounds::expected_upper`] with the other terms of a
+    /// combined metric at their largest bonuses of a team, as the root loop orders its leaders
+    /// ([`JointBounds::root_key`]).
+    pub(crate) fn warm_upper(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        orders: &[([usize; 5], u128)],
+    ) -> Result<(i128, i64), Error> {
+        self.expected_upper_reading(pool, domain, p, depth, orders, None, false)
     }
 
     /// The cheap bounds of every deck with at most `n` Gekisou combo carriers (the pool-wide ones from 5 on).

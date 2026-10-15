@@ -54,10 +54,11 @@ The search returns the first K teams of this order over the complete legal team 
 takes precedence over both secondary quantities; among exact CP ties, the requested secondary order precedes power
 and canonical identity; teams that earn fewer CP follow every team of the highest CP layer.
 
-The supported domain is lottery-free played outcomes and deterministic Skip. Active LUCK ranges and
-ordinary probability predicates with an unproved outcome distribution return `Unsupported`.
-`capabilities().challengePointPriorities` declares both priorities, `objective:lexicographicExpected`,
-`primary:challengePoints` and `lotteryFree:true`.
+Under an active LUCK range each member order earns all three rewards at its expected score, and teams equal on
+every level rank by their expected score; `eventRewards` appears once all three rewards of the team are exact.
+Ordinary probability predicates with an unproved outcome distribution
+return `Unsupported`. `capabilities().challengePointPriorities` declares both priorities,
+`objective:lexicographicExpected` and `primary:challengePoints`.
 
 The result echoes the priority and resource identity. Each team's `eventRewards` contains
 `challengePoints`, `eventPoints` and `eventItems`, each with `score`, an exact numerator/denominator and
@@ -99,10 +100,11 @@ the widest range.
 The lower-level metric is `{"kind":"combined","levels":[{"terms":[{"metric":{...},"weight":2}, ...]}, ...]}`.
 The search bounds a team by the weighted sum of the terms' bounds over all levels. When every term is an event
 reward of a Skip, or steps with the local score of a played Live, teams are first ranked by that sum as a function
-of each term's event bonus and the team power. The supported domain is lottery-free: active LUCK ranges return
-`Unsupported`.
-`capabilities().combinedMetric` declares `objective:lexicographicWeightedExpectedSums`, the level, term and weight
-limits and `lotteryFree:true`.
+of each term's event bonus and the team power. Under an active LUCK range each member order pays every term at the
+integer part of its expected score, a `score` term that integer part, and teams equal on every level rank by their
+expected score; `levels` appears once every term reward of the team is exact.
+`capabilities().combinedMetric` declares `objective:lexicographicWeightedExpectedSums` and the level, term and
+weight limits.
 
 The result echoes `metric.levels`. Each team's `levels` lists, in request order, the level's `value` (its exact
 expected weighted sum) and its `terms`: the exact expectation of every term's own payoff, unweighted and in request
@@ -122,12 +124,13 @@ order, in the canonical enumeration, that attains the value, and `objectiveValue
 and a `maximumModel` that states the order count and how an order is valued. `capabilities()` lists both
 aggregations, their laws and their tie breaks.
 
-A live with LUCK lotteries values each order by its certified lottery law, as under `"expected"`. A team's payoff
-interval then runs from the greatest lower bound to the greatest upper bound over its orders, and is exact once an
-order's exact value reaches the upper bound of every other order. `bestOrder` appears once one order is proved to
-attain the maximum: the first order with the exact maximum, or the only order whose upper bound reaches the others'
-lower bounds. Its score is that order's expected score rounded down, and `payoffInterval` and `scoreInterval` keep the
-proved bounds while the value is not exact.
+A live with LUCK lotteries values each order by the payoff at its expected score under its certified lottery
+law, as under `"expected"`, and orders with equal payoffs rank by their expected scores. A team's
+payoff interval then runs from the greatest lower bound to the greatest upper bound over its orders, and is exact
+once an order's exact payoff reaches the upper bound of every other order. `bestOrder` appears once one order is
+proved to attain the greatest ranking value: the first order with the exact maximum, or the only order whose upper
+bound reaches the others' lower bounds. Its score is that order's expected score rounded down, and `payoffInterval`
+and `scoreInterval` keep the proved bounds while the value is not exact.
 
 For every team the maximum value is at least its expected value.
 

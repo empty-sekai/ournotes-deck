@@ -63,9 +63,8 @@ impl JointBounds {
     /// per-note bounds then weigh the Rush factor and the direct-Rush score ups by their certified class masses
     /// (see `LuckLaws`). No law: every note takes its largest luck factor.
     ///
-    /// A weighted bound caps the expected score of an order, and the payoff reads it through a concave nondecreasing
-    /// majorant ([`PointBound::weighed`]), so laws compile for every metric without a score target. The luck weights
-    /// are read from `memo` when it holds those of the same laws and notes.
+    /// A weighted bound caps the expected score of an order, which a certified LUCK live ranks its orders by
+    /// ([`PointBound::ranked`]). The luck weights are read from `memo` when it holds those of the same laws and notes.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn compile_with_laws(
         pool: &Pool,
@@ -172,12 +171,9 @@ impl JointBounds {
                     )?)
                 }
                 Metric::RankedEventItems { event_id, resource_type, resource_id } => {
-                    // Under laws the envelope caps an expected score, which bounds no single score.
-                    let cap = if laws.is_empty() {
-                        ((maximum_slot * 5) as f64 * global * (1.0 + eps)).ceil()
-                    } else {
-                        f64::from(i32::MAX)
-                    };
+                    // Under laws the envelope caps an expected score, which is the score a certified LUCK live reads
+                    // its grade at.
+                    let cap = ((maximum_slot * 5) as f64 * global * (1.0 + eps)).ceil();
                     if !cap.is_finite() {
                         return Err(unavailable("ranked-item score support is not finite"));
                     }
@@ -221,11 +217,11 @@ impl JointBounds {
             }
             None => term_points(metric)?,
         };
-        // Under laws every score cap bounds an expected score.
+        // A certified LUCK live ranks its orders by their rewards at their expected scores and then by those scores.
+        use crate::search::physical::certified_engine::{LotteryMode, lottery_mode};
+        let certified = lottery_mode(pool, request, domain)? == LotteryMode::Certified;
         let points = match points {
-            Some(pt) if !laws.is_empty() => {
-                Some(pt.weighed().ok_or_else(|| unavailable("lottery laws weigh no score target"))?)
-            }
+            Some(pt) if certified => Some(pt.ranked()),
             points => points,
         };
         // Per-note caps of complete teams: one per performance order, and the cutoff tables of the simulations.
@@ -267,8 +263,9 @@ impl JointBounds {
             global,
             eps,
             points,
+            // An order short of the least final life pays nothing, but under LUCK it still ranks by its expected score.
             min_final_life: match metric {
-                Metric::ScoreAndLifeAtLeast { min_final_life, .. } => Some(i64::from(*min_final_life)),
+                Metric::ScoreAndLifeAtLeast { min_final_life, .. } if !certified => Some(i64::from(*min_final_life)),
                 _ => None,
             },
             fine,
@@ -282,6 +279,7 @@ impl JointBounds {
             rules: None,
             relax_tables: None,
             forced_tables: Default::default(),
+            step_pairs: None,
             prefix_resource: None,
             prefix_character: None,
             choices,
@@ -292,6 +290,7 @@ impl JointBounds {
             part: None,
             order_potentials: None,
             order_offset: 0.0,
+            root_keys: None,
         };
         compiled.compile_tables(pool, domain);
         if !compiled.gekisou {
@@ -348,6 +347,70 @@ impl JointBounds {
             for bounds in &mut clusters.bounds {
                 bounds.order_maximum(pool, domain);
             }
+        }
+    }
+
+    /// The score thresholds of the point bound's tiers, ascending and distinct (empty without tiers).
+    pub(crate) fn tier_scores(&self) -> Vec<i64> {
+        let mut scores = Vec::new();
+        if let Some(pt) = &self.points {
+            pt.tier_scores(&mut scores);
+        }
+        scores.sort_unstable();
+        scores.dedup();
+        scores
+    }
+
+    /// Drops the point tiers at and above `threshold`, which no performance order of a team of the domain reaches in
+    /// expected score, from these bounds and their law clusters ([`JointBounds::drop_tiers`]). The root loop of each
+    /// keeps the order of the leader pairs' keys before the cap, read with `orders` (see [`JointBounds::root_key`]):
+    /// the dropped tiers bound no reward, but they still rank first the leaders whose teams reach the higher scores.
+    pub(crate) fn cap_scores(
+        &mut self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        threshold: i64,
+        orders: &[([usize; 5], u128)],
+    ) {
+        if self.points.is_none() {
+            return;
+        }
+        let mut p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
+        let keys = self
+            .choices
+            .iter()
+            .map(|&(m, choice)| {
+                p.members[SLOTS[0]] = m;
+                p.snaps[SLOTS[0]] = (choice > 0).then(|| domain.snaps()[choice - 1]);
+                self.node_bound_reading(pool, domain, &p, 1, orders, false).ok()
+            })
+            .collect();
+        self.root_keys = Some(keys);
+        self.drop_tiers(pool, domain, threshold);
+        if let Some(clusters) = &mut self.law_clusters {
+            for bounds in &mut clusters.bounds {
+                bounds.cap_scores(pool, domain, threshold, orders);
+            }
+        }
+    }
+
+    /// Drops the point tiers at and above `threshold`, which no performance order of a team of the domain reaches in
+    /// expected score, from these bounds and their carrier levels, and rebuilds the tables that read them.
+    pub(crate) fn drop_tiers(&mut self, pool: &Pool, domain: &CandidateDomain, threshold: i64) {
+        let Some(pt) = &mut self.points else { return };
+        pt.cap_scores(threshold - 1);
+        self.compile_tables(pool, domain);
+        if let Some(levels) = &mut self.carrier_levels {
+            for level in levels.at.iter_mut().flatten() {
+                level.drop_tiers(pool, domain, threshold);
+            }
+        }
+        if self.carrier_split.is_some() {
+            self.carrier_split = carrier_split::CarrierSplit::compile(self, pool, domain);
+        }
+        if self.rules.is_some() {
+            let rules = self.rules.take();
+            self.set_rules(pool, domain, rules);
         }
     }
 
@@ -412,6 +475,7 @@ impl JointBounds {
             rules: None,
             relax_tables: None,
             forced_tables: Default::default(),
+            step_pairs: None,
             prefix_resource: None,
             prefix_character: None,
             choices: self.choices.clone(),
@@ -422,19 +486,21 @@ impl JointBounds {
             part: None,
             order_potentials: None,
             order_offset: 0.0,
+            root_keys: None,
         };
         b.compile_tables(pool, domain);
         b
     }
 
-    /// The optional tables of the cheap bounds: the choice-suffix maxima, the relaxation tables and, for Gekisou
-    /// score, the prefix resource and character tables.
+    /// The optional tables of the cheap bounds: the choice-suffix maxima, the relaxation tables, the order-step
+    /// candidates and, for Gekisou score, the prefix resource and character tables.
     fn compile_tables(&mut self, pool: &Pool, domain: &CandidateDomain) {
         // Bounded storage; an unavailable optional table never truncates the search domain.
         self.tails = ((self.lead.len() + 6).saturating_mul(self.choices.len() + 1) <= 1_000_000).then(|| {
             let n = self.choices.len();
-            let mut suffix = tail::PairMaxima::zeros(self.lead.len(), n + 1);
-            let mut blocks = tail::PairMaxima::zeros(self.lead.len(), n.div_ceil(tail::PAIR_BLOCK));
+            let others = self.points.as_ref().map_or(0, |pt| pt.others.len());
+            let mut suffix = tail::PairMaxima::zeros(self.lead.len(), others, n + 1);
+            let mut blocks = tail::PairMaxima::zeros(self.lead.len(), others, n.div_ceil(tail::PAIR_BLOCK));
             for i in (0..n).rev() {
                 let (m, choice) = self.choices[i];
                 suffix.merge(i, i + 1);
@@ -444,8 +510,12 @@ impl JointBounds {
             TailTables { suffix, blocks }
         });
         self.relax_tables = relax_tables::RelaxTables::compile(self, pool, domain);
-        if self.gekisou && self.points.is_none() {
-            (self.prefix_resource, self.prefix_character) = prefix_character::compile_prefix_tables(self, pool, domain);
+        self.step_pairs = self.points.as_ref().map(|pt| order_steps::StepPairs::compile(self, pool, pt));
+        if self.gekisou {
+            let (resource, character) = prefix_character::compile_prefix_tables(self, pool, domain);
+            // The resource caps bound a score payoff; the character caps also bound the mean score a points bound reads.
+            self.prefix_resource = resource.filter(|_| self.points.is_none());
+            self.prefix_character = character;
         }
     }
 }

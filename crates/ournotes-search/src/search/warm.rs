@@ -72,12 +72,30 @@ fn snap_of(domain: &CandidateDomain, choice: usize) -> Option<usize> {
 /// Root children of one traversal in descending order of their depth-1 node bound, with that bound.
 pub(super) struct RootOrder {
     pub(super) children: Vec<(usize, usize)>,
+    /// The bound each child's depth-1 node checks first.
     pub(super) caps: Vec<(i128, i64)>,
+    /// The key each child is ordered by: its root key ([`JointBounds::root_key`]), or else its cap.
+    pub(super) keys: Vec<(i128, i64)>,
+    /// `covers[i]`: the largest of `caps[i..]`, which bounds child `i` and every later one.
+    pub(super) covers: Vec<(i128, i64)>,
+}
+
+/// The largest of each suffix of `caps`.
+pub(super) fn suffix_maxima(caps: impl DoubleEndedIterator<Item = (i128, i64)>) -> Vec<(i128, i64)> {
+    let mut covers: Vec<_> = caps
+        .rev()
+        .scan(None, |best: &mut Option<(i128, i64)>, cap| {
+            *best = Some(best.map_or(cap, |b| b.max(cap)));
+            *best
+        })
+        .collect();
+    covers.reverse();
+    covers
 }
 
 impl RootOrder {
-    /// The leader pairs the root loop would visit (same filters), sorted by the bound their depth-1 node checks
-    /// first; a stable sort keeps the static order among equal bounds.
+    /// The leader pairs the root loop would visit (same filters), sorted by their keys ([`JointBounds::root_key`]),
+    /// by default the bound their depth-1 node checks first; a stable sort keeps the static order among equal keys.
     pub(super) fn new(
         domain: &CandidateDomain,
         bounds: &JointBounds,
@@ -86,7 +104,7 @@ impl RootOrder {
     ) -> Result<Self, Error> {
         let mut p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
         let mut rows = Vec::new();
-        for &(m, choice) in &bounds.choices {
+        for (index, &(m, choice)) in bounds.choices.iter().enumerate() {
             let character = e.pool.members[m].character_id;
             if domain.leader().is_some_and(|l| l != m)
                 || domain.required().iter().any(|&r| r != m && e.pool.members[r].character_id == character)
@@ -96,15 +114,24 @@ impl RootOrder {
             }
             p.members[SLOTS[0]] = m;
             p.snaps[SLOTS[0]] = snap_of(domain, choice);
-            rows.push(((m, choice), super::node_upper(e.pool, domain, bounds, &p, 1, orders)?));
+            let cap = super::node_upper(e.pool, domain, bounds, &p, 1, orders)?;
+            rows.push(((m, choice), cap, bounds.root_key(e.pool, domain, &p, index, orders)?.unwrap_or(cap)));
         }
-        rows.sort_by_key(|a| std::cmp::Reverse(a.1));
-        let (children, caps) = rows.into_iter().unzip();
-        Ok(Self { children, caps })
+        rows.sort_by_key(|a| std::cmp::Reverse(a.2));
+        let covers = suffix_maxima(rows.iter().map(|row| row.1));
+        let mut children = Vec::with_capacity(rows.len());
+        let mut caps = Vec::with_capacity(rows.len());
+        let mut keys = Vec::with_capacity(rows.len());
+        for (child, cap, key) in rows {
+            children.push(child);
+            caps.push(cap);
+            keys.push(key);
+        }
+        Ok(Self { children, caps, keys, covers })
     }
 
     pub(super) fn best(&self) -> Option<(i128, i64)> {
-        self.caps.first().copied()
+        self.covers.first().copied()
     }
 }
 
@@ -130,10 +157,10 @@ pub(super) fn inferior(cap: (i128, i64), e: &Engine<'_, '_>) -> bool {
 }
 
 /// Leaf bound of a full deck, the local search objective: the position-mean cheap relaxation, an upper bound of the
-/// team's payoff and of its power.
+/// team's payoff and of its power ([`JointBounds::warm_upper`]).
 fn surrogate(w: &Warm<'_>, p: &PhysicalDeck, e: &mut Engine<'_, '_>) -> Result<(i128, i64), Error> {
     e.tel.incumbents.warm_start.leaf_bound_checks += 1;
-    w.bounds.expected_upper(e.pool, w.domain, p, 5, &w.orders)
+    w.bounds.warm_upper(e.pool, w.domain, p, 5, &w.orders)
 }
 
 /// Legal teams one move away: another member in one slot (Snap kept), another Snap or None in one slot (member
@@ -265,7 +292,7 @@ fn dive(w: &Warm<'_>, leader: (usize, usize), e: &mut Engine<'_, '_>) -> Result<
             }
             p.members[slot] = m;
             p.snaps[slot] = snap;
-            let value = bounds.expected_upper(pool, domain, &p, depth + 1, &w.orders)?;
+            let value = bounds.warm_upper(pool, domain, &p, depth + 1, &w.orders)?;
             if best.is_none_or(|b| value > b.0) {
                 best = Some((value, m, choice));
             }
@@ -480,6 +507,17 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn suffix_maxima_cover_each_child_and_every_later_one() {
+        let caps = [(5, 1), (9, 0), (3, 7), (9, 2), (1, 0)];
+        let covers = super::suffix_maxima(caps.iter().copied());
+        assert_eq!(covers, [(9, 2), (9, 2), (9, 2), (9, 2), (1, 0)]);
+        for (i, cover) in covers.iter().enumerate() {
+            assert!(caps[i..].iter().all(|cap| cap <= cover));
+        }
+        assert!(super::suffix_maxima(std::iter::empty()).is_empty());
+    }
+
+    #[test]
     fn certified_seed_allocation_yields_to_the_complete_domain() {
         let mut source = synth_snaps(&mut Rng::new(91), 5, 0, &[]);
         set_column(&mut source, "MasterMemberCard", &mut |row| {
@@ -580,6 +618,7 @@ mod tests {
                     &[],
                     None,
                     budget::now(),
+                    None,
                     None,
                 )
             })

@@ -79,6 +79,7 @@ pub(super) fn ranked_prefix(values: &[SongValue]) -> Result<Vec<usize>, Error> {
             payoff: v.bounds,
             exact_score: None,
             exact_payoff: v.exact,
+            payoff_bounds: None,
             equality: None,
             revision: 0,
         })?;

@@ -17,6 +17,8 @@ pub(super) struct Engine<'a, 'm> {
     pub(super) rec: Recorder,
     /// Correlated and resource node bounds are worth their cost for the current search part.
     pub(super) correlated: bool,
+    /// Per depth, the recent checks and prunes of the correlated node bound (see `joint_search::correlated_due`).
+    pub(super) correlated_recent: [[u64; 2]; 5],
     pub(super) resource: bool,
     pub(super) bound_scratch: crate::search::snaps::JointScratch,
     pub(super) bonus_scratch: crate::search::joint::BonusScratch,
@@ -229,7 +231,7 @@ impl Engine<'_, '_> {
             match leaf {
                 Leaf::Evaluated(evaluation) => evaluation,
                 Leaf::Certified(evaluation, program, payoff) => {
-                    self.offer_certified(physical, power, evaluation, program, payoff)?;
+                    self.offer_certified(physical, power, *evaluation, program, payoff)?;
                     return Ok(true);
                 }
                 Leaf::Pruned => {
@@ -352,10 +354,10 @@ impl Engine<'_, '_> {
             return Ok(());
         }
         let started = self.bound_start();
-        // Each bound covers every child at or after `offset` (the node bound covers all of its children; ordered root
-        // children are in descending order of their depth-1 bound).
+        // Each bound covers every child at or after `offset` (the node bound covers all of its children; an ordered
+        // root's cover is the largest depth-1 bound from its child on).
         let upper = match (tail, root) {
-            (_, Some(r)) => Some(r.caps[offset].0),
+            (_, Some(r)) => Some(r.covers[offset].0),
             (Some((tail_bounds, state)), None) => Some(tail_bounds.tail_upper(state, offset)?.0),
             (None, None) if depth > 0 => Some(node_upper(self.pool, domain, bounds, p, depth, orders)?.0),
             (None, None) => joint_root_upper(self.pool, domain, bounds, orders, offset)?,
@@ -505,7 +507,7 @@ impl Engine<'_, '_> {
         };
         let probability_law = if live && maximum {
             serde_json::json!({"kind":"maximumOverMemberOrders","orders":ORDERS,
-                "orderValue":"expectedTerminalPayoffOverRandomDraws","lottery":lottery})
+                "orderValue":"terminalPayoffAtExpectedScore","lottery":lottery})
         } else if live {
             serde_json::json!({"kind":"uniformMemberOrder","orders":ORDERS,"lottery":lottery})
         } else {
@@ -535,7 +537,7 @@ impl Engine<'_, '_> {
             strategy: strategy.clone(),
             probability_law,
             proof_scope: if live && maximum {
-                "conditional on declared master, roster and complete judgement/clock inputs, with the value of a team its best performance order, each order valued by the expectation of its terminal payoff over random draws; client counters are not server reward authority"
+                "conditional on declared master, roster and complete judgement/clock inputs, with the value of a team its best performance order, each order worth the terminal payoff at its expected score over random draws; client counters are not server reward authority"
             } else {
                 "conditional on declared master, roster and complete judgement/clock inputs, with the five members performing in a uniformly random order; client counters are not server reward authority"
             },

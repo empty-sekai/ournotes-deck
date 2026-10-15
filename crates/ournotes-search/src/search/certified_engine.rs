@@ -11,7 +11,7 @@ use ournotes_sim::live::certified::F64Interval;
 
 /// How a played Gekisou request treats the lottery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum LotteryMode {
+pub(in crate::search) enum LotteryMode {
     /// No candidate reads a probability: every live is deterministic as it is.
     Absent,
     /// A candidate reads a probability in a live without a LUCK range: its decks play lottery-free
@@ -21,7 +21,7 @@ pub(super) enum LotteryMode {
     Certified,
 }
 
-pub(super) fn lottery_mode(
+pub(in crate::search) fn lottery_mode(
     pool: &Pool,
     request: &SearchRequest,
     domain: &crate::domain::CandidateDomain,
@@ -125,6 +125,12 @@ pub(super) struct CertifiedEntry {
     power: i32,
     /// The identity of the candidate's terminal payoff mapping.
     payoff: Vec<u8>,
+    /// The candidate's reward ([`CertifiedEvaluation::reward`]), within every certificate it took.
+    reward: F64Interval,
+    exact_reward: Option<super::expectation::ExactExpectation>,
+    /// A combined metric: the candidate's term rewards ([`CertifiedEvaluation::terms`]), within every certificate it
+    /// took.
+    terms: Vec<(F64Interval, Option<super::expectation::ExactExpectation>)>,
     refinement: Option<Box<RetainedRefinement>>,
     /// Under [`Reduction::Maximum`], the order proved to attain the candidate's payoff.
     best: Option<CertifiedBest>,
@@ -183,6 +189,14 @@ pub(super) struct CertifiedState<'m> {
     pub(super) census: Option<super::domain_laws::LotteryCensus>,
     /// How the payoffs of a team's performance orders make its payoff.
     pub(super) reduction: Reduction,
+    /// A payoff numerator the traversal closes every node below, whatever the frontier holds: the threshold of a
+    /// search that asks whether any team reaches it (see `solve::orders_below`). A team reaching it stops the search.
+    pub(super) floor: Option<i128>,
+    /// The greatest proved lower bound of the expected score of a performance order among the evaluated teams.
+    pub(super) order_score_seen: f64,
+    /// The lowest point tier no performance order of a team of the domain reaches in expected score, when proved:
+    /// the bounds compiled from then on drop the tiers from it on (`JointBounds::cap_scores`).
+    pub(super) tier_cap: Option<i64>,
 }
 
 /// Key bytes the request's lottery-curve cache may hold.
@@ -210,6 +224,9 @@ impl CertifiedState<'_> {
             law_bounds: super::leaf::LawBounds::default(),
             census: None,
             reduction,
+            floor: None,
+            order_score_seen: f64::NEG_INFINITY,
+            tier_cap: None,
         })
     }
     /// The denominator of the payoff numerators of the frontier's grid: a mean over the performance orders is a sum
@@ -251,10 +268,36 @@ impl CertifiedState<'_> {
             .payoff
             .intersect(evaluation.payoff)
             .ok_or_else(|| Error::Domain("conflicting refined payoff certificates".into()))?;
-        self.frontier.refine(id, current.revision, score, payoff, evaluation.exact_score, evaluation.exact_payoff)?;
+        self.frontier.refine(
+            id,
+            current.revision,
+            score,
+            payoff,
+            evaluation.exact_score,
+            evaluation.exact_payoff,
+            evaluation.payoff_bounds,
+        )?;
         self.entries.retain(|id, _| self.frontier.get(*id).is_some());
-        if let (Some(best), Some(entry)) = (CertifiedBest::of(evaluation), self.entries.get_mut(&id)) {
-            entry.best = Some(best);
+        if let Some(entry) = self.entries.get_mut(&id) {
+            entry.reward = entry
+                .reward
+                .intersect(evaluation.reward)
+                .ok_or_else(|| Error::Domain("conflicting refined reward certificates".into()))?;
+            entry.exact_reward = entry.exact_reward.or(evaluation.exact_reward);
+            if entry.terms.is_empty() {
+                entry.terms = evaluation.terms.clone();
+            } else if evaluation.terms.len() == entry.terms.len() {
+                for (term, refined) in entry.terms.iter_mut().zip(&evaluation.terms) {
+                    term.0 = term
+                        .0
+                        .intersect(refined.0)
+                        .ok_or_else(|| Error::Domain("conflicting refined term certificates".into()))?;
+                    term.1 = term.1.or(refined.1);
+                }
+            }
+            if let Some(best) = CertifiedBest::of(evaluation) {
+                entry.best = Some(best);
+            }
         }
         self.cutoff = self.frontier.grid_cutoff(self.denominator());
         Ok(true)
@@ -324,7 +367,11 @@ impl Engine<'_, '_> {
             return Some((threshold, i32::MIN));
         }
         match &self.certified {
-            Some(state) => state.cutoff,
+            Some(state) => match (state.cutoff, state.floor) {
+                (Some((threshold, power)), Some(floor)) if threshold >= floor => Some((threshold, power)),
+                (_, Some(floor)) => Some((floor, i32::MIN)),
+                (cutoff, None) => cutoff,
+            },
             None => (self.top.len() == self.request.k).then(|| {
                 let kth = self.top.last().expect("full exact Top-K");
                 (kth.evaluation.expected_payoff.numerator, kth.power)
@@ -353,6 +400,12 @@ impl Engine<'_, '_> {
             });
         }
         let id = self.tel.leaves.visited;
+        let seen = evaluation.orders.iter().map(|order| order.mean.lower()).fold(f64::NEG_INFINITY, f64::max);
+        state.order_score_seen = state.order_score_seen.max(seen);
+        // A team at or above the floor answers the question of the search.
+        if state.floor.is_some_and(|floor| evaluation.payoff.lower() >= floor as f64) {
+            self.stop = Some(ExitReason::CandidateLimit);
+        }
         let retained_program = (state.retain_refinement == Some(true)).then(|| program_identity.clone());
         let equality = state.frontier.certify_equal_program(program_identity, power, payoff_identity.clone());
         state.frontier.insert(CandidateInterval {
@@ -362,6 +415,7 @@ impl Engine<'_, '_> {
             payoff: evaluation.payoff,
             exact_score: evaluation.exact_score,
             exact_payoff: evaluation.exact_payoff,
+            payoff_bounds: evaluation.payoff_bounds,
             equality: Some(equality),
             revision: 0,
         })?;
@@ -369,15 +423,28 @@ impl Engine<'_, '_> {
         let exact = state.frontier.get(id).map_or(evaluation.exact_payoff, |c| c.exact_payoff);
         self.offered = Some(super::Offered { payoff: exact.map(|x| (x.numerator, x.denominator)), power, score: None });
         let best = CertifiedBest::of(&evaluation);
+        let (reward, exact_reward, terms) = (evaluation.reward, evaluation.exact_reward, evaluation.terms.clone());
         let refinement = RetainedRefinement::new(
             state.retain_refinement == Some(true) && state.frontier.get(id).is_some(),
             evaluation,
             map,
             retained_program.unwrap_or_default(),
         );
-        state
-            .entries
-            .insert(id, CertifiedEntry { physical, members, snaps, power, payoff: payoff_identity, refinement, best });
+        state.entries.insert(
+            id,
+            CertifiedEntry {
+                physical,
+                members,
+                snaps,
+                power,
+                payoff: payoff_identity,
+                reward,
+                exact_reward,
+                terms,
+                refinement,
+                best,
+            },
+        );
         state.entries.retain(|id, _| state.frontier.get(*id).is_some());
         state.cutoff = state.frontier.grid_cutoff(state.denominator());
         self.tel.leaves.peak_retained = self.tel.leaves.peak_retained.max(state.entries.len());
@@ -413,46 +480,33 @@ impl Engine<'_, '_> {
             };
             let state = self.certified.as_ref().expect("certified request");
             let mut candidates = proof.ambiguous.clone();
-            // Smaller upper bounds identify contenders closer to exclusion by a proved lower bound.
-            // This is a work priority; the frontier alone establishes every returned rank.
+            // The widest ranking values hold the orders whose expected scores straddle a reward step; among equal
+            // widths, smaller upper bounds identify contenders closer to exclusion by a proved lower bound. This is a
+            // work priority; the frontier alone establishes every returned rank.
+            let payoff = |id: &u64| state.frontier.get(*id).expect("live candidate").payoff;
             candidates.sort_by(|a, b| {
-                state
-                    .frontier
-                    .get(*a)
-                    .expect("live candidate")
-                    .payoff
-                    .upper()
-                    .total_cmp(&state.frontier.get(*b).expect("live candidate").payoff.upper())
+                let (a_payoff, b_payoff) = (payoff(a), payoff(b));
+                (b_payoff.upper() - b_payoff.lower())
+                    .total_cmp(&(a_payoff.upper() - a_payoff.lower()))
+                    .then(a_payoff.upper().total_cmp(&b_payoff.upper()))
                     .then(a.cmp(b))
             });
             let selected = candidates.iter().find_map(|&id| {
                 let entry = &state.entries[&id];
                 let retained = entry.refinement.as_ref()?;
-                let mut indices: Vec<_> = if matches!(retained.map, PayoffMap::Score) {
-                    retained
-                        .evaluation
-                        .orders
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(index, order)| {
-                            (order.exact_mean.is_none()
-                                && retained.evaluation.contending[index]
-                                && !attempted.contains(&(id, index)))
-                            .then_some(index)
-                        })
-                        .collect()
-                } else {
-                    retained
-                        .evaluation
-                        .refinements
-                        .iter()
-                        .filter_map(|refinement| {
-                            (!attempted.contains(&(id, refinement.order_index))).then_some(refinement.order_index)
-                        })
-                        .collect()
-                };
-                indices.sort_unstable();
-                indices.dedup();
+                // An order whose ranking value is not exact may decide a rank.
+                let indices: Vec<_> = retained
+                    .evaluation
+                    .orders
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, order)| {
+                        (retained.evaluation.contending[index]
+                            && !attempted.contains(&(id, index))
+                            && crate::search::certified_search::order_rank_open(order, &retained.map).unwrap_or(true))
+                        .then_some(index)
+                    })
+                    .collect();
                 (!indices.is_empty())
                     .then(|| (id, entry.physical, retained.program.clone(), retained.map.clone(), indices))
             });
@@ -566,7 +620,7 @@ impl Engine<'_, '_> {
                     .refinement
                     .as_mut()
                     .expect("admitted candidate");
-                if !refine_order_with_exact_law(&mut retained.evaluation.orders[index], &map, &law)? {
+                if !refine_order_with_exact_law(&mut retained.evaluation.orders[index], &law)? {
                     self.tel.lottery_refinement.arithmetic_declines += 1;
                     continue;
                 }
@@ -815,8 +869,7 @@ impl Engine<'_, '_> {
                 exact_mean: (support.0 == support.1)
                     .then(|| expectation::ExactExpectation { numerator: support.0.into(), denominator: 1 }),
                 final_life: Some((score.final_life.lower, score.final_life.upper)),
-                tails: BTreeMap::new(),
-                refined_payoff: None,
+                exact_life: None,
             });
         }
         let support = (
@@ -878,9 +931,6 @@ impl Engine<'_, '_> {
                 let Some(retained) = state.entries.get(&id).and_then(|entry| entry.refinement.as_ref()) else {
                     continue;
                 };
-                if !matches!(retained.map, PayoffMap::Score) {
-                    continue;
-                }
                 let first = named.contains(&id);
                 for (index, order) in retained.evaluation.orders.iter().enumerate() {
                     if order.exact_mean.is_some()
@@ -978,6 +1028,30 @@ impl Engine<'_, '_> {
         let proof = state.proof(exhausted, upper)?;
         let maximum = state.reduction == Reduction::Maximum;
         let interval = |value: F64Interval| FractionInterval::from_f64(value.lower(), value.upper());
+        // A combined metric reports its levels' weighted sums and its terms' rewards; the payoff is the first level.
+        let weights: Option<Vec<Vec<i128>>> = self.metric.levels().map(|levels| {
+            levels.iter().map(|level| level.terms.iter().map(|term| i128::from(term.weight)).collect()).collect()
+        });
+        let reads_life: Vec<bool> = self
+            .metric
+            .terms()
+            .map(|terms| terms.map(|term| matches!(term.metric, Metric::ScoreAndLifeAtLeast { .. })).collect())
+            .unwrap_or_default();
+        let combined = |entry: &CertifiedEntry| {
+            let weights = weights.as_ref()?;
+            let levels = crate::search::certified_search::level_values(weights, &entry.terms)?;
+            let first = levels.first().copied()?;
+            let level_payoffs = levels.iter().map(|level| level.1.map(Into::into)).collect::<Option<Vec<Fraction>>>();
+            let term_payoffs = level_payoffs.as_ref().map(|_| {
+                entry
+                    .terms
+                    .iter()
+                    .zip(&reads_life)
+                    .map(|(term, &life)| if life { None } else { term.1.map(Into::into) })
+                    .collect::<Vec<Option<Fraction>>>()
+            });
+            Some((first, level_payoffs, term_payoffs))
+        };
         let results = proof
             .ordered_prefix
             .iter()
@@ -987,20 +1061,25 @@ impl Engine<'_, '_> {
                 let entry = &state.entries[&id];
                 // Equality classes may have narrowed since this candidate's original evaluation.
                 let value = state.frontier.get(id).expect("live candidate");
+                let (reward, exact_reward, level_payoffs, term_payoffs) = match combined(entry) {
+                    Some(((bounds, exact), levels, terms)) => (Some(interval(bounds)?), exact, levels, terms),
+                    None if weights.is_some() => (None, None, None, None),
+                    None => (Some(interval(entry.reward)?), entry.exact_reward, None, None),
+                };
                 if maximum {
                     // The payoff is the best order's; its score is that order's when the order is proved.
-                    let best = entry.best.map(|best| self.certified_best_order(entry, best, value)).transpose()?;
+                    let best = entry.best.map(|best| self.certified_best_order(entry, best)).transpose()?;
                     return Ok(RecommendedDeck {
                         members: entry.members,
                         snaps: entry.snaps,
                         power: entry.power,
-                        objective_value: value.exact_payoff.map(Into::into),
+                        objective_value: exact_reward.map(Into::into),
                         expected_score: None,
                         expected_payoff: None,
-                        term_payoffs: None,
-                        level_payoffs: None,
+                        term_payoffs,
+                        level_payoffs,
                         score_interval: Some(interval(entry.best.map_or(value.score, |best| best.score))?),
-                        payoff_interval: Some(interval(value.payoff)?),
+                        payoff_interval: reward,
                         rank_certified: Some(ranked),
                         score_summary: None,
                         best_order: best,
@@ -1013,11 +1092,11 @@ impl Engine<'_, '_> {
                     power: entry.power,
                     objective_value: None,
                     expected_score: value.exact_score.map(Into::into),
-                    expected_payoff: value.exact_payoff.map(Into::into),
-                    term_payoffs: None,
-                    level_payoffs: None,
+                    expected_payoff: exact_reward.map(Into::into),
+                    term_payoffs,
+                    level_payoffs,
                     score_interval: Some(interval(value.score)?),
-                    payoff_interval: Some(interval(value.payoff)?),
+                    payoff_interval: reward,
                     rank_certified: Some(ranked),
                     score_summary: None,
                     best_order: None,
@@ -1030,13 +1109,8 @@ impl Engine<'_, '_> {
 
     /// The wire form of a candidate's proved best order ([`CertifiedBest`]): its canonical performer slots mapped back
     /// to the candidate's physical slots by the same stable sort [`canonicalize_performers`] applies. The score and
-    /// payoff are the order's expected values rounded down, from their exact values or their proved lower bounds.
-    fn certified_best_order(
-        &self,
-        entry: &CertifiedEntry,
-        best: CertifiedBest,
-        value: &CandidateInterval,
-    ) -> Result<OrderResult, Error> {
+    /// reward are the order's values rounded down, from their exact values or their proved lower bounds.
+    fn certified_best_order(&self, entry: &CertifiedEntry, best: CertifiedBest) -> Result<OrderResult, Error> {
         let input = expectation::context(self.pool, &entry.physical, &self.request.objective)?;
         let keys: Vec<String> = input.performers.iter().map(|performer| format!("{performer:?}")).collect();
         let mut slots: Vec<usize> = (0..keys.len()).collect();
@@ -1052,11 +1126,13 @@ impl Engine<'_, '_> {
         };
         let score = i32::try_from(floor(best.exact_score, best.score.lower())?)
             .map_err(|_| Error::Domain("best order score exceeds i32".into()))?;
+        // A combined metric's order pays its first level, the folded reward counted in units of that level.
+        let payoff = floor(entry.exact_reward, entry.reward.lower())?.div_euclid(self.metric.primary_unit());
         Ok(OrderResult {
             performance_order,
             members: performance_order.map(|slot| entry.members[slot]),
             score,
-            payoff: floor(value.exact_payoff, value.payoff.lower())?.to_string(),
+            payoff: payoff.to_string(),
         })
     }
 }
@@ -1091,6 +1167,7 @@ mod refinement_tests {
                     payoff: bounds,
                     exact_score: None,
                     exact_payoff: None,
+                    payoff_bounds: None,
                     equality: None,
                     revision: 0,
                 })
@@ -1112,8 +1189,7 @@ mod refinement_tests {
                     support: (1, 1),
                     exact_mean: None,
                     final_life: Some((1000, 1000)),
-                    tails: BTreeMap::new(),
-                    refined_payoff: None,
+                    exact_life: None,
                 })
                 .collect();
             let evaluation = aggregate_orders(orders, &PayoffMap::Score, Reduction::Mean).unwrap();
@@ -1123,6 +1199,9 @@ mod refinement_tests {
                 snaps: [None; 5],
                 power: 1,
                 payoff: Vec::new(),
+                reward: evaluation.reward,
+                exact_reward: evaluation.exact_reward,
+                terms: Vec::new(),
                 refinement: RetainedRefinement::new(
                     retain_order_state(notes, frames),
                     evaluation,

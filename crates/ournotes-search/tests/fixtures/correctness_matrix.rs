@@ -448,7 +448,13 @@ fn nominal_luck_objectives_certify_equivalent_leader_programs() {
                             "stream={stream} {:?} k={k} cache={cache}",
                             current.metric
                         );
-                        assert_eq!(result.results.iter().map(key).collect::<Vec<_>>(), keys[..keys.len().min(k)]);
+                        assert_eq!(
+                            result.results.iter().map(key).collect::<Vec<_>>(),
+                            keys[..keys.len().min(k)],
+                            "stream={stream} {:?} {:?} k={k} cache={cache}",
+                            current.metric,
+                            current.strategy
+                        );
                         for row in &result.results {
                             assert_eq!(row.rank_certified, Some(true));
                             assert!(row.score_interval.is_some() && row.payoff_interval.is_some());

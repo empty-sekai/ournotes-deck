@@ -168,6 +168,7 @@ impl JointBounds {
         let rows = scratch.rows.get(&key)?.as_ref()?;
         let (_, best) = self.order_gain_bounds(domain, p, depth, 5 - depth, None);
         let placement = order_gain_bound(&best, &self.column, 0);
+        let others = self.other_bonuses(pool, domain, p, depth);
         let mut caps = Vec::with_capacity(rows.len());
         for &(extra, residual) in rows {
             let row = fixed.plus(residual);
@@ -182,7 +183,7 @@ impl JointBounds {
                     (((w * w).next_up() / (4.0 * r)).next_up() * (1.0 + self.eps).next_up()).next_up().ceil() as i128;
                 score = score.min(cap);
             }
-            caps.push((bonus + extra, pt.mean_payoff(bonus + extra, score, max_cap), row.power));
+            caps.push((bonus + extra, pt.mean_payoff_with(bonus + extra, &others, score, max_cap), row.power));
         }
         Some(caps)
     }

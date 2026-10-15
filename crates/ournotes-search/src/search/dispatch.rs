@@ -47,6 +47,7 @@ pub(crate) fn execute(
             Some(&ctx.plan),
             start,
             None,
+            None,
         )?
     } else {
         let initial = r
@@ -83,6 +84,7 @@ pub(crate) fn execute(
             Some(&ctx.plan),
             start,
             progress,
+            None,
         )?
     };
     finish(&mut out, built, fixed.is_some(), start, build_ms);

@@ -30,7 +30,7 @@ pub fn solve_physical(
 }
 
 /// [`solve_physical`] with an explicit aggregation of the performance orders of a played live: their mean
-/// (`Expected`) or their greatest value (`Maximum`), each order valued by the expectation of its terminal payoff over
+/// (`Expected`) or their greatest value (`Maximum`), each order worth the terminal payoff at its expected score over
 /// its random draws.
 #[allow(clippy::too_many_arguments)]
 pub fn solve_physical_with_aggregation(
@@ -60,6 +60,7 @@ pub fn solve_physical_with_aggregation(
         None,
         origin,
         None,
+        None,
     )
 }
 
@@ -81,6 +82,7 @@ pub(crate) fn solve_physical_impl(
     compiled: Option<&crate::handler::ExecutionPlan>,
     origin: Instant,
     progress: Option<ProgressHook<'_>>,
+    floor: Option<i128>,
 ) -> Result<RecommendationOutcome, Error> {
     reject_unsupported_lifecycle(network, simulation.live_finished_from_frame)?;
     let start = Instant::now();
@@ -176,8 +178,16 @@ pub(crate) fn solve_physical_impl(
     }
     let lottery = certified_engine::lottery_mode(pool, request, &plan.domain)?;
     if lottery == certified_engine::LotteryMode::Certified {
-        if matches!(metric, Metric::Combined { .. }) {
-            return Err(Error::Unsupported("combined metrics require lottery-free terminal outcomes".into()));
+        // The ranking value of an order weighs its folded reward by the reward weight, and the rational enclosures
+        // of the ranking values sum it over the performance orders.
+        let cap = metric.levels().and_then(|levels| levels.first()).map_or(0, |level| level.scale.cap);
+        let room = (crate::search::certified_search::REWARD_WEIGHT * ORDERS as i128) << 8;
+        if cap > i128::MAX / room {
+            return Err(Error::Input(
+                "the weights and payoff ranges of the combined metric's levels exceed the exact integer range of a \
+                 LUCK live"
+                    .into(),
+            ));
         }
         if certified_engine::converts_great(pool, &request.objective, &plan.domain)? {
             return Err(Error::Unsupported(
@@ -200,26 +210,34 @@ pub(crate) fn solve_physical_impl(
         tel,
         rec: Recorder::new(origin),
         correlated: false,
+        correlated_recent: [[0; 2]; 5],
         resource: false,
         bound_scratch: crate::search::snaps::JointScratch::default(),
         bonus_scratch: crate::search::joint::BonusScratch::default(),
         order_steps: Default::default(),
         top: Vec::new(),
         certified: if lottery == certified_engine::LotteryMode::Certified {
-            Some(CertifiedState::new(
-                request.k,
-                if limits.cache_entries == 0 { 0 } else { certified_engine::LUCK_CURVE_CACHE_BYTES },
-                match plan.aggregation {
-                    Aggregation::Expected => crate::search::certified_search::Reduction::Mean,
-                    Aggregation::Maximum => crate::search::certified_search::Reduction::Maximum,
-                },
-            )?)
+            Some(
+                CertifiedState::new(
+                    request.k,
+                    if limits.cache_entries == 0 { 0 } else { certified_engine::LUCK_CURVE_CACHE_BYTES },
+                    match plan.aggregation {
+                        Aggregation::Expected => crate::search::certified_search::Reduction::Mean,
+                        Aggregation::Maximum => crate::search::certified_search::Reduction::Maximum,
+                    },
+                )
+                .map(|mut state| {
+                    state.floor = floor;
+                    state
+                })?,
+            )
         } else {
             None
         },
-        // A combined metric settles every term on one terminal result, so its lives play lottery-free too.
+        // A combined metric settles every term on one terminal result, so its lives without a LUCK range play
+        // lottery-free too.
         lottery_free: if lottery == certified_engine::LotteryMode::Free
-            || (live && matches!(metric, Metric::Combined { .. }))
+            || (live && lottery == certified_engine::LotteryMode::Absent && matches!(metric, Metric::Combined { .. }))
         {
             Some(std::sync::Arc::new(ournotes_sim::live::full::luck_skills(pool.master)?))
         } else {
@@ -358,16 +376,45 @@ pub(crate) fn solve_physical_impl(
                         }
                         // After the maximum-bonus warmup, whose full Top-K ends it.
                         warm::seed(&mut engine)?;
+                        // A certified search drops the point tiers that no performance order reaches.
+                        let tier_cap = if engine.certified.is_some() && !engine.expired() {
+                            engine.rec.begin(&mut engine.tel, "tierProbe", None);
+                            let cap = tier_cap(&mut engine, bounds, network, simulation)?;
+                            engine.rec.end(&mut engine.tel);
+                            if let Some(state) = engine.certified.as_mut() {
+                                state.tier_cap = cap;
+                            }
+                            cap
+                        } else {
+                            None
+                        };
                         let mut searched = false;
                         if !engine.expired() {
                             engine.rec.begin(&mut engine.tel, "ptRegimeCompile", None);
                             let restricted = if let Some((numerator, _)) = engine.safe_cutoff() {
-                                bounds.qualifying_pt_domain(pool, &plan.domain, numerator, ORDERS as u128)?
+                                bounds.qualifying_pt_domain(pool, &plan.domain, numerator, ORDERS as u128, tier_cap)?
                             } else {
                                 None
                             };
                             let mut regime = telemetry::PtRegime::default();
-                            let compiled = if let Some(domain) = &restricted {
+                            // A certified LUCK live searches the bounds that weigh the lottery laws of its domain,
+                            // cluster by cluster of those laws, and its leaves read the laws of their own teams from
+                            // the census.
+                            let weighed = if engine.certified.is_some() {
+                                let domain = restricted.as_ref().unwrap_or(&plan.domain);
+                                let mut census = engine.lottery_census(domain);
+                                let weighed =
+                                    census.as_mut().and_then(|census| engine.weighed_bounds(census, domain, true));
+                                if let Some(state) = engine.certified.as_mut() {
+                                    state.census = census;
+                                }
+                                weighed
+                            } else {
+                                None
+                            };
+                            let mut compiled = if weighed.is_some() {
+                                weighed
+                            } else if let Some(domain) = &restricted {
                                 let prepare = Instant::now();
                                 let result = crate::search::joint::JointBounds::compile(
                                     pool,
@@ -388,16 +435,34 @@ pub(crate) fn solve_physical_impl(
                             } else {
                                 None
                             };
+                            if let Some(threshold) = tier_cap {
+                                let domain = restricted.as_ref().unwrap_or(&plan.domain);
+                                if compiled.is_none() {
+                                    compiled = crate::search::joint::JointBounds::compile(
+                                        pool,
+                                        request,
+                                        domain,
+                                        metric,
+                                        event_input,
+                                        simulation,
+                                    )
+                                    .ok();
+                                }
+                                if let Some(compiled) = &mut compiled {
+                                    compiled.cap_scores(pool, domain, threshold, &orders);
+                                }
+                            }
                             engine.rec.end(&mut engine.tel);
                             engine.rec.begin(&mut engine.tel, "search", None);
                             engine.rec.frontier.clear();
                             (engine.rec.tracked, engine.rec.bounded, engine.rec.unexplored) = (true, true, None);
                             searched = true;
-                            if let (Some(domain), Some(refined)) = (&restricted, &compiled) {
+                            if let Some(refined) = &compiled {
+                                let domain = restricted.as_ref().unwrap_or(&plan.domain);
                                 regime.members_removed = plan.domain.members().len() - domain.members().len();
                                 engine.correlated = refined.correlation_worthwhile(pool, domain, &orders)?;
                                 engine.tel.environment.bounds.pt_regime = Some(regime);
-                                ordered_root(&mut physical, domain, refined, &orders, &mut engine)?;
+                                traverse(&mut physical, domain, refined, &orders, &mut engine)?;
                             } else {
                                 engine.tel.environment.bounds.pt_regime = Some(regime);
                                 ordered_root(&mut physical, &plan.domain, bounds, &orders, &mut engine)?;
@@ -540,7 +605,8 @@ pub(crate) fn solve_physical_impl(
         }
     }
     engine.tel.incumbents.warm_start.final_top_k = engine.seeded_in_top();
-    if engine.certified.is_some() && engine.stop.is_none() {
+    // A search for a floor only asks whether a team reaches it: the ranking below it needs no refinement.
+    if engine.certified.as_ref().is_some_and(|state| state.floor.is_none()) && engine.stop.is_none() {
         engine.refine_certified_frontier()?;
     }
     let standing = engine.standing();
@@ -562,4 +628,108 @@ pub(crate) fn solve_physical_impl(
     engine.finish_telemetry(standing);
     let telemetry = std::mem::take(&mut engine.tel);
     Ok(engine.outcome(strategy, exit_reason, fixed.is_some(), results, telemetry, start.elapsed()))
+}
+
+/// The answer of [`orders_below`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Probe {
+    /// No performance order of any team reaches the threshold.
+    Below,
+    /// A team's order reaches it.
+    Reached,
+    /// The search did not finish.
+    Open,
+}
+
+/// Whether a performance order of a team of the request's domain has an expected score of `threshold` or more: a
+/// certified search of the teams' best orders by expected score that closes every node whose bound lies below
+/// `threshold` and stops at the first team whose best order reaches it, within `time_ms`. The domain is exhausted
+/// when the search ends without a stop, ranked or not; then every evaluated team still on its frontier lies below
+/// the threshold, and every other one lies below one of them.
+#[allow(clippy::too_many_arguments)]
+fn orders_below(
+    pool: &Pool,
+    request: &SearchRequest,
+    limits: &Limits,
+    network: Option<&[RankConfirmation]>,
+    simulation: &SimulationInput,
+    threshold: i64,
+    time_ms: Option<u64>,
+) -> Result<Probe, Error> {
+    let probe = SearchRequest { k: 1, time_limit: None, ..request.clone() };
+    let limits = Limits { time_limit_ms: time_ms, ..limits.clone() };
+    let outcome = match solve_physical_impl(
+        pool,
+        &probe,
+        &Metric::Score,
+        None,
+        &limits,
+        &Strategy::BranchAndBound,
+        network,
+        simulation,
+        Aggregation::Maximum,
+        None,
+        &[],
+        None,
+        Instant::now(),
+        None,
+        Some(i128::from(threshold)),
+    ) {
+        Ok(outcome) => outcome,
+        Err(Error::Unsupported(_) | Error::Capacity(_)) => return Ok(Probe::Open),
+        Err(error) => return Err(error),
+    };
+    let reaches = |deck: &RecommendedDeck| {
+        deck.payoff_interval.as_ref().is_some_and(|payoff| payoff.lower_f64() >= threshold as f64)
+    };
+    let below = |deck: &RecommendedDeck| {
+        deck.payoff_interval.as_ref().is_some_and(|payoff| payoff.upper_f64() < threshold as f64)
+    };
+    Ok(if outcome.results.iter().any(reaches) {
+        Probe::Reached
+    } else if matches!(outcome.exit_reason, ExitReason::Exhausted | ExitReason::RefinementRequired)
+        && outcome.results.iter().all(below)
+    {
+        Probe::Below
+    } else {
+        Probe::Open
+    })
+}
+
+/// The lowest score threshold of a point tier of `bounds` that no performance order of a team of the domain reaches
+/// in expected score ([`orders_below`]), asked for the thresholds above the greatest order score evaluated so far in
+/// ascending order until one is not reached; each search takes at most a quarter of the time left. None when no
+/// threshold is proved unreached.
+fn tier_cap(
+    engine: &mut Engine<'_, '_>,
+    bounds: &crate::search::joint::JointBounds,
+    network: Option<&[RankConfirmation]>,
+    simulation: &SimulationInput,
+) -> Result<Option<i64>, Error> {
+    let seen = engine.certified.as_ref().expect("certified request").order_score_seen.max(0.0);
+    for threshold in bounds.tier_scores().into_iter().filter(|&score| score as f64 > seen) {
+        if engine.expired() {
+            break;
+        }
+        let started = Instant::now();
+        let time_ms = engine.budget.deadline().map(|deadline| {
+            (deadline.saturating_duration_since(started).as_millis() / 4).min(u128::from(u64::MAX)) as u64
+        });
+        let probe = orders_below(engine.pool, engine.request, engine.limits, network, simulation, threshold, time_ms)?;
+        engine.tel.environment.bounds.tier_probes.push(telemetry::TierProbe {
+            threshold,
+            outcome: match probe {
+                Probe::Below => "below",
+                Probe::Reached => "reached",
+                Probe::Open => "open",
+            },
+            ms: started.elapsed().as_secs_f64() * 1000.0,
+        });
+        match probe {
+            Probe::Below => return Ok(Some(threshold)),
+            Probe::Reached => {}
+            Probe::Open => return Ok(None),
+        }
+    }
+    Ok(None)
 }

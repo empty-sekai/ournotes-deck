@@ -81,7 +81,7 @@ impl LawBounds {
 pub(super) enum Leaf {
     Evaluated(FiniteEvaluation),
     Certified(
-        crate::search::certified_search::CertifiedEvaluation,
+        Box<crate::search::certified_search::CertifiedEvaluation>,
         Vec<u8>,
         crate::search::certified_search::PayoffMap,
     ),
@@ -113,9 +113,17 @@ impl Engine<'_, '_> {
         let metric = self.metric;
         let compiled = &mut self.tel.leaves.law_bounds;
         let (_, resume) = self.rec.clock.lap(slot::FINE);
-        let bounds = self.certified.as_mut().expect("certified request").law_bounds.get(domain, laws, |laws| {
+        let state = self.certified.as_mut().expect("certified request");
+        let tier_cap = state.tier_cap;
+        let bounds = state.law_bounds.get(domain, laws, |laws| {
             *compiled += 1;
-            JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, laws, None).ok()
+            let mut bounds =
+                JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, laws, None)
+                    .ok()?;
+            if let Some(threshold) = tier_cap {
+                bounds.drop_tiers(pool, domain, threshold);
+            }
+            Some(bounds)
         });
         let below = |total: i128| total < threshold || (total == threshold && power < kth_power);
         let maximum = self.certified.as_ref().is_some_and(|state| state.reduction == Reduction::Maximum);
@@ -411,7 +419,7 @@ impl Engine<'_, '_> {
             )?;
             let reduction = self.certified.as_ref().expect("certified request").reduction;
             let evaluation = crate::search::certified_search::aggregate_orders(score.orders, &map, reduction)?;
-            return Ok(Leaf::Certified(evaluation, program, map));
+            return Ok(Leaf::Certified(Box::new(evaluation), program, map));
         }
         if let Some(threshold) = crate::search::snaps::census() {
             return self.census_leaf(physical, power, cut, threshold);

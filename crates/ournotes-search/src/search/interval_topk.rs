@@ -34,6 +34,8 @@ pub struct CandidateInterval {
     /// Only mathematically exact values belong here. Neither an interval midpoint nor a rounded endpoint does.
     pub exact_score: Option<ExactExpectation>,
     pub exact_payoff: Option<ExactExpectation>,
+    /// A rational enclosure of the payoff, which narrows the endpoints of `payoff` where binary64 cannot hold them.
+    pub payoff_bounds: Option<(ExactExpectation, ExactExpectation)>,
     pub equality: Option<EqualityCertificate>,
     pub revision: u64,
 }
@@ -199,12 +201,71 @@ fn compare_bound(a: PayoffBound, b: PayoffBound) -> Ordering {
 }
 
 impl CandidateInterval {
+    /// The greatest proved lower bound of the payoff: the exact value, or the larger of the two enclosures' ends.
     fn payoff_lower(&self) -> PayoffBound {
-        self.exact_payoff.map_or(PayoffBound::Real(self.payoff.lower()), PayoffBound::Exact)
+        if let Some(exact) = self.exact_payoff {
+            return PayoffBound::Exact(exact);
+        }
+        let real = PayoffBound::Real(self.payoff.lower());
+        match self.payoff_bounds {
+            Some((lower, _)) if compare_bound(PayoffBound::Exact(lower), real).is_gt() => PayoffBound::Exact(lower),
+            _ => real,
+        }
     }
+    /// The least proved upper bound of the payoff.
     fn payoff_upper(&self) -> PayoffBound {
-        self.exact_payoff.map_or(PayoffBound::Real(self.payoff.upper()), PayoffBound::Exact)
+        if let Some(exact) = self.exact_payoff {
+            return PayoffBound::Exact(exact);
+        }
+        let real = PayoffBound::Real(self.payoff.upper());
+        match self.payoff_bounds {
+            Some((_, upper)) if compare_bound(PayoffBound::Exact(upper), real).is_lt() => PayoffBound::Exact(upper),
+            _ => real,
+        }
     }
+}
+
+/// A finite binary64 value as a fraction, when its numerator and power-of-two denominator fit.
+fn real_fraction(value: f64) -> Option<ExactExpectation> {
+    if !value.is_finite() {
+        return None;
+    }
+    let bits = value.abs().to_bits();
+    let raw = ((bits >> 52) & 0x7ff) as i32;
+    let mut mantissa = (bits & ((1u64 << 52) - 1)) | if raw == 0 { 0 } else { 1u64 << 52 };
+    if mantissa == 0 {
+        return Some(ExactExpectation { numerator: 0, denominator: 1 });
+    }
+    let mut exponent = if raw == 0 { -1074 } else { raw - 1075 };
+    let trailing = mantissa.trailing_zeros() as i32;
+    mantissa >>= trailing;
+    exponent += trailing;
+    let sign = if value < 0.0 { -1 } else { 1 };
+    if exponent >= 0 {
+        // The mantissa has at most 53 bits.
+        (exponent <= 74)
+            .then(|| ExactExpectation { numerator: sign * ((mantissa as i128) << exponent), denominator: 1 })
+    } else {
+        (exponent >= -127)
+            .then(|| ExactExpectation { numerator: sign * mantissa as i128, denominator: 1u128 << (-exponent) })
+    }
+}
+
+/// The intersection of two rational enclosures; None when they are disjoint.
+fn intersect_bounds(
+    a: Option<(ExactExpectation, ExactExpectation)>,
+    b: Option<(ExactExpectation, ExactExpectation)>,
+) -> Result<Option<(ExactExpectation, ExactExpectation)>, Error> {
+    let (a, b) = match (a, b) {
+        (Some(a), Some(b)) => (a, b),
+        (a, b) => return Ok(a.or(b)),
+    };
+    let lower = if compare_exact(a.0, b.0)?.is_ge() { a.0 } else { b.0 };
+    let upper = if compare_exact(a.1, b.1)?.is_le() { a.1 } else { b.1 };
+    if compare_exact(lower, upper)?.is_gt() {
+        return Err(invalid("disjoint rational payoff enclosures"));
+    }
+    Ok(Some((lower, upper)))
 }
 
 /// Greater means a ranks before b: its payoff is proved larger, or proved at least as large while its canonical
@@ -309,6 +370,21 @@ impl IntervalTopK {
                 return Err(invalid("zero exact denominator"));
             }
         }
+        if let Some((lower, upper)) = candidate.payoff_bounds {
+            if lower.denominator == 0 || upper.denominator == 0 || compare_exact(lower, upper)?.is_gt() {
+                return Err(invalid("invalid rational payoff enclosure"));
+            }
+            if compare_exact_real(lower, candidate.payoff.upper())?.is_gt()
+                || compare_exact_real(upper, candidate.payoff.lower())?.is_lt()
+            {
+                return Err(invalid("disjoint payoff enclosures"));
+            }
+            if let Some(exact) = candidate.exact_payoff
+                && (compare_exact(exact, lower)?.is_lt() || compare_exact(exact, upper)?.is_gt())
+            {
+                return Err(invalid("exact payoff outside its rational enclosure"));
+            }
+        }
         for (exact, interval) in [(candidate.exact_score, candidate.score), (candidate.exact_payoff, candidate.payoff)]
         {
             if let Some(exact) = exact
@@ -339,11 +415,12 @@ impl IntervalTopK {
     }
 
     fn check_equal_class(&self, candidate: &CandidateInterval) -> Result<(), Error> {
-        let (mut score, mut payoff) = (candidate.score, candidate.payoff);
+        let (mut score, mut payoff, mut bounds) = (candidate.score, candidate.payoff, candidate.payoff_bounds);
         for other in self.candidates.values().filter(|c| c.id != candidate.id && same_certificate(c, candidate)) {
             score = score.intersect(other.score).ok_or_else(|| invalid("equal programs have disjoint score bounds"))?;
             payoff =
                 payoff.intersect(other.payoff).ok_or_else(|| invalid("equal mappings have disjoint payoff bounds"))?;
+            bounds = intersect_bounds(bounds, other.payoff_bounds)?;
             for (a, b) in [(candidate.exact_score, other.exact_score), (candidate.exact_payoff, other.exact_payoff)] {
                 if let (Some(a), Some(b)) = (a, b)
                     && compare_exact(a, b)? != Ordering::Equal
@@ -356,27 +433,39 @@ impl IntervalTopK {
     }
 
     fn tighten_equal_classes(&mut self) {
-        let mut classes =
-            BTreeMap::<u64, (F64Interval, F64Interval, Option<ExactExpectation>, Option<ExactExpectation>)>::new();
+        type Class = (
+            F64Interval,
+            F64Interval,
+            Option<ExactExpectation>,
+            Option<ExactExpectation>,
+            Option<(ExactExpectation, ExactExpectation)>,
+        );
+        let mut classes = BTreeMap::<u64, Class>::new();
         for c in self.candidates.values() {
             if let Some(certificate) = &c.equality {
-                let v =
-                    classes.entry(certificate.identity).or_insert((c.score, c.payoff, c.exact_score, c.exact_payoff));
+                let v = classes.entry(certificate.identity).or_insert((
+                    c.score,
+                    c.payoff,
+                    c.exact_score,
+                    c.exact_payoff,
+                    c.payoff_bounds,
+                ));
                 v.0 = v.0.intersect(c.score).expect("checked equal class");
                 v.1 = v.1.intersect(c.payoff).expect("checked equal class");
                 v.2 = v.2.or(c.exact_score);
                 v.3 = v.3.or(c.exact_payoff);
+                v.4 = intersect_bounds(v.4, c.payoff_bounds).expect("checked equal class");
             }
         }
         for c in self.candidates.values_mut() {
             if let Some(certificate) = &c.equality {
-                let (score, payoff, exact_score, exact_payoff) = classes[&certificate.identity];
-                (c.score, c.payoff, c.exact_score, c.exact_payoff) = (score, payoff, exact_score, exact_payoff);
+                (c.score, c.payoff, c.exact_score, c.exact_payoff, c.payoff_bounds) = classes[&certificate.identity];
             }
         }
     }
 
     /// Revisions reject stale refinement responses. A refinement must retain every previously proved restriction.
+    #[allow(clippy::too_many_arguments)]
     pub fn refine(
         &mut self,
         id: CandidateId,
@@ -385,6 +474,7 @@ impl IntervalTopK {
         payoff: F64Interval,
         exact_score: Option<ExactExpectation>,
         exact_payoff: Option<ExactExpectation>,
+        payoff_bounds: Option<(ExactExpectation, ExactExpectation)>,
     ) -> Result<(), Error> {
         let old = self.candidates.get(&id).ok_or_else(|| invalid("candidate no longer in frontier"))?;
         if old.revision != expected_revision {
@@ -402,6 +492,7 @@ impl IntervalTopK {
         }
         let mut next = old.clone();
         (next.score, next.payoff) = (score, payoff);
+        next.payoff_bounds = intersect_bounds(old.payoff_bounds, payoff_bounds)?;
         next.exact_score = next.exact_score.or(exact_score);
         next.exact_payoff = next.exact_payoff.or(exact_payoff);
         next.revision = next.revision.checked_add(1).ok_or_else(|| invalid("revision overflow"))?;
@@ -436,15 +527,33 @@ impl IntervalTopK {
             // The least grid point at or above the proved lower bound. Every grid point below it is strictly below
             // the candidate's payoff, and the point itself is at most that payoff exactly when it equals the bound.
             let lower = c.payoff_lower();
-            let approx = match lower {
-                PayoffBound::Exact(x) => x.numerator as f64 / x.denominator as f64,
-                PayoffBound::Real(v) => v,
-            } * denominator as f64;
-            let approx = approx.ceil();
-            if !(approx.is_finite() && approx.abs() < 2f64.powi(100)) {
-                return None;
-            }
-            let mut t = approx as i128;
+            // The bound's ceiling on the grid, computed exactly where it fits; the loops below then only confirm it.
+            // With `numerator = q * divisor + r` and `0 <= r < divisor`, the ceiling of `numerator * grid / divisor` is
+            // `q * grid` plus the ceiling of `r * grid / divisor`, which never forms the full product.
+            let exact = match lower {
+                PayoffBound::Exact(x) => Some(x),
+                PayoffBound::Real(v) => real_fraction(v),
+            };
+            let ceiling = exact.and_then(|x| {
+                let (grid, divisor) = (i128::try_from(denominator).ok()?, i128::try_from(x.denominator).ok()?);
+                let (q, r) = (x.numerator.div_euclid(divisor), x.numerator.rem_euclid(divisor));
+                let part = r.checked_mul(grid)?;
+                q.checked_mul(grid)?.checked_add(part / divisor + i128::from(part % divisor != 0))
+            });
+            let mut t = match ceiling {
+                Some(t) => t,
+                None => {
+                    let approx = match lower {
+                        PayoffBound::Exact(x) => x.numerator as f64 / x.denominator as f64,
+                        PayoffBound::Real(v) => v,
+                    } * denominator as f64;
+                    let approx = approx.ceil();
+                    if !(approx.is_finite() && approx.abs() < 2f64.powi(100)) {
+                        return None;
+                    }
+                    approx as i128
+                }
+            };
             while compare_bound(grid(t), lower) == Ordering::Less {
                 t += 1;
             }
@@ -546,6 +655,7 @@ mod tests {
             payoff: F64Interval::new(lo, hi).unwrap(),
             exact_score: None,
             exact_payoff: None,
+            payoff_bounds: None,
             equality: None,
             revision: 0,
         }
@@ -558,11 +668,22 @@ mod tests {
         let proof = f.proof(RemainingDomain::Exhausted).unwrap();
         assert!(!proof.complete && proof.ordered_prefix.is_empty());
         assert_eq!(proof.ambiguous.len(), 2);
-        f.refine(2, 0, F64Interval::point(12.5).unwrap(), F64Interval::point(12.5).unwrap(), None, None).unwrap();
+        f.refine(2, 0, F64Interval::point(12.5).unwrap(), F64Interval::point(12.5).unwrap(), None, None, None).unwrap();
         assert_eq!(f.len(), 1);
         assert!(!f.proof(RemainingDomain::Open { upper: Some(12.5) }).unwrap().complete);
         assert!(f.proof(RemainingDomain::Open { upper: Some(12.49) }).unwrap().complete);
         assert_eq!(f.proof(RemainingDomain::Exhausted).unwrap().ordered_prefix, [2]);
+    }
+    #[test]
+    fn grid_cutoff_ceils_exact_payoffs_whose_grid_product_leaves_i128() {
+        // numerator * 120 exceeds i128::MAX; over 120 * 2^20 its grid ceiling is ceil(numerator / 2^20)
+        let numerator: i128 = 1_462_264_813_495_014_140_090_720_227_580_739_602;
+        let mut f = IntervalTopK::new(1).unwrap();
+        let mut c = candidate(1, 1.1e28, 1.2e28);
+        c.exact_payoff = Some(ExactExpectation { numerator, denominator: 120 << 20 });
+        f.insert(c).unwrap();
+        assert!(numerator.checked_mul(120).is_none());
+        assert_eq!(f.grid_cutoff(120).map(|cut| cut.0), Some((numerator + (1 << 20) - 1) >> 20));
     }
     #[test]
     fn entire_program_identity_proves_ties_without_fake_exact_values() {
@@ -625,10 +746,45 @@ mod tests {
         assert!(!proof.complete);
         assert_eq!(proof.pruned, 1);
         let v = F64Interval::new(22.5, 22.75).unwrap();
-        f.refine(3, 0, v, v, None, None).unwrap();
-        assert!(f.refine(3, 0, v, v, None, None).is_err());
-        assert!(f.refine(3, 1, F64Interval::new(22.0, 23.0).unwrap(), v, None, None).is_err());
+        f.refine(3, 0, v, v, None, None, None).unwrap();
+        assert!(f.refine(3, 0, v, v, None, None, None).is_err());
+        assert!(f.refine(3, 1, F64Interval::new(22.0, 23.0).unwrap(), v, None, None, None).is_err());
         assert_eq!(f.proof(RemainingDomain::Exhausted).unwrap().ordered_prefix, [1, 3]);
+    }
+    #[test]
+    fn binary64_values_convert_to_their_exact_fractions() {
+        for v in [0.0, 1.0, -2.5, 0.1, 1e15 + 0.5, -(2f64.powi(70)), f64::MIN_POSITIVE * 2f64.powi(60)] {
+            if let Some(x) = real_fraction(v) {
+                assert_eq!(compare_exact_real(x, v).unwrap(), Ordering::Equal, "{v}");
+            }
+        }
+        assert!(real_fraction(2f64.powi(200)).is_none() && real_fraction(f64::MIN_POSITIVE).is_none());
+    }
+    #[test]
+    fn rational_bounds_separate_what_binary64_endpoints_cannot() {
+        // Two payoffs of 2^60 + 10 and 2^60 + 3: binary64 rounds both to the same enclosure.
+        let base = 1i128 << 60;
+        let fraction = |numerator: i128| ExactExpectation { numerator, denominator: 1 };
+        let mut f = IntervalTopK::new(1).unwrap();
+        for (id, value) in [(1, base + 10), (2, base + 3)] {
+            let mut c = candidate(id, (base as f64).next_down(), (base as f64 + 64.0).next_up());
+            c.payoff_bounds = Some((fraction(value), fraction(value + 1)));
+            f.insert(c).unwrap();
+        }
+        let proof = f.proof(RemainingDomain::Exhausted).unwrap();
+        assert!(proof.complete);
+        assert_eq!(proof.ordered_prefix, [1]);
+        assert_eq!(f.grid_cutoff(1), Some((base + 10, 100)));
+        // Disjoint enclosures are a contradiction, and a refinement narrows the rational one.
+        let mut g = IntervalTopK::new(2).unwrap();
+        let mut c = candidate(3, 0.0, 10.0);
+        c.payoff_bounds = Some((fraction(11), fraction(12)));
+        assert!(g.insert(c.clone()).is_err());
+        c.payoff_bounds = Some((fraction(2), fraction(8)));
+        g.insert(c).unwrap();
+        let v = F64Interval::new(0.0, 10.0).unwrap();
+        g.refine(3, 0, v, v, None, None, Some((fraction(4), fraction(9)))).unwrap();
+        assert_eq!(g.get(3).unwrap().payoff_bounds, Some((fraction(4), fraction(8))));
     }
     fn exact(id: u64, power: i32, numerator: i128) -> CandidateInterval {
         // Aggregated exact means carry outward-rounded enclosures, never a singleton.

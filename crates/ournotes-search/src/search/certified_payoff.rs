@@ -42,6 +42,16 @@ pub(crate) fn payoff_map(
                 value: i128::from(power),
             }]));
         }
+        Metric::Combined { .. } => {
+            let terms = metric.folded_terms().expect("combined metric");
+            return Ok(PayoffMap::Combined(
+                terms
+                    .map(|(weight, term)| {
+                        Ok((weight, payoff_map(pool, request, term, event_input, physical, power, support)?))
+                    })
+                    .collect::<Result<_, Error>>()?,
+            ));
+        }
         _ => {}
     }
     let context =

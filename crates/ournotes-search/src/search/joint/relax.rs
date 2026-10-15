@@ -52,11 +52,13 @@ impl JointBounds {
         depth: usize,
         positions: &[usize; 5],
     ) -> (i128, i64) {
-        self.upper_keyed(pool, domain, p, depth, positions, None)
+        self.upper_reading(pool, domain, p, depth, positions, None, true)
     }
 
-    /// The cheap bound, with the envelope of a node's placed carriers, if any.
-    pub(super) fn upper_keyed(
+    /// The cheap bound, with the envelope of a node's placed carriers, if any, the other terms of a combined metric at
+    /// [`JointBounds::other_bonuses`] (`per_term`) or at their largest bonuses of a team.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn upper_reading(
         &self,
         pool: &Pool,
         domain: &CandidateDomain,
@@ -64,10 +66,70 @@ impl JointBounds {
         depth: usize,
         positions: &[usize; 5],
         keyed: Option<&Keyed>,
+        per_term: bool,
     ) -> (i128, i64) {
         let (power, gain, bonus) = self.relax(pool, domain, p, depth, &SLOTS[depth..], positions, keyed);
         let max_gain = self.node_order_gain(domain, p, depth, gain, keyed);
-        (self.payoff_cap_from(keyed.map_or(self.a0, |k| k.a0), power, gain, bonus, max_gain), power)
+        let others = if per_term { self.other_bonuses(pool, domain, p, depth) } else { Vec::new() };
+        (self.payoff_cap_with(keyed.map_or(self.a0, |k| k.a0), power, gain, bonus, &others, max_gain), power)
+    }
+
+    /// For a combined metric, at least the event bonus under each other term of the point bound (in their order) of
+    /// every completion of the first `depth` search slots of `p`: the placed pairs' bonuses under the term, plus the
+    /// largest member bonuses of as many distinct characters not placed as there are slots to fill and as many of the
+    /// largest positive bonuses of the Snaps not placed, and at most the term's largest bonus of a team. A completion
+    /// takes distinct characters and distinct Snaps (or none) for its slots to fill, so its bonus under the term is
+    /// at most that sum. Empty without other terms.
+    pub(super) fn other_bonuses(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+    ) -> Vec<i64> {
+        let Some(pt) = &self.points else { return Vec::new() };
+        let mut bonuses = self.other_bonuses_free(pool, domain, p, depth, 5 - depth);
+        for (bonus, (_, largest, _)) in bonuses.iter_mut().zip(&pt.others) {
+            *bonus = (*bonus).min(*largest);
+        }
+        bonuses
+    }
+
+    /// [`JointBounds::other_bonuses`] of `free` slots to fill, without the cap at the largest bonus of a team.
+    pub(super) fn other_bonuses_free(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        free: usize,
+    ) -> Vec<i64> {
+        let Some(pt) = self.points.as_ref().filter(|pt| !pt.others.is_empty()) else { return Vec::new() };
+        let choices = Self::prefix_choices(domain, p, depth);
+        let placed = |m: usize| {
+            SLOTS[..depth].iter().any(|&s| pool.members[p.members[s]].character_id == pool.members[m].character_id)
+        };
+        let used = |j: usize| SLOTS[..depth].iter().any(|&s| choices[s] == j + 1);
+        let top = |mut values: Vec<i64>| {
+            values.sort_unstable_by(|a, b| b.cmp(a));
+            values.iter().take(free).sum::<i64>()
+        };
+        pt.others
+            .iter()
+            .map(|(_, _, part)| {
+                let own: i64 = SLOTS[..depth].iter().map(|&s| part.pair_bonus(p.members[s], choices[s])).sum();
+                let mut characters = HashMap::<i64, i64>::new();
+                for &m in domain.members() {
+                    if placed(m) {
+                        continue;
+                    }
+                    let best = characters.entry(pool.members[m].character_id).or_insert(i64::MIN);
+                    *best = (*best).max(part.member[m]);
+                }
+                let snaps = (0..part.snap.len()).filter(|&j| !used(j)).map(|j| part.snap[j].max(0)).collect();
+                own + top(characters.into_values().collect()) + top(snaps)
+            })
+            .collect()
     }
 
     /// Diagnostics only: the relaxation behind a node's cheap bound (keyed when given) with its mean score cap, and
@@ -160,9 +222,23 @@ impl JointBounds {
     /// leaves the global coefficient). Under [`JointBounds::order_maximum`] both bound the gain sum of every order,
     /// and the score cap reads the smaller.
     pub(super) fn payoff_cap_from(&self, a0: f64, power: i64, gain: f64, bonus: i64, max_gain: f64) -> i128 {
+        self.payoff_cap_with(a0, power, gain, bonus, &[], max_gain)
+    }
+
+    /// [`JointBounds::payoff_cap_from`] with the other terms of a combined metric at the event bonuses `others` (see
+    /// [`PointBound::mean_payoff_with`]).
+    pub(super) fn payoff_cap_with(
+        &self,
+        a0: f64,
+        power: i64,
+        gain: f64,
+        bonus: i64,
+        others: &[i64],
+        max_gain: f64,
+    ) -> i128 {
         let cap = |gain: f64| ((power as f64) * add_up(a0, gain).min(self.global) * (1.0 + self.eps)).ceil() as i128;
         let score_cap = cap(if self.is_order_maximum() { gain.min(max_gain) } else { gain });
-        self.points.as_ref().map_or(score_cap, |pt| pt.mean_payoff(bonus, score_cap, cap(max_gain)))
+        self.points.as_ref().map_or(score_cap, |pt| pt.mean_payoff_with(bonus, others, score_cap, cap(max_gain)))
     }
 
     /// Two bounds of the gain sum of any completion of a prefix in any order (in the keyed envelope, if any, for the

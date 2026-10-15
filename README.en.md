@@ -41,8 +41,9 @@ paired with each) by their mean payoff over the 120 equally likely performance o
 non-leader members are a layout, not a decision, and each team is reported in a canonical layout with its score
 distribution over the orders and its best order. A skill probability check with Gekisou off is rejected as
 unsupported. In a Gekisou live without a LUCK range it gates nothing that can run, so each order keeps one exact
-score; a LUCK range ranks decks by certified intervals over the native lottery probabilities, and an overlapping
-frontier ends `RefinementRequired`.
+score; a LUCK range values each order at its expected score over the native lottery probabilities, ranks equal
+step and target payoffs by that expected score, and ranks decks by certified intervals; an overlapping frontier ends
+`RefinementRequired`.
 The default `branchAndBound` decomposes ordinary Live into member compositions and Snap pairings; Gekisou retains
 joint member/Snap traversal. Both bound the mean score with position-mean skill gains and bound normal-played PT in a
 certified nonwrapping bonus domain. Unsupported bounds fall back to enumeration with

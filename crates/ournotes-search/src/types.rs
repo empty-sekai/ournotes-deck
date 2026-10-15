@@ -51,7 +51,7 @@ pub struct RecommendationRequest {
 /// How the payoffs of a team's performance orders combine into the team's value.
 ///
 /// `Expected` is the mean over the equally likely performance orders. `Maximum` is the greatest value among the
-/// orders, where the value of one order is the expectation of its terminal payoff over the random draws it contains.
+/// orders, where one order is worth the terminal payoff at its expected score over the random draws it contains.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Aggregation {
@@ -75,7 +75,7 @@ impl MaximumModel {
         if live {
             Self::Orders {
                 performance_orders: 120,
-                order_value: "expectedTerminalPayoffOverRandomDraws",
+                order_value: "terminalPayoffAtExpectedScore",
                 order_choice: "maximum",
             }
         } else {
@@ -444,10 +444,10 @@ impl Metric {
             _ => test(self),
         }
     }
-    /// Whether bounds of expected scores bound the metric's expected payoff: every term's payoff has a concave
-    /// nondecreasing majorant in the score, which a score target's indicator lacks.
+    /// Whether bounds of expected scores bound the metric's ranking value under a LUCK lottery: every metric that
+    /// reads the score does, since each order earns its reward at its expected score.
     pub(crate) fn weighs_laws(&self) -> bool {
-        !self.any(|m| matches!(m, Self::Power | Self::ScoreAtLeast { .. } | Self::ScoreAndLifeAtLeast { .. }))
+        !self.any(|m| matches!(m, Self::Power))
     }
     pub(crate) fn event(&self) -> Option<i64> {
         match *self {

@@ -109,6 +109,66 @@ fn item_prefix_maxima_and_mean_hulls_cover_each_outcome_before_averaging() {
 }
 
 #[test]
+fn capped_tiers_bound_every_score_below_the_cap() {
+    let full = compile(&fixture(), (0, 30), true).unwrap();
+    let mut scores = Vec::new();
+    full.tier_scores(&mut scores);
+    assert_eq!(scores, [0, 10, 20]);
+    let mut capped = full.clone();
+    capped.cap_scores(9);
+    assert_eq!(capped.multiplier, 21);
+    assert_eq!(capped.multiplier_at(30), 21);
+    for a in 0..=9 {
+        assert_eq!(capped.order_payoff(2500, a), full.order_payoff(2500, a));
+        for b in 0..=9 {
+            let mean_ceiling = (a + b + 1) / 2;
+            assert_eq!(
+                capped.mean_payoff(2500, mean_ceiling, a.max(b)),
+                full.mean_payoff(2500, mean_ceiling, a.max(b))
+            );
+        }
+    }
+    // Scores above the cap read the tiers below it, never more than the full bound.
+    for a in 10..=30 {
+        assert_eq!(capped.order_payoff(2500, a), 26);
+        assert!(capped.mean_payoff(2500, a, 30) <= full.mean_payoff(2500, a, 30));
+    }
+    // The first tier stays when the cap lies below it.
+    let mut low = full.clone();
+    low.cap_scores(-1);
+    assert_eq!(low.multiplier_at(5), 21);
+}
+
+#[test]
+fn other_terms_read_a_team_bonus_at_most_the_largest_one() {
+    let own = compile(&fixture(), (0, 30), true).unwrap();
+    let mut part = own.clone();
+    part.member = (0..part.member.len()).map(|m| 1000 * (m as i64 % 3)).collect();
+    let largest = 5 * 2000 + part.snap.iter().map(|&b| b.max(0)).sum::<i64>();
+    let mut combined = own.clone();
+    combined.weight = 7;
+    combined.others = vec![(3, largest, part.clone())];
+    let pairs: [(usize, usize); 5] = std::array::from_fn(|s| (s % own.member.len(), 0));
+    let own_bonus: i64 = pairs.iter().map(|&(m, choice)| own.pair_bonus(m, choice)).sum();
+    let team_bonus: i64 = pairs.iter().map(|&(m, choice)| part.pair_bonus(m, choice)).sum();
+    assert!(team_bonus <= largest);
+    for cap in [0, 9, 10, 25, 30] {
+        let exact = 7 * own.order_payoff(own_bonus, cap) + 3 * part.order_payoff(team_bonus, cap);
+        assert_eq!(combined.team_order_payoff(&pairs, cap), exact);
+        assert!(exact <= combined.order_payoff(own_bonus, cap));
+        for max_cap in [cap, 30] {
+            let at_team = combined.mean_payoff_with(own_bonus, &[team_bonus], cap, max_cap);
+            assert!(at_team <= combined.mean_payoff(own_bonus, cap, max_cap));
+            assert_eq!(
+                combined.mean_payoff_with(own_bonus, &[largest], cap, max_cap),
+                combined.mean_payoff(own_bonus, cap, max_cap)
+            );
+        }
+    }
+    assert!(combined.maximum_with(own_bonus, &[team_bonus]) <= combined.maximum_with(own_bonus, &[]));
+}
+
+#[test]
 fn every_rank_checks_native_products_before_resource_filtering_or_zero_rate() {
     for count in [-1, i64::from(i32::MAX), 1i64 << 32] {
         for rate in [0, 3] {

@@ -5,7 +5,7 @@ use super::{data_document, joint_request, roster_document, synthetic_master};
 use ournotes_search::{
     engine,
     search::Completion,
-    types::{RecommendationRequest, Strategy},
+    types::{RecommendationRequest, RecommendedDeck, Strategy},
 };
 use ournotes_sim::{cards::Roster, data::DeckData};
 use serde_json::json;
@@ -34,57 +34,56 @@ fn inputs(threshold: i32, k: usize, cache_entries: usize) -> (DeckData, Roster, 
 }
 
 #[test]
-fn probability_range_settles_the_k1_and_k12_certain_event_witnesses() {
-    let powers = [127480, 125551, 125292, 125100, 124371, 124190, 124054, 123871, 123296, 122261, 122183, 122125];
+fn a_reached_threshold_ranks_by_the_expected_score() {
     for (k, cache) in [(1, 0), (12, 64)] {
         let (data, roster, request) = inputs(545_749, k, cache);
         let result = engine::recommend(&data, &roster, &request).unwrap();
         assert_eq!(result.completion, Completion::Complete);
         assert_eq!(result.telemetry.leaves.visited, 31);
-        assert_eq!(result.results.iter().map(|deck| deck.power).collect::<Vec<_>>(), powers[..k]);
         assert_eq!(
             result.telemetry.lottery_refinement.attempted_orders, 0,
-            "the closed probability range already proves these power ties"
+            "the expected-score enclosures already separate these teams"
         );
+        // Every order of these teams reaches the threshold at its expected score, so they rank as by the score.
+        let mut by_score = joint_request("mission", true, json!({"kind":"score"}));
+        (by_score.k, by_score.strategy, by_score.limits.cache_entries) = (k, Strategy::Exhaustive, cache);
+        let by_score = engine::recommend(&data, &roster, &by_score).unwrap();
+        assert_eq!(by_score.completion, Completion::Complete);
+        let teams = |decks: &[RecommendedDeck]| decks.iter().map(|d| (d.members, d.snaps, d.power)).collect::<Vec<_>>();
+        assert_eq!(teams(&result.results), teams(&by_score.results));
         for deck in &result.results {
             assert_eq!(deck.rank_certified, Some(true));
-            let payoff = deck.expected_payoff.as_ref().expect("the threshold is reached on every path");
+            let payoff = deck.expected_payoff.as_ref().expect("the threshold is reached in every order");
             assert_eq!(payoff.numerator, payoff.denominator);
             let interval = deck.payoff_interval.as_ref().unwrap();
-            assert!(interval.lower_f64() >= 0.0);
-            assert_eq!(interval.upper_f64(), 1.0);
+            assert!(interval.lower_f64() <= 1.0 && interval.upper_f64() == 1.0);
         }
+        assert_ranked(&result.results);
     }
 }
 
 #[test]
-fn exact_nominal_refinement_settles_the_remaining_threshold_witness_without_a_cache() {
-    let (data, roster, request) = inputs(610_000, 1, 0);
+fn exact_refinement_settles_an_expected_score_on_the_threshold_without_a_cache() {
+    let (data, roster, request) = inputs(611_236, 12, 0);
     let result = engine::recommend(&data, &roster, &request).unwrap();
     assert_eq!(result.completion, Completion::Complete);
     assert_eq!(result.telemetry.leaves.visited, 31);
-    assert_eq!(result.results.len(), 1);
+    assert_eq!(result.results.len(), 12);
     let winner = &result.results[0];
     assert_eq!(winner.members, [1, 2, 3, 4, 5]);
     assert_eq!(winner.snaps, [Some(1), Some(2), None, None, None]);
     assert_eq!(winner.power, 127_480);
-    assert_eq!(winner.rank_certified, Some(true));
+    assert!(result.results.iter().all(|deck| deck.rank_certified == Some(true)));
     let counters = &result.telemetry.lottery_refinement;
-    assert!(counters.installed_orders > 0, "moment bounds alone cannot settle this witness");
+    assert!(counters.installed_orders > 0, "the enclosures alone leave an expected score on the threshold");
     assert_eq!(counters.completed_orders, counters.installed_orders);
     assert_eq!(counters.declined_orders, 0);
     assert!(counters.terminal_paths > counters.completed_orders);
-    let probability = winner.payoff_interval.as_ref().unwrap();
-    assert!(
-        probability.lower_f64() > 0.388_928_092_021_209_54,
-        "the provider must add information beyond the original first-moment lower bound"
-    );
-    assert!(probability.upper_f64() <= 1.0);
-    // Complete certifies the ranking. Numeric expectations remain absent until all 120 relevant order
-    // expectations are exact; no midpoint is filled in just because the winner has been identified.
-    if winner.expected_payoff.is_none() {
-        assert!(probability.lower_f64() < probability.upper_f64());
-    }
+    // 54 of the winner's 120 orders reach the threshold at their expected scores.
+    let reward = winner.expected_payoff.as_ref().expect("an exact reward");
+    let (n, d): (i128, i128) = (reward.numerator.parse().unwrap(), reward.denominator.parse().unwrap());
+    assert_eq!(n * 120, 54 * d);
+    assert_ranked(&result.results);
 }
 
 #[test]
@@ -93,7 +92,7 @@ fn a_long_frame_schedule_loads_boundary_orders_and_certifies_the_threshold_ranki
     use ournotes_sim::live::model::JudgementStream;
 
     for cache_entries in [0, 64] {
-        let (data, roster, mut request) = inputs(610_000, 1, cache_entries);
+        let (data, roster, mut request) = inputs(611_236, 12, cache_entries);
         let mut stream = JudgementStream::theoretical_best(&data.chart(super::SCORE_ID).unwrap());
         let first = stream.frames.len() as i32;
         stream.frames.extend((first..=600).map(|frame| frame * 1000 / 60));
@@ -107,22 +106,22 @@ fn a_long_frame_schedule_loads_boundary_orders_and_certifies_the_threshold_ranki
             result.telemetry.lottery_refinement,
             result.results
         );
-        assert_eq!(result.results.len(), 1);
+        assert_eq!(result.results.len(), 12);
         let winner = &result.results[0];
         assert_eq!(winner.members, [1, 2, 3, 4, 5]);
         assert_eq!(winner.snaps, [Some(1), Some(2), None, None, None]);
-        assert_eq!(winner.rank_certified, Some(true));
+        assert!(result.results.iter().all(|deck| deck.rank_certified == Some(true)));
         assert!(result.telemetry.lottery_refinement.installed_orders > 0);
         assert_eq!(result.telemetry.lottery_refinement.declined_orders, 0);
-        assert!(winner.payoff_interval.as_ref().unwrap().lower_f64() > 0.388_928_092_021_209_54);
+        assert_ranked(&result.results);
     }
 }
 
 #[test]
 fn long_stream_refinement_materializes_the_boundary_candidate() {
-    let (data, roster, _) = inputs(610_000, 1, 0);
-    let mut wire = super::joint_request_json("mission", true, json!({"kind":"scoreAtLeast","threshold":610_000}));
-    wire["k"] = json!(1);
+    let (data, roster, _) = inputs(583_086, 31, 0);
+    let mut wire = super::joint_request_json("mission", true, json!({"kind":"scoreAtLeast","threshold":583_086}));
+    wire["k"] = json!(31);
     wire["strategy"] = json!({"kind":"exhaustive"});
     wire["execution"]["play"] = json!({"kind":"stream","stream":{
         "frames":(0..=2000).step_by(20).collect::<Vec<_>>(),
@@ -130,6 +129,7 @@ fn long_stream_refinement_materializes_the_boundary_candidate() {
     }});
     let short = engine::recommend(&data, &roster, &serde_json::from_value(wire.clone()).unwrap()).unwrap();
     assert_eq!(short.completion, Completion::Complete);
+    assert_ranked(&short.results);
     wire["execution"]["play"]["stream"]["frames"] = json!((0..=10400).step_by(20).collect::<Vec<_>>());
     let long = engine::recommend(&data, &roster, &serde_json::from_value(wire).unwrap()).unwrap();
     assert!(matches!(long.completion, Completion::Complete | Completion::RefinementRequired));
@@ -145,6 +145,7 @@ fn long_stream_refinement_materializes_the_boundary_candidate() {
         assert_eq!(counters.frames, ournotes_sim::live::full::LuckExactBudget::default().remaining_frames);
     } else {
         assert!(long.results.iter().all(|row| row.rank_certified == Some(true)));
+        assert_ranked(&long.results);
     }
     // The finite work allowance preserves the ambiguous frontier and the true winning candidate.
     let expected = &short.results[0];
@@ -160,6 +161,26 @@ fn long_stream_refinement_materializes_the_boundary_candidate() {
     for row in &long.results {
         let p = row.payoff_interval.as_ref().unwrap();
         assert!(p.lower_f64() >= 0.0 && p.upper_f64() <= 1.0);
+    }
+}
+
+/// Certified teams rank by their reward, the share of their orders whose expected score reaches the threshold, and
+/// teams with equal rewards by their expected scores.
+fn assert_ranked(decks: &[RecommendedDeck]) {
+    let reward = |deck: &RecommendedDeck| {
+        let p = deck.payoff_interval.as_ref().unwrap();
+        (p.lower_f64(), p.upper_f64())
+    };
+    let score = |deck: &RecommendedDeck| {
+        let s = deck.score_interval.as_ref().unwrap();
+        (s.lower_f64(), s.upper_f64())
+    };
+    for pair in decks.windows(2) {
+        let ((a_low, a_high), (b_low, b_high)) = (reward(&pair[0]), reward(&pair[1]));
+        assert!(a_high >= b_low, "a lower reward ranks first");
+        if a_low <= b_high {
+            assert!(score(&pair[0]).0 >= score(&pair[1]).1, "equal rewards rank by the expected score");
+        }
     }
 }
 
