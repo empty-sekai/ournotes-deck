@@ -2,6 +2,12 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.11](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.10...v0.0.11) - 2026-10-16
+
+### Features
+
+- **search:** [**breaking**] Value LUCK orders at their expected scores ([#62](https://github.com/empty-sekai/ournotes-deck/issues/62)) ([25cdad0](https://github.com/empty-sekai/ournotes-deck/commit/25cdad006188e5fda39f36243bce0e71ca92ec97))
+
 ## [0.0.10](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.9...v0.0.10) - 2026-10-15
 
 ### Bug fixes
