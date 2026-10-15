@@ -528,14 +528,17 @@ impl IntervalTopK {
             // the candidate's payoff, and the point itself is at most that payoff exactly when it equals the bound.
             let lower = c.payoff_lower();
             // The bound's ceiling on the grid, computed exactly where it fits; the loops below then only confirm it.
+            // With `numerator = q * divisor + r` and `0 <= r < divisor`, the ceiling of `numerator * grid / divisor` is
+            // `q * grid` plus the ceiling of `r * grid / divisor`, which never forms the full product.
             let exact = match lower {
                 PayoffBound::Exact(x) => Some(x),
                 PayoffBound::Real(v) => real_fraction(v),
             };
             let ceiling = exact.and_then(|x| {
-                let grid = i128::try_from(denominator).ok()?;
-                let (numerator, divisor) = (x.numerator.checked_mul(grid)?, i128::try_from(x.denominator).ok()?);
-                Some(numerator.div_euclid(divisor) + i128::from(numerator.rem_euclid(divisor) != 0))
+                let (grid, divisor) = (i128::try_from(denominator).ok()?, i128::try_from(x.denominator).ok()?);
+                let (q, r) = (x.numerator.div_euclid(divisor), x.numerator.rem_euclid(divisor));
+                let part = r.checked_mul(grid)?;
+                q.checked_mul(grid)?.checked_add(part / divisor + i128::from(part % divisor != 0))
             });
             let mut t = match ceiling {
                 Some(t) => t,
@@ -670,6 +673,17 @@ mod tests {
         assert!(!f.proof(RemainingDomain::Open { upper: Some(12.5) }).unwrap().complete);
         assert!(f.proof(RemainingDomain::Open { upper: Some(12.49) }).unwrap().complete);
         assert_eq!(f.proof(RemainingDomain::Exhausted).unwrap().ordered_prefix, [2]);
+    }
+    #[test]
+    fn grid_cutoff_ceils_exact_payoffs_whose_grid_product_leaves_i128() {
+        // numerator * 120 exceeds i128::MAX; over 120 * 2^20 its grid ceiling is ceil(numerator / 2^20)
+        let numerator: i128 = 1_462_264_813_495_014_140_090_720_227_580_739_602;
+        let mut f = IntervalTopK::new(1).unwrap();
+        let mut c = candidate(1, 1.1e28, 1.2e28);
+        c.exact_payoff = Some(ExactExpectation { numerator, denominator: 120 << 20 });
+        f.insert(c).unwrap();
+        assert!(numerator.checked_mul(120).is_none());
+        assert_eq!(f.grid_cutoff(120).map(|cut| cut.0), Some((numerator + (1 << 20) - 1) >> 20));
     }
     #[test]
     fn entire_program_identity_proves_ties_without_fake_exact_values() {
