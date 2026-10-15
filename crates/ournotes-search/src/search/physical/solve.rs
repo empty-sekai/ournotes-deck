@@ -696,8 +696,9 @@ fn orders_below(
 }
 
 /// The lowest score threshold of a point tier of `bounds` that no performance order of a team of the domain reaches
-/// in expected score ([`orders_below`]), asked for the two lowest thresholds above the greatest order score evaluated
-/// so far; each search takes at most a quarter of the time left. None when neither is proved.
+/// in expected score ([`orders_below`]), asked for the thresholds above the greatest order score evaluated so far in
+/// ascending order until one is not reached; each search takes at most a quarter of the time left. None when no
+/// threshold is proved unreached.
 fn tier_cap(
     engine: &mut Engine<'_, '_>,
     bounds: &crate::search::joint::JointBounds,
@@ -705,7 +706,10 @@ fn tier_cap(
     simulation: &SimulationInput,
 ) -> Result<Option<i64>, Error> {
     let seen = engine.certified.as_ref().expect("certified request").order_score_seen.max(0.0);
-    for threshold in bounds.tier_scores().into_iter().filter(|&score| score as f64 > seen).take(2) {
+    for threshold in bounds.tier_scores().into_iter().filter(|&score| score as f64 > seen) {
+        if engine.expired() {
+            break;
+        }
         let started = Instant::now();
         let time_ms = engine.budget.deadline().map(|deadline| {
             (deadline.saturating_duration_since(started).as_millis() / 4).min(u128::from(u64::MAX)) as u64

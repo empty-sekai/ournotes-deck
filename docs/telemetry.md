@@ -115,7 +115,7 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | `initial` | 评估请求给出的 `initialDecks` |
 | `setup` | 相关上界与资源上界的启用判断、warm start 准备 |
 | `ptWarmStart` | PT：先在最高奖金区间找出 Top-K |
-| `tierProbe` | 认证 LUCK 的 PT：询问已评估分数之上最低的几个 PT 档有没有顺序达到（见 `bounds.tierProbes`） |
+| `tierProbe` | 认证 LUCK 的 PT：从已评估分数之上最低的 PT 档起逐档询问有没有顺序达到，直到某档没达到（见 `bounds.tierProbes`） |
 | `ptRegimeCompile` | PT：按当前第 K 名去掉不可能入选的成员并重新编译上界 |
 | `conversionCompile` | 撃奏分数：编译各转换分段的上界 |
 | `seed` | 联合搜索遍历前的 warm start（见 `incumbents.warmStart`） |

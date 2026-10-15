@@ -125,7 +125,7 @@ In time order, without overlap; small gaps between phases belong to none. Each e
 | `initial` | Evaluate the request's `initialDecks` |
 | `setup` | Decide the correlated and resource bounds, prepare the warm start |
 | `ptWarmStart` | PT: find a Top-K in the maximum-bonus regime first |
-| `tierProbe` | Certified LUCK PT: ask whether any order reaches the lowest point tiers above the evaluated scores (see `bounds.tierProbes`) |
+| `tierProbe` | Certified LUCK PT: ask, tier by tier from the lowest point tier above the evaluated scores, whether any order reaches it, until one is not reached (see `bounds.tierProbes`) |
 | `ptRegimeCompile` | PT: drop members that cannot reach the current K-th and recompile the bounds |
 | `conversionCompile` | Gekisou score: compile the bounds of each conversion part |
 | `seed` | Warm start before the joint traversal (see `incumbents.warmStart`) |

@@ -278,19 +278,21 @@ impl PointBound {
         self.weight != 1 || !self.others.is_empty()
     }
 
-    /// The largest payoff of an order of a deck with this event bonus.
-    pub(super) fn maximum(&self, bonus: i64) -> i128 {
-        self.rank(self.maximum_reward(bonus), i128::from(i32::MAX))
+    /// The largest payoff of an order of a deck with this event bonus, the other terms at the event bonuses `others`
+    /// (see [`PointBound::mean_payoff_with`]).
+    pub(super) fn maximum_with(&self, bonus: i64, others: &[i64]) -> i128 {
+        self.rank(self.maximum_reward(bonus, others), i128::from(i32::MAX))
     }
 
-    /// The largest reward of an order of a deck with this event bonus.
-    fn maximum_reward(&self, bonus: i64) -> i128 {
+    /// The largest reward of an order of a deck with this event bonus, the other terms at `others`.
+    fn maximum_reward(&self, bonus: i64, others: &[i64]) -> i128 {
         let own = match self.target {
             Some(_) => i128::from(self.multiplier),
             None => ((bonus + 10000) * self.multiplier / 10000) as i128,
         };
-        self.others.iter().fold(self.weight.saturating_mul(own), |sum, (weight, bonus, part)| {
-            sum.saturating_add(weight.saturating_mul(part.maximum_reward(*bonus)))
+        self.others.iter().enumerate().fold(self.weight.saturating_mul(own), |sum, (i, (weight, largest, part))| {
+            let bonus = others.get(i).copied().unwrap_or(*largest);
+            sum.saturating_add(weight.saturating_mul(part.maximum_reward(bonus, &[])))
         })
     }
     /// The event bonus of a member and choice.
@@ -366,6 +368,25 @@ impl PointBound {
         })
     }
 
+    /// The payoff of one performance order of a complete team, whose member and choice pairs are `pairs`, whose score
+    /// is at most `score_cap`: [`PointBound::order_payoff`] with every term at the team's own event bonus under that
+    /// term, in place of the largest bonus of a team.
+    pub(super) fn team_order_payoff(&self, pairs: &[(usize, usize); 5], score_cap: i128) -> i128 {
+        self.rank(self.team_order_reward(pairs, score_cap), score_cap)
+    }
+
+    /// [`PointBound::team_order_payoff`] of the rewards.
+    fn team_order_reward(&self, pairs: &[(usize, usize); 5], score_cap: i128) -> i128 {
+        let bonus = pairs.iter().map(|&(m, choice)| self.pair_bonus(m, choice)).sum();
+        let own = self.own_order_payoff(bonus, score_cap);
+        if !self.is_combined() {
+            return own;
+        }
+        self.others.iter().fold(self.weight.saturating_mul(own), |sum, (weight, _, part)| {
+            sum.saturating_add(weight.saturating_mul(part.team_order_reward(pairs, score_cap)))
+        })
+    }
+
     /// [`PointBound::order_payoff`] of the first term alone.
     fn own_order_payoff(&self, bonus: i64, score_cap: i128) -> i128 {
         if let Some(target) = self.target {
@@ -392,12 +413,25 @@ impl PointBound {
 
     /// [`PointBound::mean_payoff`] of the rewards.
     fn mean_reward(&self, bonus: i64, score_cap: i128, max_cap: i128) -> i128 {
+        self.mean_reward_with(bonus, &[], score_cap, max_cap)
+    }
+
+    /// [`PointBound::mean_payoff`] with the other terms of a combined metric at the event bonuses `others`, one per
+    /// term in their order, each at least the bonus under the term of every deck it bounds; a term past the end of
+    /// `others` reads its largest bonus of a team.
+    pub(super) fn mean_payoff_with(&self, bonus: i64, others: &[i64], score_cap: i128, max_cap: i128) -> i128 {
+        self.rank(self.mean_reward_with(bonus, others, score_cap, max_cap), score_cap)
+    }
+
+    /// [`PointBound::mean_payoff_with`] of the rewards.
+    fn mean_reward_with(&self, bonus: i64, others: &[i64], score_cap: i128, max_cap: i128) -> i128 {
         let own = self.own_mean_payoff(bonus, score_cap, max_cap);
         if !self.is_combined() {
             return own;
         }
-        self.others.iter().fold(self.weight.saturating_mul(own), |sum, (weight, bonus, part)| {
-            sum.saturating_add(weight.saturating_mul(part.mean_reward(*bonus, score_cap, max_cap)))
+        self.others.iter().enumerate().fold(self.weight.saturating_mul(own), |sum, (i, (weight, largest, part))| {
+            let bonus = others.get(i).copied().unwrap_or(*largest);
+            sum.saturating_add(weight.saturating_mul(part.mean_reward(bonus, score_cap, max_cap)))
         })
     }
 

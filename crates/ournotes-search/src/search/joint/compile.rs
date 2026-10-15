@@ -496,8 +496,9 @@ impl JointBounds {
         // Bounded storage; an unavailable optional table never truncates the search domain.
         self.tails = ((self.lead.len() + 6).saturating_mul(self.choices.len() + 1) <= 1_000_000).then(|| {
             let n = self.choices.len();
-            let mut suffix = tail::PairMaxima::zeros(self.lead.len(), n + 1);
-            let mut blocks = tail::PairMaxima::zeros(self.lead.len(), n.div_ceil(tail::PAIR_BLOCK));
+            let others = self.points.as_ref().map_or(0, |pt| pt.others.len());
+            let mut suffix = tail::PairMaxima::zeros(self.lead.len(), others, n + 1);
+            let mut blocks = tail::PairMaxima::zeros(self.lead.len(), others, n.div_ceil(tail::PAIR_BLOCK));
             for i in (0..n).rev() {
                 let (m, choice) = self.choices[i];
                 suffix.merge(i, i + 1);

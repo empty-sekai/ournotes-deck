@@ -46,8 +46,9 @@ impl JointBounds {
         Some(crate::search::deck_payoff::ScoreSteps::new(self.global, self.eps, steps))
     }
 
-    /// Every deck containing member m earns at most this many PT in every performance order.
-    /// Distinct-character bonus maxima and distinct-Snap maxima are independent,
+    /// Every deck containing member m earns at most this many PT in every performance order: under each term of the
+    /// point bound, m's bonus plus the largest member bonuses of four other characters and the five largest positive
+    /// Snap bonuses. Distinct-character bonus maxima and distinct-Snap maxima are independent,
     /// so ignoring their pairing, leader and required-member conflicts is optimistic.
     pub(crate) fn member_pt_caps(
         &self,
@@ -66,24 +67,37 @@ impl JointBounds {
             capped.cap_scores(threshold - 1);
             pt = &capped;
         }
-        let mut chars = HashMap::<i64, i64>::new();
-        for &m in domain.members() {
-            let v = chars.entry(pool.members[m].character_id).or_default();
-            *v = (*v).max(pt.member[m]);
-        }
-        let mut snaps = pt.snap.clone();
-        snaps.sort_unstable_by(|a, b| b.cmp(a));
-        let snap_bonus: i64 = snaps.iter().take(5).sum();
+        // Per term: the largest member bonus of each character and the sum of the five largest positive Snap bonuses.
+        let tables = |part: &PointBound| {
+            let mut chars = HashMap::<i64, i64>::new();
+            for &m in domain.members() {
+                let v = chars.entry(pool.members[m].character_id).or_insert(i64::MIN);
+                *v = (*v).max(part.member[m]);
+            }
+            let mut snaps: Vec<i64> = part.snap.iter().map(|&b| b.max(0)).collect();
+            snaps.sort_unstable_by(|a, b| b.cmp(a));
+            (chars, snaps.iter().take(5).sum::<i64>())
+        };
+        let own = tables(pt);
+        let others: Vec<_> = pt.others.iter().map(|(_, _, part)| tables(part)).collect();
+        let bonus_with = |m: usize, part: &PointBound, (chars, snap_bonus): &(HashMap<i64, i64>, i64)| {
+            let mut rest: Vec<_> =
+                chars.iter().filter(|(c, _)| **c != pool.members[m].character_id).map(|(_, b)| *b).collect();
+            rest.sort_unstable_by(|a, b| b.cmp(a));
+            part.member[m] + snap_bonus + rest.iter().take(4).sum::<i64>()
+        };
         Some(
             domain
                 .members()
                 .iter()
                 .map(|&m| {
-                    let mut rest: Vec<_> =
-                        chars.iter().filter(|(c, _)| **c != pool.members[m].character_id).map(|(_, b)| *b).collect();
-                    rest.sort_unstable_by(|a, b| b.cmp(a));
-                    let bonus = pt.member[m] + snap_bonus + rest.iter().take(4).sum::<i64>();
-                    (m, pt.maximum(bonus))
+                    let others: Vec<i64> = pt
+                        .others
+                        .iter()
+                        .zip(&others)
+                        .map(|((_, largest, part), tables)| bonus_with(m, part, tables).min(*largest))
+                        .collect();
+                    (m, pt.maximum_with(bonus_with(m, pt, &own), &others))
                 })
                 .collect(),
         )

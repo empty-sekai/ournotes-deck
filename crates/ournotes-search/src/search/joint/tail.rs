@@ -19,6 +19,8 @@ pub(super) struct PairMaxima {
     /// Per position, the position-mean gain.
     pub(super) gain: [Vec<f64>; 5],
     pub(super) bonus: Vec<i64>,
+    /// Per other term of a combined metric's point bound, the bonus under the term.
+    pub(super) others: Vec<Vec<i64>>,
     pub(super) spread: Vec<f64>,
     /// Per position, the per-position gains (`order_gains`).
     pub(super) order_gain: [Vec<f64>; 5],
@@ -26,11 +28,12 @@ pub(super) struct PairMaxima {
 
 impl PairMaxima {
     /// The maxima of `sets` empty sets of pairs, at least 0 each.
-    pub(super) fn zeros(profiles: usize, sets: usize) -> PairMaxima {
+    pub(super) fn zeros(profiles: usize, others: usize, sets: usize) -> PairMaxima {
         PairMaxima {
             power: vec![vec![0; sets]; profiles],
             gain: std::array::from_fn(|_| vec![0.0; sets]),
             bonus: vec![0; sets],
+            others: vec![vec![0; sets]; others],
             spread: vec![0.0; sets],
             order_gain: std::array::from_fn(|_| vec![0.0; sets]),
         }
@@ -49,6 +52,9 @@ impl PairMaxima {
         }
         if let Some(pt) = &b.points {
             self.bonus[set] = self.bonus[set].max(pt.member[m] + if choice == 0 { 0 } else { pt.snap[choice - 1] });
+            for (row, (_, _, part)) in self.others.iter_mut().zip(&pt.others) {
+                row[set] = row[set].max(part.pair_bonus(m, choice));
+            }
         }
     }
 
@@ -56,6 +62,9 @@ impl PairMaxima {
     pub(super) fn merge(&mut self, set: usize, from: usize) {
         self.spread[set] = self.spread[set].max(self.spread[from]);
         self.bonus[set] = self.bonus[set].max(self.bonus[from]);
+        for row in &mut self.others {
+            row[set] = row[set].max(row[from]);
+        }
         for pos in 0..5 {
             self.order_gain[pos][set] = self.order_gain[pos][set].max(self.order_gain[pos][from]);
             self.gain[pos][set] = self.gain[pos][set].max(self.gain[pos][from]);
@@ -76,6 +85,9 @@ pub(crate) struct TailState {
     /// Per position `p`, at least the gain sum of the rows' slots in every order that leaves `p` to the next slot.
     beside: [f64; 5],
     rows: Vec<(i64, f64, i64, usize, u128)>,
+    /// Per other term of a combined metric's point bound, at least the bonus under the term of the placed slots and
+    /// of the rows' slots (see [`JointBounds::other_bonuses`]); the next pair's adds to it.
+    others: Vec<i64>,
 }
 
 impl JointBounds {
@@ -115,6 +127,7 @@ impl JointBounds {
             a0: keyed.map_or(self.a0, |k| k.a0),
             spread,
             beside,
+            others: self.other_bonuses_free(pool, domain, p, depth, 4 - depth),
             rows: orders
                 .iter()
                 .map(|(positions, weight)| {
@@ -143,13 +156,14 @@ impl JointBounds {
 
     fn maxima_upper(&self, state: &TailState, t: &PairMaxima, set: usize) -> Result<(i128, i64), Error> {
         let placed = (0..5).map(|pos| add_up(t.order_gain[pos][set], state.beside[pos])).fold(f64::MIN, f64::max);
+        let others = self.tail_others(state, |i, _| t.others[i][set]);
         let mut total = 0i128;
         let mut power = 0;
         for &(p, g, b, pos, weight) in &state.rows {
             power = p + t.power[state.profile][set];
             let gain = add_up(g, t.gain[pos][set]);
             let max_gain = add_up(gain, add_up(state.spread, t.spread[set])).min(placed);
-            let payoff = self.payoff_cap_from(state.a0, power, gain, b + t.bonus[set], max_gain);
+            let payoff = self.payoff_cap_with(state.a0, power, gain, b + t.bonus[set], &others, max_gain);
             total = total
                 .checked_add(
                     payoff
@@ -172,13 +186,14 @@ impl JointBounds {
             self.points.as_ref().map_or(0, |pt| pt.member[member] + if choice == 0 { 0 } else { pt.snap[choice - 1] });
         let row = &self.order_gains[member][choice];
         let placed = (0..5).map(|pos| add_up(row[pos], state.beside[pos])).fold(f64::MIN, f64::max);
+        let others = self.tail_others(state, |_, part| part.pair_bonus(member, choice));
         let mut total = 0i128;
         let mut power = 0;
         for &(p, g, b, pos, weight) in &state.rows {
             power = p + added_power;
             let gain = add_up(g, self.gains[member][choice][pos]);
             let max_gain = add_up(gain, add_up(state.spread, self.spread[member][choice])).min(placed);
-            let payoff = self.payoff_cap_from(state.a0, power, gain, b + added_bonus, max_gain);
+            let payoff = self.payoff_cap_with(state.a0, power, gain, b + added_bonus, &others, max_gain);
             total = total
                 .checked_add(
                     payoff
@@ -188,6 +203,19 @@ impl JointBounds {
                 .ok_or_else(|| unavailable("pair bound sum overflow"))?;
         }
         Ok((total, power))
+    }
+
+    /// The other terms' bonuses of a tail state's children: the state's plus the next pair's, `next(i, term)` for the
+    /// `i`-th other term, at most the term's largest bonus of a team.
+    fn tail_others(&self, state: &TailState, next: impl Fn(usize, &PointBound) -> i64) -> Vec<i64> {
+        let Some(pt) = &self.points else { return Vec::new() };
+        state
+            .others
+            .iter()
+            .zip(&pt.others)
+            .enumerate()
+            .map(|(i, (&bonus, (_, largest, part)))| (bonus + next(i, part)).min(*largest))
+            .collect()
     }
 
     /// If every remaining character must be used, maximize the residual power as

@@ -132,7 +132,7 @@ fn ranked_bounds_cover_the_ranking_value_of_every_expected_score() {
         for (plain, ranked) in plain.iter().zip(&ranked) {
             let values: Vec<i128> = means.iter().map(|&m| rank(plain, bonus, m)).collect();
             assert!(values.iter().all(|&v| v <= ranked.order_payoff(bonus, max_cap)));
-            assert!(values.iter().all(|&v| v <= ranked.maximum(bonus)));
+            assert!(values.iter().all(|&v| v <= ranked.maximum_with(bonus, &[])));
             assert!(values.iter().sum::<i128>() <= n * ranked.mean_payoff(bonus, mean_cap, max_cap));
             if plain.target.is_none() {
                 assert!(values.iter().all(|&v| v <= ranked.cutoff_payoff(bonus, max_cap)));

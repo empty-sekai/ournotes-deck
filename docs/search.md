@@ -1354,8 +1354,12 @@ per-term expectations are computed from the same score distribution when it ente
 The upper bound is the weighted sum of the terms' own bounds. For a node, every term bound `U_i` covers the
 term's expected payoff over the node's completions, the weights are nonnegative and the term rewards are
 nonnegative, so `sum_i w_i * U_i` covers the expected combined payoff. One term keeps its member and Snap event
-bonuses in the bound's additive tables. Every other term's payoff is nondecreasing in its event bonus and is
-evaluated at the largest bonus of a legal team, which no team exceeds. Where the single-metric bound reads the
+bonuses in the bound's additive tables. Every other term's payoff is nondecreasing in its event bonus. A node's
+cheap and bonus bounds evaluate it at the term's bonus of the placed pairs plus, for the slots to fill, the largest
+member bonuses of as many distinct characters not placed and the largest positive bonuses of as many Snaps not
+placed, at most the largest bonus of a legal team: a completion takes distinct characters and distinct Snaps (or
+none) for those slots, so no completion exceeds it. The other node bounds read the largest bonus of a legal team,
+and the caps of a complete team read every term at the team's own bonus. Where the single-metric bound reads the
 payoff of one order from a score cap, the combined bound adds the terms' order payoffs at that cap; where it
 reads a mean from a mean score cap, it adds the terms' mean bounds. When every term is a step function of the
 score, the union of the terms' step scores partitions the score axis for the per-interval order bound.
@@ -1971,8 +1975,9 @@ score-and-life target relaxes its life requirement at nodes: an order short of t
 expected score. Every ranking value reads its own order's cap.
 
 A cap reads every outcome's score, so it can lie above every order's expected score and reach a tier no order
-earns. Before its search, a PT request asks of the two lowest tier thresholds above the greatest expected score
-evaluated so far whether any order of a team of the domain reaches them. Each question is a nested certified
+earns. Before its search, a PT request asks of the tier thresholds above the greatest expected score evaluated so
+far, in ascending order until one is not reached, whether any order of a team of the domain reaches them. Each
+question is a nested certified
 search of the teams' best orders by expected score: it closes every node whose cap lies below the threshold `T`
 and stops at the first team whose best order reaches `T`. When it exhausts the domain and every team it retains
 lies below `T`, every other team lies below a retained one or was closed below `T`, so no order has an expected
