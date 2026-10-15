@@ -266,6 +266,8 @@ pub struct BoundSetup {
     pub fine: bool,
     pub class_search: bool,
     pub pt_regime: Option<PtRegime>,
+    /// The searches that asked whether a performance order of any team reaches the score of a point tier.
+    pub tier_probes: Vec<TierProbe>,
     pub conversion: Option<Conversion>,
     /// The census of the lottery laws of the domain's teams (certified score searches of a Gekisou live).
     pub domain_laws: Option<DomainLaws>,
@@ -286,6 +288,17 @@ pub struct DeckPayoffSetup {
     pub shortfalls: usize,
     /// The joint traversal took the search over.
     pub handed_over: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TierProbe {
+    /// The tier's score threshold.
+    pub threshold: i64,
+    /// `below` (proved: no order reaches it, so the bounds drop the tiers from it on), `reached` or `open` (the
+    /// search did not finish).
+    pub outcome: &'static str,
+    pub ms: f64,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -716,8 +729,9 @@ pub struct Carriers {
     pub nodes: [u64; 6],
 }
 
-/// Root children visited in descending order of their depth-1 bound: once one is strictly inferior to the K-th, the
-/// loop skips it and every later one (each would be pruned at depth 1).
+/// Root children visited in descending order of their depth-1 bound (or of the bound before a point tier cap): a child
+/// whose own bound is strictly inferior to the K-th is skipped, and once the largest bound of a child and every later
+/// one is, the loop skips them all (each would be pruned at depth 1).
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RootOrder {

@@ -189,6 +189,14 @@ pub(super) struct CertifiedState<'m> {
     pub(super) census: Option<super::domain_laws::LotteryCensus>,
     /// How the payoffs of a team's performance orders make its payoff.
     pub(super) reduction: Reduction,
+    /// A payoff numerator the traversal closes every node below, whatever the frontier holds: the threshold of a
+    /// search that asks whether any team reaches it (see `solve::orders_below`). A team reaching it stops the search.
+    pub(super) floor: Option<i128>,
+    /// The greatest proved lower bound of the expected score of a performance order among the evaluated teams.
+    pub(super) order_score_seen: f64,
+    /// The lowest point tier no performance order of a team of the domain reaches in expected score, when proved:
+    /// the bounds compiled from then on drop the tiers from it on (`JointBounds::cap_scores`).
+    pub(super) tier_cap: Option<i64>,
 }
 
 /// Key bytes the request's lottery-curve cache may hold.
@@ -216,6 +224,9 @@ impl CertifiedState<'_> {
             law_bounds: super::leaf::LawBounds::default(),
             census: None,
             reduction,
+            floor: None,
+            order_score_seen: f64::NEG_INFINITY,
+            tier_cap: None,
         })
     }
     /// The denominator of the payoff numerators of the frontier's grid: a mean over the performance orders is a sum
@@ -356,7 +367,11 @@ impl Engine<'_, '_> {
             return Some((threshold, i32::MIN));
         }
         match &self.certified {
-            Some(state) => state.cutoff,
+            Some(state) => match (state.cutoff, state.floor) {
+                (Some((threshold, power)), Some(floor)) if threshold >= floor => Some((threshold, power)),
+                (_, Some(floor)) => Some((floor, i32::MIN)),
+                (cutoff, None) => cutoff,
+            },
             None => (self.top.len() == self.request.k).then(|| {
                 let kth = self.top.last().expect("full exact Top-K");
                 (kth.evaluation.expected_payoff.numerator, kth.power)
@@ -385,6 +400,12 @@ impl Engine<'_, '_> {
             });
         }
         let id = self.tel.leaves.visited;
+        let seen = evaluation.orders.iter().map(|order| order.mean.lower()).fold(f64::NEG_INFINITY, f64::max);
+        state.order_score_seen = state.order_score_seen.max(seen);
+        // A team at or above the floor answers the question of the search.
+        if state.floor.is_some_and(|floor| evaluation.payoff.lower() >= floor as f64) {
+            self.stop = Some(ExitReason::CandidateLimit);
+        }
         let retained_program = (state.retain_refinement == Some(true)).then(|| program_identity.clone());
         let equality = state.frontier.certify_equal_program(program_identity, power, payoff_identity.clone());
         state.frontier.insert(CandidateInterval {

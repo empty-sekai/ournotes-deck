@@ -72,12 +72,31 @@ fn snap_of(domain: &CandidateDomain, choice: usize) -> Option<usize> {
 /// Root children of one traversal in descending order of their depth-1 node bound, with that bound.
 pub(super) struct RootOrder {
     pub(super) children: Vec<(usize, usize)>,
+    /// The bound each child's depth-1 node checks first.
     pub(super) caps: Vec<(i128, i64)>,
+    /// The key each child is ordered by: its cap, or the one its bounds kept from before a tier cap.
+    pub(super) keys: Vec<(i128, i64)>,
+    /// `covers[i]`: the largest of `caps[i..]`, which bounds child `i` and every later one.
+    pub(super) covers: Vec<(i128, i64)>,
+}
+
+/// The largest of each suffix of `caps`.
+pub(super) fn suffix_maxima(caps: impl DoubleEndedIterator<Item = (i128, i64)>) -> Vec<(i128, i64)> {
+    let mut covers: Vec<_> = caps
+        .rev()
+        .scan(None, |best: &mut Option<(i128, i64)>, cap| {
+            *best = Some(best.map_or(cap, |b| b.max(cap)));
+            *best
+        })
+        .collect();
+    covers.reverse();
+    covers
 }
 
 impl RootOrder {
     /// The leader pairs the root loop would visit (same filters), sorted by the bound their depth-1 node checks
-    /// first; a stable sort keeps the static order among equal bounds.
+    /// first, or by the bound the bounds kept from before a tier cap ([`JointBounds::root_key`]); a stable sort keeps
+    /// the static order among equal keys.
     pub(super) fn new(
         domain: &CandidateDomain,
         bounds: &JointBounds,
@@ -86,7 +105,7 @@ impl RootOrder {
     ) -> Result<Self, Error> {
         let mut p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
         let mut rows = Vec::new();
-        for &(m, choice) in &bounds.choices {
+        for (index, &(m, choice)) in bounds.choices.iter().enumerate() {
             let character = e.pool.members[m].character_id;
             if domain.leader().is_some_and(|l| l != m)
                 || domain.required().iter().any(|&r| r != m && e.pool.members[r].character_id == character)
@@ -96,15 +115,24 @@ impl RootOrder {
             }
             p.members[SLOTS[0]] = m;
             p.snaps[SLOTS[0]] = snap_of(domain, choice);
-            rows.push(((m, choice), super::node_upper(e.pool, domain, bounds, &p, 1, orders)?));
+            let cap = super::node_upper(e.pool, domain, bounds, &p, 1, orders)?;
+            rows.push(((m, choice), cap, bounds.root_key(index).unwrap_or(cap)));
         }
-        rows.sort_by_key(|a| std::cmp::Reverse(a.1));
-        let (children, caps) = rows.into_iter().unzip();
-        Ok(Self { children, caps })
+        rows.sort_by_key(|a| std::cmp::Reverse(a.2));
+        let covers = suffix_maxima(rows.iter().map(|row| row.1));
+        let mut children = Vec::with_capacity(rows.len());
+        let mut caps = Vec::with_capacity(rows.len());
+        let mut keys = Vec::with_capacity(rows.len());
+        for (child, cap, key) in rows {
+            children.push(child);
+            caps.push(cap);
+            keys.push(key);
+        }
+        Ok(Self { children, caps, keys, covers })
     }
 
     pub(super) fn best(&self) -> Option<(i128, i64)> {
-        self.caps.first().copied()
+        self.covers.first().copied()
     }
 }
 
@@ -480,6 +508,17 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn suffix_maxima_cover_each_child_and_every_later_one() {
+        let caps = [(5, 1), (9, 0), (3, 7), (9, 2), (1, 0)];
+        let covers = super::suffix_maxima(caps.iter().copied());
+        assert_eq!(covers, [(9, 2), (9, 2), (9, 2), (9, 2), (1, 0)]);
+        for (i, cover) in covers.iter().enumerate() {
+            assert!(caps[i..].iter().all(|cap| cap <= cover));
+        }
+        assert!(super::suffix_maxima(std::iter::empty()).is_empty());
+    }
+
+    #[test]
     fn certified_seed_allocation_yields_to_the_complete_domain() {
         let mut source = synth_snaps(&mut Rng::new(91), 5, 0, &[]);
         set_column(&mut source, "MasterMemberCard", &mut |row| {
@@ -580,6 +619,7 @@ mod tests {
                     &[],
                     None,
                     budget::now(),
+                    None,
                     None,
                 )
             })

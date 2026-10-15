@@ -1970,6 +1970,19 @@ bounds read the mean expected score's cap through the same concave majorants as 
 score-and-life target relaxes its life requirement at nodes: an order short of the final life still ranks by its
 expected score. Every ranking value reads its own order's cap.
 
+A cap reads every outcome's score, so it can lie above every order's expected score and reach a tier no order
+earns. Before its search, a PT request asks of the two lowest tier thresholds above the greatest expected score
+evaluated so far whether any order of a team of the domain reaches them. Each question is a nested certified
+search of the teams' best orders by expected score: it closes every node whose cap lies below the threshold `T`
+and stops at the first team whose best order reaches `T`. When it exhausts the domain and every team it retains
+lies below `T`, every other team lies below a retained one or was closed below `T`, so no order has an expected
+score of `T` or more and every order's reward reads only the tiers below `T`. The bounds then drop the tiers from
+`T` on: the reward at any cap, the concave majorants and the largest multiplier read the remaining tiers, in the
+qualifying-domain restriction and the leaf bounds as well. The root loop still visits the leader pairs in the order
+of their bounds before the drop, which rank first the leaders whose teams reach the higher scores: it skips a pair
+whose own bound lies below the cutoff and stops once the largest bound of the pairs left does. Each question takes at
+most a quarter of the time left; one that does not finish drops nothing.
+
 #### Complete-law replay and reuse
 
 The exact tree branches over all positive-weight base-point and bonus LUCK outcomes. A pending branch contains

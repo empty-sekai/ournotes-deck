@@ -147,6 +147,9 @@ pub(crate) struct JointBounds {
     order_potentials: Option<[f64; 5]>,
     /// The sum of those potentials, rounded up (0 otherwise), which per-order quantities leave out.
     order_offset: f64,
+    /// After [`JointBounds::cap_scores`]: the depth-1 bound of each pair of `choices` in the leader slot before the
+    /// cap (None where it did not compute), which orders the root loop (see `warm::RootOrder`).
+    root_keys: Option<Vec<Option<(i128, i64)>>>,
 }
 
 /// The cheap bounds of decks with at most `n < 5` Gekisou combo carriers (a slot whose member and Snap bring combo
@@ -206,6 +209,34 @@ impl JointBounds {
             "marginDiagnostic":self.fine.as_ref().map(|fine| fine.margin_diagnostic(power, deck.members,
                 deck.snaps.map(|s| s.map_or(0, |snap| domain.snaps().iter().position(|&v| v == snap).expect("compiled Snap") + 1)), positions, None)),
             "finePayoffUpper":self.fine_upper(domain,deck,power,positions,&mut JointScratch::default()).map(|v|v.to_string()),"globalCoefficient":self.global,"relativeMargin":self.eps,"pairGains":gains,"positions":positions})
+    }
+
+    /// The bound every joint node checks first: the cheap bound of the carrier level of the completions of the first
+    /// `depth` search slots of `p`, keyed by the performers placed.
+    pub(crate) fn node_bound(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        orders: &[([usize; 5], u128)],
+    ) -> Result<(i128, i64), Error> {
+        let choices = Self::prefix_choices(domain, p, depth);
+        let placed = self.carriers_placed(p, depth, &choices);
+        let keyed = self.keyed(p, depth, &choices, 5 - depth, 5 - depth);
+        self.carrier_level((placed + 5 - depth).min(5)).expected_upper_keyed(
+            pool,
+            domain,
+            p,
+            depth,
+            orders,
+            keyed.as_ref(),
+        )
+    }
+
+    /// The key the root loop orders the leader pair `choices[index]` by, when [`JointBounds::cap_scores`] kept one.
+    pub(crate) fn root_key(&self, index: usize) -> Option<(i128, i64)> {
+        self.root_keys.as_ref().and_then(|keys| keys.get(index).copied().flatten())
     }
 
     /// The cheap bounds of every deck with at most `n` Gekisou combo carriers (the pool-wide ones from 5 on).

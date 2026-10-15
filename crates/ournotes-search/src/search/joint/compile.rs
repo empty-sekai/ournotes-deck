@@ -289,6 +289,7 @@ impl JointBounds {
             part: None,
             order_potentials: None,
             order_offset: 0.0,
+            root_keys: None,
         };
         compiled.compile_tables(pool, domain);
         if !compiled.gekisou {
@@ -345,6 +346,70 @@ impl JointBounds {
             for bounds in &mut clusters.bounds {
                 bounds.order_maximum(pool, domain);
             }
+        }
+    }
+
+    /// The score thresholds of the point bound's tiers, ascending and distinct (empty without tiers).
+    pub(crate) fn tier_scores(&self) -> Vec<i64> {
+        let mut scores = Vec::new();
+        if let Some(pt) = &self.points {
+            pt.tier_scores(&mut scores);
+        }
+        scores.sort_unstable();
+        scores.dedup();
+        scores
+    }
+
+    /// Drops the point tiers at and above `threshold`, which no performance order of a team of the domain reaches in
+    /// expected score, from these bounds and their law clusters ([`JointBounds::drop_tiers`]). The root loop of each
+    /// keeps the order of the leader pairs' bounds before the cap, read with `orders` (see `warm::RootOrder`): the
+    /// dropped tiers bound no reward, but they still rank first the leaders whose teams reach the higher scores.
+    pub(crate) fn cap_scores(
+        &mut self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        threshold: i64,
+        orders: &[([usize; 5], u128)],
+    ) {
+        if self.points.is_none() {
+            return;
+        }
+        let mut p = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
+        let keys = self
+            .choices
+            .iter()
+            .map(|&(m, choice)| {
+                p.members[SLOTS[0]] = m;
+                p.snaps[SLOTS[0]] = (choice > 0).then(|| domain.snaps()[choice - 1]);
+                self.node_bound(pool, domain, &p, 1, orders).ok()
+            })
+            .collect();
+        self.root_keys = Some(keys);
+        self.drop_tiers(pool, domain, threshold);
+        if let Some(clusters) = &mut self.law_clusters {
+            for bounds in &mut clusters.bounds {
+                bounds.cap_scores(pool, domain, threshold, orders);
+            }
+        }
+    }
+
+    /// Drops the point tiers at and above `threshold`, which no performance order of a team of the domain reaches in
+    /// expected score, from these bounds and their carrier levels, and rebuilds the tables that read them.
+    pub(crate) fn drop_tiers(&mut self, pool: &Pool, domain: &CandidateDomain, threshold: i64) {
+        let Some(pt) = &mut self.points else { return };
+        pt.cap_scores(threshold - 1);
+        self.compile_tables(pool, domain);
+        if let Some(levels) = &mut self.carrier_levels {
+            for level in levels.at.iter_mut().flatten() {
+                level.drop_tiers(pool, domain, threshold);
+            }
+        }
+        if self.carrier_split.is_some() {
+            self.carrier_split = carrier_split::CarrierSplit::compile(self, pool, domain);
+        }
+        if self.rules.is_some() {
+            let rules = self.rules.take();
+            self.set_rules(pool, domain, rules);
         }
     }
 
@@ -419,6 +484,7 @@ impl JointBounds {
             part: None,
             order_potentials: None,
             order_offset: 0.0,
+            root_keys: None,
         };
         b.compile_tables(pool, domain);
         b

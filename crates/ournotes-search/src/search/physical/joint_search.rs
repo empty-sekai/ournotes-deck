@@ -41,17 +41,7 @@ pub(super) fn node_upper(
     depth: usize,
     orders: &[([usize; 5], u128)],
 ) -> Result<(i128, i64), Error> {
-    let choices = crate::search::joint::JointBounds::prefix_choices(domain, p, depth);
-    let placed = bounds.carriers_placed(p, depth, &choices);
-    let keyed = bounds.keyed(p, depth, &choices, 5 - depth, 5 - depth);
-    bounds.carrier_level((placed + 5 - depth).min(5)).expected_upper_keyed(
-        pool,
-        domain,
-        p,
-        depth,
-        orders,
-        keyed.as_ref(),
-    )
+    bounds.node_bound(pool, domain, p, depth, orders)
 }
 
 /// Gekisou score: partition the physical domain by the Snaps selected from its compiled conversion reach.
@@ -308,13 +298,14 @@ pub(super) fn traverse(
     for (c, cluster) in clusters.bounds.iter().enumerate() {
         let root = warm::RootOrder::new(domain, cluster, orders, e)?;
         let prefix = cluster.part_prefix(p, 0, &[0; 5]);
-        for (&(m, choice), &cap) in root.children.iter().zip(&root.caps) {
+        for (i, (&(m, choice), &cap)) in root.children.iter().zip(&root.caps).enumerate() {
             if cluster.part_allows(prefix.as_ref(), 0, m, choice)? {
-                rows.push((cap, c, (m, choice)));
+                rows.push((cap, c, (m, choice), root.keys[i]));
             }
         }
     }
-    rows.sort_by_key(|&(cap, _, _)| std::cmp::Reverse(cap));
+    rows.sort_by_key(|&(_, _, _, key)| std::cmp::Reverse(key));
+    let covers = warm::suffix_maxima(rows.iter().map(|row| row.0));
     if let Some(threshold) = crate::search::snaps::census() {
         let open = rows.iter().filter(|r| r.0.0 >= threshold).count();
         let census = e.tel.leaves.census.get_or_insert_with(|| telemetry::Census::new(threshold));
@@ -324,15 +315,19 @@ pub(super) fn traverse(
     e.tel.joint.nodes[0] += 1;
     let levels = clusters.bounds.iter().map(|b| b.carrier_level_count()).max().unwrap_or(0);
     e.tel.joint.carriers.levels = e.tel.joint.carriers.levels.max(levels);
-    if rows.first().is_some_and(|r| warm::inferior(r.0, e)) {
+    if covers.first().is_some_and(|&cover| warm::inferior(cover, e)) {
         e.tel.joint.root_order.traversals_pruned += 1;
     }
-    for (offset, &(cap, c, (m, choice))) in rows.iter().enumerate() {
-        // Each cap covers its child and every later one.
-        e.note_open(Some(cap.0));
-        if warm::inferior(cap, e) {
+    for (offset, &(cap, c, (m, choice), _)) in rows.iter().enumerate() {
+        // Each cover bounds its child and every later one.
+        e.note_open(Some(covers[offset].0));
+        if warm::inferior(covers[offset], e) {
             e.tel.joint.root_order.skipped += (rows.len() - offset) as u64;
             break;
+        }
+        if warm::inferior(cap, e) {
+            e.tel.joint.root_order.skipped += 1;
+            continue;
         }
         if e.expired() {
             let started = e.bound_start();
@@ -346,7 +341,7 @@ pub(super) fn traverse(
         let more = joint_rec(1, 0, p, domain, &clusters.bounds[c], orders, e, None)?;
         e.rec.clock.lap(0);
         if !more {
-            if let Some(&(next, _, _)) = rows.get(offset + 1) {
+            if let Some(&next) = covers.get(offset + 1) {
                 let started = e.bound_start();
                 e.fold_unexplored(Some(next.0), started);
             }
@@ -585,14 +580,18 @@ pub(super) fn joint_rec(
         if let Some(r) = &root
             && seed_bonus.is_none()
         {
-            // Ordered root children: each cap covers its child and every later one.
-            e.note_open(Some(r.caps[offset].0));
+            // Ordered root children: each cover bounds its child and every later one.
+            e.note_open(Some(r.covers[offset].0));
         }
-        if let Some(r) = &root
-            && warm::inferior(r.caps[offset], e)
-        {
-            e.tel.joint.root_order.skipped += (width - offset) as u64;
-            break;
+        if let Some(r) = &root {
+            if warm::inferior(r.covers[offset], e) {
+                e.tel.joint.root_order.skipped += (width - offset) as u64;
+                break;
+            }
+            if warm::inferior(r.caps[offset], e) {
+                e.tel.joint.root_order.skipped += 1;
+                continue;
+            }
         }
         if offset % 16 == 0
             && let Some((threshold, cutoff_power)) = e.safe_cutoff()

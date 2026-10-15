@@ -49,10 +49,22 @@ impl JointBounds {
     /// Every deck containing member m earns at most this many PT in every performance order.
     /// Distinct-character bonus maxima and distinct-Snap maxima are independent,
     /// so ignoring their pairing, leader and required-member conflicts is optimistic.
-    pub(crate) fn member_pt_caps(&self, pool: &Pool, domain: &CandidateDomain) -> Option<Vec<(usize, i128)>> {
-        let pt = self.points.as_ref()?;
+    pub(crate) fn member_pt_caps(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        tier_cap: Option<i64>,
+    ) -> Option<Vec<(usize, i128)>> {
+        let mut capped;
+        let mut pt = self.points.as_ref()?;
         if pt.target.is_some() {
             return None;
+        }
+        // No order reaches the tiers from `tier_cap` on (see [`JointBounds::cap_scores`]).
+        if let Some(threshold) = tier_cap {
+            capped = pt.clone();
+            capped.cap_scores(threshold - 1);
+            pt = &capped;
         }
         let mut chars = HashMap::<i64, i64>::new();
         for &m in domain.members() {
@@ -134,8 +146,9 @@ impl JointBounds {
         domain: &CandidateDomain,
         numerator: i128,
         mass: u128,
+        tier_cap: Option<i64>,
     ) -> Result<Option<CandidateDomain>, Error> {
-        let Some(caps) = self.member_pt_caps(pool, domain) else {
+        let Some(caps) = self.member_pt_caps(pool, domain, tier_cap) else {
             return Ok(None);
         };
         let mass = i128::try_from(mass).map_err(|_| unavailable("PT domain mass overflow"))?;

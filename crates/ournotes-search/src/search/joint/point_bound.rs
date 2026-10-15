@@ -171,6 +171,30 @@ impl PointBound {
         }
     }
 
+    /// The score thresholds of the tiers of this bound and of its other terms.
+    pub(super) fn tier_scores(&self, scores: &mut Vec<i64>) {
+        scores.extend(self.score_tiers.iter().flatten().map(|&(score, _)| score));
+        for (_, _, part) in &self.others {
+            part.tier_scores(scores);
+        }
+    }
+
+    /// Drops the tiers above `cap`, which no order's expected score exceeds: the multiplier at any score, the concave
+    /// majorants and the largest multiplier read only the tiers left. The first tier stays.
+    pub(super) fn cap_scores(&mut self, cap: i64) {
+        if let Some(tiers) = &mut self.score_tiers {
+            let keep = tiers.partition_point(|&(score, _)| score <= cap).max(1);
+            tiers.truncate(keep);
+            self.multiplier = tiers.iter().map(|&(_, multiplier)| multiplier).max().unwrap_or(0);
+            if let Some(hulls) = &mut self.hulls {
+                hulls.truncate(keep);
+            }
+        }
+        for (_, _, part) in &mut self.others {
+            part.cap_scores(cap);
+        }
+    }
+
     /// This bound for the ranking values of the orders of a certified LUCK live
     /// ([`crate::search::certified_search::REWARD_WEIGHT`]): an order earns its reward at the integer part of its
     /// expected score and ranks by `reward * REWARD_WEIGHT + expected score`. The score caps

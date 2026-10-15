@@ -352,10 +352,10 @@ impl Engine<'_, '_> {
             return Ok(());
         }
         let started = self.bound_start();
-        // Each bound covers every child at or after `offset` (the node bound covers all of its children; ordered root
-        // children are in descending order of their depth-1 bound).
+        // Each bound covers every child at or after `offset` (the node bound covers all of its children; an ordered
+        // root's cover is the largest depth-1 bound from its child on).
         let upper = match (tail, root) {
-            (_, Some(r)) => Some(r.caps[offset].0),
+            (_, Some(r)) => Some(r.covers[offset].0),
             (Some((tail_bounds, state)), None) => Some(tail_bounds.tail_upper(state, offset)?.0),
             (None, None) if depth > 0 => Some(node_upper(self.pool, domain, bounds, p, depth, orders)?.0),
             (None, None) => joint_root_upper(self.pool, domain, bounds, orders, offset)?,

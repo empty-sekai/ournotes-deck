@@ -58,6 +58,7 @@ reports the work so far, a recommendation result reports the whole request.
 | `bounds.correlated`, `bounds.resource` | Correlated and resource bounds enabled (in the last search part) |
 | `bounds.fine`, `bounds.classSearch` | Fine bounds present, class search used |
 | `bounds.ptRegime` | PT tightening after the warm start: `membersRemoved`, `fallback`, `compileMs`; null when not run |
+| `bounds.tierProbes[]` | Certified LUCK PT: each question whether an order of any team reaches a point tier in expected score: `threshold` (the tier's score), `outcome` (`below`: proved unreached, so the bounds drop the tiers from it on; `reached`; `open`: unfinished), `ms` |
 | `bounds.conversion` | Gekisou score split by converting Snaps: `snaps` (converting Snaps), `parts`, `fallback`, `compileMs`; null when not split |
 
 ## `proof`
@@ -80,7 +81,7 @@ deck of the true Top-K that was not kept pays at most `max(upperBound, kth)`. A 
 
 How it is computed: after the stop, for the remaining branches at every level of the current path, take the bound the
 search itself would check there (node bounds and tail bounds; at the root, the depth-1 node bound of each remaining
-choice, which is the first remaining one when the root follows that bound's descending order; for conversion parts not
+choice, whose maximum over the remaining ones the ordered root keeps for each position; for conversion parts not
 yet started, the pool-wide bound), and take the maximum. When the stop happens in the
 PT warm start, the prefixes the warm start skipped by bonus are unexplored too, and the whole-domain root bound is used.
 
@@ -124,6 +125,7 @@ In time order, without overlap; small gaps between phases belong to none. Each e
 | `initial` | Evaluate the request's `initialDecks` |
 | `setup` | Decide the correlated and resource bounds, prepare the warm start |
 | `ptWarmStart` | PT: find a Top-K in the maximum-bonus regime first |
+| `tierProbe` | Certified LUCK PT: ask whether any order reaches the lowest point tiers above the evaluated scores (see `bounds.tierProbes`) |
 | `ptRegimeCompile` | PT: drop members that cannot reach the current K-th and recompile the bounds |
 | `conversionCompile` | Gekisou score: compile the bounds of each conversion part |
 | `seed` | Warm start before the joint traversal (see `incumbents.warmStart`) |
@@ -192,7 +194,7 @@ checked; `tail` and `pair` count at the parent's depth (they check its children)
 | `seedBonusSkipped` | PT warm start: prefixes outside the maximum-bonus regime |
 | `modules` | Bound modules by name (`memberAdditive`, ...; `carrierSplit`: the node bound split by the combo carriers of the slots to fill, see `carriers`; `carrierSplitTail`: the same bound over the children left in a node's choice loop), each `{checks, pruned}` over all depths |
 | `carriers` | Gekisou score on a chart with a combo range: cheap bounds by the number of combo carriers (a member and Snap bringing Gekisou combo bonus windows; a node with `c` carriers placed and `r` slots to fill reads level `c + r`): `levels` compiled apart from the pool-wide bounds (the largest over the search parts), `nodes[n]` the bounded nodes reading level `n` (0 to 5) |
-| `rootOrder` | Root children visited in descending order of their depth-1 bound: `skipped` counts root children left once one was strictly inferior to the K-th (each would be pruned at depth 1), `traversalsPruned` the traversals (the whole domain, or one Gekisou conversion part with its slot rules) whose best root child already was |
+| `rootOrder` | Root children visited in descending order of their depth-1 bound (with dropped point tiers, of the bound before the drop): `skipped` counts root children left because their own bound, or the largest bound of them and every later one, was strictly inferior to the K-th (each would be pruned at depth 1), `traversalsPruned` the traversals (the whole domain, or one Gekisou conversion part with its slot rules) whose largest root bound already was |
 
 ## `composition`
 

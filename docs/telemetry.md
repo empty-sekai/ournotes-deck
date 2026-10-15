@@ -55,6 +55,7 @@
 | `bounds.correlated`、`bounds.resource` | 相关上界、资源上界是否启用（最后一个搜索分段） |
 | `bounds.fine`、`bounds.classSearch` | 有精细上界、使用分类搜索 |
 | `bounds.ptRegime` | PT 预热后的收紧：`membersRemoved` 去掉的成员数、`fallback`、`compileMs`；没有走这一步时为 null |
+| `bounds.tierProbes[]` | 认证 LUCK 的 PT：逐个询问是否有队伍的某个顺序期望分数达到某个 PT 档：`threshold`（该档分数线）、`outcome`（`below` 已证明达不到，上界从这一档起去掉；`reached` 达到；`open` 没跑完）、`ms` |
 | `bounds.conversion` | 撃奏分数按转换 Snap 分段：`snaps` 转换 Snap 数、`parts` 分段数、`fallback`、`compileMs`；不分段时为 null |
 
 ## `proof`
@@ -75,7 +76,7 @@
 收益都不超过 `max(upperBound, kth)`。因此超时时可以显示“未证明，最优与当前最佳相差不超过 `bestGap`”。
 
 计算方式：停止后，沿当前路径对每一层剩余的分支，取搜索本身在那里会检查的上界（节点上界、尾部上界；
-根层逐个分支取深度 1 的节点上界，根层按这个上界降序访问时就是剩余分支里的第一个；尚未开始的转换分段取全池上界），再取最大值。PT 预热阶段就停止时，
+根层逐个分支取深度 1 的节点上界，按序访问的根层为每个位置保存其后剩余分支上界的最大值；尚未开始的转换分段取全池上界），再取最大值。PT 预热阶段就停止时，
 预热按奖金过滤跳过的前缀也算未探索，取全域根上界。
 
 运行中的某一转换分段不能单独提供全域上界，`globalUpperBound` 此时可能为 null。停止时将已保留的最佳值与覆盖所有剩余分段的
@@ -114,6 +115,7 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | `initial` | 评估请求给出的 `initialDecks` |
 | `setup` | 相关上界与资源上界的启用判断、warm start 准备 |
 | `ptWarmStart` | PT：先在最高奖金区间找出 Top-K |
+| `tierProbe` | 认证 LUCK 的 PT：询问已评估分数之上最低的几个 PT 档有没有顺序达到（见 `bounds.tierProbes`） |
 | `ptRegimeCompile` | PT：按当前第 K 名去掉不可能入选的成员并重新编译上界 |
 | `conversionCompile` | 撃奏分数：编译各转换分段的上界 |
 | `seed` | 联合搜索遍历前的 warm start（见 `incumbents.warmStart`） |
@@ -181,7 +183,7 @@ warm start 和打磨只把精确评估过的合法编成放进 Top-K，不剪任
 | `seedBonusSkipped` | PT 预热时不在最高奖金区间而跳过的前缀 |
 | `modules` | 按名称的上界模块（`memberAdditive` 等；`carrierSplit`：按空位将放的连击载体拆分的节点上界，载体见 `carriers`；`carrierSplitTail`：同一上界用于节点选择循环里剩下的全部子节点），各为全部深度合计的 `{checks, pruned}` |
 | `carriers` | 撃奏分数且谱面有连击区间时，按连击载体数分档的廉价上界（载体：带撃奏连击加成窗口的成员与 Snap；已放 `c` 个载体、还剩 `r` 个空位的节点读第 `c + r` 档）：`levels` 是全池上界之外编译的档数（各搜索分段取最大），`nodes[n]` 是读第 `n` 档（0 到 5）的受检节点数 |
-| `rootOrder` | 根层按深度 1 上界降序访问：`skipped` 是某个分支已严格劣于第 K 名后不再访问的根分支数（它们都会在深度 1 被剪），`traversalsPruned` 是最好的根分支一开始就已劣于第 K 名的遍历数（整个域或撃奏的一个转换分段及其槽位规则） |
+| `rootOrder` | 根层按深度 1 上界降序访问（去掉过 PT 档时按去掉前的上界）：`skipped` 是因自身上界、或它与其后全部分支的最大上界严格劣于第 K 名而不再访问的根分支数（它们都会在深度 1 被剪），`traversalsPruned` 是根层最大上界一开始就已劣于第 K 名的遍历数（整个域或撃奏的一个转换分段及其槽位规则） |
 
 ## `composition`
 

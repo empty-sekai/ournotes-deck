@@ -109,6 +109,37 @@ fn item_prefix_maxima_and_mean_hulls_cover_each_outcome_before_averaging() {
 }
 
 #[test]
+fn capped_tiers_bound_every_score_below_the_cap() {
+    let full = compile(&fixture(), (0, 30), true).unwrap();
+    let mut scores = Vec::new();
+    full.tier_scores(&mut scores);
+    assert_eq!(scores, [0, 10, 20]);
+    let mut capped = full.clone();
+    capped.cap_scores(9);
+    assert_eq!(capped.multiplier, 21);
+    assert_eq!(capped.multiplier_at(30), 21);
+    for a in 0..=9 {
+        assert_eq!(capped.order_payoff(2500, a), full.order_payoff(2500, a));
+        for b in 0..=9 {
+            let mean_ceiling = (a + b + 1) / 2;
+            assert_eq!(
+                capped.mean_payoff(2500, mean_ceiling, a.max(b)),
+                full.mean_payoff(2500, mean_ceiling, a.max(b))
+            );
+        }
+    }
+    // Scores above the cap read the tiers below it, never more than the full bound.
+    for a in 10..=30 {
+        assert_eq!(capped.order_payoff(2500, a), 26);
+        assert!(capped.mean_payoff(2500, a, 30) <= full.mean_payoff(2500, a, 30));
+    }
+    // The first tier stays when the cap lies below it.
+    let mut low = full.clone();
+    low.cap_scores(-1);
+    assert_eq!(low.multiplier_at(5), 21);
+}
+
+#[test]
 fn every_rank_checks_native_products_before_resource_filtering_or_zero_rate() {
     for count in [-1, i64::from(i32::MAX), 1i64 << 32] {
         for rate in [0, 3] {

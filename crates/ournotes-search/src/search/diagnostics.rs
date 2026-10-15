@@ -624,7 +624,7 @@ pub fn member_pt_caps(built: &BuiltProblem<'_>) -> Option<Vec<(i64, i128)>> {
     let bounds = built.context.plan.joint.as_ref()?;
     Some(
         bounds
-            .member_pt_caps(&built.pool, built.domain())?
+            .member_pt_caps(&built.pool, built.domain(), None)?
             .into_iter()
             .map(|(m, cap)| (built.pool.members[m].id, cap))
             .collect(),
