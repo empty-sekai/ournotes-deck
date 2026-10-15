@@ -362,8 +362,8 @@ impl JointBounds {
 
     /// Drops the point tiers at and above `threshold`, which no performance order of a team of the domain reaches in
     /// expected score, from these bounds and their law clusters ([`JointBounds::drop_tiers`]). The root loop of each
-    /// keeps the order of the leader pairs' bounds before the cap, read with `orders` (see `warm::RootOrder`): the
-    /// dropped tiers bound no reward, but they still rank first the leaders whose teams reach the higher scores.
+    /// keeps the order of the leader pairs' keys before the cap, read with `orders` (see [`JointBounds::root_key`]):
+    /// the dropped tiers bound no reward, but they still rank first the leaders whose teams reach the higher scores.
     pub(crate) fn cap_scores(
         &mut self,
         pool: &Pool,
@@ -381,7 +381,7 @@ impl JointBounds {
             .map(|&(m, choice)| {
                 p.members[SLOTS[0]] = m;
                 p.snaps[SLOTS[0]] = (choice > 0).then(|| domain.snaps()[choice - 1]);
-                self.node_bound(pool, domain, &p, 1, orders).ok()
+                self.node_bound_reading(pool, domain, &p, 1, orders, false).ok()
             })
             .collect();
         self.root_keys = Some(keys);

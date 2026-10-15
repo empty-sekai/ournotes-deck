@@ -729,7 +729,7 @@ pub struct Carriers {
     pub nodes: [u64; 6],
 }
 
-/// Root children visited in descending order of their depth-1 bound (or of the bound before a point tier cap): a child
+/// Root children visited in descending order of their root keys (by default the depth-1 bound): a child
 /// whose own bound is strictly inferior to the K-th is skipped, and once the largest bound of a child and every later
 /// one is, the loop skips them all (each would be pruned at depth 1).
 #[derive(Clone, Debug, Default, Serialize)]

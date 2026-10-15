@@ -52,11 +52,13 @@ impl JointBounds {
         depth: usize,
         positions: &[usize; 5],
     ) -> (i128, i64) {
-        self.upper_keyed(pool, domain, p, depth, positions, None)
+        self.upper_reading(pool, domain, p, depth, positions, None, true)
     }
 
-    /// The cheap bound, with the envelope of a node's placed carriers, if any.
-    pub(super) fn upper_keyed(
+    /// The cheap bound, with the envelope of a node's placed carriers, if any, the other terms of a combined metric at
+    /// [`JointBounds::other_bonuses`] (`per_term`) or at their largest bonuses of a team.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn upper_reading(
         &self,
         pool: &Pool,
         domain: &CandidateDomain,
@@ -64,10 +66,11 @@ impl JointBounds {
         depth: usize,
         positions: &[usize; 5],
         keyed: Option<&Keyed>,
+        per_term: bool,
     ) -> (i128, i64) {
         let (power, gain, bonus) = self.relax(pool, domain, p, depth, &SLOTS[depth..], positions, keyed);
         let max_gain = self.node_order_gain(domain, p, depth, gain, keyed);
-        let others = self.other_bonuses(pool, domain, p, depth);
+        let others = if per_term { self.other_bonuses(pool, domain, p, depth) } else { Vec::new() };
         (self.payoff_cap_with(keyed.map_or(self.a0, |k| k.a0), power, gain, bonus, &others, max_gain), power)
     }
 

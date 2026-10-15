@@ -1356,14 +1356,18 @@ The upper bound is the weighted sum of the terms' own bounds. For a node, every 
 term's expected payoff over the node's completions, the weights are nonnegative and the term rewards are
 nonnegative, so `sum_i w_i * U_i` covers the expected combined payoff. One term keeps its member and Snap event
 bonuses in the bound's additive tables. Every other term's payoff is nondecreasing in its event bonus. A node's
-cheap and bonus bounds evaluate it at the term's bonus of the placed pairs plus, for the slots to fill, the largest
-member bonuses of as many distinct characters not placed and the largest positive bonuses of as many Snaps not
-placed, at most the largest bonus of a legal team: a completion takes distinct characters and distinct Snaps (or
-none) for those slots, so no completion exceeds it. The other node bounds read the largest bonus of a legal team,
-and the caps of a complete team read every term at the team's own bonus. Where the single-metric bound reads the
-payoff of one order from a score cap, the combined bound adds the terms' order payoffs at that cap; where it
-reads a mean from a mean score cap, it adds the terms' mean bounds. When every term is a step function of the
-score, the union of the terms' step scores partitions the score axis for the per-interval order bound.
+cheap, bonus and correlated bounds evaluate it at the term's bonus of the placed pairs plus, for the slots to fill,
+the largest member bonuses of as many distinct characters not placed and the largest positive bonuses of as many
+Snaps not placed, at most the largest bonus of a legal team: a completion takes distinct characters and distinct
+Snaps (or none) for those slots, so no completion exceeds it. The suffix, block and pair bounds of a node's
+children add the next pair's bonus under each term, the other node bounds read the largest bonus of a legal team,
+and the caps of a complete team read every term at the team's own bonus. The root loop orders the leader pairs by
+their depth-1 bound with every other term at its largest bonus: when the best teams' rewards agree, their expected
+scores rank them, and that order ranks first the leaders whose teams reach the higher scores. Where the
+single-metric bound reads the payoff of one order from a score cap, the combined bound adds the terms' order
+payoffs at that cap; where it reads a mean from a mean score cap, it adds the terms' mean bounds. When every term is
+a step function of the score, the union of the terms' step scores partitions the score axis for the per-interval
+order bound.
 A term without a bound of its own pays its score, which the score cap covers.
 
 ### Several levels
