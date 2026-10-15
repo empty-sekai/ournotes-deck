@@ -279,6 +279,7 @@ impl JointBounds {
             rules: None,
             relax_tables: None,
             forced_tables: Default::default(),
+            step_pairs: None,
             prefix_resource: None,
             prefix_character: None,
             choices,
@@ -474,6 +475,7 @@ impl JointBounds {
             rules: None,
             relax_tables: None,
             forced_tables: Default::default(),
+            step_pairs: None,
             prefix_resource: None,
             prefix_character: None,
             choices: self.choices.clone(),
@@ -490,8 +492,8 @@ impl JointBounds {
         b
     }
 
-    /// The optional tables of the cheap bounds: the choice-suffix maxima, the relaxation tables and, for Gekisou
-    /// score, the prefix resource and character tables.
+    /// The optional tables of the cheap bounds: the choice-suffix maxima, the relaxation tables, the order-step
+    /// candidates and, for Gekisou score, the prefix resource and character tables.
     fn compile_tables(&mut self, pool: &Pool, domain: &CandidateDomain) {
         // Bounded storage; an unavailable optional table never truncates the search domain.
         self.tails = ((self.lead.len() + 6).saturating_mul(self.choices.len() + 1) <= 1_000_000).then(|| {
@@ -508,6 +510,7 @@ impl JointBounds {
             TailTables { suffix, blocks }
         });
         self.relax_tables = relax_tables::RelaxTables::compile(self, pool, domain);
+        self.step_pairs = self.points.as_ref().map(|pt| order_steps::StepPairs::compile(self, pool, pt));
         if self.gekisou {
             let (resource, character) = prefix_character::compile_prefix_tables(self, pool, domain);
             // The resource caps bound a score payoff; the character caps also bound the mean score a points bound reads.

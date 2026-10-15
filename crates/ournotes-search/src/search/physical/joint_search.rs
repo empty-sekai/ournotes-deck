@@ -403,6 +403,87 @@ fn correlated_count(recent: &mut [u64; 2], pruned: bool) {
     }
 }
 
+/// Whether a bound and its power fall below a cutoff (a threshold and the power of a proved tie-break, `i32::MIN`
+/// without one).
+fn below_cutoff(bound: i128, power: i64, (threshold, cutoff_power): (i128, i32)) -> bool {
+    bound < threshold || (cutoff_power > i32::MIN && bound == threshold && power < i64::from(cutoff_power))
+}
+
+/// What a choice loop knows of the order-step bounds of its suffixes ([`JointBounds::order_steps_suffix`] from an
+/// offset on), which do not increase with the offset: at the cutoff `at`, none is below it up to offset `clear`, and
+/// the bound from `cut.0` on is at most `cut.1` (with its power), which was below it. The loop checks the offsets
+/// that are multiples of a step: a search from a check offset finds the first one whose bound is below the cutoff,
+/// probing at doubling distances and then halving the interval, and the loop stops there. A higher cutoff later
+/// starts a new search; the cut stands as long as it stays below.
+///
+/// [`JointBounds::order_steps_suffix`]: crate::search::joint::JointBounds::order_steps_suffix
+#[derive(Default)]
+struct StepsTail {
+    at: Option<(i128, i32)>,
+    clear: usize,
+    cut: Option<(usize, i128, i64)>,
+}
+
+impl StepsTail {
+    /// Whether the order-step bound of the suffix from `offset` is known to be below `cutoff`.
+    fn cut_below(&self, offset: usize, cutoff: (i128, i32)) -> bool {
+        self.cut.is_some_and(|(at, bound, power)| offset >= at && below_cutoff(bound, power, cutoff))
+    }
+
+    /// Whether the check offset `offset` of a loop with check step `step` starts a search.
+    fn due(&self, offset: usize, step: usize, cutoff: (i128, i32)) -> bool {
+        offset.is_multiple_of(step) && (self.at != Some(cutoff) || offset > self.clear)
+    }
+
+    /// The search from the check offset `offset` over the check offsets before the cut (or `width`, where the loop
+    /// ends), reading the prepared order steps of the node at `depth`.
+    fn search(
+        &mut self,
+        bounds: &crate::search::joint::JointBounds,
+        e: &mut Engine<'_, '_>,
+        depth: usize,
+        (offset, step, width): (usize, usize, usize),
+        cutoff: (i128, i32),
+    ) {
+        let below = |e: &mut Engine<'_, '_>, at: usize| {
+            e.tel.joint.modules.entry("orderStepsTail").or_default().checks += 1;
+            let bound = bounds.order_steps_suffix(&e.positions, &mut e.order_steps[depth], at);
+            // The suffix summaries hold the open pairs' gains and frontier: the bound of one pass over the suffix.
+            debug_assert_eq!(
+                bound,
+                bounds.order_steps_open(&e.positions, &mut e.order_steps[depth], &bounds.choices[at..])
+            );
+            bound.filter(|&(bound, power)| below_cutoff(bound, power, cutoff)).map(|(bound, power)| (at, bound, power))
+        };
+        self.cut = self.cut.filter(|&(_, bound, power)| below_cutoff(bound, power, cutoff));
+        // The check offsets in (lo, hi) are unknown; lo is below the search's first offset or not below the cutoff,
+        // hi the cut or the loop's end.
+        let (mut lo, mut hi) = (offset - step, self.cut.map_or(width, |(at, ..)| at));
+        let mut span = step;
+        while lo + span < hi {
+            let probe = lo + span;
+            if let Some(cut) = below(e, probe) {
+                (hi, self.cut) = (probe, Some(cut));
+                break;
+            }
+            (lo, span) = (probe, span * 2);
+        }
+        // The check offsets strictly between lo and hi are lo + j * step for 1 <= j <= inside.
+        loop {
+            let inside = (hi - lo - 1) / step;
+            if inside == 0 {
+                break;
+            }
+            let mid = lo + inside.div_ceil(2) * step;
+            match below(e, mid) {
+                Some(cut) => (hi, self.cut) = (mid, Some(cut)),
+                None => lo = mid,
+            }
+        }
+        (self.at, self.clear) = (Some(cutoff), lo);
+    }
+}
+
 /// One node of the joint member/Snap traversal: the leader pair at depth 0, then the other slots in `SLOTS` order.
 /// The pairs of the other slots take ascending indices of the choice order (`start` is the first index left to the
 /// next one), so every team is visited once, in one layout; its canonical layout is the one evaluated.
@@ -474,7 +555,8 @@ pub(super) fn joint_rec(
         if numerator == threshold {
             joint.node_ties[depth] += 1;
         }
-        // The open slots take ascending candidate indices from `start` on.
+        // The open slots take ascending candidate indices from `start` on. The suffix summaries this check collects
+        // serve the order-step checks of the choice loop too.
         if depth < 5
             && sums
             && node_bounds.order_steps_prepare(
@@ -487,7 +569,7 @@ pub(super) fn joint_rec(
                 &mut e.order_steps[depth],
             )
             && let Some((steps, steps_power)) =
-                node_bounds.order_steps_open(e.pool, &e.positions, &mut e.order_steps[depth], &bounds.choices[start..])
+                node_bounds.order_steps_suffix(&e.positions, &mut e.order_steps[depth], start)
         {
             let module = joint.modules.entry("orderSteps").or_default();
             module.checks += 1;
@@ -606,6 +688,7 @@ pub(super) fn joint_rec(
     }
     // The children before this offset lie in a block whose bound failed.
     let mut skip_to = 0;
+    let mut steps_tail = StepsTail::default();
     for (offset, &(m, choice)) in children.iter().enumerate().skip(start) {
         if offset < skip_to {
             continue;
@@ -655,39 +738,29 @@ pub(super) fn joint_rec(
             }
         }
         // Below the leader every child and its completions take candidates from `offset` on: their order steps bound
-        // all the children left (the node's own check covered `start`).
+        // all the children left (the node's own check covered `start`), read at the check offsets by `StepsTail`.
         if depth > 0
             && sums
             && offset > start
-            && offset % if depth < 4 { 4 } else { 16 } == 0
-            && let Some((threshold, cutoff_power)) = e.safe_cutoff()
-            && node_bounds.order_steps_prepare(
-                e.pool,
-                domain,
-                p,
-                depth,
-                &e.positions,
-                keyed.as_ref(),
-                &mut e.order_steps[depth],
-            )
-            && let Some((steps, steps_power)) =
-                node_bounds.order_steps_suffix(e.pool, &e.positions, &mut e.order_steps[depth], offset)
+            && let Some(cutoff) = e.safe_cutoff()
         {
-            // The suffix summaries hold the open pairs' gains and frontier: the bound of one pass over the suffix.
-            debug_assert_eq!(
-                Some((steps, steps_power)),
-                node_bounds.order_steps_open(
+            let step = if depth < 4 { 4 } else { 16 };
+            if !steps_tail.cut_below(offset, cutoff)
+                && steps_tail.due(offset, step, cutoff)
+                && node_bounds.order_steps_prepare(
                     e.pool,
+                    domain,
+                    p,
+                    depth,
                     &e.positions,
+                    keyed.as_ref(),
                     &mut e.order_steps[depth],
-                    &bounds.choices[offset..]
                 )
-            );
-            let exact_ties = cutoff_power > i32::MIN;
-            let module = e.tel.joint.modules.entry("orderStepsTail").or_default();
-            module.checks += 1;
-            if steps < threshold || (exact_ties && steps == threshold && steps_power < i64::from(cutoff_power)) {
-                module.pruned += 1;
+            {
+                steps_tail.search(node_bounds, e, depth, (offset, step, width), cutoff);
+            }
+            if steps_tail.cut_below(offset, cutoff) {
+                e.tel.joint.modules.entry("orderStepsTail").or_default().pruned += 1;
                 e.tel.joint.tail_choices_skipped[depth] += (width - offset) as u64;
                 break;
             }
@@ -798,7 +871,7 @@ pub(super) fn joint_rec(
                 &mut e.order_steps[depth],
             )
             && let Some((steps, steps_power)) =
-                node_bounds.order_steps_pair(e.pool, &e.positions, &mut e.order_steps[depth], offset, m, choice)
+                node_bounds.order_steps_pair(&e.positions, &mut e.order_steps[depth], offset, m, choice)
         {
             let exact_ties = cutoff_power > i32::MIN;
             let module = e.tel.joint.modules.entry("orderStepsPair").or_default();

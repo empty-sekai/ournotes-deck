@@ -129,6 +129,8 @@ pub(crate) struct JointBounds {
     relax_tables: Option<relax_tables::RelaxTables>,
     /// Table form of each forced slot's term for the current rules.
     forced_tables: [Option<relax_tables::ForcedTable>; 5],
+    /// With a point bound: the candidates as the passes of the order-step bound read them.
+    step_pairs: Option<order_steps::StepPairs>,
     /// (pool member, choice index: 0=None, j+1=domain.snaps[j]). Ordering only.
     pub(crate) choices: Vec<(usize, usize)>,
     /// With a Gekisou combo range: the cheap bounds of decks with few combo carriers (see `CarrierLevels`).

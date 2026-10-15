@@ -1,4 +1,4 @@
-use super::order_steps::pareto_pairs;
+use super::order_steps::pareto_in_place;
 use super::point_bound::signed_network_reward_values;
 use super::*;
 use ournotes_sim::{event, master::Master};
@@ -215,8 +215,9 @@ fn ranked_payoff_sums_are_the_sums_of_each_orders_best_ranking_value() {
 
 #[test]
 fn pareto_pairs_keep_exactly_the_undominated_pairs() {
-    let pairs = vec![(5, 1), (3, 4), (5, 2), (1, 9), (3, 3), (2, 4), (1, 9), (0, 10)];
-    assert_eq!(pareto_pairs(pairs), vec![(5, 2), (3, 4), (1, 9), (0, 10)]);
+    let mut pairs = vec![(5, 1), (3, 4), (5, 2), (1, 9), (3, 3), (2, 4), (1, 9), (0, 10)];
+    pareto_in_place(&mut pairs);
+    assert_eq!(pairs, vec![(5, 2), (3, 4), (1, 9), (0, 10)]);
 }
 
 #[test]

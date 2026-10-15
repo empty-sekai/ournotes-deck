@@ -3,8 +3,9 @@
 use super::*;
 
 /// What the order-step bound of a node (see [`JointBounds::order_steps_prepare`]) reads of its placed slots, and the
-/// open pairs of each suffix of the candidate order from the first offset a check of the node's choice loop asked for
-/// (the loop asks for ascending offsets, so one backward pass collects them all).
+/// open pairs of each suffix of the candidate order from the first offset a check of the node asked for (the node's
+/// own check asks for its first child's offset and the choice loop for ascending offsets, so one backward pass
+/// collects them all).
 #[derive(Default)]
 pub(crate) struct OrderSteps {
     ready: bool,
@@ -17,18 +18,20 @@ pub(crate) struct OrderSteps {
     a0: f64,
     /// Per performance order, the placed slots' gain sum in slot order, rounded up.
     gains: Vec<f64>,
-    /// The placed characters, and per choice whether a placed slot holds its Snap.
-    characters: Vec<i64>,
+    /// Per character of the pool (`StepPairs::characters`) whether a placed slot holds it, and per choice whether a
+    /// placed slot holds its Snap.
+    blocked: Vec<bool>,
     used: Vec<bool>,
-    /// The suffix summaries from candidate `first` on: per offset the largest per-position gains of the open pairs
-    /// and the top of `stack`, a persistent stack of (power, bonus, parent) whose path from a top holds that suffix's
-    /// Pareto frontier.
+    /// The suffix summaries from candidate `first` on (`usize::MAX` before the first pass): per offset the largest
+    /// per-position gains of the open pairs and the top of `stack`, a persistent stack of (power, bonus, parent)
+    /// whose path from a top holds that suffix's Pareto frontier.
     first: usize,
     free: Vec<[f64; 5]>,
     top: Vec<u32>,
     stack: Vec<(i64, i64, u32)>,
     singles: Vec<(i64, i64)>,
     sums: Vec<(i64, i64)>,
+    cross: Vec<(i64, i64)>,
     factors: Vec<f64>,
     steps: Vec<(f64, i128)>,
 }
@@ -43,21 +46,71 @@ impl OrderSteps {
     }
 
     /// Whether an open slot of the node may take a member and choice: no placed character or Snap.
-    fn open(&self, pool: &Pool, m: usize, choice: usize) -> bool {
-        !self.characters.contains(&pool.members[m].character_id) && !self.used[choice]
+    fn open(&self, table: &StepPairs, m: usize, choice: usize) -> bool {
+        !self.blocked[table.characters[m] as usize] && !self.used[choice]
     }
 }
 
-/// The pairs no other pair dominates in both parts (ties keep one).
-pub(super) fn pareto_pairs(mut pairs: Vec<(i64, i64)>) -> Vec<(i64, i64)> {
+/// What the passes of the order-step bound read of one candidate of `JointBounds::choices`.
+#[derive(Clone, Copy)]
+struct StepPair {
+    /// The pair's per-position gains (`JointBounds::order_gains`).
+    gains: [f64; 5],
+    /// Its power less the leader profile's term, and its event bonus.
+    power: i64,
+    bonus: i64,
+    member: u32,
+    /// The member's character (`StepPairs::characters`) and the choice.
+    character: u32,
+    choice: u32,
+}
+
+/// The candidates of `JointBounds::choices` as the order-step bound reads them, in the choice order, and per pool
+/// member the index of its character among the pool's distinct characters.
+pub(super) struct StepPairs {
+    pairs: Vec<StepPair>,
+    characters: Vec<u32>,
+    distinct: usize,
+}
+
+impl StepPairs {
+    /// The table of bounds with a point bound.
+    pub(super) fn compile(b: &JointBounds, pool: &Pool, pt: &PointBound) -> Self {
+        let mut ids: Vec<i64> = pool.members.iter().map(|member| member.character_id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let characters: Vec<u32> = pool
+            .members
+            .iter()
+            .map(|member| ids.binary_search(&member.character_id).expect("listed character") as u32)
+            .collect();
+        let pairs = b
+            .choices
+            .iter()
+            .map(|&(m, choice)| StepPair {
+                gains: b.order_gains[m][choice],
+                power: b.a[m] + if choice == 0 { 0 } else { b.w[m][choice - 1] },
+                bonus: pt.pair_bonus(m, choice),
+                member: m as u32,
+                character: characters[m],
+                choice: choice as u32,
+            })
+            .collect();
+        StepPairs { pairs, characters, distinct: ids.len() }
+    }
+}
+
+/// Keeps the pairs no other pair dominates in both parts (ties keep one), first part descending.
+pub(super) fn pareto_in_place(pairs: &mut Vec<(i64, i64)>) {
     pairs.sort_unstable_by(|a, b| b.cmp(a));
-    let mut out: Vec<(i64, i64)> = Vec::new();
-    for pair in pairs {
-        if out.last().is_none_or(|last| pair.1 > last.1) {
-            out.push(pair);
+    let mut kept = 0;
+    for i in 0..pairs.len() {
+        if kept == 0 || pairs[i].1 > pairs[kept - 1].1 {
+            pairs[kept] = pairs[i];
+            kept += 1;
         }
     }
-    out
+    pairs.truncate(kept);
 }
 
 impl JointBounds {
@@ -88,7 +141,7 @@ impl JointBounds {
         if steps.ready {
             return true;
         }
-        let Some(pt) = &self.points else { return false };
+        let (Some(pt), Some(table)) = (&self.points, &self.step_pairs) else { return false };
         if depth == 0 {
             return false;
         }
@@ -96,14 +149,15 @@ impl JointBounds {
         let profile = self.profile[p.members[2]];
         let choices = Self::prefix_choices(domain, p, depth);
         let (mut placed_power, mut placed_bonus) = (0i64, 0i64);
-        steps.characters.clear();
+        steps.blocked.clear();
+        steps.blocked.resize(table.distinct, false);
         steps.used.clear();
         steps.used.resize(domain.snaps().len() + 1, false);
         for &slot in &SLOTS[..depth] {
             let (m, choice) = (p.members[slot], choices[slot]);
             placed_power += self.pair_power(profile, m, choice);
             placed_bonus += pt.pair_bonus(m, choice);
-            steps.characters.push(pool.members[m].character_id);
+            steps.blocked[table.characters[m] as usize] = true;
         }
         for (choice, used) in steps.used.iter_mut().enumerate().skip(1) {
             *used = SLOTS[..depth].iter().any(|&slot| p.snaps[slot] == Some(domain.snaps()[choice - 1]));
@@ -135,15 +189,15 @@ impl JointBounds {
     }
 
     /// The order-step bound of the prepared node's completions whose open slots take pairs of `open` (one pass over
-    /// them). None on overflow.
+    /// them, read from the pool's tables). None on overflow.
     pub(crate) fn order_steps_open(
         &self,
-        pool: &Pool,
         positions: &[[usize; 5]],
         steps: &mut OrderSteps,
         open: &[(usize, usize)],
     ) -> Option<(i128, i64)> {
         let pt = self.points.as_ref()?;
+        let table = self.step_pairs.as_ref()?;
         let mut free = [0f64; 5];
         // The Pareto frontier of the open pairs in one pass while their bonuses do not increase (the candidate order
         // sorts by bonus first), else by a sort.
@@ -151,7 +205,7 @@ impl JointBounds {
         let mut run = i64::MIN;
         steps.singles.clear();
         for &(m, choice) in open {
-            if !steps.open(pool, m, choice) {
+            if !steps.open(table, m, choice) {
                 continue;
             }
             any = true;
@@ -179,7 +233,7 @@ impl JointBounds {
             return Some((i128::MIN, i64::MIN));
         }
         if !ordered {
-            steps.singles = pareto_pairs(std::mem::take(&mut steps.singles));
+            pareto_in_place(&mut steps.singles);
         }
         self.order_steps_total(pt, positions, steps, &free, None)
     }
@@ -188,13 +242,12 @@ impl JointBounds {
     /// on. The first call of a node collects the suffixes from its offset on; later calls ask for later suffixes.
     pub(crate) fn order_steps_suffix(
         &self,
-        pool: &Pool,
         positions: &[[usize; 5]],
         steps: &mut OrderSteps,
         offset: usize,
     ) -> Option<(i128, i64)> {
         let pt = self.points.as_ref()?;
-        let free = self.order_steps_singles(pool, steps, offset);
+        let free = self.order_steps_singles(steps, offset);
         if steps.singles.is_empty() {
             return Some((i128::MIN, i64::MIN));
         }
@@ -204,10 +257,8 @@ impl JointBounds {
     /// The order-step bound of the prepared node's completions whose next slot (`SLOTS[depth]`) takes the pair `m`,
     /// `choice` of candidate `offset` and whose other open slots take pairs from `offset + 1` on. The child's own
     /// character and Snap stay open to those slots, which only enlarges the completion set.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn order_steps_pair(
         &self,
-        pool: &Pool,
         positions: &[[usize; 5]],
         steps: &mut OrderSteps,
         offset: usize,
@@ -215,7 +266,7 @@ impl JointBounds {
         choice: usize,
     ) -> Option<(i128, i64)> {
         let pt = self.points.as_ref()?;
-        let free = self.order_steps_singles(pool, steps, offset + 1);
+        let free = self.order_steps_singles(steps, offset + 1);
         if steps.singles.is_empty() {
             return Some((i128::MIN, i64::MIN));
         }
@@ -224,26 +275,29 @@ impl JointBounds {
 
     /// The largest per-position gains of the open pairs from `offset` on, with their (power, bonus) Pareto frontier
     /// in `steps.singles` (bonus descending). Collects the suffix summaries from `offset` on when the node has none
-    /// that far back: one backward pass keeps the frontier of each suffix as the top of a persistent stack.
-    fn order_steps_singles(&self, pool: &Pool, steps: &mut OrderSteps, offset: usize) -> [f64; 5] {
-        let pt = self.points.as_ref().expect("prepared order steps");
-        let n = self.choices.len();
+    /// that far back: a backward pass from the earliest summary keeps the frontier of each suffix as the top of a
+    /// persistent stack.
+    fn order_steps_singles(&self, steps: &mut OrderSteps, offset: usize) -> [f64; 5] {
+        let table = self.step_pairs.as_ref().expect("prepared order steps");
+        let n = table.pairs.len();
         let offset = offset.min(n);
         if offset < steps.first {
-            steps.first = offset;
-            steps.free.clear();
-            steps.free.resize(n + 1 - offset, [0.0; 5]);
-            steps.top.clear();
-            steps.top.resize(n + 1 - offset, NO_PAIR);
-            steps.stack.clear();
-            let (mut free, mut top) = ([0f64; 5], NO_PAIR);
-            for i in (offset..n).rev() {
-                let (m, choice) = self.choices[i];
-                if steps.open(pool, m, choice) {
-                    for (position, g) in free.iter_mut().enumerate() {
-                        *g = g.max(self.order_gains[m][choice][position]);
+            if steps.first > n {
+                steps.stack.clear();
+                steps.free.resize(n + 1, [0.0; 5]);
+                steps.top.resize(n + 1, NO_PAIR);
+                (steps.free[n], steps.top[n]) = ([0.0; 5], NO_PAIR);
+                steps.first = n;
+            }
+            let lead = &self.lead[steps.profile];
+            let (mut free, mut top) = (steps.free[steps.first], steps.top[steps.first]);
+            for i in (offset..steps.first).rev() {
+                let pair = &table.pairs[i];
+                if !steps.blocked[pair.character as usize] && !steps.used[pair.choice as usize] {
+                    for (g, &x) in free.iter_mut().zip(&pair.gains) {
+                        *g = g.max(x);
                     }
-                    let (power, bonus) = (self.pair_power(steps.profile, m, choice), pt.pair_bonus(m, choice));
+                    let (power, bonus) = (pair.power + lead[pair.member as usize], pair.bonus);
                     // Pairs come in nondecreasing bonus order: the new one removes the frontier points it dominates
                     // from the top, unless the top dominates it. Out of that order the stack may keep dominated
                     // points too, which no bound reads as better than the frontier.
@@ -263,12 +317,13 @@ impl JointBounds {
                         }
                     };
                 }
-                steps.free[i - offset] = free;
-                steps.top[i - offset] = top;
+                steps.free[i] = free;
+                steps.top[i] = top;
             }
+            steps.first = offset;
         }
         steps.singles.clear();
-        let (mut at, mut ordered) = (steps.top[offset - steps.first], true);
+        let (mut at, mut ordered) = (steps.top[offset], true);
         while at != NO_PAIR {
             let (power, bonus, parent) = steps.stack[at as usize];
             if let Some(&(p, b)) = steps.singles.last() {
@@ -278,9 +333,9 @@ impl JointBounds {
             at = parent;
         }
         if !ordered {
-            steps.singles = pareto_pairs(std::mem::take(&mut steps.singles));
+            pareto_in_place(&mut steps.singles);
         }
-        steps.free[offset - steps.first]
+        steps.free[offset]
     }
 
     /// The order-step bound from the prepared node, an optional child pair of the next slot and the open pairs'
@@ -304,25 +359,30 @@ impl JointBounds {
         steps.sums.clear();
         steps.sums.push((placed_power, placed_bonus));
         for _ in placed..5 {
-            let singles = &steps.singles;
-            let cross = steps.sums.iter().flat_map(|&(a, b)| singles.iter().map(move |&(c, d)| (a + c, b + d)));
-            steps.sums = pareto_pairs(cross.collect());
+            steps.cross.clear();
+            for &(a, b) in &steps.sums {
+                steps.cross.extend(steps.singles.iter().map(|&(c, d)| (a + c, b + d)));
+            }
+            pareto_in_place(&mut steps.cross);
+            std::mem::swap(&mut steps.sums, &mut steps.cross);
         }
         for sum in &mut steps.sums {
             *sum = (sum.0.min(power), sum.1.min(bonus));
         }
         let child_slot = SLOTS[steps.depth];
         let (a0, global, eps) = (steps.a0, self.global, self.eps);
+        let (child_gains, open, scale) =
+            (child.map(|(m, choice)| self.order_gains[m][choice]), &SLOTS[placed..], 1.0 + eps);
         steps.factors.clear();
         steps.factors.extend(positions.iter().zip(&steps.gains).map(|(order, &placed_gain)| {
             let mut gain = placed_gain;
-            if let Some((m, choice)) = child {
-                gain = add_up(gain, self.order_gains[m][choice][order[child_slot]]);
+            if let Some(row) = &child_gains {
+                gain = add_up(gain, row[order[child_slot]]);
             }
-            for &slot in &SLOTS[placed..] {
+            for &slot in open {
                 gain = add_up(gain, free[order[slot]]);
             }
-            add_up(a0, gain).min(global) * (1.0 + eps)
+            add_up(a0, gain).min(global) * scale
         }));
         Some((pt.order_payoff_sum(&steps.sums, &steps.factors, &mut steps.steps)?, power))
     }
