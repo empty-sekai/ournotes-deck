@@ -7,6 +7,10 @@ use std::collections::{HashMap, HashSet};
 
 pub(crate) const SLOTS: [usize; 5] = [2, 0, 1, 3, 4];
 
+/// Snap columns up to which [`TeamPowerBounds::refined_upper`] also assigns the Snap terms. The matching work grows
+/// with the column count, so a wider pool keeps the cheaper column relaxation.
+const ASSIGNED_SNAPS: usize = 128;
+
 pub(crate) fn applies(objective: &Objective, metric: &Metric) -> bool {
     matches!(
         (objective.inner(), metric),
@@ -180,8 +184,25 @@ impl TeamPowerBounds {
             .collect()
     }
 
+    /// An upper bound of the power of every completion of `SLOTS[..depth]`, from two relaxations: each remaining
+    /// slot takes the largest `a[m] + lead[m] + wmax[m]` of its character (a team's members have distinct
+    /// characters), or the largest member terms plus the five largest column terms (its Snaps occupy distinct
+    /// columns). A placed slot keeps its own Snap terms in both.
     pub(crate) fn upper(&self, pool: &Pool, domain: &CandidateDomain, p: &PhysicalDeck, depth: usize) -> Option<i64> {
         let (available, required) = candidates(pool, domain, p, depth)?;
+        Some(self.relaxed_upper(pool, domain, p, depth, &available, &required))
+    }
+
+    /// [`TeamPowerBounds::upper`] of a prefix whose candidates are already known.
+    fn relaxed_upper(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        available: &[usize],
+        required: &HashSet<i64>,
+    ) -> i64 {
         let remaining = 5 - depth;
         let leaders = if depth > 0 {
             vec![p.members[2]]
@@ -200,7 +221,7 @@ impl TeamPowerBounds {
             }
             let mut base = HashMap::<i64, i64>::new();
             let mut paired = HashMap::<i64, i64>::new();
-            for &m in &available {
+            for &m in available {
                 let c = pool.members[m].character_id;
                 let b = self.a[m] + self.lead[profile][m];
                 base.entry(c).and_modify(|v| *v = (*v).max(b)).or_insert(b);
@@ -209,7 +230,7 @@ impl TeamPowerBounds {
             }
             let paired = fixed_base
                 + SLOTS[..depth].iter().map(|&s| self.row_max[p.members[s]]).sum::<i64>()
-                + sum_rows(&paired, &required, remaining);
+                + sum_rows(&paired, required, remaining);
             let mut resources: Vec<_> = (0..domain.snaps().len())
                 .map(|column| {
                     SLOTS[..depth]
@@ -223,10 +244,114 @@ impl TeamPowerBounds {
                 })
                 .collect();
             resources.sort_unstable_by(|a, b| b.cmp(a));
-            let resource = fixed_base + sum_rows(&base, &required, remaining) + resources.iter().take(5).sum::<i64>();
+            let resource = fixed_base + sum_rows(&base, required, remaining) + resources.iter().take(5).sum::<i64>();
             maximum = maximum.max(paired.min(resource));
         }
+        maximum
+    }
+
+    /// [`TeamPowerBounds::upper`] lowered by [`TeamPowerBounds::assigned_upper`] where the Snap pool is narrow enough
+    /// for the matching work to pay off, for a prefix whose candidates are already known: both bound every
+    /// completion of `SLOTS[..depth]`, so their lower one does too, and it is never above the relaxation.
+    pub(crate) fn refined_upper(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        available: &[usize],
+        required: &HashSet<i64>,
+    ) -> i64 {
+        let relaxed = self.relaxed_upper(pool, domain, p, depth, available, required);
+        if domain.snaps().len() > ASSIGNED_SNAPS {
+            return relaxed;
+        }
+        self.assigned_with(pool, domain, p, depth, available, required)
+            .map_or(relaxed, |assigned| relaxed.min(assigned))
+    }
+
+    /// An upper bound of the power of every completion of `SLOTS[..depth]` that keeps the remaining member terms
+    /// per character and assigns the Snap terms to the five slots. A placed slot keeps its own member's row of `w`;
+    /// a remaining slot may take the largest term of any available member in a column. Every completion is one such
+    /// assignment with slots on distinct columns, and none of these sums more. `None` once every member is placed,
+    /// where the caller's power is already exact.
+    pub(crate) fn assigned_upper(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+    ) -> Option<i64> {
+        let (available, required) = candidates(pool, domain, p, depth)?;
+        self.assigned_with(pool, domain, p, depth, &available, &required)
+    }
+
+    /// [`TeamPowerBounds::assigned_upper`] of a prefix whose candidates are already known.
+    fn assigned_with(
+        &self,
+        pool: &Pool,
+        domain: &CandidateDomain,
+        p: &PhysicalDeck,
+        depth: usize,
+        available: &[usize],
+        required: &HashSet<i64>,
+    ) -> Option<i64> {
+        let remaining = 5 - depth;
+        if remaining == 0 {
+            return None;
+        }
+        let snap = self.assigned_snaps(domain.snaps().len(), available, p, depth);
+        let leaders = if depth > 0 {
+            vec![p.members[2]]
+        } else {
+            domain.leader().map_or_else(|| domain.members().to_vec(), |m| vec![m])
+        };
+        let profiles: HashSet<_> = leaders.iter().map(|&m| self.profile[m]).collect();
+        let mut maximum = 0;
+        for profile in profiles {
+            let fixed_base: i64 =
+                SLOTS[..depth].iter().map(|&s| self.a[p.members[s]] + self.lead[profile][p.members[s]]).sum();
+            let mut base = HashMap::<i64, i64>::new();
+            for &m in available {
+                let c = pool.members[m].character_id;
+                let b = self.a[m] + self.lead[profile][m];
+                base.entry(c).and_modify(|v| *v = (*v).max(b)).or_insert(b);
+            }
+            maximum = maximum.max(fixed_base + sum_rows(&base, required, remaining) + snap);
+        }
         Some(maximum)
+    }
+
+    /// The largest total Snap term of the five slots when a placed slot keeps its own row of `w` and a remaining
+    /// slot may take any available member's term in a column, on distinct columns.
+    ///
+    /// Every completion is one such assignment: its placed slots take their own member's term at their own column,
+    /// and each of its remaining slots takes at most the largest available member's term there. Distinct Snaps mean
+    /// distinct columns, and an unpaired slot takes the zero of "no Snap". So the largest assignment is an upper
+    /// bound of every completion's Snap terms.
+    ///
+    /// Only the five best columns of each row are kept. Four other slots occupy at most four columns, so a row on a
+    /// column outside its five best always has one of them free; moving to that column keeps the sum and the
+    /// distinctness. An assignment of the kept columns is therefore as good as any other.
+    fn assigned_snaps(&self, snaps: usize, available: &[usize], p: &PhysicalDeck, depth: usize) -> i64 {
+        let columns: Vec<i64> =
+            (0..snaps).map(|column| available.iter().map(|&m| self.w[m][column]).max().unwrap_or(0).max(0)).collect();
+        let rows: [&[i64]; 5] = std::array::from_fn(|slot| {
+            if SLOTS[..depth].contains(&slot) { self.w[p.members[slot]].as_slice() } else { columns.as_slice() }
+        });
+        let mut kept = Vec::<usize>::new();
+        for row in rows {
+            let mut top: Vec<(i64, usize)> = row.iter().copied().enumerate().map(|(at, v)| (v, at)).collect();
+            top.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            for &(_, column) in top.iter().take(5) {
+                kept.push(column);
+            }
+        }
+        kept.sort_unstable();
+        kept.dedup();
+        let weights: [Vec<i64>; 5] =
+            std::array::from_fn(|slot| kept.iter().map(|&column| rows[slot][column]).collect());
+        super::matching::best_assignment(weights.each_ref().map(|row| row.as_slice())).0
     }
 
     pub(crate) fn least_key(

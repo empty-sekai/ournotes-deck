@@ -288,6 +288,45 @@ fn normal_and_challenge_skip_preserve_canonical_k5_and_k31() {
     check(&data, Scenario::Free(10), false, true);
 }
 
+/// Challenge-point earnings read no card bonus, so every deck of the fixture pays the same and every member prefix
+/// ties the K-th's payoff: the power bound alone decides, and the tighter assignment of the remaining Snap terms must
+/// keep every team that outranks the K-th by power.
+#[test]
+fn equal_payoffs_are_ordered_by_power_and_keep_the_top_k() {
+    let data = fixture();
+    let master = data.master();
+    let mut owned = roster(&mut Rng::new(739), &master);
+    owned.members.reverse();
+    owned.snaps.reverse();
+    let inputs = input();
+    let context = inputs.resolve(&master, Scenario::Free(10), Some(1004), &[]).unwrap();
+    let pool = context.pool(&master, &owned).unwrap();
+    let payoff = inputs.event_payoff.as_ref().unwrap();
+    let metric = Metric::ClientChallengePoints { event_id: 7 };
+    let expected = oracle(&pool, &request(&master, context.clone(), 31), &context, payoff, true);
+    let payoffs: HashSet<_> =
+        expected.iter().map(|row| row.expected_payoff.as_ref().expect("exact payoff").numerator.clone()).collect();
+    assert_eq!(payoffs.len(), 1, "every team of the fixture pays the same");
+    assert!(expected[..5].windows(2).all(|pair| pair[0].power >= pair[1].power));
+    for k in [1, 5, 31] {
+        let out = search::solve_physical(
+            &pool,
+            &request(&master, context.clone(), k),
+            &metric,
+            Some(payoff),
+            &Limits { time_limit_ms: None, max_candidates: None, cache_entries: 0 },
+            &Strategy::BranchAndBound,
+            None,
+            &SimulationInput::default(),
+        )
+        .unwrap();
+        assert_eq!(out.completion, Completion::Complete);
+        assert_eq!(out.optimality, Optimality::Proven);
+        assert_eq!(out.results, expected[..k]);
+        assert!(out.telemetry.joint.modules["deckPayoff"].checks > 0);
+    }
+}
+
 #[test]
 fn configured_c_reward_stays_fixed_when_native_scores_cross_rank_thresholds() {
     for scenario in [Scenario::Free(10), Scenario::Challenge(70)] {

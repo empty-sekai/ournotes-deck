@@ -764,6 +764,14 @@ At an unassigned leader the maximum over possible leader profiles is also safe. 
 bound uses an exact maximum-weight Snap assignment and the bounded leader constant. Complex leader effects can
 make that constant loose; they do not change the Snap weights or the upper-bound direction.
 
+A prefix bound also assigns the Snap terms instead of summing column maxima, for a pool narrow enough that the
+matching work pays off. Its rows are the members already placed, bound by their own member's `W`, and the remaining
+slots, bound by the largest term of any available member in a column. Every completion's binding is one such
+assignment with distinct columns, so the assignment total dominates all of them, and it is never above
+`U_resource`, which lets one column serve several slots. Each row keeps only its five best columns: four other slots
+occupy at most four columns, so a slot on a column outside its five best always has one of them free and moving there
+preserves both the total and distinctness.
+
 **Fixed-layout assignment lemma.** For a complete member layout `M`, exact native power has the form
 `P(M,s) = P(M,None) + sum_i W(M_i,s_i)`. The first term is independent of the Snap binding, including with complex
 leader effects. Scan Snap resources once in public-ID order. After a scan position, a partial binding is described
@@ -797,6 +805,7 @@ upper bound. Those two cases have different completion rules.
 | `floor(reward * (B + 10000) * rate / 10000)` | Exact Skip event points at the configured result rank. |
 | `reward * rate` | Exact Skip challenge-point earnings; no card bonus is applied. |
 | `floor(count * (B + 10000) * rate / 10000)` | Exact Skip items at the configured result grade, or zero when that grade rewards a different resource. `B` contains EventItem effects. |
+| Skip score at the deck's power | Exact Skip score over the request's chart; no bonus is read. Its monotonicity over the compiled power interval is proved before a ranking reads it. |
 | Score-step function at a score cap | Upper bound for each played order's score-dependent payoff. |
 
 The compiler resolves the requested result route, active events, reward rows and effect event before selecting a
@@ -807,9 +816,15 @@ products over this interval. In particular, a zero final rate does not excuse ov
 `reward * (B + 10000)` product. These checks establish monotonicity of the integer arithmetic actually evaluated.
 
 At a member prefix, the fixed bonuses plus required-character maxima and the best remaining character values,
-together with the five largest Snap bonuses, give `B_upper`. The team power bound gives `P_upper`. Every completion
-has `B <= B_upper` and `P <= P_upper`, so `F(B_upper,P_upper)` bounds its payoff even if those two maxima cannot
-occur in one team. This is a relaxation; no assumption of positive correlation between bonus and power is needed.
+together with the five largest Snap bonuses, give `B_upper`. The team power bound gives `P_upper`: the smaller of
+the per-character and per-column relaxations, lowered by an exact assignment of the Snap terms over the five slots
+when the Snap pool is narrow enough for the work to pay off. Each placed slot keeps its own member's row of `w`, and
+each remaining slot may take any available member's term in a column, on distinct columns. A completion is one such
+assignment, so the assignment total also bounds it; it is never above the column relaxation, which lets one Snap
+column serve several slots. Every completion has `B <= B_upper` and `P <= P_upper`, so `F(B_upper,P_upper)` bounds
+its payoff even if those two maxima cannot occur in one team. This is a relaxation; no assumption of positive
+correlation between bonus and power is needed. A `Curve::Skip` term reads no bonus and is nondecreasing in the
+power, so the same `P_upper` bounds its score just as it bounds a scored order's step.
 
 For played score-step payoffs, [the joint compiler](../crates/ournotes-search/src/search/joint.rs) supplies a
 per-outcome score cap `C(P) = ceil(P * global * (1 + eps))`. A reward table may decrease at a higher score: the bound
@@ -858,34 +873,29 @@ This frontier can keep many mutually undominated bonus/power tradeoffs in one ma
 `K`, unlike the power-only assignment DP. The compilation checks on `K * max(1, number_of_Snaps)` and table sizes
 are algorithm-selection limits; they do not prove a wall-clock bound or a bound of `K` states per payoff mask.
 
-### Evaluation and reranking of payoff bounds
+### Evaluation of payoff bounds
 
 [The payoff traversal](../crates/ournotes-search/src/search/deck_payoff_search.rs) ranks all teams by their compiled
 payoff, exact power and canonical IDs, then evaluates the first `K`. Use common payoff mass `D = 1` for Skip and
 `D = 120` for played Live. An unevaluated team has optimistic numerator `D * F(B,P)`; an evaluated shortfall is
 replaced by its exact numerator over that same mass. Numerator/denominator comparisons are checked explicitly.
 Replacing a bound by a smaller exact value only moves that team down. A payoff above its bound or a power mismatch
-is an error and cannot certify a ranking.
+is an error and cannot certify a ranking. A payoff bound that only ties the `K`-th's is compared with the K-th's
+power using the assignment bound of the remaining slots, so a tie that no completion can reach is pruned; an
+equality of both keeps every completion whose canonical key may still precede the K-th.
 
-**Reranking frontier lemma.** Suppose `f` bindings of one member layout have been moved down after evaluation.
-Any binding outside that layout's original first `K + f` has at least `K + f` bindings ahead of it; at most `f`
-of those can move down. At least `K` unchanged bindings still precede it. Therefore recomputing the original
-`K + f` frontier, applying the recorded decreases and merging the layouts preserves the new global Top-K.
-The count is per member layout, as are the frontier and recorded shortfalls.
-
-**Termination certificate.** In a round, every current ranking value is an upper bound on its team's true value,
-while already replaced values are exact. If all first `K` teams have settled values equal to their current ranking
-values and no new shortfall occurs, every other team's optimistic rank is behind those exact ranks. Its true rank
-can only move down, so the retained exact Top-K is globally correct. When the domain has fewer than `K` teams, all
-of them must be accounted for. This argument includes power and canonical-ID ties, not only primary-payoff values.
+**Termination certificate.** If all first `K` teams have settled values equal to their current ranking values and no
+shortfall occurs, every other team's optimistic rank is behind those exact ranks. Its true rank can only move down,
+so the retained exact Top-K is globally correct. When the domain has fewer than `K` teams, all of them must be
+accounted for. This argument includes power and canonical-ID ties, not only primary-payoff values.
 
 A known evaluated team whose exact payoff is no longer retained cannot simply be skipped as an unsettled optimistic
-entry. For a bounded payoff that situation hands the domain to the joint traversal. A certified lottery evaluation
-that falls below the bound, a value that cannot be settled on the common mass, or continued shortfalls after eight
-ranking rounds also hands over. The continuation retains evaluated incumbents and searches the full legal domain
-with its own admissible bounds. The round limit changes the algorithm; it never converts an unresolved ranking
-into `Complete`. A time or candidate stop retains the root payoff cap for all unresolved work, including ranked
-teams not yet evaluated, and reports an incomplete search.
+entry. For a bounded payoff that situation hands the domain to the joint traversal, as does a certified lottery
+evaluation below the bound, a value that cannot be settled on the common mass, and the first settled shortfall: its
+retained bound was optimistic, so no further ranking of the same bounds can certify the Top-K. The continuation
+retains evaluated incumbents and searches the full legal domain with its own admissible bounds. Handing over changes
+the algorithm; it never converts an unresolved ranking into `Complete`. A time or candidate stop retains the root
+payoff cap for all unresolved work, including ranked teams not yet evaluated, and reports an incomplete search.
 
 ## Uniform member-order search
 
@@ -1409,7 +1419,7 @@ the weighted sum of those curves with the folded weights. On a Skip the event-po
 terms are determined by the deck, the sum is the exact folded payoff, and the ranking is the result. On a played
 Live a term has a curve when its payoff steps with the local score (a score target, event points or items by
 score tier, Challenge points); the sum is an upper bound of every order's folded payoff, and
-[evaluation and reranking](#evaluation-and-reranking-of-payoff-bounds) settles it, handing over to the traversal
+[evaluation of payoff bounds](#evaluation-of-payoff-bounds) settles it, handing over to the traversal
 with the bound of the sections above under the same conditions as a single metric. A played Live with a term
 without score steps, such as a raw score, uses that traversal from the start. A Skip with a term the deck does
 not determine uses complete legal team enumeration.

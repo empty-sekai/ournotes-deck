@@ -3,19 +3,14 @@
 //! Members branch in `SLOTS` order with ascending nonleader IDs, so each canonical member layout is visited once, and
 //! a complete layout offers its exact frontier of Snap bindings. The ranking (payoff, then power, then canonical IDs)
 //! needs no evaluation: the search keeps it alone and evaluates only the decks it ranks first, in rank order. A
-//! deck-determined payoff must be reproduced exactly. A bounded payoff (score steps) may fall short: such a deck is
-//! ranked again by what it paid, and the ranking repeats until its first K decks are all evaluated. The joint
-//! traversal takes over after `ROUNDS` rankings, or when a certified evaluation falls short.
+//! deck-determined payoff must be reproduced exactly. A bounded payoff (score steps) may fall short: after that first
+//! shortfall the joint traversal takes over, re-ranking the whole domain against the evaluated incumbents.
 use super::*;
 use crate::domain::CandidateDomain;
 use crate::search::deck_payoff::DeckPayoffBounds;
 use crate::search::team_power::SLOTS;
-use std::collections::HashMap;
 
 type Key = ([i64; 5], [Option<i64>; 5]);
-
-/// Rankings of a bounded payoff before the joint traversal takes over.
-const ROUNDS: usize = 8;
 
 /// A ranked team: payoff numerator over the engine's order mass (its bound until evaluated), power, canonical key.
 struct Ranked {
@@ -32,9 +27,6 @@ impl Ranked {
     }
 }
 
-/// Evaluated decks that paid less than their bound, by member layout, with their payoff numerators.
-type Below = HashMap<[usize; 5], Vec<(PhysicalDeck, i128)>>;
-
 /// A complete power-ranked prefix settles Maximum only when every member attains the common cap.
 /// If fewer than K legal teams exist, evaluating every returned team exhausts the domain instead.
 pub(super) fn solve_upper_only(
@@ -50,7 +42,7 @@ pub(super) fn solve_upper_only(
     (e.rec.tracked, e.rec.bounded) = (true, true);
     e.note_open(Some(cap));
     let mut top = Vec::new();
-    visit(0, &mut p, domain, bounds, &Below::new(), 1, &mut top, e)?;
+    visit(0, &mut p, domain, bounds, 1, &mut top, e)?;
     if e.stop.is_some() {
         return stopped(e, Some(cap));
     }
@@ -76,6 +68,10 @@ pub(super) fn solve_upper_only(
 }
 
 /// Ok(false) when the joint traversal is to take over (only with `joint_follows`).
+///
+/// One ranking, then the first `K` decks are evaluated in rank order. A deck that pays less than its bound makes the
+/// ranking optimistic, so nothing below it can be settled without exact values: the joint traversal takes over and
+/// re-ranks the whole domain against the incumbents already evaluated.
 pub(super) fn solve(
     domain: &CandidateDomain,
     bounds: &DeckPayoffBounds,
@@ -88,82 +84,66 @@ pub(super) fn solve(
     e.rec.frontier.clear();
     (e.rec.tracked, e.rec.bounded) = (true, true);
     e.note_open(root);
-    let mut below = Below::new();
-    let mut evaluated = HashSet::new();
-    for round in 1..=ROUNDS {
-        let setup = e.tel.environment.bounds.deck_payoff.get_or_insert_with(Default::default);
-        setup.rounds = round;
-        let mut top = Vec::new();
-        visit(0, &mut p, domain, bounds, &below, scale, &mut top, e)?;
-        if e.stop.is_some() {
+    e.tel.environment.bounds.deck_payoff.get_or_insert_with(Default::default).rounds = 1;
+    let mut top = Vec::new();
+    visit(0, &mut p, domain, bounds, scale, &mut top, e)?;
+    if e.stop.is_some() {
+        return stopped(e, root);
+    }
+    for row in top {
+        if !e.consider(row.deck)? {
             return stopped(e, root);
         }
-        let mut fell = false;
-        for row in top {
-            if !evaluated.insert(row.deck) {
-                continue;
-            }
-            if !e.consider(row.deck)? {
-                return stopped(e, root);
-            }
-            let Some(offered) = e.offered.take().or_else(|| e.recorded(&row.deck)) else {
-                // This known deck is outside Top-K, but its optimistic rank may still precede an unseen winner.
-                // No retained exact payoff means a bounded ranking cannot close on this row. The full joint
-                // traversal retains the incumbents and proves every remaining candidate against them.
-                if bounds.bounded_only() {
-                    if joint_follows {
-                        return hand_over(e);
-                    }
-                    return Err(Error::Domain("unsettled deck payoff without a joint traversal".into()));
+        let Some(offered) = e.offered.take().or_else(|| e.recorded(&row.deck)) else {
+            // This known deck is outside Top-K, but its optimistic rank may still precede an unseen winner. No
+            // retained exact payoff means a bounded ranking cannot close on this row. The joint traversal retains
+            // the incumbents and proves every remaining candidate against them; an exact payoff cannot move below
+            // the K decks already retained.
+            if bounds.bounded_only() {
+                if joint_follows {
+                    return hand_over(e);
                 }
-                // A deck-determined payoff is exact: K evaluated decks rank ahead of this exact ranking entry.
-                below.entry(row.deck.members).or_default().push((row.deck, i128::MIN));
-                continue;
-            };
-            let mismatch = || {
-                Error::Domain(format!(
-                    "deck payoff bound predicted payoff {}/{scale} and power {} for {:?}, the evaluation differs",
-                    row.payoff, row.power, row.key
-                ))
-            };
-            if i64::from(offered.power) != row.power {
-                return Err(mismatch());
+                return Err(Error::Domain("unsettled deck payoff without a joint traversal".into()));
             }
-            if let (Some(cap), Some(score)) = (bounds.score_cap(row.power), offered.score)
-                && i128::from(score) > cap
-            {
-                return Err(Error::Domain(format!("score {score} above the score cap {cap} of {:?}", row.key)));
-            }
-            // The evaluated payoff fraction against the bound numerator over the aggregation's scale,
-            // and its exact numerator on that same scale when representable.
-            let paid = offered.payoff.and_then(|(numerator, denominator)| {
-                let denominator = i128::try_from(denominator).ok()?;
-                let scaled = numerator.checked_mul(scale)?;
-                let ranked = (scaled % denominator == 0).then(|| scaled / denominator);
-                Some((scaled, row.payoff.checked_mul(denominator)?, ranked))
-            });
-            match paid {
-                Some((paid, bound, _)) if paid == bound => {}
-                Some((paid, bound, Some(ranked))) if paid < bound && bounds.bounded_only() && e.certified.is_none() => {
-                    below.entry(row.deck.members).or_default().push((row.deck, ranked));
-                    e.tel.environment.bounds.deck_payoff.get_or_insert_with(Default::default).shortfalls += 1;
-                    fell = true;
-                }
-                Some((paid, bound, _)) if paid > bound => return Err(mismatch()),
-                // A certified payoff below its bound, or not settled: the joint traversal ranks it.
-                _ if bounds.bounded_only() && joint_follows => return hand_over(e),
-                _ => return Err(mismatch()),
-            }
+            continue;
+        };
+        let mismatch = || {
+            Error::Domain(format!(
+                "deck payoff bound predicted payoff {}/{scale} and power {} for {:?}, the evaluation differs",
+                row.payoff, row.power, row.key
+            ))
+        };
+        if i64::from(offered.power) != row.power {
+            return Err(mismatch());
         }
-        if !fell {
-            return Ok(true);
+        if let (Some(cap), Some(score)) = (bounds.score_cap(row.power), offered.score)
+            && i128::from(score) > cap
+        {
+            return Err(Error::Domain(format!("score {score} above the score cap {cap} of {:?}", row.key)));
+        }
+        // The evaluated payoff fraction against the bound numerator over the aggregation's scale.
+        let paid = offered.payoff.and_then(|(numerator, denominator)| {
+            let denominator = i128::try_from(denominator).ok()?;
+            Some((numerator.checked_mul(scale)?, row.payoff.checked_mul(denominator)?, denominator))
+        });
+        match paid {
+            Some((paid, bound, _)) if paid == bound => {}
+            Some((paid, bound, _)) if paid < bound && bounds.bounded_only() && e.certified.is_none() => {
+                // The ranking was optimistic for this deck, so no later ranking can settle the Top-K without exact
+                // values. The joint traversal re-ranks the whole domain against the incumbents evaluated so far.
+                e.tel.environment.bounds.deck_payoff.get_or_insert_with(Default::default).shortfalls += 1;
+                if joint_follows {
+                    return hand_over(e);
+                }
+                return Err(Error::Domain("bounded deck payoff without a joint traversal".into()));
+            }
+            Some((paid, bound, _)) if paid > bound => return Err(mismatch()),
+            // A certified payoff below its bound, or not settled: the joint traversal ranks it.
+            _ if bounds.bounded_only() && joint_follows => return hand_over(e),
+            _ => return Err(mismatch()),
         }
     }
-    if joint_follows {
-        hand_over(e)
-    } else {
-        Err(Error::Domain("bounded deck payoff without a joint traversal".into()))
-    }
+    Ok(true)
 }
 
 /// The root cap covers every unvisited branch and every ranked team not yet evaluated.
@@ -178,13 +158,11 @@ fn hand_over(e: &mut Engine<'_, '_>) -> Result<bool, Error> {
     Ok(false)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn visit(
     depth: usize,
     p: &mut PhysicalDeck,
     domain: &CandidateDomain,
     bounds: &DeckPayoffBounds,
-    below: &Below,
     scale: i128,
     top: &mut Vec<Ranked>,
     e: &mut Engine<'_, '_>,
@@ -204,6 +182,14 @@ fn visit(
     let payoff = payoff * scale;
     if top.len() == k {
         let kth = &top[k - 1];
+        // A payoff bound that only ties the K-th's leaves the power to decide. Assigning the Snap terms of the
+        // remaining slots, rather than bounding each column alone, can then rule out every completion that could
+        // reach it, and the tie falls to the canonical key.
+        let power = if payoff == kth.payoff {
+            bounds.power.assigned_upper(e.pool, domain, p, depth).map_or(power, |assigned| power.min(assigned))
+        } else {
+            power
+        };
         // Equal payoff and power keep every completion whose canonical key may still come first.
         if (payoff, power) < (kth.payoff, kth.power)
             || ((payoff, power) == (kth.payoff, kth.power)
@@ -216,10 +202,8 @@ fn visit(
     if depth == 5 {
         let bare = PhysicalDeck { members: p.members, snaps: [None; 5] };
         let base = e.pool.deck_power(&bare.as_deck(), e.song, e.event)?.power();
-        // Decks that paid less only move down: the layout's first K stay within its first K plus their count.
-        let paid = below.get(&p.members).map_or(&[][..], Vec::as_slice);
-        for (bound, power, deck) in bounds.frontier(domain, p, i64::from(base), k + paid.len())? {
-            let payoff = paid.iter().find(|(d, _)| *d == deck).map_or(bound * scale, |&(_, numerator)| numerator);
+        for (bound, power, deck) in bounds.frontier(domain, p, i64::from(base), k)? {
+            let payoff = bound * scale;
             let key = (deck.members.map(|m| e.pool.members[m].id), deck.snaps.map(|s| s.map(|s| e.pool.snaps[s].id)));
             let row = Ranked { payoff, power, key, deck };
             let at = top.partition_point(|t| t.ahead_of(&row));
@@ -249,7 +233,7 @@ fn visit(
         }
         p.members[slot] = member;
         e.rec.frontier.set(depth, index, bounds.members.len());
-        if !visit(depth + 1, p, domain, bounds, below, scale, top, e)? {
+        if !visit(depth + 1, p, domain, bounds, scale, top, e)? {
             return Ok(false);
         }
     }
