@@ -571,6 +571,54 @@ fn characters_reach_ranks_by_experience_and_all_count_in_the_total() {
     assert_eq!(missing(&resolve(&doc, Goal::Power)), ["_player._characters[1]._exp"]);
 }
 
+/// The synthetic master with character 4 marked non-playable.
+fn master_with_non_playable_character() -> Master {
+    let mut t = tables();
+    t.insert(
+        "MasterCharacter",
+        json!([{"_id": 1, "_bandID": 1}, {"_id": 2, "_bandID": 1}, {"_id": 3, "_bandID": 2},
+               {"_id": 4, "_bandID": 2, "_isNonPlayable": true}]),
+    );
+    master_of(&t)
+}
+
+fn resolve_on(master: Master, doc: &Value) -> Resolution {
+    AccountInput::from_json(&doc.to_string()).unwrap().resolve(
+        &data_of(master, "jp"),
+        Goal::Power,
+        &Exclusions::default(),
+    )
+}
+
+#[test]
+fn a_partial_character_list_requires_only_unlisted_playable_characters() {
+    let mut doc = base();
+    doc["coverage"]["_player._characters"] = json!("partial");
+    // Characters 1 and 2 are listed, 3 is playable and unlisted, 4 is non-playable and unlisted.
+    let resolution = resolve_on(master_with_non_playable_character(), &doc);
+    assert_eq!(missing(&resolution), ["_player._characters"]);
+    assert!(resolution.missing[0].message.contains("characters 3 are"), "{}", resolution.missing[0].message);
+    doc["account"]["_player"]["_characters"].as_array_mut().unwrap().push(json!({"_masterId": 3, "_exp": 0}));
+    ok(resolve_on(master_with_non_playable_character(), &doc));
+}
+
+#[test]
+fn complete_character_coverage_leaves_non_playable_characters_out_of_the_total() {
+    // Complete coverage: characters 1 and 2 reach ranks 3 and 5, playable character 3 is unlisted and counts at
+    // experience 0 as rank 1; non-playable character 4 is unlisted and does not count.
+    let resolved = ok(resolve_on(master_with_non_playable_character(), &base()));
+    let player = &resolved.roster().player;
+    assert_eq!(player.character_ranks, BTreeMap::from([(1, 3), (2, 5), (3, 1)]));
+    assert_eq!(player.character_total_rank(), 9);
+    // A listed non-playable character is read normally and its rank is part of the total.
+    let mut doc = base();
+    doc["account"]["_player"]["_characters"].as_array_mut().unwrap().push(json!({"_masterId": 4, "_exp": 5}));
+    let resolved = ok(resolve_on(master_with_non_playable_character(), &doc));
+    let player = &resolved.roster().player;
+    assert_eq!(player.character_ranks, BTreeMap::from([(1, 3), (2, 5), (3, 1), (4, 3)]));
+    assert_eq!(player.character_total_rank(), 12);
+}
+
 #[test]
 fn the_declared_vip_rank_is_required_and_must_be_in_the_deck_data() {
     let mut doc = base();

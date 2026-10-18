@@ -845,8 +845,10 @@ impl AccountInput {
             out.label_since(mark, &format!("snap _masterId {id}"));
         }
 
-        // Characters: the rank each reaches with its experience; under complete coverage an unlisted character is at
-        // experience 0, so every character counts in the total rank.
+        // Characters: the rank each reaches with its experience; under complete coverage an unlisted playable character
+        // is at experience 0, so every playable character counts in the total rank. A save lists only playable
+        // characters, so non-playable ones are neither required nor counted when unlisted. A listed non-playable
+        // character is read like any other.
         let mut character_ranks = BTreeMap::new();
         let character_items = out.identities(
             "_player._characters",
@@ -870,7 +872,13 @@ impl AccountInput {
             }
             out.label_since(mark, &format!("character _masterId {id}"));
         }
-        let unlisted: Vec<i64> = master.characters.iter().map(|c| c.id).filter(|id| !listed.contains(id)).collect();
+        let unlisted: Vec<i64> = master
+            .characters
+            .iter()
+            .filter(|c| !c.is_non_playable)
+            .map(|c| c.id)
+            .filter(|id| !listed.contains(id))
+            .collect();
         if !unlisted.is_empty() {
             match coverage.characters {
                 Coverage::Complete => match master.character_rank_by_exp(0) {

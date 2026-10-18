@@ -548,7 +548,8 @@ impl OwnedSnapshot {
             if sum.is_some_and(|sum| total < sum) {
                 out.error("player.characterTotalRank", "rank_conflict", "total is below the known local-rank sum");
             }
-            let absent = master.characters.iter().filter(|row| !ranks.contains_key(&row.id)).count();
+            let absent =
+                master.characters.iter().filter(|row| !row.is_non_playable && !ranks.contains_key(&row.id)).count();
             let minimum_rank = master.character_ranks.iter().map(|row| row.rank).filter(|rank| *rank > 0).min();
             if let (Some(sum), Some(minimum_rank)) = (sum, minimum_rank) {
                 let minimum = i64::try_from(absent)
@@ -579,7 +580,7 @@ impl OwnedSnapshot {
             }
         }
         if self.player.character_ranks.coverage == Coverage::Complete {
-            if master.characters.iter().any(|row| !ranks.contains_key(&row.id)) {
+            if master.characters.iter().any(|row| !row.is_non_playable && !ranks.contains_key(&row.id)) {
                 out.error("player.characterRanks", "coverage_conflict", "complete coverage is missing characters");
             }
             if let (Some(sum), Some(total)) = (sum, total)
