@@ -282,9 +282,9 @@ pub struct DeckPayoffSetup {
     pub score_cap: Option<String>,
     /// Why a played Live's payoff steps are not ranked by deck.
     pub refusal: Option<String>,
-    /// Rankings run; each later one ranks again after evaluated decks paid less than their bound.
+    /// Rankings run: one, unless the deck payoff is not ranked at all.
     pub rounds: usize,
-    /// Evaluated decks that paid less than their bound.
+    /// Evaluated decks that paid less than their bound; the first one hands the search to the joint traversal.
     pub shortfalls: usize,
     /// The joint traversal took the search over.
     pub handed_over: bool,

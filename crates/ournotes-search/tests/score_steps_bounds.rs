@@ -177,9 +177,11 @@ fn score_steps_rank_by_deck_and_keep_the_exhaustive_top_k() {
     let high = i32::try_from(cap + 1).unwrap();
     let synth = fixture(middle, high);
 
-    // The most powerful decks bound the target at one; those with a lower order fall back and the ranking settles.
+    // The most powerful decks bound the target at one; those with a lower order pay less than their bound, and the
+    // joint traversal re-ranks the whole domain against them after that first shortfall.
     let (rounds, shortfalls, handed_over) = compare(&synth, Metric::ScoreAtLeast { threshold: middle });
-    assert!(rounds > 1 && shortfalls > 0 && !handed_over, "{rounds} {shortfalls} {handed_over}");
+    assert_eq!(rounds, 1, "{rounds} {shortfalls} {handed_over}");
+    assert!(shortfalls > 0 && handed_over, "{rounds} {shortfalls} {handed_over}");
     for metric in [points, Metric::ClientChallengePoints { event_id: EVENT }] {
         compare(&synth, metric);
     }

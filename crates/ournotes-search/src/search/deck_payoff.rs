@@ -8,11 +8,12 @@
 //! (a declared multiplayer room ranks its total, which is nondecreasing in the local score). Every order of a deck
 //! scores at most its power times the joint envelope's global coefficient, so the step of that cap bounds the payoff
 //! by the deck's bonus and power alone ([`ScoreSteps`]); the search then ranks by this bound and evaluates the decks
-//! it ranks first, re-ranking those that pay less.
+//! it ranks first, handing over to the joint traversal as soon as one pays less.
 //!
 //! Members branch in `SLOTS` order; a member prefix bounds its completions by the best remaining bonuses and the
-//! power bound of [`TeamPowerBounds`]. A complete member layout has one Snap-independent power constant, and its Snap
-//! bindings are ranked exactly by [`DeckPayoffBounds::frontier`].
+//! power bound of [`TeamPowerBounds`], which assigns the remaining slots' Snap terms where that is tighter. A complete
+//! member layout has one Snap-independent power constant, and its Snap bindings are ranked exactly by
+//! [`DeckPayoffBounds::frontier`].
 //!
 //! A common terminal upper bound can also order the domain by power and canonical identity. Its proposals require
 //! terminal evaluation; the upper-only mode does not assign that bound as a deck's actual payoff.
@@ -477,7 +478,9 @@ impl DeckPayoffBounds {
     }
 
     /// Bound every completion of the members in `SLOTS[..depth]` (no Snap is placed yet): (payoff, power), or None
-    /// when the prefix has no legal completion. Each kind's bonus is bounded on its own.
+    /// when the prefix has no legal completion. Each kind's bonus is bounded on its own. The power is the smaller of
+    /// the column relaxation and, where it applies, an assignment of the remaining slots' Snap terms; both bound
+    /// every completion, so the payoff curve read at it stays a bound.
     pub(crate) fn upper(
         &self,
         pool: &Pool,
@@ -485,11 +488,10 @@ impl DeckPayoffBounds {
         p: &PhysicalDeck,
         depth: usize,
     ) -> Result<Option<(i128, i64)>, Error> {
-        let (Some(power), Some((available, required))) =
-            (self.power.upper(pool, domain, p, depth), candidates(pool, domain, p, depth))
-        else {
+        let Some((available, required)) = candidates(pool, domain, p, depth) else {
             return Ok(None);
         };
+        let power = self.power.refined_upper(pool, domain, p, depth, &available, &required);
         let mut bonus = [0i64; KINDS];
         let mut rows = HashMap::<i64, i64>::new();
         for (kind, bonus) in self.kinds.iter().zip(&mut bonus) {
@@ -847,6 +849,75 @@ mod tests {
         }
         if !matches!(metric, Metric::ClientChallengePoints { .. }) {
             assert!(payoffs.len() > 2, "{metric:?}: the fixture must rank by payoff, not only by power");
+        }
+    }
+
+    /// Both power bounds of a member prefix are at least the exact power of every completion beneath it, and the bound
+    /// the search uses is the smaller of the two, so it never exceeds the column relaxation.
+    #[test]
+    fn assignment_power_bounds_every_completion_and_never_exceeds_the_relaxation() {
+        let data = fixture();
+        let master = data.master();
+        let owned = roster(&mut Rng::new(739), &master);
+        let input: ContextInput = serde_json::from_value(json!({
+            "powerSnapshot":{"eventIds":[7],"capturedJstTicks":50},
+            "resultClock":{"execution":"skip","serverNowJstTicks":99},
+            "eventPayoff":{"consumedCount":0,"localEvents":[{"eventId":7,"points":0,"challengePoints":30,"added":[]}],
+                "eventWindows":[{"eventId":7,"startJstTicks":90,"endJstTicks":100}]}
+        }))
+        .unwrap();
+        let context = input.resolve(&master, Scenario::Free(10), Some(1004), &[]).unwrap();
+        let pool = context.pool(&master, &owned).unwrap();
+        let chart = short_chart(&mut Rng::new(3), 4, false).0;
+        let request = SearchRequest {
+            objective: Objective::SkipScore { score_id: 1004, chart }.in_scenario(context.clone()),
+            k: 3,
+            constraints: Constraints { leader: Some(1), ..Default::default() },
+            time_limit: None,
+        };
+        let domain = CandidateDomain::build(&pool, &request.constraints).unwrap();
+        let bound = DeckPayoffBounds::compile(
+            &pool,
+            &request,
+            &domain,
+            &Metric::ClientEventPoints { event_id: 7 },
+            input.event_payoff.as_ref(),
+            None,
+        )
+        .unwrap();
+        // The best exact power over the completions of each member prefix. Only the canonical layout is a team the
+        // search visits: its four non-leaders take slots 0, 1, 3, 4 in ascending ID order, so every prefix of it is a
+        // prefix the member order and the ID floor of the search admit.
+        let mut best = HashMap::<(usize, [usize; 5]), i64>::new();
+        visit_physical_decks(&pool, &request.constraints, |deck| {
+            if canonical(&pool, &deck) != deck {
+                return Ok(true);
+            }
+            let power = i64::from(crate::search::evaluate(&pool, &deck.as_deck(), &request.objective)?.0);
+            for depth in 0..=5 {
+                let mut prefix = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
+                for &slot in &SLOTS[..depth] {
+                    prefix.members[slot] = deck.members[slot];
+                }
+                let held = best.entry((depth, prefix.members)).or_insert(i64::MIN);
+                *held = (*held).max(power);
+            }
+            Ok(true)
+        })
+        .unwrap();
+        assert!(best.len() > 5);
+        for (&(depth, members), &power) in &best {
+            let prefix = PhysicalDeck { members, snaps: [None; 5] };
+            let (available, required) = candidates(&pool, &domain, &prefix, depth).expect("legal prefix");
+            let relaxed = bound.power.upper(&pool, &domain, &prefix, depth).expect("legal prefix");
+            assert!(relaxed >= power, "depth {depth}: the relaxation is below a completion");
+            let refined = bound.power.refined_upper(&pool, &domain, &prefix, depth, &available, &required);
+            assert!(refined >= power, "depth {depth}: the bound in use is below a completion");
+            assert!(refined <= relaxed, "depth {depth}: the bound in use is above the relaxation");
+            match bound.power.assigned_upper(&pool, &domain, &prefix, depth) {
+                Some(assigned) => assert!(assigned >= power, "depth {depth}: the assignment is below a completion"),
+                None => assert_eq!(depth, 5, "a member prefix still to fill has an assignment bound"),
+            }
         }
     }
 
