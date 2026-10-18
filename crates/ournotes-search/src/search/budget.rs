@@ -20,6 +20,11 @@ impl SearchBudget {
         Ok(Self { deadline })
     }
 
+    /// No deadline: preparation without a request time limit (diagnostics, fixed evaluation).
+    pub(crate) fn unlimited() -> Self {
+        Self { deadline: None }
+    }
+
     pub(crate) fn deadline(self) -> Option<Instant> {
         self.deadline
     }

@@ -69,6 +69,7 @@ pub(super) fn joint_regimes(
     e: &mut Engine<'_, '_>,
 ) -> Result<(), Error> {
     use crate::search::joint::{JointBounds, SLOTS, SlotRules};
+    e.rec.begin(&mut e.tel, "regimeCompile", Some("census".into()));
     let mut census = e.lottery_census(&plan.domain);
     let mut converting = bounds.conversion_snaps(&plan.domain);
     let conversion = converting.len();
@@ -89,12 +90,22 @@ pub(super) fn joint_regimes(
         // Under the maximum aggregation one traversal of the whole domain's bounds, whose teams' leaves read the
         // bounds of their own laws, outruns the traversals of law clusters, which repeat the shared prefixes.
         let clusters = !certified_maximum(e);
+        e.rec.end(&mut e.tel);
+        e.rec.begin(&mut e.tel, "regimeCompile", Some("laws".into()));
         let mut weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &plan.domain, clusters));
         if certified_maximum(e) {
             // bounds of each order's payoff, weighing no law when the census reads none
             if weighed.is_none() {
-                weighed =
-                    JointBounds::compile(e.pool, e.request, &plan.domain, e.metric, e.event_input, e.simulation).ok();
+                weighed = JointBounds::compile(
+                    e.pool,
+                    e.request,
+                    &plan.domain,
+                    e.metric,
+                    e.event_input,
+                    e.simulation,
+                    e.budget,
+                )
+                .ok();
             }
             if let Some(weighed) = &mut weighed {
                 weighed.order_maximum(e.pool, &plan.domain);
@@ -108,11 +119,16 @@ pub(super) fn joint_regimes(
                 && bounds.resource_worthwhile(e.pool, &plan.domain, orders, e.correlated)?;
         }
         lend(e, &mut census);
+        e.rec.end(&mut e.tel);
         e.rec.begin(&mut e.tel, "search", None);
         traverse(p, &plan.domain, bounds, orders, e)?;
         e.rec.end(&mut e.tel);
         return Ok(());
     }
+    // The converted parts prepare their own bounds in the `conversionCompile` phase below, one by one, each under the
+    // request deadline.
+    e.rec.end(&mut e.tel);
+    e.rec.begin(&mut e.tel, "regimeCompile", Some("parts".into()));
     let is_converting = |s: usize| converting.contains(&s);
     let mask = |domain: &crate::domain::CandidateDomain, keep: &dyn Fn(usize) -> bool| -> Vec<bool> {
         std::iter::once(false).chain(domain.snaps().iter().map(|&s| keep(s))).collect()
@@ -173,6 +189,8 @@ pub(super) fn joint_regimes(
     schedule.sort_by_key(|(i, (_, rules))| {
         std::cmp::Reverse((0..rules.len()).filter_map(|j| priority.get(&(*i, j)).copied()).max())
     });
+    // The part list is complete: the compilations below time their own phases.
+    e.rec.end(&mut e.tel);
     let bound_pending = |e: &mut Engine<'_, '_>| -> Result<(), Error> {
         // The pool-wide bound covers the active group and every group still awaiting compilation.
         let started = e.bound_start();
@@ -198,7 +216,7 @@ pub(super) fn joint_regimes(
         let weighed = census.as_mut().and_then(|census| e.weighed_bounds(census, &domain, false));
         let result = match weighed {
             Some(weighed) => Ok(weighed),
-            None => JointBounds::compile(e.pool, e.request, &domain, e.metric, e.event_input, e.simulation),
+            None => JointBounds::compile(e.pool, e.request, &domain, e.metric, e.event_input, e.simulation, e.budget),
         };
         let result = result.map(|mut part| {
             if certified_maximum(e) {
@@ -214,6 +232,12 @@ pub(super) fn joint_regimes(
             Ok(part) => {
                 e.tel.environment.bounds.conversion.as_mut().expect("conversion context").prepared_domains += 1;
                 part
+            }
+            // The deadline ended this part's bounds: its teams stay unexplored under the pool-wide envelope, and no
+            // later part starts.
+            Err(_) if e.budget.expired() => {
+                bound_pending(e)?;
+                return Ok(());
             }
             Err(error) => {
                 e.tel.environment.bounds.conversion.as_mut().expect("conversion context").fallback =

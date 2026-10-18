@@ -63,6 +63,10 @@ pub(super) struct Offered {
     pub(super) score: Option<i32>,
 }
 
+/// What `bound_start` interrupted: the phase to reopen once the `bound` phase ends, if any, and the activity the
+/// clock continues at.
+pub(super) type BoundMark = crate::search::telemetry::PhaseMark;
+
 impl Engine<'_, '_> {
     /// Formal deterministic objectives also retain the leader and four unordered member/Snap pairs.
     /// The explicit v1 session cursor and fixed deterministic evaluation keep their physical-deck contracts.
@@ -366,10 +370,13 @@ impl Engine<'_, '_> {
         Ok(())
     }
 
-    /// Start bounding what the stop leaves unexplored. Its time goes to `proof.boundMs` and `otherMs`, not to the
-    /// search activity the stop interrupted; pass the returned mark to `fold_unexplored`.
-    pub(super) fn bound_start(&mut self) -> (Instant, usize) {
-        self.rec.clock.lap(slot::OTHER)
+    /// Start bounding what the stop leaves unexplored. Its time goes to `proof.boundMs`, `otherMs` and its own `bound`
+    /// phase; the interrupted phase is reopened by `fold_unexplored`. Pass the returned mark to it.
+    pub(super) fn bound_start(&mut self) -> (Instant, BoundMark) {
+        // `pause` charges the interrupted work to its own activity and continues the clock at `otherMs`.
+        let paused = self.rec.pause(&mut self.tel);
+        self.rec.begin(&mut self.tel, "bound", None);
+        (crate::search::budget::now(), paused)
     }
 
     /// The branches still open are bounded by `open` (None: no branch open): offer the larger of it and the best
@@ -385,11 +392,19 @@ impl Engine<'_, '_> {
         }
     }
 
-    pub(super) fn fold_unexplored(&mut self, upper: Option<i128>, (started, resume): (Instant, usize)) {
+    pub(super) fn fold_unexplored(&mut self, upper: Option<i128>, (started, paused): (Instant, BoundMark)) {
         if let Some(upper) = upper {
             self.rec.unexplored(upper);
         }
-        let (now, _) = self.rec.clock.lap(resume);
+        let (now, _) = self.rec.clock.lap(slot::OTHER);
+        if self.rec.is_open() {
+            self.rec.end(&mut self.tel);
+        }
+        let (phase, activity) = paused;
+        if let Some(phase) = phase {
+            self.rec.resume(&mut self.tel, phase);
+        }
+        self.rec.clock.switch(activity);
         self.tel.proof.bound_ms += now.saturating_duration_since(started).as_secs_f64() * 1000.0;
     }
 

@@ -463,6 +463,7 @@ pub fn luck_fine_order_sums(
         &spec.simulation,
         &laws,
         None,
+        crate::search::budget::SearchBudget::unlimited(),
     )?;
     let positions: Vec<_> = uniform::all_orders().iter().map(uniform::positions_of).collect();
     let mut scratch = super::snaps::JointScratch::default();

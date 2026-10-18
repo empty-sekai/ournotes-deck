@@ -73,7 +73,7 @@ reports the work so far, a recommendation result reports the whole request.
 | `upperBound` | Payoff bound (numerator) of **the part not yet explored** at the stop |
 | `globalUpperBound` | Bound of the best payoff numerator over the whole domain, covering retained decks and every open branch; nonincreasing once known. A completed deterministic physical search sets it to `best`, including exhaustive and multipart conversion searches. Null for a completed empty domain, the LUCK interval path, and traversals that do not record this field |
 | `bestGap`, `kthGap` | `(upperBound − x) / x`; 0 when the bound does not exceed x; null when x is not positive |
-| `boundMs` | Time spent computing `upperBound` after the stop (outside the search deadline) |
+| `boundMs` | Time spent computing `upperBound` after the stop (in the `bound` phase, outside the search deadline) |
 
 For deterministic searches, `upperBound` is a true upper bound: the best deck of the whole domain pays at most `max(best, upperBound)`, and every
 deck of the true Top-K that was not kept pays at most `max(upperBound, kth)`. A stopped search can therefore show
@@ -124,12 +124,15 @@ In time order, without overlap; small gaps between phases belong to none. Each e
 | `boundCompile` | Compile the joint bounds |
 | `initial` | Evaluate the request's `initialDecks` |
 | `setup` | Decide the correlated and resource bounds, prepare the warm start |
+| `regimeCompile` | Gekisou score: read the lottery census (`label: census`) and compile the bounds weighing its laws (`label: laws`) |
 | `ptWarmStart` | PT: find a Top-K in the maximum-bonus regime first |
 | `tierProbe` | Certified LUCK PT: ask, tier by tier from the lowest point tier above the evaluated scores, whether any order reaches it, until one is not reached (see `bounds.tierProbes`) |
 | `ptRegimeCompile` | PT: drop members that cannot reach the current K-th and recompile the bounds |
 | `conversionCompile` | Gekisou score: compile the bounds of each conversion part |
 | `seed` | Warm start before the joint traversal (see `incumbents.warmStart`) |
 | `search` | Main search; with conversion parts one entry per part, `label` being `free`, `snap <Snap ID> slot <slot>` or `pair slots <i>,<j>` |
+| `refine` | Certified LUCK: refine the frontier of the exhaustive domain with exact laws and residues (see `lotteryRefinement`), within the request deadline |
+| `bound` | Bound the regions a stop leaves unexplored (see `proof.boundMs`) |
 | `evaluate` | Evaluate the requested deck |
 | `warmStart`, `proposals` | The two stages of the heuristic candidate strategy |
 | `verify` | Result check of the canonical Power/Skip search |

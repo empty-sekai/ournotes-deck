@@ -197,7 +197,28 @@ pub(super) struct CertifiedState<'m> {
     /// The lowest point tier no performance order of a team of the domain reaches in expected score, when proved:
     /// the bounds compiled from then on drop the tiers from it on (`JointBounds::cap_scores`).
     pub(super) tier_cap: Option<i64>,
+    /// The longest unit of each kind of exact refinement this request has run, in [`RefinementUnit`] kinds. A unit
+    /// that cannot be interrupted is not started with less time left than its kind's longest one, so a refinement the
+    /// deadline cuts short runs past it by at most one such unit.
+    unit_ms: [f64; RefinementUnit::COUNT],
 }
+
+/// The exact refinement work that runs to its end once started.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::search) enum RefinementUnit {
+    /// The residue law of every order's rank bonuses ([`ournotes_sim::live::full::luck_exact_score_refined`]).
+    Residues,
+    /// The power-twin comparison of two candidates ([`ournotes_sim::live::full::luck_exact_orders_power_twin`]).
+    Twin,
+}
+
+impl RefinementUnit {
+    const COUNT: usize = 2;
+}
+
+/// Milliseconds a unit of exact refinement is assumed to take before this request has run one of its kind: a
+/// conservative prior for a chart of ordinary length. A unit observed to take longer raises its kind's estimate.
+const REFINEMENT_UNIT_PRIOR_MS: f64 = 100.0;
 
 /// Key bytes the request's lottery-curve cache may hold.
 pub(super) const LUCK_CURVE_CACHE_BYTES: usize = 32 * 1024 * 1024;
@@ -227,6 +248,7 @@ impl CertifiedState<'_> {
             floor: None,
             order_score_seen: f64::NEG_INFINITY,
             tier_cap: None,
+            unit_ms: [0.0; RefinementUnit::COUNT],
         })
     }
     /// The denominator of the payoff numerators of the frontier's grid: a mean over the performance orders is a sum
@@ -464,11 +486,37 @@ impl Engine<'_, '_> {
         self.refine_joint_orders()
     }
 
+    /// The longest unit of this kind so far, or the conservative prior before the first one.
+    fn unit_estimate_ms(&self, unit: RefinementUnit) -> f64 {
+        let observed = self.certified.as_ref().map_or(0.0, |state| state.unit_ms[unit as usize]);
+        if observed > 0.0 { observed } else { REFINEMENT_UNIT_PRIOR_MS }
+    }
+
+    /// Whether a unit of `unit` that runs to its end cannot pass the deadline: false once the request has stopped,
+    /// and false when less time is left than the longest such unit took so far. A stopped request starts nothing.
+    fn unit_fits(&self, unit: RefinementUnit) -> bool {
+        if self.stop.is_some() {
+            return false;
+        }
+        let Some(deadline) = self.budget.deadline() else { return true };
+        let left = deadline.saturating_duration_since(crate::search::budget::now()).as_secs_f64() * 1000.0;
+        left >= self.unit_estimate_ms(unit)
+    }
+
+    /// Records how long a unit of `unit` took, for [`Self::unit_fits`].
+    fn observe_unit(&mut self, unit: RefinementUnit, ms: f64) {
+        if let Some(state) = self.certified.as_mut() {
+            state.unit_ms[unit as usize] = state.unit_ms[unit as usize].max(ms);
+        }
+    }
+
     /// Every installed order is a complete nominal law; declined/partial trees keep their old bounds.
     fn refine_certified_orders(&mut self) -> Result<(), Error> {
         use ournotes_sim::live::full::{LuckExactBudget, LuckExactDecline, LuckExactSession};
         let state = self.certified.as_mut().expect("certified request");
         state.domain_exhausted = true;
+        // The provider stops an order's law at the deadline; a declined attempt is no certificate, so the frontier
+        // keeps its enclosures.
         let mut work = LuckExactBudget::default();
         let mut attempted = std::collections::BTreeSet::<(u64, usize)>::new();
         let mut materialized = std::collections::BTreeSet::new();
@@ -778,6 +826,10 @@ impl Engine<'_, '_> {
                 if self.expired() {
                     return Ok(());
                 }
+                // The comparison of two candidates is not interrupted once begun.
+                if !self.unit_fits(RefinementUnit::Twin) {
+                    return Ok(());
+                }
                 let Some(setup) = a.4.gekisou.as_ref() else { return Ok(()) };
                 self.tel.lottery_refinement.power_pairs += 1;
                 let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
@@ -800,6 +852,7 @@ impl Engine<'_, '_> {
                     b.1,
                 );
                 self.tel.lottery_refinement.twin_ms += elapsed_ms(started);
+                self.observe_unit(RefinementUnit::Twin, elapsed_ms(started));
                 self.rec.clock.lap(resume);
                 self.tel.caches.luck_curves.record(curves.stats());
                 let state = self.certified.as_mut().expect("certified request");
@@ -836,6 +889,10 @@ impl Engine<'_, '_> {
             if self.expired() {
                 return Ok(());
             }
+            // One order's residue law runs to its end once begun.
+            if !self.unit_fits(RefinementUnit::Residues) {
+                return Ok(());
+            }
             let performers = order.map(|slot| input.performers[slot].clone());
             let (_, resume) = self.rec.clock.lap(slot::SIMULATION);
             let started = crate::search::budget::now();
@@ -852,6 +909,7 @@ impl Engine<'_, '_> {
                 input.rank_confirmations.as_deref(),
             );
             self.tel.lottery_refinement.residue_ms += elapsed_ms(started);
+            self.observe_unit(RefinementUnit::Residues, elapsed_ms(started));
             self.rec.clock.lap(resume);
             let score = match score {
                 Ok(score) if score.wide_notes == 0 => score,

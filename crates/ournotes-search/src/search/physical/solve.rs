@@ -423,6 +423,7 @@ pub(crate) fn solve_physical_impl(
                                     metric,
                                     event_input,
                                     simulation,
+                                    engine.budget,
                                 );
                                 regime.compile_ms = prepare.elapsed().as_secs_f64() * 1000.0;
                                 match result {
@@ -445,6 +446,7 @@ pub(crate) fn solve_physical_impl(
                                         metric,
                                         event_input,
                                         simulation,
+                                        engine.budget,
                                     )
                                     .ok();
                                 }
@@ -607,7 +609,9 @@ pub(crate) fn solve_physical_impl(
     engine.tel.incumbents.warm_start.final_top_k = engine.seeded_in_top();
     // A search for a floor only asks whether a team reaches it: the ranking below it needs no refinement.
     if engine.certified.as_ref().is_some_and(|state| state.floor.is_none()) && engine.stop.is_none() {
+        engine.rec.begin(&mut engine.tel, "refine", None);
         engine.refine_certified_frontier()?;
+        engine.rec.end(&mut engine.tel);
     }
     let standing = engine.standing();
     engine.rec.begin(&mut engine.tel, "finish", None);
