@@ -26,20 +26,32 @@ pub(super) fn solve(
                 .iter()
                 .any(|&m| m != leader && pool.members[m].character_id == pool.members[leader].character_id)
     };
-    // The bound of every leader's subtree, then their suffix maxima: the bound of the leaders still open.
-    let mut open = vec![None; candidates.len() + 1];
-    for (index, &leader) in candidates.iter().enumerate().rev() {
-        open[index] = open[index + 1];
-        if legal(leader) {
+    // Leaders open best-first by their subtree bound (the member order breaks ties); each leader's subtree takes
+    // every member as a nonleader, so the visiting order of leaders leaves the traversed domain unchanged.
+    let mut caps = Vec::with_capacity(candidates.len());
+    for &leader in &candidates {
+        caps.push(if legal(leader) {
             p.members[2] = leader;
-            let cap = members_upper(&p, 1, domain, bounds, orders, e)?;
-            open[index] = Some(open[index].map_or(cap, |u: i128| u.max(cap)));
-        }
+            Some(members_upper(&p, 1, domain, bounds, orders, e)?)
+        } else {
+            None
+        });
     }
-    for (index, &leader) in candidates.iter().enumerate() {
+    let mut ranked: Vec<usize> = (0..candidates.len()).collect();
+    ranked.sort_by_key(|&i| std::cmp::Reverse(caps[i]));
+    let leaders: Vec<usize> = ranked.iter().map(|&i| candidates[i]).collect();
+    // The suffix maxima of the leaders' bounds: the bound of the leaders still open.
+    let mut open: Vec<Option<i128>> = vec![None; leaders.len() + 1];
+    for (index, &i) in ranked.iter().enumerate().rev() {
+        open[index] = match (open[index + 1], caps[i]) {
+            (Some(u), Some(cap)) => Some(u.max(cap)),
+            (u, cap) => u.or(cap),
+        };
+    }
+    for (index, &leader) in leaders.iter().enumerate() {
         e.note_open(open[index]);
         if e.expired() {
-            unexplored_members(0, index, &mut p, &candidates, domain, bounds, orders, e)?;
+            unexplored_members(0, index, &mut p, &leaders, domain, bounds, orders, e)?;
             return Ok(false);
         }
         if !legal(leader) {
@@ -48,7 +60,7 @@ pub(super) fn solve(
         p.members[2] = leader;
         e.rec.frontier.set(0, index, candidates.len());
         if !members(1, 0, &mut p, &candidates, domain, bounds, orders, e)? {
-            unexplored_members(0, index + 1, &mut p, &candidates, domain, bounds, orders, e)?;
+            unexplored_members(0, index + 1, &mut p, &leaders, domain, bounds, orders, e)?;
             return Ok(false);
         }
     }

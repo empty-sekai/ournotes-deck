@@ -227,12 +227,18 @@ impl JointBounds {
         // Per-note caps of complete teams: one per performance order, and the cutoff tables of the simulations.
         let fine = Some(envelope.into_joint_fine());
         // This estimate only orders branches. It never removes a pair or claims a native order.
+        // A combined metric whose first level reads no event bonus is decided by the score first: the term that reads
+        // the bonuses only orders the pairs whose power is equal.
+        let power_first = points.as_ref().is_some_and(|pt| pt.is_combined() && pt.weight < metric.primary_unit());
         let priority = |(m, s): (usize, usize)| {
             let power =
                 t.a[m] + t.lead.iter().map(|r| r[m]).max().unwrap_or(0) + if s == 0 { 0 } else { t.w[m][s - 1] };
             match &points {
-                Some(pt) => (pt.member[m] + if s == 0 { 0 } else { pt.snap[s - 1] }) as f64 * 1e12 + power as f64,
-                None => power as f64 * (a0 / 5.0 + gains[m][s].iter().copied().fold(0.0, f64::max)),
+                Some(pt) => {
+                    let bonus = (pt.member[m] + if s == 0 { 0 } else { pt.snap[s - 1] }) as f64;
+                    if power_first { (power as f64, bonus) } else { (bonus * 1e12 + power as f64, 0.0) }
+                }
+                None => (power as f64 * (a0 / 5.0 + gains[m][s].iter().copied().fold(0.0, f64::max)), 0.0),
             }
         };
         // Each pair's estimate is taken once, before the sort; the stable sort and its comparison are unchanged.
@@ -243,7 +249,10 @@ impl JointBounds {
             .map(|c| (priority(c), c))
             .collect();
         keyed.sort_by(|&(pa, a), &(pb, b)| {
-            pb.total_cmp(&pa).then_with(|| pool.members[a.0].id.cmp(&pool.members[b.0].id)).then(a.1.cmp(&b.1))
+            pb.0.total_cmp(&pa.0)
+                .then_with(|| pb.1.total_cmp(&pa.1))
+                .then_with(|| pool.members[a.0].id.cmp(&pool.members[b.0].id))
+                .then(a.1.cmp(&b.1))
         });
         let choices: Vec<_> = keyed.into_iter().map(|(_, c)| c).collect();
         let scale =
