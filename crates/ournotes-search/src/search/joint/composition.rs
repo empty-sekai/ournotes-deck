@@ -1,5 +1,6 @@
 //! Envelopes for member compositions before physical layouts and Snap bindings.
 use super::*;
+use crate::types::MAX_METRIC_TERMS;
 
 #[derive(Clone, Copy, Default)]
 struct Envelope {
@@ -8,6 +9,11 @@ struct Envelope {
     /// At least the spread of the gain sum (see `JointBounds::spread`).
     spread: f64,
     bonus: i64,
+    /// At least the event bonus under each other term of a combined metric's point bound, in the terms' order, of
+    /// every deck the envelope covers. Only the first `n_others` entries are read; a term past them reads its largest
+    /// bonus of a team. The composition tables carry none.
+    others: [i64; MAX_METRIC_TERMS],
+    n_others: u8,
     weighted: [f64; 3],
 }
 impl Envelope {
@@ -16,6 +22,10 @@ impl Envelope {
         self.gain = self.gain.max(r.gain);
         self.spread = self.spread.max(r.spread);
         self.bonus = self.bonus.max(r.bonus);
+        self.n_others = self.n_others.max(r.n_others);
+        for i in 0..usize::from(self.n_others) {
+            self.others[i] = self.others[i].max(r.others[i]);
+        }
         for i in 0..3 {
             self.weighted[i] = self.weighted[i].max(r.weighted[i]);
         }
@@ -25,6 +35,10 @@ impl Envelope {
         self.gain = add_up(self.gain, r.gain);
         self.spread = add_up(self.spread, r.spread);
         self.bonus += r.bonus;
+        self.n_others = self.n_others.max(r.n_others);
+        for i in 0..usize::from(self.n_others) {
+            self.others[i] += r.others[i];
+        }
         for i in 0..3 {
             self.weighted[i] = add_up(self.weighted[i], r.weighted[i]);
         }
@@ -39,7 +53,7 @@ pub(super) struct CompositionTables {
     layers: Vec<[Layer; 5]>,
 }
 fn add_remaining(total: &mut Envelope, rows: &[Envelope], take: usize) {
-    let top_int = |f: fn(&Envelope) -> i64| {
+    let top_int = |f: &dyn Fn(&Envelope) -> i64| {
         let mut v: Vec<_> = rows.iter().map(f).collect();
         v.sort_unstable_by(|a, b| b.cmp(a));
         v.into_iter().take(take).sum::<i64>()
@@ -49,8 +63,13 @@ fn add_remaining(total: &mut Envelope, rows: &[Envelope], take: usize) {
         v.sort_by(|a, b| b.total_cmp(a));
         v.into_iter().take(take).fold(0.0, add_up)
     };
-    total.power += top_int(|r| r.power);
-    total.bonus += top_int(|r| r.bonus);
+    total.power += top_int(&|r| r.power);
+    total.bonus += top_int(&|r| r.bonus);
+    let n_others = rows.iter().map(|r| r.n_others).fold(total.n_others, u8::max);
+    for i in 0..usize::from(n_others) {
+        total.others[i] += top_int(&|r| r.others[i]);
+    }
+    total.n_others = n_others;
     total.gain = add_up(total.gain, top_float(&|r| r.gain));
     total.spread = add_up(total.spread, top_float(&|r| r.spread));
     for i in 0..3 {
@@ -89,6 +108,8 @@ impl CompositionTables {
                                     gain,
                                     spread: b.spread[m][choice],
                                     bonus,
+                                    others: [0; MAX_METRIC_TERMS],
+                                    n_others: 0,
                                     weighted: b.correlation_scales.map(|r| add_up(power as f64, (r * gain).next_up())),
                                 });
                             }
@@ -235,6 +256,9 @@ impl JointBounds {
         let characters: ournotes_sim::num::FxHashSet<_> =
             SLOTS[..member_depth].iter().map(|&s| pool.members[p.members[s]].character_id).collect();
         let used: ournotes_sim::num::FxHashSet<_> = SLOTS[..snap_depth].iter().filter_map(|&s| p.snaps[s]).collect();
+        // The other terms of a combined metric, in their order, whose event bonuses the envelope bounds per slot.
+        let other_terms: &[(i128, i64, PointBound)] = self.points.as_ref().map_or(&[][..], |pt| pt.others.as_slice());
+        let n_others = other_terms.len().min(MAX_METRIC_TERMS) as u8;
         let row = |m: usize, choice: usize, slot: Option<usize>| {
             let power = self.a[m] + self.lead[profile][m] + if choice == 0 { 0 } else { self.w[m][choice - 1] };
             let gain = if let Some(slot) = slot {
@@ -244,11 +268,15 @@ impl JointBounds {
             };
             let bonus =
                 self.points.as_ref().map_or(0, |pt| pt.member[m] + if choice == 0 { 0 } else { pt.snap[choice - 1] });
+            let others =
+                std::array::from_fn(|i| other_terms.get(i).map_or(0, |(_, _, part)| part.pair_bonus(m, choice)));
             Envelope {
                 power,
                 gain,
                 spread: self.spread[m][choice],
                 bonus,
+                others,
+                n_others,
                 weighted: self.correlation_scales.map(|r| add_up(power as f64, (r * gain).next_up())),
             }
         };
@@ -283,6 +311,12 @@ impl JointBounds {
             }
         }
         add_remaining(&mut total, &remaining.into_values().collect::<Vec<_>>(), 5 - member_depth);
+        // A team's event bonus under a term is at most the term's largest bonus of a team.
+        if let Some(pt) = &self.points {
+            for (i, (_, largest, _)) in pt.others.iter().enumerate().take(MAX_METRIC_TERMS) {
+                total.others[i] = total.others[i].min(*largest);
+            }
+        }
         self.composition_cap(total, power_cap)
     }
     fn composition_cap(&self, total: Envelope, power_cap: Option<i64>) -> (i128, i64) {
@@ -297,9 +331,14 @@ impl JointBounds {
             );
         }
         (
-            self.points
-                .as_ref()
-                .map_or(score, |pt| pt.mean_payoff(total.bonus, score, cap(add_up(total.gain, total.spread)))),
+            self.points.as_ref().map_or(score, |pt| {
+                pt.mean_payoff_with(
+                    total.bonus,
+                    &total.others[..usize::from(total.n_others)],
+                    score,
+                    cap(add_up(total.gain, total.spread)),
+                )
+            }),
             power,
         )
     }
@@ -437,5 +476,99 @@ impl JointBounds {
         let mut choices: Vec<_> = (0..=domain.snaps().len()).collect();
         choices.sort_by(|&a, &b| priority(b).total_cmp(&priority(a)).then(a.cmp(&b)));
         choices
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bounds whose score caps are zero, holding `points` as the point bound.
+    fn bounds(points: PointBound) -> JointBounds {
+        JointBounds {
+            a: vec![0; 5],
+            w: vec![Vec::new(); 5],
+            lead: vec![vec![0; 5]],
+            profile: vec![0; 5],
+            gains: vec![vec![[0.0; 5]; 1]; 5],
+            order_gains: vec![vec![[0.0; 5]; 1]; 5],
+            spread: vec![vec![0.0; 1]; 5],
+            spread_top: [0.0; 6],
+            column: [0.0; 5],
+            a0: 0.0,
+            global: 1.0,
+            eps: 0.0,
+            points: Some(points),
+            min_final_life: None,
+            fine: None,
+            correlation_scales: [1.0; 3],
+            tails: None,
+            composition: None,
+            modules: Vec::new(),
+            gekisou: false,
+            class_search: false,
+            class_resource_caps: false,
+            prefix_resource: None,
+            prefix_character: None,
+            rules: None,
+            relax_tables: None,
+            forced_tables: Default::default(),
+            step_pairs: None,
+            choices: Vec::new(),
+            carrier_levels: None,
+            carrier_split: None,
+            laws: Vec::new(),
+            law_clusters: None,
+            part: None,
+            order_potentials: None,
+            order_offset: 0.0,
+            root_keys: None,
+        }
+    }
+
+    /// A bounded payoff of weight 2 plus one other term of weight 3 and largest bonus 1500.
+    fn combined() -> PointBound {
+        let mut own = PointBound::plain(vec![0; 5], Vec::new(), 100, None, None, None);
+        own.weight = 2;
+        own.others =
+            vec![(3, 1_500, PointBound::plain(vec![100, 200, 300, 400, 500], Vec::new(), 100, None, None, None))];
+        own
+    }
+
+    #[test]
+    fn a_fixed_composition_caps_each_other_term_at_the_teams_own_bonus() {
+        let pt = combined();
+        let bound = bounds(pt.clone());
+        let (own, other) = (700, 900);
+        let mut total = Envelope { bonus: own, n_others: 1, ..Envelope::default() };
+        total.others[0] = other;
+        let (tight, _) = bound.composition_cap(total, None);
+        let (loose, _) = bound.composition_cap(Envelope { bonus: own, ..Envelope::default() }, None);
+        assert_eq!(tight, pt.mean_payoff_with(own, &[other], 0, 0));
+        assert_eq!(loose, pt.mean_payoff(own, 0, 0));
+        assert!(tight < loose);
+    }
+
+    #[test]
+    fn other_term_bonuses_merge_sum_and_take_the_top_slots() {
+        let mut a = Envelope { n_others: 2, ..Envelope::default() };
+        a.others[0] = 7;
+        a.others[1] = 5;
+        let mut b = Envelope { n_others: 2, ..Envelope::default() };
+        b.others[0] = 9;
+        b.others[1] = 2;
+        a.merge(b);
+        let mut total = Envelope::default();
+        total.add(a);
+        assert_eq!(&total.others[..2], &[9, 5]);
+        let mut rows = [Envelope::default(); 3];
+        for (row, values) in rows.iter_mut().zip([[1, 5], [4, 0], [2, 3]]) {
+            row.n_others = 2;
+            row.others[0] = values[0];
+            row.others[1] = values[1];
+        }
+        add_remaining(&mut total, &rows, 2);
+        assert_eq!(&total.others[..2], &[9 + 4 + 2, 5 + 5 + 3]);
+        assert_eq!(total.n_others, 2);
     }
 }

@@ -528,6 +528,7 @@ impl PointBound {
     /// is constant. A combined payoff sums the bounds of its terms, each a bound of the term's mean. A
     /// [`PointBound::ranked`] bound reads expected scores as scores and adds the mean expected score's cap, so it
     /// bounds the mean ranking value.
+    #[cfg(any(test, feature = "search-diagnostics"))]
     pub(super) fn mean_payoff(&self, bonus: i64, score_cap: i128, max_cap: i128) -> i128 {
         self.rank(self.mean_reward(bonus, score_cap, max_cap), score_cap)
     }
