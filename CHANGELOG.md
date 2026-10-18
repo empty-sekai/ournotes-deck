@@ -2,6 +2,16 @@
 
 All notable changes to this project are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.12](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.11...v0.0.12) - 2026-10-18
+
+### Bug fixes
+
+- **sim:** Leave non-playable characters out of the character list ([#66](https://github.com/empty-sekai/ournotes-deck/issues/66)) ([3ff10cf](https://github.com/empty-sekai/ournotes-deck/commit/3ff10cfed614e775b0900760e98f1c2bd9d6bb05))
+
+### Performance
+
+- **search:** Bound combined-metric terms by each team's own bonuses ([#65](https://github.com/empty-sekai/ournotes-deck/issues/65)) ([a21f74a](https://github.com/empty-sekai/ournotes-deck/commit/a21f74a94f2de06f34c764cb6d1e7677b844bd52))
+
 ## [0.0.11](https://github.com/empty-sekai/ournotes-deck/compare/v0.0.10...v0.0.11) - 2026-10-16
 
 ### Features
