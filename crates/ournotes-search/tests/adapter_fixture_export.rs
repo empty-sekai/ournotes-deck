@@ -28,6 +28,8 @@ mod conversion_partitions;
 mod cp_priorities;
 #[path = "fixtures/effect_identity.rs"]
 mod effect_identity;
+#[path = "fixtures/luck_deadline.rs"]
+mod luck_deadline;
 #[path = "fixtures/luck_refinement.rs"]
 mod luck_refinement;
 #[path = "fixtures/network_snapshots.rs"]

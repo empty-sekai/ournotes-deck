@@ -14,7 +14,6 @@ use super::{
     tables::Tables,
 };
 use crate::{
-    clock::Instant,
     domain::CandidateDomain,
     types::{Metric, SimulationInput},
 };

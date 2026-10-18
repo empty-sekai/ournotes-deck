@@ -997,6 +997,11 @@ impl Clock {
         self.mark = now;
         (now, std::mem::replace(&mut self.slot, next))
     }
+    /// Continue `slot` as the current activity after work that [`Recorder::pause`] timed apart.
+    #[inline]
+    pub(crate) fn switch(&mut self, slot: usize) {
+        self.slot = slot;
+    }
     /// Like `lap`, charging the elapsed time to `charged` instead of the current activity.
     #[inline]
     pub(crate) fn lap_as(&mut self, charged: usize, next: usize) {
@@ -1086,6 +1091,10 @@ pub(crate) struct Recorder {
     pub(crate) upper: Option<i128>,
 }
 
+/// What [`Recorder::pause`] set aside: the phase to reopen with [`Recorder::resume`], if any, and the activity the
+/// clock was in.
+pub(crate) type PhaseMark = (Option<(&'static str, Option<String>)>, usize);
+
 impl Recorder {
     pub(crate) fn new(origin: Instant) -> Self {
         Self {
@@ -1143,6 +1152,27 @@ impl Recorder {
         if self.open.is_some() {
             self.end(tel);
         }
+    }
+
+    /// Whether a phase is open.
+    pub(crate) fn is_open(&self) -> bool {
+        self.open.is_some()
+    }
+
+    /// Closes the open phase, if any, and leaves the activity clock at [`slot::OTHER`]. Returns that phase, to reopen
+    /// with [`Recorder::resume`], and the activity the closing lap interrupted: work the wire document times apart from
+    /// the phase (a bound the stop needs) runs before both resume.
+    pub(crate) fn pause(&mut self, tel: &mut Telemetry) -> PhaseMark {
+        let (_, activity) = self.clock.lap(slot::OTHER);
+        let Some(open) = self.open.take() else { return (None, activity) };
+        close_phase(tel, open, super::budget::now());
+        let phase = &tel.phases[open.0];
+        (Some((phase.name, phase.label.clone())), activity)
+    }
+
+    /// Opens the phase [`Recorder::pause`] closed, as a new entry in time order.
+    pub(crate) fn resume(&mut self, tel: &mut Telemetry, phase: (&'static str, Option<String>)) {
+        self.begin(tel, phase.0, phase.1);
     }
 
     /// Close the open phase, if any, at `now` in a copy of the document, leaving it open here.

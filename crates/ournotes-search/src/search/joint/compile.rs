@@ -55,8 +55,9 @@ impl JointBounds {
         metric: &Metric,
         input: Option<&EventPayoffInput>,
         simulation: &SimulationInput,
+        budget: SearchBudget,
     ) -> Result<Self, Error> {
-        Self::compile_with_laws(pool, request, domain, metric, input, simulation, &[], None)
+        Self::compile_with_laws(pool, request, domain, metric, input, simulation, &[], None, budget)
     }
 
     /// [`JointBounds::compile`] with the certified lottery laws of every team of the domain in every order: the
@@ -65,6 +66,8 @@ impl JointBounds {
     ///
     /// A weighted bound caps the expected score of an order, which a certified LUCK live ranks its orders by
     /// ([`PointBound::ranked`]). The luck weights are read from `memo` when it holds those of the same laws and notes.
+    /// `budget` is the request's: preparation that would run past its deadline fails as unavailable instead of
+    /// starting another step, and the caller then searches without these bounds.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn compile_with_laws(
         pool: &Pool,
@@ -75,7 +78,11 @@ impl JointBounds {
         simulation: &SimulationInput,
         laws: &[std::sync::Arc<ournotes_sim::live::full::LuckDpCertifiedResult>],
         memo: Option<&crate::search::snaps::WeightsMemo>,
+        budget: SearchBudget,
     ) -> Result<Self, Error> {
+        if budget.expired() {
+            return Err(unavailable("the request deadline was reached before the bounds compiled"));
+        }
         if !domain.is_feasible() {
             return Err(unavailable("empty legal domain"));
         }
@@ -108,8 +115,8 @@ impl JointBounds {
             return Err(unavailable("joint preparation exceeds bounded table capacity"));
         }
         let (song, event, _) = crate::search::objective_song(pool, &request.objective)?;
-        let budget = SearchBudget::new(Instant::now(), None)?;
-        let t = Tables::new(pool, song, event, domain.snaps(), budget)?.expect("unlimited preparation");
+        let t = Tables::new(pool, song, event, domain.snaps(), budget)?
+            .ok_or_else(|| unavailable("the request deadline was reached while the power tables built"))?;
         let mut allowed = vec![false; n];
         for &m in domain.members() {
             allowed[m] = true;
@@ -133,6 +140,9 @@ impl JointBounds {
         }
         let setup =
             crate::search::full_setup(pool, &request.objective)?.ok_or_else(|| unavailable("missing Live setup"))?;
+        if budget.expired() {
+            return Err(unavailable("the request deadline was reached while the bounds compiled"));
+        }
         let envelope = SnapLive::new(pool, &t, &allowed, &setup, laws, memo)?;
         let nonnegative_scores = envelope.nonnegative_scores();
         let (a0, global, eps, order_gains) = envelope.joint_envelope();
@@ -302,11 +312,17 @@ impl JointBounds {
             root_keys: None,
         };
         compiled.compile_tables(pool, domain);
+        if budget.expired() {
+            return Err(unavailable("the request deadline was reached while the bounds compiled"));
+        }
         if !compiled.gekisou {
             compiled.composition = composition::CompositionTables::compile(&compiled, pool, domain);
             if let Some(tables) = lambda::LambdaTables::compile(&compiled, pool, domain) {
                 compiled.modules.push(Box::new(tables));
             }
+        }
+        if budget.expired() {
+            return Err(unavailable("the request deadline was reached while the bounds compiled"));
         }
         if let Some((levels, carrier)) = levels {
             let at = levels

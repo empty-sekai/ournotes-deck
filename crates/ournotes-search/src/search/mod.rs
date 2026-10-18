@@ -21,7 +21,7 @@ pub use physical::{
     StepBudget, evaluate_declared_context, score_summary, solve_physical, solve_physical_with_aggregation,
 };
 
-mod budget;
+pub(crate) mod budget;
 pub(crate) mod deck_payoff;
 #[cfg(feature = "search-diagnostics")]
 pub mod diagnostics;

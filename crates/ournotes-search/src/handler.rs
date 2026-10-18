@@ -164,7 +164,15 @@ pub(crate) fn compile_execution(
             Err(reason) => (None, Some(reason.to_string())),
         }
     } else if matches!(strategy, Strategy::BranchAndBound) {
-        match crate::search::joint::JointBounds::compile(pool, request, &domain, metric, event_input, simulation) {
+        match crate::search::joint::JointBounds::compile(
+            pool,
+            request,
+            &domain,
+            metric,
+            event_input,
+            simulation,
+            crate::search::budget::SearchBudget::unlimited(),
+        ) {
             Ok(bound) => {
                 // A played Live whose payoff steps with the local score is first ranked by deck under its score cap:
                 // a combined metric when every term does.

@@ -10,7 +10,7 @@ use ournotes_search::{
 use ournotes_sim::{cards::Roster, data::DeckData};
 use serde_json::json;
 
-fn inputs(threshold: i32, k: usize, cache_entries: usize) -> (DeckData, Roster, RecommendationRequest) {
+pub(super) fn inputs(threshold: i32, k: usize, cache_entries: usize) -> (DeckData, Roster, RecommendationRequest) {
     let mut synth = synthetic_master(5, 2, 5);
     set_column(&mut synth, "MasterLiveMusic", &mut |row| {
         row["_gekisouMission1"] = json!(2);

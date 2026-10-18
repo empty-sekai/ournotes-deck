@@ -115,11 +115,21 @@ impl Engine<'_, '_> {
         let (_, resume) = self.rec.clock.lap(slot::FINE);
         let state = self.certified.as_mut().expect("certified request");
         let tier_cap = state.tier_cap;
+        let bounded = self.budget;
         let bounds = state.law_bounds.get(domain, laws, |laws| {
             *compiled += 1;
-            let mut bounds =
-                JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, laws, None)
-                    .ok()?;
+            let mut bounds = JointBounds::compile_with_laws(
+                pool,
+                request,
+                domain,
+                metric,
+                event_input,
+                simulation,
+                laws,
+                None,
+                bounded,
+            )
+            .ok()?;
             if let Some(threshold) = tier_cap {
                 bounds.drop_tiers(pool, domain, threshold);
             }

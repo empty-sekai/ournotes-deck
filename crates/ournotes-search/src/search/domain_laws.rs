@@ -608,6 +608,7 @@ impl Engine<'_, '_> {
             || !self.metric.weighs_laws()
             || self.simulation.music_length_ms.is_some()
             || self.simulation.score_music_length_ms.is_some()
+            || self.expired()
         {
             return None;
         }
@@ -652,7 +653,11 @@ impl Engine<'_, '_> {
         domain: &CandidateDomain,
         clusters: bool,
     ) -> Option<JointBounds> {
+        if self.expired() {
+            return None;
+        }
         let pool = self.pool;
+        let budget = self.budget;
         let mut kinds = self.take_luck_kinds();
         let mut curves = std::mem::take(&mut self.certified.as_mut().expect("certified request").luck_curves);
         let mut stats = self.tel.environment.bounds.domain_laws.take().unwrap_or_default();
@@ -672,7 +677,7 @@ impl Engine<'_, '_> {
         let mut bounds = laws.as_ref().map_err(Clone::clone).and_then(|laws| {
             let (request, metric, event_input, simulation) =
                 (self.request, self.metric, self.event_input, self.simulation);
-            JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, laws, memo)
+            JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, laws, memo, budget)
                 .map_err(|error| format!("the weighed bounds do not compile: {error}"))
         });
         stats.compile_ms += started.elapsed().as_secs_f64() * 1000.0;
@@ -708,6 +713,7 @@ impl Engine<'_, '_> {
         let (prefixes, teams) = multiset_places(multisets, &cluster)?;
         let (pool, request, metric, event_input, simulation) =
             (self.pool, self.request, self.metric, self.event_input, self.simulation);
+        let budget = self.budget;
         let mut bounds = Vec::with_capacity(sets.len());
         for set in &sets {
             // each cluster's bounds compile as one step of preparation; none begins after the deadline
@@ -715,8 +721,18 @@ impl Engine<'_, '_> {
                 return None;
             }
             bounds.push(
-                JointBounds::compile_with_laws(pool, request, domain, metric, event_input, simulation, set, None)
-                    .ok()?,
+                JointBounds::compile_with_laws(
+                    pool,
+                    request,
+                    domain,
+                    metric,
+                    event_input,
+                    simulation,
+                    set,
+                    None,
+                    budget,
+                )
+                .ok()?,
             );
         }
         let mut kinds = vec![Box::<[u32]>::default(); pool.members.len()];
