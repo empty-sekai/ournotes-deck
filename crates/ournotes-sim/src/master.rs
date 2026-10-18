@@ -147,10 +147,11 @@ row!(
 );
 
 row!(
-    /// `MasterCharacter`.
+    /// `MasterCharacter`. `_isNonPlayable` marks a character a player save never lists.
     CharacterRow {
         id: i64 = "_id",
         band_id: i64 = "_bandID",
+        is_non_playable: bool = "_isNonPlayable",
     }
 );
 

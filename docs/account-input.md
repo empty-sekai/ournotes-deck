@@ -32,6 +32,9 @@ integer tokens. Missing/null scalar facts remain unknown. Duplicate keys in read
 
 Experience is converted through each card kind's level table. Character rank uses `MasterCharacterRank._exp`;
 account resolution rejects data missing those thresholds. Every represented character contributes to total rank.
+A save lists only playable characters: a `MasterCharacter` row with `_isNonPlayable` true (the optional column, absent
+meaning false) is not required, and when unlisted it is left out of the total rank. A listed non-playable character is
+read like any other.
 A memory music group's bonus uses the songs actually listed in that group, not an inferred complete master group.
 Power/skip do not read skill levels. Ordinary live reads live skill levels; Gekisou also reads performance skill levels.
 Excluding a card from candidates does not remove its ownership for memory bonuses.
