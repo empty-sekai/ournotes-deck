@@ -1,6 +1,8 @@
-//! Payoffs the deck alone determines: Skip event points, challenge points and ranked items at the configured result
-//! rank. Each is a nondecreasing function of one additive deck sum, the event bonus of its members and Snaps, so the
-//! canonical team Top-K needs no Live play: payoff, power, then canonical member and Snap IDs rank every team exactly.
+//! Payoffs the deck alone determines: the Skip score, Skip event points, challenge points and ranked items at the
+//! configured result rank. Each is a nondecreasing function of the deck's power or of one additive deck sum, the
+//! event bonus of its members and Snaps, so the canonical team Top-K needs no Live play: payoff, power, then
+//! canonical member and Snap IDs rank every team exactly. The Skip score is a closed form of the power alone; its
+//! monotonicity over the compiled power interval is proved by [`TeamPowerBounds`] before a ranking reads it.
 //!
 //! A played Live's event points, challenge points, ranked items and score targets step with the local score instead
 //! (a declared multiplayer room ranks its total, which is nondecreasing in the local score). Every order of a deck
@@ -23,6 +25,7 @@ use crate::{domain::CandidateDomain, types::Metric};
 use ournotes_sim::{
     Error,
     event::{self, EventCard, EventResultRoute},
+    live::skip::SkipEvaluator,
     master::EventEffectRow,
     scenario::EventPayoffInput,
 };
@@ -133,10 +136,13 @@ enum Curve {
     UpperOnly(i128),
     /// A bound of each order of a played Live: the step its score cap reaches.
     Steps(ScoreSteps),
+    /// The Skip score at the deck's power: a closed form of the power over the request's own chart. Its
+    /// monotonicity over the compiled power interval is certified by [`TeamPowerBounds`] before the bound is used.
+    Skip,
 }
 
 impl Curve {
-    fn value(&self, bonus: i64, power: i64) -> Result<i128, Error> {
+    fn value(&self, bonus: i64, power: i64, skip: Option<&SkipEvaluator>) -> Result<i128, Error> {
         match self {
             Self::Points { reward, rate } => point_product(*reward, bonus, *rate),
             Self::Items { count, rate, counted } => {
@@ -145,6 +151,14 @@ impl Curve {
             }
             Self::Constant(value) | Self::UpperOnly(value) => Ok(*value),
             Self::Steps(steps) => steps.value(bonus, power),
+            Self::Skip => {
+                let skip = skip.ok_or_else(|| unavailable("Skip score monotonicity is not certified"))?;
+                let power = i32::try_from(power)
+                    .ok()
+                    .filter(|power| *power >= 0)
+                    .ok_or_else(|| unavailable("Skip power outside the certified interval"))?;
+                Ok(i128::from(skip.score(power).0))
+            }
         }
     }
 
@@ -155,7 +169,7 @@ impl Curve {
             Self::Items { count, rate, counted } => {
                 f64::from(u8::from(*counted)) * *count as f64 * *rate as f64 / 10000.0
             }
-            Self::Constant(_) | Self::UpperOnly(_) => 0.0,
+            Self::Constant(_) | Self::UpperOnly(_) | Self::Skip => 0.0,
             Self::Steps(steps) => steps.steps.iter().fold(0.0, |best, &(_, step)| match step {
                 Step::Points(multiplier) => best.max(multiplier as f64),
                 Step::Target(_) => best,
@@ -188,6 +202,11 @@ fn curve(
             }
             _ => Err(unavailable("score steps of a payoff that does not step with the score")),
         };
+    }
+    // A skipped Live has one score: a closed form of the deck's power over the request's chart. It reads no event
+    // bonus and needs no event payoff input.
+    if matches!(request.objective.inner(), Objective::SkipScore { .. }) && matches!(*metric, Metric::Score) {
+        return Ok((event::EVENT_POINT, None, Curve::Skip));
     }
     let input = input.ok_or_else(|| unavailable("missing event payoff input"))?;
     let master = pool.master;
@@ -293,6 +312,8 @@ pub(crate) struct DeckPayoffBounds {
     pub(crate) members: Vec<usize>,
     kinds: Vec<Kind>,
     terms: Vec<Term>,
+    /// The Skip score of the request's own chart, present exactly when a [`Curve::Skip`] term reads it.
+    skip: Option<SkipEvaluator>,
 }
 
 impl DeckPayoffBounds {
@@ -318,6 +339,7 @@ impl DeckPayoffBounds {
             members,
             kinds: vec![kind],
             terms: vec![Term { weight: 1, kind: 0, curve: Curve::UpperOnly(cap) }],
+            skip: None,
         })
     }
 
@@ -387,9 +409,16 @@ impl DeckPayoffBounds {
         domain: &CandidateDomain,
         parts: Vec<(i128, Vec<i64>, Vec<i64>, Curve)>,
     ) -> Result<Self, Error> {
-        // The power tables certify nonnegative, nonwrapping powers (and a monotone Skip score) for every legal
-        // deck. They protect native evaluation; without score steps power only breaks payoff ties.
+        // The power tables certify nonnegative, nonwrapping powers for every legal deck, and for a Skip objective
+        // they also prove the Skip score nondecreasing over the whole compiled power interval and hold its evaluator.
+        // They protect native evaluation; without score steps power only breaks payoff ties.
         let power = TeamPowerBounds::tables(pool, request, domain)?;
+        // Without that proof no Skip term is ranked by deck, and the request keeps its other route.
+        let skip = if parts.iter().any(|part| matches!(part.3, Curve::Skip)) {
+            Some(power.monotone_skip().ok_or_else(|| unavailable("Skip score monotonicity is not certified"))?)
+        } else {
+            None
+        };
         let mut kinds = Vec::<Kind>::new();
         let mut terms = Vec::with_capacity(parts.len());
         // How much the payoff gains from each kind's bonus, at least.
@@ -420,7 +449,7 @@ impl DeckPayoffBounds {
             return Err(unavailable("too many distinct event bonuses"));
         }
         let mut members = power.members.clone();
-        let bound = Self { power, members: Vec::new(), kinds, terms };
+        let bound = Self { power, members: Vec::new(), kinds, terms, skip };
         let root = PhysicalDeck { members: [0; 5], snaps: [None; 5] };
         let maxima: Vec<i64> = bound.kinds.iter().map(|kind| kind.maximum).collect();
         bound
@@ -439,7 +468,7 @@ impl DeckPayoffBounds {
         for term in &self.terms {
             sum = term
                 .curve
-                .value(bonus[term.kind], power)?
+                .value(bonus[term.kind], power, self.skip.as_ref())?
                 .checked_mul(term.weight)
                 .and_then(|value| sum.checked_add(value))
                 .ok_or_else(|| unavailable("weighted payoff overflow"))?;
@@ -506,6 +535,10 @@ impl DeckPayoffBounds {
     /// is dropped once `k` bindings of its mask with at least its bonus of every kind beat its power and Snap IDs:
     /// every common extension keeps them ahead (the payoff is nondecreasing in each bonus and in the power), so no
     /// dropped binding is among the layout's first `k`.
+    ///
+    /// A [`Curve::Skip`] term reads no bonus: the payoff of a binding is its own power's score, so the rows are
+    /// ranked by the payoff at `base + power`. With one bonus-only kind the `N == 1` shortcut still holds on power,
+    /// since a higher power scores at least as much.
     pub(crate) fn frontier(
         &self,
         domain: &CandidateDomain,
@@ -743,11 +776,12 @@ mod tests {
         .unwrap();
         let metric = folded.unwrap_or(metric);
         let bound = DeckPayoffBounds::compile(&pool, &request, &domain, &metric, Some(payoff), None).unwrap();
-        // Point effects, item effects and no effect (challenge points) are three different bonuses of the fixture.
+        // Point effects and item effects are two different bonuses of the fixture; challenge points and the Skip
+        // score read no bonus at all and share the third, all-zero one.
         let read = |test: fn(&Metric) -> bool| usize::from(metric.any(test));
         let kinds = read(|term| matches!(term, Metric::ClientEventPoints { .. }))
             + read(|term| matches!(term, Metric::RankedEventItems { .. }))
-            + read(|term| matches!(term, Metric::ClientChallengePoints { .. }));
+            + usize::from(metric.any(|term| matches!(term, Metric::ClientChallengePoints { .. } | Metric::Score)));
         assert_eq!(bound.kinds.len(), kinds);
         let mut layouts = HashMap::new();
         let mut teams = 0;
@@ -761,6 +795,7 @@ mod tests {
             let score = score.expect("Skip score");
             let native = |term: &Metric| -> Result<i128, Error> {
                 Ok(match *term {
+                    Metric::Score => i128::from(score),
                     Metric::ClientEventPoints { event_id } => i128::from(
                         context
                             .preview_event_points(&pool, &deck.as_deck(), payoff, event_id, score)?
@@ -837,6 +872,20 @@ mod tests {
             check_exact(scenario, items.clone());
         }
         check_exact(Scenario::Free(10), Metric::ClientChallengePoints { event_id: 7 });
+    }
+
+    #[test]
+    fn combined_skip_score_terms_are_bounded_and_ranked_exactly() {
+        let points = Metric::ClientEventPoints { event_id: 7 };
+        let items = Metric::RankedEventItems { event_id: 7, resource_type: 4, resource_id: 88 };
+        for scenario in [Scenario::Free(10), Scenario::Challenge(70)] {
+            check_exact(scenario, combined(&[&[(&Metric::Score, 1), (&points, 1)]]));
+            check_exact(scenario, combined(&[&[(&Metric::Score, 1), (&points, 1000)]]));
+            check_exact(scenario, combined(&[&[(&points, 1), (&Metric::Score, 1)]]));
+            check_exact(scenario, combined(&[&[(&Metric::Score, 1)], &[(&points, 1)]]));
+            check_exact(scenario, combined(&[&[(&points, 2)], &[(&Metric::Score, 1)], &[(&items, 1)]]));
+        }
+        check_exact(Scenario::Free(10), combined(&[&[(&Metric::Score, 3)]]));
     }
 
     #[test]

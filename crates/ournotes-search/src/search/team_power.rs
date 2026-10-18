@@ -146,6 +146,12 @@ impl TeamPowerBounds {
         Ok(Self { members, a: t.a, w: t.w, lead: t.lead, profile: t.profile_of, row_max: t.wmax, maximum, skip })
     }
 
+    /// The Skip score evaluator whose monotonicity [`TeamPowerBounds::tables`] proved over `0..=maximum`, or `None`
+    /// when the request has no Skip score.
+    pub(crate) fn monotone_skip(&self) -> Option<SkipEvaluator> {
+        self.skip.clone()
+    }
+
     /// On the certified power interval, every supported Skip utility is
     /// nondecreasing. Utility then power then IDs has exactly power then IDs order.
     pub(crate) fn primary_upper(&self, power: i64, metric: &Metric) -> Result<i128, Error> {
