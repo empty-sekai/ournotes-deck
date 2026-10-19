@@ -192,7 +192,7 @@ impl JointBounds {
                         request.objective.context().ok_or_else(|| unavailable("items need resolved context"))?;
                     let route = context.event_request(pool.master, input, *event_id)?.route;
                     let nonnegative = nonnegative_scores
-                        || point_bound::negative_scores_unpaid(pool, context, input, |rank| {
+                        || crate::search::caps::negative_scores_unpaid(pool, context, input, |rank| {
                             ournotes_sim::event::ranked_event_reward(pool.master, *event_id, &route, rank).is_ok()
                         });
                     let support = (if nonnegative { 0 } else { i32::MIN }, cap.clamp(0.0, i32::MAX as f64) as i32);
