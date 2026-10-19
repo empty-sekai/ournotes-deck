@@ -7,7 +7,7 @@ use crate::{clock::Instant, domain::CandidateDomain, types::Metric};
 use ournotes_sim::{Error, live::skip::SkipEvaluator};
 use std::collections::{HashMap, HashSet};
 
-pub(crate) const SLOTS: [usize; 5] = [2, 0, 1, 3, 4];
+pub(crate) use super::slots::SLOTS;
 
 /// Snap columns up to which [`TeamPowerBounds::refined_upper`] also assigns the Snap terms. The matching work grows
 /// with the column count, so a wider pool keeps the cheaper column relaxation.

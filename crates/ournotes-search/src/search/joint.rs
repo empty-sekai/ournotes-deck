@@ -58,8 +58,7 @@ use relax::order_gain_bound;
 use tail::TailTables;
 pub(crate) use tail::{PAIR_BLOCK, TailState};
 
-/// Leader first, then the other physical slots. Performance order is never a decision.
-pub(crate) const SLOTS: [usize; 5] = [2, 0, 1, 3, 4];
+pub(crate) use super::slots::SLOTS;
 
 /// A bound module: an upper bound of the payoff numerator, over the performance-order masses `orders`, of every
 /// completion of a partial team. `p` holds the members of `SLOTS[..depth]` (the leader first) and, with
