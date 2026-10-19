@@ -235,7 +235,7 @@ pub(super) fn joint_regimes(
             }
             // The deadline ended this part's bounds: its teams stay unexplored under the pool-wide envelope, and no
             // later part starts.
-            Err(_) if e.budget.expired() => {
+            Err(_) if e.expired() => {
                 bound_pending(e)?;
                 return Ok(());
             }
