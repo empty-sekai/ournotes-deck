@@ -8,6 +8,7 @@ Only unfinished work is listed; finished items are removed.
 
 - Exact proofs within a time budget on every objective and scene: tighter interior bounds on Gekisou charts, cheaper exact leaf evaluation (performance orders sharing their common start), and initial decks from a fast heuristic.
 - Tighter bounds on Gekisou charts (bonus bounds on combo charts).
+- Tighter Maximum node bounds from distinct characters: the other terms' bonuses keyed by the characters already placed, and the gain column and spread envelope taken over unused characters only.
 
 ## Gekisou rank parameter
 
@@ -51,4 +52,13 @@ Requirements:
 - Results identify both chart and team; the same team on different charts gives distinct results. The global canonical order is explicit and keeps the within-chart tie contract; PT is still computed per performance order before averaging.
 - The outer search may prioritize charts with prepared data and admissible request-specific upper bounds, but never truncates charts by a static song ranking or the best score seen so far. The inner search shares the global cutoff only through a proven lower-bound contract; an unfinished inner incumbent is a feasible proposal, not a certificate.
 - Global Complete requires every admitted chart domain to be exhausted or excluded by an admissible bound that also preserves secondary ranking and canonical ties. Timeout, unsupported input, numeric/capacity failure and an unfinished chart stay explicit, with the remaining chart domains and their certificate state.
+Approach:
+
+- One branch-and-bound whose first branching variable is the chart: each chart first gets an admissible root upper bound over its whole team domain (every skill effect bounded as the search already bounds it, no search), charts are expanded best-first by that bound, and there is one global (chart, team) Top-K.
+- A chart whose root bound is below the global K-th is excluded whole; a remaining chart's inner search only has to prove that no team beats the global K-th (a threshold search), not its own Top-K.
+- The card pool and power tables are shared across charts; good teams found on one chart seed the others.
+- An entry point that compiles the bounds and returns the root bound only, covering Gekisou, PT and partitioned searches.
+- Bounds of event-point, challenge-point and item objectives follow each chart's score bound; when the reward saturates, the threshold search ranks by the secondary order such as power.
+- The winning combinations are always scored by a complete replay.
+
 - Validation: exhaustive joint chart/deck oracles on bounded fixtures, fixed-deck cross-chart comparison, charts with different missions/bonuses/rank thresholds, canonical ties, and native/WASM comparisons.
