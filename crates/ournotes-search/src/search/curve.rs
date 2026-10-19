@@ -1,6 +1,7 @@
 //! The shape of a score-dependent payoff: how far one order's payoff steps with its score, and the score cap the
 //! step is read at.
 use crate::search::bonus::unavailable;
+use crate::search::reward::points_payoff;
 use ournotes_sim::Error;
 
 /// One step of a played Live's per-order payoff, from its lowest score on.
@@ -40,7 +41,7 @@ impl ScoreSteps {
         // The joint bound's compilation proved the native products nonwrapping up to the largest bonus.
         match at.checked_sub(1).map(|i| self.steps[i].1) {
             None => Err(unavailable("score cap below the lowest step")),
-            Some(Step::Points(multiplier)) => Ok(i128::from(multiplier) * i128::from(bonus + 10000) / 10000),
+            Some(Step::Points(multiplier)) => Ok(points_payoff(bonus, multiplier)),
             Some(Step::Target(reached)) => Ok(i128::from(reached)),
         }
     }

@@ -152,7 +152,7 @@ impl PointBound {
     /// The point payoff of an order of a deck with this event bonus at a score cap without a score target: the step
     /// multiplier at the cap.
     fn tier_payoff(&self, bonus: i64, score_cap: i128) -> i128 {
-        ((bonus + 10000) * self.multiplier_at(score_cap) / 10000) as i128
+        crate::search::reward::points_payoff(bonus, self.multiplier_at(score_cap))
     }
 
     /// The bound of a combined metric's payoff from its terms' weights and bounds. The first term whose payoff
@@ -223,7 +223,7 @@ impl PointBound {
     fn maximum_reward(&self, bonus: i64, others: &[i64]) -> i128 {
         let own = match self.target {
             Some(_) => i128::from(self.multiplier),
-            None => ((bonus + 10000) * self.multiplier / 10000) as i128,
+            None => crate::search::reward::points_payoff(bonus, self.multiplier),
         };
         self.others.iter().enumerate().fold(self.weight.saturating_mul(own), |sum, (i, (weight, largest, part))| {
             let bonus = others.get(i).copied().unwrap_or(*largest);
@@ -478,7 +478,7 @@ impl PointBound {
                     .expect("PT values in the nonwrapping domain")
                     .min(self.own_order_payoff(bonus, max_cap))
             }
-            _ => ((bonus + 10000) * self.multiplier / 10000) as i128,
+            _ => crate::search::reward::points_payoff(bonus, self.multiplier),
         }
     }
 

@@ -8,7 +8,7 @@ use super::{Pool, SearchRequest};
 use crate::types::Metric;
 use ournotes_sim::Error;
 use ournotes_sim::event;
-use ournotes_sim::scenario::{EventPayoffInput, MultiplayerScorePolicy, ResolvedContext, Scenario, item_payoff};
+use ournotes_sim::scenario::{EventPayoffInput, MultiplayerScorePolicy, ResolvedContext, Scenario};
 
 fn invalid(message: &str) -> Error {
     Error::Domain(format!("certified payoff: {message}"))
@@ -65,15 +65,8 @@ pub(crate) fn payoff_map(
     pool.check_deck(&deck)?;
     let cuts = rank_cuts(pool, context, input, support)?;
     let value_at = |score| match *metric {
-        Metric::ClientEventPoints { event_id } => {
-            Ok(i128::from(context.preview_event_points(pool, &deck, input, event_id, score)?.points_for(event_id)))
-        }
-        Metric::ClientChallengePoints { event_id } => Ok(i128::from(
-            context.preview_event_points(pool, &deck, input, event_id, score)?.challenge_points_for(event_id),
-        )),
-        Metric::RankedEventItems { event_id, resource_type, resource_id } => {
-            let preview = context.preview_event_items(pool, &deck, input, event_id, score)?;
-            item_payoff(&preview, event_id, resource_type, resource_id)
+        Metric::ClientEventPoints { .. } | Metric::ClientChallengePoints { .. } | Metric::RankedEventItems { .. } => {
+            crate::search::reward::payoff_of(pool, request, metric, Some(input), physical, score, power, None)
         }
         _ => Err(invalid("non-event metric reached native settlement")),
     };
@@ -225,7 +218,7 @@ mod tests {
     use super::*;
     use crate::search::{Constraints, Objective, PlayInput};
     use ournotes_sim::live::model::JudgementStream;
-    use ournotes_sim::scenario::ContextInput;
+    use ournotes_sim::scenario::{ContextInput, item_payoff};
     use serde_json::{Value, json};
 
     fn fixture() -> Synth {
