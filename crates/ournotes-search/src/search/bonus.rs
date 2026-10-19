@@ -8,7 +8,8 @@ use ournotes_sim::{
 };
 use std::collections::{HashMap, HashSet};
 
-fn unavailable(message: &str) -> Error {
+/// The refusal of a payoff computation whose native intermediates would leave the supported range.
+pub(crate) fn unavailable(message: &str) -> Error {
     Error::Unsupported(format!("deck payoff bound unavailable: {message}"))
 }
 
