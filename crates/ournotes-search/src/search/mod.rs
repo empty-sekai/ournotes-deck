@@ -33,6 +33,7 @@ pub(crate) mod levels;
 mod live;
 mod matching;
 mod power;
+pub(crate) mod reward;
 mod slots;
 mod snaps;
 mod tables;

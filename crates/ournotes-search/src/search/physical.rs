@@ -50,10 +50,10 @@ mod team_power_search;
 mod team_scores;
 #[path = "warm.rs"]
 mod warm;
+pub(crate) use crate::search::reward::{arithmetic, payoff_of};
 use engine::{Engine, Offered};
 use entry::{Entry, compare};
 use enumeration::{ProposalRandom, members_rec, random_deck};
-pub(crate) use evaluation::{arithmetic, payoff_of};
 pub use evaluation::{evaluate_declared_context, score_summary};
 use joint_search::{joint_rec, joint_regimes, joint_root_upper, node_upper, ordered_root, traverse};
 pub(crate) use progress::ProgressHook;
