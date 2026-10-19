@@ -31,6 +31,7 @@ pub(crate) mod levels;
 mod live;
 mod matching;
 mod power;
+mod slots;
 mod snaps;
 mod tables;
 pub(crate) mod team_power;
