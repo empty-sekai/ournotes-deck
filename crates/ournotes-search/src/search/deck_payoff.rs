@@ -19,65 +19,21 @@
 //! terminal evaluation; the upper-only mode does not assign that bound as a deck's actual payoff.
 use super::{
     Objective, Pool, SearchRequest,
+    bonus::{card_bonus, challenge_product, largest_team_bonus, nonnegative_i32, point_product, sum_rows},
     expectation::PhysicalDeck,
-    team_power::{SLOTS, TeamPowerBounds, candidates, largest_team_bonus, sum_rows},
+    team_power::{SLOTS, TeamPowerBounds, candidates},
 };
 use crate::{domain::CandidateDomain, types::Metric};
 use ournotes_sim::{
     Error,
     event::{self, EventCard, EventResultRoute},
     live::skip::SkipEvaluator,
-    master::EventEffectRow,
     scenario::EventPayoffInput,
 };
 use std::collections::HashMap;
 
 fn unavailable(message: &str) -> Error {
     Error::Unsupported(format!("deck payoff bound unavailable: {message}"))
-}
-
-fn nonnegative_i32(value: i64) -> Result<i64, Error> {
-    if (0..=i64::from(i32::MAX)).contains(&value) {
-        Ok(value)
-    } else {
-        Err(unavailable("negative or wrapping native Int32 value"))
-    }
-}
-
-/// Audit the native order `value * (bonus + 10000) * rate / 10000`.
-/// The first product must fit even when the final rate is zero.
-pub(super) fn point_product(value: i64, bonus: i64, rate: i64) -> Result<i128, Error> {
-    nonnegative_i32(value)?;
-    nonnegative_i32(bonus)?;
-    nonnegative_i32(rate)?;
-    let base = nonnegative_i32(bonus.checked_add(10000).ok_or_else(|| unavailable("bonus overflow"))?)?;
-    let first = nonnegative_i32(value.checked_mul(base).ok_or_else(|| unavailable("first product overflow"))?)?;
-    let last = nonnegative_i32(first.checked_mul(rate).ok_or_else(|| unavailable("second product overflow"))?)?;
-    Ok(i128::from(last / 10000))
-}
-
-/// Challenge-point earnings have no event bonus or 10000-scale intermediate.
-fn challenge_product(value: i64, rate: i64) -> Result<i128, Error> {
-    nonnegative_i32(value)?;
-    nonnegative_i32(rate)?;
-    let product = value.checked_mul(rate).ok_or_else(|| unavailable("CP product overflow"))?;
-    Ok(i128::from(nonnegative_i32(product)?))
-}
-
-/// Reproduce the native card's sum of `bonus_type` effects only after proving every cast/addition safe.
-pub(super) fn card_bonus(effects: &[&EventEffectRow], card: EventCard<'_>, bonus_type: i64) -> Result<i64, Error> {
-    let mut sum = 0i64;
-    for effect in effects.iter().filter(|e| e.event_bonus_type == bonus_type) {
-        let (hit, rank) = match card {
-            EventCard::Member(m) => (event::is_member_target(effect, m)?, m.rank),
-            EventCard::Snap(s) => (event::is_snap_target(effect, s), s.rank),
-        };
-        if hit {
-            let value = nonnegative_i32(event::rank_effect_value(effect, rank)?)?;
-            sum = nonnegative_i32(sum + value)?;
-        }
-    }
-    Ok(sum)
 }
 
 /// One step of a played Live's per-order payoff, from its lowest score on.
@@ -646,38 +602,6 @@ mod tests {
     use ournotes_sim::scenario::{ContextInput, Scenario};
     use serde_json::json;
     use std::collections::HashSet;
-
-    #[test]
-    fn native_intermediate_wrapping_is_refused_even_at_zero_rate() {
-        assert!(point_product(i64::from(i32::MAX), 0, 0).is_err());
-        assert!(point_product(1, i64::from(i32::MAX), 0).is_err());
-        assert!(point_product(1, 0, i64::from(i32::MAX)).is_err());
-        assert!(point_product(-1, 0, 1).is_err());
-        assert_eq!(point_product(100, 20000, 0).unwrap(), 0);
-        assert_eq!(challenge_product(i64::from(i32::MAX), 1).unwrap(), i128::from(i32::MAX));
-        assert_eq!(challenge_product(i64::from(i32::MAX), 0).unwrap(), 0);
-        assert!(challenge_product(i64::from(i32::MAX), 2).is_err());
-    }
-
-    #[test]
-    fn effect_casts_and_each_addition_must_fit_before_native_wrapping() {
-        let member =
-            event::EventMember { id: 1, character_id: 1, band_id: Some(1), card_type: 1, tags: vec![], rank: 1 };
-        let mut effect = EventEffectRow {
-            event_bonus_type: event::EVENT_POINT,
-            resource_type_constraint: 2,
-            rank1_effect_value: i64::from(i32::MAX),
-            ..Default::default()
-        };
-        let card = EventCard::Member(&member);
-        assert_eq!(card_bonus(&[&effect], card, event::EVENT_POINT).unwrap(), i64::from(i32::MAX));
-        assert_eq!(card_bonus(&[&effect], card, event::EVENT_ITEM).unwrap(), 0, "another bonus type is not read");
-        assert!(card_bonus(&[&effect, &effect], card, event::EVENT_POINT).is_err());
-        effect.rank1_effect_value = 1i64 << 32;
-        assert!(card_bonus(&[&effect], card, event::EVENT_POINT).is_err());
-        effect.rank1_effect_value = -1;
-        assert!(card_bonus(&[&effect], card, event::EVENT_POINT).is_err());
-    }
 
     /// Seven one-character members and three Snaps. Event 7 has point effects and item effects on different cards,
     /// and normal and Challenge item rewards of resource 4/88 next to another resource.

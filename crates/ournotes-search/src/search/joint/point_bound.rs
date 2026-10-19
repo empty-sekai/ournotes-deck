@@ -71,7 +71,7 @@ fn event_cap(
     metric: &Metric,
     input: Option<&EventPayoffInput>,
 ) -> Option<i128> {
-    use crate::search::deck_payoff::{card_bonus, point_product};
+    use crate::search::bonus::{card_bonus, point_product};
     use ournotes_sim::event::{self, EventCard, EventResultRoute};
 
     let event_id = metric.event()?;
@@ -134,7 +134,7 @@ fn event_cap(
                 .map(|&s| card_bonus(&effects, EventCard::Snap(&ournotes_sim::bonus::event_snap(&pool.snaps[s])), kind))
                 .collect::<Result<Vec<_>, Error>>()
                 .ok()?;
-            crate::search::team_power::largest_team_bonus(members, &snaps)
+            crate::search::bonus::largest_team_bonus(members, &snaps)
         }
         None => 0,
     };
@@ -276,7 +276,7 @@ impl PointBound {
         let others: Vec<_> = parts
             .into_iter()
             .map(|(weight, part)| {
-                let bonus = crate::search::team_power::largest_team_bonus(
+                let bonus = crate::search::bonus::largest_team_bonus(
                     domain.members().iter().map(|&m| (pool.members[m].character_id, part.member[m])),
                     &part.snap,
                 );
@@ -614,7 +614,7 @@ impl PointBound {
         target: (i64, i64, i64),
         support: (i32, i32),
     ) -> Result<Self, Error> {
-        use crate::search::deck_payoff::{card_bonus, point_product};
+        use crate::search::bonus::{card_bonus, point_product};
         use ournotes_sim::event::{self, EventCard, EventResultRoute};
 
         let (event_id, resource_type, resource_id) = target;
@@ -661,7 +661,7 @@ impl PointBound {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let maximum_bonus = crate::search::team_power::largest_team_bonus(
+        let maximum_bonus = crate::search::bonus::largest_team_bonus(
             domain.members().iter().map(|&m| (pool.members[m].character_id, member[m])),
             &snap,
         );
@@ -799,7 +799,7 @@ impl PointBound {
         if !(0..=i32::MAX as i64).contains(&rate) || values.iter().any(|v| !(0..=i32::MAX as i64).contains(v)) {
             return Err(unavailable("PT rate/value outside nonwrapping domain"));
         }
-        let maximum_bonus = crate::search::team_power::largest_team_bonus(
+        let maximum_bonus = crate::search::bonus::largest_team_bonus(
             domain.members().iter().map(|&m| (pool.members[m].character_id, member[m])),
             &snap,
         );
