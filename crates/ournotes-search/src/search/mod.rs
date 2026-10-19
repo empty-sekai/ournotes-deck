@@ -24,6 +24,7 @@ pub use physical::{
 pub(crate) mod bonus;
 pub(crate) mod budget;
 pub(crate) mod caps;
+pub(crate) mod curve;
 pub(crate) mod deck_payoff;
 #[cfg(feature = "search-diagnostics")]
 pub mod diagnostics;

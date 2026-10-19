@@ -23,6 +23,8 @@ use super::{
     expectation::PhysicalDeck,
     team_power::{SLOTS, TeamPowerBounds, candidates},
 };
+use crate::search::bonus::unavailable;
+use crate::search::curve::{ScoreSteps, TermSteps};
 use crate::{domain::CandidateDomain, types::Metric};
 use ournotes_sim::{
     Error,
@@ -31,53 +33,6 @@ use ournotes_sim::{
     scenario::EventPayoffInput,
 };
 use std::collections::HashMap;
-
-fn unavailable(message: &str) -> Error {
-    Error::Unsupported(format!("deck payoff bound unavailable: {message}"))
-}
-
-/// One step of a played Live's per-order payoff, from its lowest score on.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Step {
-    /// Event or challenge points `multiplier * (bonus + 10000) / 10000`, the multiplier being the rate times the
-    /// largest reward value at or below the step's score (challenge points read no card bonus).
-    Points(i64),
-    /// A score target: reached (1) or not (0).
-    Target(bool),
-}
-
-/// The per-order payoff of a played Live steps with the order's score. Every order of a deck with power `p`
-/// scores at most `ceil(p * global * (1 + eps))` (the global coefficient of the joint envelope with its margin, see
-/// `JointBounds::score_steps`), so the step of that cap bounds each of its orders.
-#[derive(Clone, Debug)]
-pub(crate) struct ScoreSteps {
-    global: f64,
-    eps: f64,
-    /// (lowest score, step) by ascending score, each step at least the previous one.
-    steps: Vec<(i128, Step)>,
-}
-
-impl ScoreSteps {
-    pub(crate) fn new(global: f64, eps: f64, steps: Vec<(i128, Step)>) -> Self {
-        Self { global, eps, steps }
-    }
-
-    /// The score cap of every order of a deck with power at most `power`.
-    pub(crate) fn score_cap(&self, power: i64) -> i128 {
-        ((power as f64) * self.global * (1.0 + self.eps)).ceil() as i128
-    }
-
-    fn value(&self, bonus: i64, power: i64) -> Result<i128, Error> {
-        let cap = self.score_cap(power);
-        let at = self.steps.partition_point(|&(score, _)| score <= cap);
-        // The joint bound's compilation proved the native products nonwrapping up to the largest bonus.
-        match at.checked_sub(1).map(|i| self.steps[i].1) {
-            None => Err(unavailable("score cap below the lowest step")),
-            Some(Step::Points(multiplier)) => Ok(i128::from(multiplier) * i128::from(bonus + 10000) / 10000),
-            Some(Step::Target(reached)) => Ok(i128::from(reached)),
-        }
-    }
-}
 
 /// The payoff of a deck as a function of its event bonus (10000 = 100 %) and power, nondecreasing in both on the
 /// compiled domain.
@@ -127,10 +82,7 @@ impl Curve {
                 f64::from(u8::from(*counted)) * *count as f64 * *rate as f64 / 10000.0
             }
             Self::Constant(_) | Self::UpperOnly(_) | Self::Skip => 0.0,
-            Self::Steps(steps) => steps.steps.iter().fold(0.0, |best, &(_, step)| match step {
-                Step::Points(multiplier) => best.max(multiplier as f64),
-                Step::Target(_) => best,
-            }),
+            Self::Steps(steps) => steps.largest_step(),
         }
     }
 }
@@ -256,9 +208,6 @@ struct Term {
     kind: usize,
     curve: Curve,
 }
-
-/// A term's weight, its event bonus per member and per Snap column, and its steps with the score.
-pub(crate) type TermSteps<'a> = (i128, &'a [i64], &'a [i64], ScoreSteps);
 
 /// Owned arrays only. The payoff unit is one deck payoff; the engine scales it to its order mass. The payoff is the
 /// weighted sum of its terms (one term of weight one for a single metric), each nondecreasing in its own event bonus

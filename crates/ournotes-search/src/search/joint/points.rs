@@ -6,13 +6,13 @@ impl JointBounds {
     /// The per-order payoff steps of a score target or of points stepped by the local score, with this envelope's
     /// global score cap (`payoff_cap_from` with every gain at the global coefficient); None for score payoffs, capped
     /// scores, multiplayer rewards without score tiers and combined metrics.
-    pub(crate) fn score_steps(&self) -> Option<crate::search::deck_payoff::ScoreSteps> {
+    pub(crate) fn score_steps(&self) -> Option<crate::search::curve::ScoreSteps> {
         self.steps_of(self.points.as_ref().filter(|pt| !pt.is_combined())?)
     }
 
     /// The steps of every term of a combined metric with the term's weight and event bonuses; None when a term has
     /// no steps.
-    pub(crate) fn term_steps(&self) -> Option<Vec<crate::search::deck_payoff::TermSteps<'_>>> {
+    pub(crate) fn term_steps(&self) -> Option<Vec<crate::search::curve::TermSteps<'_>>> {
         let pt = self.points.as_ref()?;
         std::iter::once((pt.weight, pt))
             .chain(pt.others.iter().map(|(weight, _, part)| (*weight, part)))
@@ -21,8 +21,8 @@ impl JointBounds {
     }
 
     /// The steps of one term's own payoff; None for ranking values ([`PointBound::ranked`]), which step nowhere.
-    fn steps_of(&self, pt: &PointBound) -> Option<crate::search::deck_payoff::ScoreSteps> {
-        use crate::search::deck_payoff::Step;
+    fn steps_of(&self, pt: &PointBound) -> Option<crate::search::curve::ScoreSteps> {
+        use crate::search::curve::Step;
         if pt.ranked {
             return None;
         }
@@ -43,7 +43,7 @@ impl JointBounds {
                     .collect()
             }
         };
-        Some(crate::search::deck_payoff::ScoreSteps::new(self.global, self.eps, steps))
+        Some(crate::search::curve::ScoreSteps::new(self.global, self.eps, steps))
     }
 
     /// Every deck containing member m earns at most this many PT in every performance order: under each term of the
