@@ -646,7 +646,7 @@ mod tests {
         let domain = CandidateDomain::build(&pool, &request.constraints).unwrap();
         let payoff = input.event_payoff.as_ref().unwrap();
         let folded = crate::search::levels::fold(&metric, |term| {
-            crate::search::joint::term_cap(&pool, &request, &domain, term, Some(payoff))
+            crate::search::caps::term_cap(&pool, &request, &domain, term, Some(payoff))
         })
         .unwrap();
         let metric = folded.unwrap_or(metric);
