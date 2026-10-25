@@ -4,6 +4,12 @@ Deck power, skip score and live score for BanG Dream! Our Notes, and an exact To
 
 [中文](README.md) · [Roadmap](docs/roadmap.en.md)
 
+> **Maintenance status: no longer actively maintained.**
+>
+> The maintainer no longer has the time to work on it and does not play the game, so no implementation is guaranteed to stay correct or efficient; in the future only the simulation parts that are still needed (`crates/ournotes-sim`) may be maintained. Anyone interested is welcome to take over the project or continue from a fork; it is released under MIT OR Apache-2.0, so taking it over or republishing it needs no further permission.
+>
+> For the game version checked so far (client 1.0.6), the results of the calculations (deck power, skip score and event points) and of the whole-live simulation (live score) are correct, and a `Complete` search is still the exact Top-K over the declared model and inputs (see [Correctness](#correctness)). The implementation puts correctness first and does not prioritise speed: search and single-live simulation stay essentially single-threaded (parallel search is only an optional fallback on the roadmap), so searches can be slow and may reach the time limit. These statements cover only the checked version, resources and inputs; game updates, unmodelled rules and results outside the declared range are not guaranteed.
+
 ## Repository layout
 
 The repository is a Cargo workspace of two crates; the search depends on the model, the model never on the search:
